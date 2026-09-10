@@ -1,0 +1,45 @@
+# Python / local environments
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Frontend tooling and local artifacts
+node_modules/
+.cache/
+coverage/
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Keep research data and compute outputs outside source control
+/data/
+/artifacts/
+/outputs/
+/logs/
+/.local/
+/histopilot/static/
+*.db
+*.db-shm
+*.db-wal
+service.lock
+.vite/
+playwright-report/
+test-results/
+*.svs
+*.ndpi
+*.mrxs
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+docs/
+examples/

@@ -1,0 +1,82 @@
+.split-role-guide {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 12px;
+}
+.split-role-guide > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.split-role-guide span {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.split-allocation {
+  margin: 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.split-allocation figcaption {
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+.split-allocation-bar {
+  display: flex;
+  height: 24px;
+  overflow: hidden;
+  border-radius: 7px;
+  gap: 2px;
+  background: var(--line);
+}
+.split-train {
+  background: #7463d7;
+}
+.split-val {
+  background: #dcaa4b;
+}
+.split-test {
+  background: #21998c;
+}
+.split-allocation-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 22px;
+  margin: 14px 0;
+  font-size: 13px;
+}
+.split-allocation-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.split-allocation-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.split-plan-summary {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.split-plan-name {
+  min-width: 150px;
+}
+.split-plan-name small {
+  font-weight: 400;
+}
+
+.split-plan-summary + .protocol-coverage progress {
+  width: 100%;
+  height: 10px;
+  accent-color: #21998c;
+}

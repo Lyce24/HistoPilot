@@ -1,0 +1,120 @@
+.protocol-distribution {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfaff;
+}
+.protocol-distribution figcaption {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.protocol-distribution .science-bar {
+  grid-template-columns: minmax(80px, 150px) minmax(40px, 1fr) 65px;
+}
+.protocol-distribution .science-bar:hover {
+  background: transparent;
+}
+.protocol-field-profile {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f6f5fb;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.protocol-field-profile code {
+  display: inline-block;
+  padding: 2px 6px;
+  margin: 2px 4px 2px 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+.protocol-population {
+  display: grid;
+  gap: 12px;
+}
+.protocol-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+}
+.protocol-coverage {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.protocol-population progress,
+.protocol-partition-live progress {
+  width: 100%;
+  height: 10px;
+  accent-color: #7864d7;
+}
+.protocol-partition-live {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  background: #fbfaff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.protocol-partition-live p {
+  margin: 0;
+}
+.protocol-sample summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.protocol-sample .table-wrap {
+  margin-top: 12px;
+}
+.protocol-condition {
+  display: grid;
+  gap: 10px;
+  padding: 12px 0;
+}
+.protocol-condition + .protocol-condition {
+  border-top: 1px dashed var(--line);
+}
+.protocol-live-status {
+  padding: 16px;
+  border-radius: 10px;
+  background: #f7f6fb;
+  color: var(--muted);
+}
+.protocol-extra-inputs {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}
+.protocol-extra-inputs summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.protocol-extra-inputs .science-checkbox-grid {
+  margin-top: 16px;
+}
+.protocol-partition-bars {
+  min-width: 180px;
+}
+.protocol-partition-bars .science-bar-track {
+  height: 8px;
+  margin: 8px 0;
+}
+@media (max-width: 560px) {
+  .protocol-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .protocol-distribution {
+    padding: 10px;
+  }
+  .protocol-distribution .science-bar {
+    grid-template-columns: minmax(60px, 90px) minmax(20px, 1fr) 50px;
+    gap: 8px;
+  }
+}

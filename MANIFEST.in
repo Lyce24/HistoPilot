@@ -1,0 +1,2 @@
+recursive-include histopilot/resources *.json
+recursive-include histopilot/static *

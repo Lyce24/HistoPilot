@@ -1,0 +1,53 @@
+.project-switch-button {
+  text-align: left;
+  color: inherit;
+}
+.project-switch-button > div {
+  flex: 1;
+  min-width: 0;
+}
+.project-switch-button strong {
+  overflow-wrap: anywhere;
+}
+.project-switch-button:hover {
+  background: #2c3041;
+  border-color: #686079;
+}
+.breadcrumb-home {
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+}
+.breadcrumb-home:hover {
+  color: var(--accent);
+}
+.local-path {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.local-source-form {
+  display: grid;
+  gap: 16px;
+  padding-top: 20px;
+}
+.local-note {
+  margin-top: 20px;
+}
+.local-source-form .grid-2 {
+  margin-bottom: 0;
+}
+.connection-state .btn + .btn {
+  margin-left: 10px;
+}
+@media (max-width: 720px) {
+  .workspace-banner {
+    flex-wrap: wrap;
+  }
+  .workspace-banner > div:nth-child(2) {
+    min-width: 0;
+    max-width: calc(100% - 66px);
+  }
+  .detail-list .local-path {
+    max-width: 58vw;
+  }
+}

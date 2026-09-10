@@ -1,0 +1,1491 @@
+{
+  "dataset": {
+    "id": "crc-demo-v1",
+    "patientCount": 24,
+    "specimenCount": 28,
+    "slideCount": 28
+  },
+  "encoders": [
+    {
+      "id": "uni2",
+      "name": "UNI2-h",
+      "description": "Explore a pathology image encoder in a shared feature contract.",
+      "dimensions": 1536,
+      "adapter": "TRIDENT"
+    },
+    {
+      "id": "uni",
+      "name": "UNI",
+      "description": "A second encoder configuration for controlled comparisons.",
+      "dimensions": 1024,
+      "adapter": "TRIDENT"
+    },
+    {
+      "id": "conch",
+      "name": "CONCH",
+      "description": "Make room for image–language features in the same workflow.",
+      "dimensions": 512,
+      "adapter": "Custom / STAMP"
+    }
+  ],
+  "featureSets": [
+    {
+      "id": "feature-uni2-demo",
+      "encoderId": "uni2",
+      "slides": 28,
+      "dimensions": 1536,
+      "status": "Demo artifact"
+    },
+    {
+      "id": "feature-uni-demo",
+      "encoderId": "uni",
+      "slides": 28,
+      "dimensions": 1024,
+      "status": "Demo artifact"
+    },
+    {
+      "id": "feature-conch-demo",
+      "encoderId": "conch",
+      "slides": 28,
+      "dimensions": 512,
+      "status": "Demo artifact"
+    }
+  ],
+  "milModels": [
+    {
+      "id": "abmil",
+      "name": "Gated ABMIL",
+      "description": "Attention pooling baseline for slide-level feature bags.",
+      "adapter": "Native / OceanPath"
+    },
+    {
+      "id": "clam",
+      "name": "CLAM",
+      "description": "Attention pooling with an instance clustering objective.",
+      "adapter": "CLAM"
+    },
+    {
+      "id": "transmil",
+      "name": "TransMIL",
+      "description": "Transformer aggregation for a second modeling family.",
+      "adapter": "TorchMIL"
+    }
+  ],
+  "patients": [
+    {
+      "id": "DEMO-001",
+      "site": "North",
+      "specimenType": "Primary",
+      "msi": "MSI-H",
+      "braf": "Mutant",
+      "kras": "Mutant",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-002",
+      "site": "South",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-003",
+      "site": "West",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-004",
+      "site": "North",
+      "specimenType": "Metastatic",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "Mutant",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-005",
+      "site": "South",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-006",
+      "site": "West",
+      "specimenType": "Primary",
+      "msi": "MSI-H",
+      "braf": "WT",
+      "kras": "Mutant",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-007",
+      "site": "North",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "Mutant",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-008",
+      "site": "South",
+      "specimenType": "Metastatic",
+      "msi": "MSS",
+      "braf": "Mutant",
+      "kras": "WT",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-009",
+      "site": "West",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-010",
+      "site": "North",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "Mutant",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-011",
+      "site": "South",
+      "specimenType": "Primary",
+      "msi": "MSI-H",
+      "braf": "WT",
+      "kras": "Mutant",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-012",
+      "site": "West",
+      "specimenType": "Metastatic",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-013",
+      "site": "North",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "Mutant",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-014",
+      "site": "South",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-015",
+      "site": "West",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "Mutant",
+      "kras": "WT",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-016",
+      "site": "North",
+      "specimenType": "Metastatic",
+      "msi": "MSI-H",
+      "braf": "WT",
+      "kras": "Mutant",
+      "partition": "train"
+    },
+    {
+      "id": "DEMO-017",
+      "site": "South",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "validation"
+    },
+    {
+      "id": "DEMO-018",
+      "site": "West",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "validation"
+    },
+    {
+      "id": "DEMO-019",
+      "site": "North",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "Mutant",
+      "partition": "validation"
+    },
+    {
+      "id": "DEMO-020",
+      "site": "South",
+      "specimenType": "Metastatic",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "validation"
+    },
+    {
+      "id": "DEMO-021",
+      "site": "West",
+      "specimenType": "Primary",
+      "msi": "MSI-H",
+      "braf": "WT",
+      "kras": "Mutant",
+      "partition": "test"
+    },
+    {
+      "id": "DEMO-022",
+      "site": "North",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "Mutant",
+      "kras": "Mutant",
+      "partition": "test"
+    },
+    {
+      "id": "DEMO-023",
+      "site": "South",
+      "specimenType": "Primary",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "test"
+    },
+    {
+      "id": "DEMO-024",
+      "site": "West",
+      "specimenType": "Metastatic",
+      "msi": "MSS",
+      "braf": "WT",
+      "kras": "WT",
+      "partition": "test"
+    }
+  ],
+  "project": {
+    "id": "project-crc-demo",
+    "name": "CRC · KRAS Demo"
+  },
+  "results": [
+    {
+      "id": "result-demo-01",
+      "encoderId": "uni2",
+      "milId": "abmil",
+      "auroc": 0.711,
+      "auprc": 0.603,
+      "accuracy": 0.682,
+      "seed": 42,
+      "splitId": "split-demo-42",
+      "featureSetId": "feature-uni2-demo"
+    },
+    {
+      "id": "result-demo-02",
+      "encoderId": "uni",
+      "milId": "clam",
+      "auroc": 0.704,
+      "auprc": 0.596,
+      "accuracy": 0.669,
+      "seed": 42,
+      "splitId": "split-demo-42",
+      "featureSetId": "feature-uni-demo"
+    },
+    {
+      "id": "result-demo-03",
+      "encoderId": "uni",
+      "milId": "abmil",
+      "auroc": 0.693,
+      "auprc": 0.581,
+      "accuracy": 0.657,
+      "seed": 42,
+      "splitId": "split-demo-42",
+      "featureSetId": "feature-uni-demo"
+    }
+  ],
+  "slides": [
+    {
+      "id": "DEMO-001-A",
+      "patientId": "DEMO-001",
+      "specimenId": "DEMO-001-SP1",
+      "site": "North",
+      "status": "Ready",
+      "filename": "DEMO-001-A.svs"
+    },
+    {
+      "id": "DEMO-001-B",
+      "patientId": "DEMO-001",
+      "specimenId": "DEMO-001-SP2",
+      "site": "North",
+      "status": "Ready",
+      "filename": "DEMO-001-B.svs"
+    },
+    {
+      "id": "DEMO-002-A",
+      "patientId": "DEMO-002",
+      "specimenId": "DEMO-002-SP1",
+      "site": "South",
+      "status": "Ready",
+      "filename": "DEMO-002-A.svs"
+    },
+    {
+      "id": "DEMO-002-B",
+      "patientId": "DEMO-002",
+      "specimenId": "DEMO-002-SP2",
+      "site": "South",
+      "status": "Ready",
+      "filename": "DEMO-002-B.svs"
+    },
+    {
+      "id": "DEMO-003-A",
+      "patientId": "DEMO-003",
+      "specimenId": "DEMO-003-SP1",
+      "site": "West",
+      "status": "Ready",
+      "filename": "DEMO-003-A.svs"
+    },
+    {
+      "id": "DEMO-003-B",
+      "patientId": "DEMO-003",
+      "specimenId": "DEMO-003-SP2",
+      "site": "West",
+      "status": "Ready",
+      "filename": "DEMO-003-B.svs"
+    },
+    {
+      "id": "DEMO-004-A",
+      "patientId": "DEMO-004",
+      "specimenId": "DEMO-004-SP1",
+      "site": "North",
+      "status": "Ready",
+      "filename": "DEMO-004-A.svs"
+    },
+    {
+      "id": "DEMO-004-B",
+      "patientId": "DEMO-004",
+      "specimenId": "DEMO-004-SP2",
+      "site": "North",
+      "status": "Ready",
+      "filename": "DEMO-004-B.svs"
+    },
+    {
+      "id": "DEMO-005-A",
+      "patientId": "DEMO-005",
+      "specimenId": "DEMO-005-SP1",
+      "site": "South",
+      "status": "Ready",
+      "filename": "DEMO-005-A.svs"
+    },
+    {
+      "id": "DEMO-006-A",
+      "patientId": "DEMO-006",
+      "specimenId": "DEMO-006-SP1",
+      "site": "West",
+      "status": "Ready",
+      "filename": "DEMO-006-A.svs"
+    },
+    {
+      "id": "DEMO-007-A",
+      "patientId": "DEMO-007",
+      "specimenId": "DEMO-007-SP1",
+      "site": "North",
+      "status": "Ready",
+      "filename": "DEMO-007-A.svs"
+    },
+    {
+      "id": "DEMO-008-A",
+      "patientId": "DEMO-008",
+      "specimenId": "DEMO-008-SP1",
+      "site": "South",
+      "status": "Review",
+      "filename": "DEMO-008-A.svs"
+    },
+    {
+      "id": "DEMO-009-A",
+      "patientId": "DEMO-009",
+      "specimenId": "DEMO-009-SP1",
+      "site": "West",
+      "status": "Ready",
+      "filename": "DEMO-009-A.svs"
+    },
+    {
+      "id": "DEMO-010-A",
+      "patientId": "DEMO-010",
+      "specimenId": "DEMO-010-SP1",
+      "site": "North",
+      "status": "Ready",
+      "filename": "DEMO-010-A.svs"
+    },
+    {
+      "id": "DEMO-011-A",
+      "patientId": "DEMO-011",
+      "specimenId": "DEMO-011-SP1",
+      "site": "South",
+      "status": "Ready",
+      "filename": "DEMO-011-A.svs"
+    },
+    {
+      "id": "DEMO-012-A",
+      "patientId": "DEMO-012",
+      "specimenId": "DEMO-012-SP1",
+      "site": "West",
+      "status": "Ready",
+      "filename": "DEMO-012-A.svs"
+    },
+    {
+      "id": "DEMO-013-A",
+      "patientId": "DEMO-013",
+      "specimenId": "DEMO-013-SP1",
+      "site": "North",
+      "status": "Ready",
+      "filename": "DEMO-013-A.svs"
+    },
+    {
+      "id": "DEMO-014-A",
+      "patientId": "DEMO-014",
+      "specimenId": "DEMO-014-SP1",
+      "site": "South",
+      "status": "Ready",
+      "filename": "DEMO-014-A.svs"
+    },
+    {
+      "id": "DEMO-015-A",
+      "patientId": "DEMO-015",
+      "specimenId": "DEMO-015-SP1",
+      "site": "West",
+      "status": "Ready",
+      "filename": "DEMO-015-A.svs"
+    },
+    {
+      "id": "DEMO-016-A",
+      "patientId": "DEMO-016",
+      "specimenId": "DEMO-016-SP1",
+      "site": "North",
+      "status": "Ready",
+      "filename": "DEMO-016-A.svs"
+    },
+    {
+      "id": "DEMO-017-A",
+      "patientId": "DEMO-017",
+      "specimenId": "DEMO-017-SP1",
+      "site": "South",
+      "status": "Ready",
+      "filename": "DEMO-017-A.svs"
+    },
+    {
+      "id": "DEMO-018-A",
+      "patientId": "DEMO-018",
+      "specimenId": "DEMO-018-SP1",
+      "site": "West",
+      "status": "Ready",
+      "filename": "DEMO-018-A.svs"
+    },
+    {
+      "id": "DEMO-019-A",
+      "patientId": "DEMO-019",
+      "specimenId": "DEMO-019-SP1",
+      "site": "North",
+      "status": "Review",
+      "filename": "DEMO-019-A.svs"
+    },
+    {
+      "id": "DEMO-020-A",
+      "patientId": "DEMO-020",
+      "specimenId": "DEMO-020-SP1",
+      "site": "South",
+      "status": "Ready",
+      "filename": "DEMO-020-A.svs"
+    },
+    {
+      "id": "DEMO-021-A",
+      "patientId": "DEMO-021",
+      "specimenId": "DEMO-021-SP1",
+      "site": "West",
+      "status": "Ready",
+      "filename": "DEMO-021-A.svs"
+    },
+    {
+      "id": "DEMO-022-A",
+      "patientId": "DEMO-022",
+      "specimenId": "DEMO-022-SP1",
+      "site": "North",
+      "status": "Ready",
+      "filename": "DEMO-022-A.svs"
+    },
+    {
+      "id": "DEMO-023-A",
+      "patientId": "DEMO-023",
+      "specimenId": "DEMO-023-SP1",
+      "site": "South",
+      "status": "Ready",
+      "filename": "DEMO-023-A.svs"
+    },
+    {
+      "id": "DEMO-024-A",
+      "patientId": "DEMO-024",
+      "specimenId": "DEMO-024-SP1",
+      "site": "West",
+      "status": "Ready",
+      "filename": "DEMO-024-A.svs"
+    }
+  ],
+  "split": {
+    "id": "split-demo-42",
+    "seed": 42,
+    "groupBy": "patient_id"
+  },
+  "manifests": [
+    {
+      "schema_version": "0.1.0",
+      "mode": "synthetic-demo",
+      "executable": false,
+      "project": {
+        "id": "project-crc-demo"
+      },
+      "dataset": {
+        "id": "crc-demo-v1",
+        "source_table_uri": "demo://clinical.csv",
+        "labels_uri": "demo://labels.csv",
+        "content_hash": "placeholder:not-computed"
+      },
+      "cohort": {
+        "id": "cohort-demo-all",
+        "dataset_version_id": "crc-demo-v1",
+        "target": "KRAS",
+        "unit": "patient",
+        "patient_ids": [
+          "DEMO-001",
+          "DEMO-002",
+          "DEMO-003",
+          "DEMO-004",
+          "DEMO-005",
+          "DEMO-006",
+          "DEMO-007",
+          "DEMO-008",
+          "DEMO-009",
+          "DEMO-010",
+          "DEMO-011",
+          "DEMO-012",
+          "DEMO-013",
+          "DEMO-014",
+          "DEMO-015",
+          "DEMO-016",
+          "DEMO-017",
+          "DEMO-018",
+          "DEMO-019",
+          "DEMO-020",
+          "DEMO-021",
+          "DEMO-022",
+          "DEMO-023",
+          "DEMO-024"
+        ]
+      },
+      "split": {
+        "id": "split-demo-42",
+        "group_by": "patient_id",
+        "seed": 42,
+        "assignments": {
+          "DEMO-001": "train",
+          "DEMO-002": "train",
+          "DEMO-003": "train",
+          "DEMO-004": "train",
+          "DEMO-005": "train",
+          "DEMO-006": "train",
+          "DEMO-007": "train",
+          "DEMO-008": "train",
+          "DEMO-009": "train",
+          "DEMO-010": "train",
+          "DEMO-011": "train",
+          "DEMO-012": "train",
+          "DEMO-013": "train",
+          "DEMO-014": "train",
+          "DEMO-015": "train",
+          "DEMO-016": "train",
+          "DEMO-017": "validation",
+          "DEMO-018": "validation",
+          "DEMO-019": "validation",
+          "DEMO-020": "validation",
+          "DEMO-021": "test",
+          "DEMO-022": "test",
+          "DEMO-023": "test",
+          "DEMO-024": "test"
+        }
+      },
+      "features": {
+        "id": "feature-uni2-demo",
+        "encoder": "uni2",
+        "checkpoint_uri": "demo://checkpoints/uni2",
+        "patch_coordinates_uri": "demo://coordinates/uni2",
+        "artifact_uri": "demo://features/uni2",
+        "dataset_version_id": "crc-demo-v1"
+      },
+      "experiment": {
+        "id": "experiment-demo-01",
+        "cohort_id": "cohort-demo-all",
+        "split_id": "split-demo-42",
+        "feature_set_id": "feature-uni2-demo",
+        "mil": "abmil"
+      },
+      "run": {
+        "id": "run-demo-01",
+        "experiment_id": "experiment-demo-01",
+        "seed": 42,
+        "mil_checkpoint_uri": "demo://checkpoints/mil-01",
+        "code_commit": "placeholder:not-recorded",
+        "environment": "placeholder:not-captured"
+      },
+      "result": {
+        "id": "result-demo-01",
+        "run_id": "run-demo-01",
+        "metrics": {
+          "auroc": 0.711,
+          "auprc": 0.603,
+          "accuracy": 0.682
+        },
+        "predictions_uri": "demo://predictions/01",
+        "attention_uri": "demo://attention/01"
+      },
+      "sources": [
+        {
+          "slide_id": "DEMO-001-A",
+          "specimen_id": "DEMO-001-SP1",
+          "patient_id": "DEMO-001",
+          "wsi_uri": "demo://slides/DEMO-001-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-001-B",
+          "specimen_id": "DEMO-001-SP2",
+          "patient_id": "DEMO-001",
+          "wsi_uri": "demo://slides/DEMO-001-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-002-A",
+          "specimen_id": "DEMO-002-SP1",
+          "patient_id": "DEMO-002",
+          "wsi_uri": "demo://slides/DEMO-002-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-002-B",
+          "specimen_id": "DEMO-002-SP2",
+          "patient_id": "DEMO-002",
+          "wsi_uri": "demo://slides/DEMO-002-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-003-A",
+          "specimen_id": "DEMO-003-SP1",
+          "patient_id": "DEMO-003",
+          "wsi_uri": "demo://slides/DEMO-003-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-003-B",
+          "specimen_id": "DEMO-003-SP2",
+          "patient_id": "DEMO-003",
+          "wsi_uri": "demo://slides/DEMO-003-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-004-A",
+          "specimen_id": "DEMO-004-SP1",
+          "patient_id": "DEMO-004",
+          "wsi_uri": "demo://slides/DEMO-004-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-004-B",
+          "specimen_id": "DEMO-004-SP2",
+          "patient_id": "DEMO-004",
+          "wsi_uri": "demo://slides/DEMO-004-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-005-A",
+          "specimen_id": "DEMO-005-SP1",
+          "patient_id": "DEMO-005",
+          "wsi_uri": "demo://slides/DEMO-005-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-006-A",
+          "specimen_id": "DEMO-006-SP1",
+          "patient_id": "DEMO-006",
+          "wsi_uri": "demo://slides/DEMO-006-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-007-A",
+          "specimen_id": "DEMO-007-SP1",
+          "patient_id": "DEMO-007",
+          "wsi_uri": "demo://slides/DEMO-007-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-008-A",
+          "specimen_id": "DEMO-008-SP1",
+          "patient_id": "DEMO-008",
+          "wsi_uri": "demo://slides/DEMO-008-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-009-A",
+          "specimen_id": "DEMO-009-SP1",
+          "patient_id": "DEMO-009",
+          "wsi_uri": "demo://slides/DEMO-009-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-010-A",
+          "specimen_id": "DEMO-010-SP1",
+          "patient_id": "DEMO-010",
+          "wsi_uri": "demo://slides/DEMO-010-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-011-A",
+          "specimen_id": "DEMO-011-SP1",
+          "patient_id": "DEMO-011",
+          "wsi_uri": "demo://slides/DEMO-011-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-012-A",
+          "specimen_id": "DEMO-012-SP1",
+          "patient_id": "DEMO-012",
+          "wsi_uri": "demo://slides/DEMO-012-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-013-A",
+          "specimen_id": "DEMO-013-SP1",
+          "patient_id": "DEMO-013",
+          "wsi_uri": "demo://slides/DEMO-013-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-014-A",
+          "specimen_id": "DEMO-014-SP1",
+          "patient_id": "DEMO-014",
+          "wsi_uri": "demo://slides/DEMO-014-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-015-A",
+          "specimen_id": "DEMO-015-SP1",
+          "patient_id": "DEMO-015",
+          "wsi_uri": "demo://slides/DEMO-015-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-016-A",
+          "specimen_id": "DEMO-016-SP1",
+          "patient_id": "DEMO-016",
+          "wsi_uri": "demo://slides/DEMO-016-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-017-A",
+          "specimen_id": "DEMO-017-SP1",
+          "patient_id": "DEMO-017",
+          "wsi_uri": "demo://slides/DEMO-017-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-018-A",
+          "specimen_id": "DEMO-018-SP1",
+          "patient_id": "DEMO-018",
+          "wsi_uri": "demo://slides/DEMO-018-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-019-A",
+          "specimen_id": "DEMO-019-SP1",
+          "patient_id": "DEMO-019",
+          "wsi_uri": "demo://slides/DEMO-019-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-020-A",
+          "specimen_id": "DEMO-020-SP1",
+          "patient_id": "DEMO-020",
+          "wsi_uri": "demo://slides/DEMO-020-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-021-A",
+          "specimen_id": "DEMO-021-SP1",
+          "patient_id": "DEMO-021",
+          "wsi_uri": "demo://slides/DEMO-021-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-022-A",
+          "specimen_id": "DEMO-022-SP1",
+          "patient_id": "DEMO-022",
+          "wsi_uri": "demo://slides/DEMO-022-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-023-A",
+          "specimen_id": "DEMO-023-SP1",
+          "patient_id": "DEMO-023",
+          "wsi_uri": "demo://slides/DEMO-023-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-024-A",
+          "specimen_id": "DEMO-024-SP1",
+          "patient_id": "DEMO-024",
+          "wsi_uri": "demo://slides/DEMO-024-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        }
+      ]
+    },
+    {
+      "schema_version": "0.1.0",
+      "mode": "synthetic-demo",
+      "executable": false,
+      "project": {
+        "id": "project-crc-demo"
+      },
+      "dataset": {
+        "id": "crc-demo-v1",
+        "source_table_uri": "demo://clinical.csv",
+        "labels_uri": "demo://labels.csv",
+        "content_hash": "placeholder:not-computed"
+      },
+      "cohort": {
+        "id": "cohort-demo-all",
+        "dataset_version_id": "crc-demo-v1",
+        "target": "KRAS",
+        "unit": "patient",
+        "patient_ids": [
+          "DEMO-001",
+          "DEMO-002",
+          "DEMO-003",
+          "DEMO-004",
+          "DEMO-005",
+          "DEMO-006",
+          "DEMO-007",
+          "DEMO-008",
+          "DEMO-009",
+          "DEMO-010",
+          "DEMO-011",
+          "DEMO-012",
+          "DEMO-013",
+          "DEMO-014",
+          "DEMO-015",
+          "DEMO-016",
+          "DEMO-017",
+          "DEMO-018",
+          "DEMO-019",
+          "DEMO-020",
+          "DEMO-021",
+          "DEMO-022",
+          "DEMO-023",
+          "DEMO-024"
+        ]
+      },
+      "split": {
+        "id": "split-demo-42",
+        "group_by": "patient_id",
+        "seed": 42,
+        "assignments": {
+          "DEMO-001": "train",
+          "DEMO-002": "train",
+          "DEMO-003": "train",
+          "DEMO-004": "train",
+          "DEMO-005": "train",
+          "DEMO-006": "train",
+          "DEMO-007": "train",
+          "DEMO-008": "train",
+          "DEMO-009": "train",
+          "DEMO-010": "train",
+          "DEMO-011": "train",
+          "DEMO-012": "train",
+          "DEMO-013": "train",
+          "DEMO-014": "train",
+          "DEMO-015": "train",
+          "DEMO-016": "train",
+          "DEMO-017": "validation",
+          "DEMO-018": "validation",
+          "DEMO-019": "validation",
+          "DEMO-020": "validation",
+          "DEMO-021": "test",
+          "DEMO-022": "test",
+          "DEMO-023": "test",
+          "DEMO-024": "test"
+        }
+      },
+      "features": {
+        "id": "feature-uni-demo",
+        "encoder": "uni",
+        "checkpoint_uri": "demo://checkpoints/uni",
+        "patch_coordinates_uri": "demo://coordinates/uni",
+        "artifact_uri": "demo://features/uni",
+        "dataset_version_id": "crc-demo-v1"
+      },
+      "experiment": {
+        "id": "experiment-demo-02",
+        "cohort_id": "cohort-demo-all",
+        "split_id": "split-demo-42",
+        "feature_set_id": "feature-uni-demo",
+        "mil": "clam"
+      },
+      "run": {
+        "id": "run-demo-02",
+        "experiment_id": "experiment-demo-02",
+        "seed": 42,
+        "mil_checkpoint_uri": "demo://checkpoints/mil-02",
+        "code_commit": "placeholder:not-recorded",
+        "environment": "placeholder:not-captured"
+      },
+      "result": {
+        "id": "result-demo-02",
+        "run_id": "run-demo-02",
+        "metrics": {
+          "auroc": 0.704,
+          "auprc": 0.596,
+          "accuracy": 0.669
+        },
+        "predictions_uri": "demo://predictions/02",
+        "attention_uri": "demo://attention/02"
+      },
+      "sources": [
+        {
+          "slide_id": "DEMO-001-A",
+          "specimen_id": "DEMO-001-SP1",
+          "patient_id": "DEMO-001",
+          "wsi_uri": "demo://slides/DEMO-001-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-001-B",
+          "specimen_id": "DEMO-001-SP2",
+          "patient_id": "DEMO-001",
+          "wsi_uri": "demo://slides/DEMO-001-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-002-A",
+          "specimen_id": "DEMO-002-SP1",
+          "patient_id": "DEMO-002",
+          "wsi_uri": "demo://slides/DEMO-002-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-002-B",
+          "specimen_id": "DEMO-002-SP2",
+          "patient_id": "DEMO-002",
+          "wsi_uri": "demo://slides/DEMO-002-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-003-A",
+          "specimen_id": "DEMO-003-SP1",
+          "patient_id": "DEMO-003",
+          "wsi_uri": "demo://slides/DEMO-003-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-003-B",
+          "specimen_id": "DEMO-003-SP2",
+          "patient_id": "DEMO-003",
+          "wsi_uri": "demo://slides/DEMO-003-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-004-A",
+          "specimen_id": "DEMO-004-SP1",
+          "patient_id": "DEMO-004",
+          "wsi_uri": "demo://slides/DEMO-004-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-004-B",
+          "specimen_id": "DEMO-004-SP2",
+          "patient_id": "DEMO-004",
+          "wsi_uri": "demo://slides/DEMO-004-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-005-A",
+          "specimen_id": "DEMO-005-SP1",
+          "patient_id": "DEMO-005",
+          "wsi_uri": "demo://slides/DEMO-005-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-006-A",
+          "specimen_id": "DEMO-006-SP1",
+          "patient_id": "DEMO-006",
+          "wsi_uri": "demo://slides/DEMO-006-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-007-A",
+          "specimen_id": "DEMO-007-SP1",
+          "patient_id": "DEMO-007",
+          "wsi_uri": "demo://slides/DEMO-007-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-008-A",
+          "specimen_id": "DEMO-008-SP1",
+          "patient_id": "DEMO-008",
+          "wsi_uri": "demo://slides/DEMO-008-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-009-A",
+          "specimen_id": "DEMO-009-SP1",
+          "patient_id": "DEMO-009",
+          "wsi_uri": "demo://slides/DEMO-009-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-010-A",
+          "specimen_id": "DEMO-010-SP1",
+          "patient_id": "DEMO-010",
+          "wsi_uri": "demo://slides/DEMO-010-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-011-A",
+          "specimen_id": "DEMO-011-SP1",
+          "patient_id": "DEMO-011",
+          "wsi_uri": "demo://slides/DEMO-011-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-012-A",
+          "specimen_id": "DEMO-012-SP1",
+          "patient_id": "DEMO-012",
+          "wsi_uri": "demo://slides/DEMO-012-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-013-A",
+          "specimen_id": "DEMO-013-SP1",
+          "patient_id": "DEMO-013",
+          "wsi_uri": "demo://slides/DEMO-013-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-014-A",
+          "specimen_id": "DEMO-014-SP1",
+          "patient_id": "DEMO-014",
+          "wsi_uri": "demo://slides/DEMO-014-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-015-A",
+          "specimen_id": "DEMO-015-SP1",
+          "patient_id": "DEMO-015",
+          "wsi_uri": "demo://slides/DEMO-015-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-016-A",
+          "specimen_id": "DEMO-016-SP1",
+          "patient_id": "DEMO-016",
+          "wsi_uri": "demo://slides/DEMO-016-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-017-A",
+          "specimen_id": "DEMO-017-SP1",
+          "patient_id": "DEMO-017",
+          "wsi_uri": "demo://slides/DEMO-017-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-018-A",
+          "specimen_id": "DEMO-018-SP1",
+          "patient_id": "DEMO-018",
+          "wsi_uri": "demo://slides/DEMO-018-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-019-A",
+          "specimen_id": "DEMO-019-SP1",
+          "patient_id": "DEMO-019",
+          "wsi_uri": "demo://slides/DEMO-019-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-020-A",
+          "specimen_id": "DEMO-020-SP1",
+          "patient_id": "DEMO-020",
+          "wsi_uri": "demo://slides/DEMO-020-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-021-A",
+          "specimen_id": "DEMO-021-SP1",
+          "patient_id": "DEMO-021",
+          "wsi_uri": "demo://slides/DEMO-021-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-022-A",
+          "specimen_id": "DEMO-022-SP1",
+          "patient_id": "DEMO-022",
+          "wsi_uri": "demo://slides/DEMO-022-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-023-A",
+          "specimen_id": "DEMO-023-SP1",
+          "patient_id": "DEMO-023",
+          "wsi_uri": "demo://slides/DEMO-023-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-024-A",
+          "specimen_id": "DEMO-024-SP1",
+          "patient_id": "DEMO-024",
+          "wsi_uri": "demo://slides/DEMO-024-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        }
+      ]
+    },
+    {
+      "schema_version": "0.1.0",
+      "mode": "synthetic-demo",
+      "executable": false,
+      "project": {
+        "id": "project-crc-demo"
+      },
+      "dataset": {
+        "id": "crc-demo-v1",
+        "source_table_uri": "demo://clinical.csv",
+        "labels_uri": "demo://labels.csv",
+        "content_hash": "placeholder:not-computed"
+      },
+      "cohort": {
+        "id": "cohort-demo-all",
+        "dataset_version_id": "crc-demo-v1",
+        "target": "KRAS",
+        "unit": "patient",
+        "patient_ids": [
+          "DEMO-001",
+          "DEMO-002",
+          "DEMO-003",
+          "DEMO-004",
+          "DEMO-005",
+          "DEMO-006",
+          "DEMO-007",
+          "DEMO-008",
+          "DEMO-009",
+          "DEMO-010",
+          "DEMO-011",
+          "DEMO-012",
+          "DEMO-013",
+          "DEMO-014",
+          "DEMO-015",
+          "DEMO-016",
+          "DEMO-017",
+          "DEMO-018",
+          "DEMO-019",
+          "DEMO-020",
+          "DEMO-021",
+          "DEMO-022",
+          "DEMO-023",
+          "DEMO-024"
+        ]
+      },
+      "split": {
+        "id": "split-demo-42",
+        "group_by": "patient_id",
+        "seed": 42,
+        "assignments": {
+          "DEMO-001": "train",
+          "DEMO-002": "train",
+          "DEMO-003": "train",
+          "DEMO-004": "train",
+          "DEMO-005": "train",
+          "DEMO-006": "train",
+          "DEMO-007": "train",
+          "DEMO-008": "train",
+          "DEMO-009": "train",
+          "DEMO-010": "train",
+          "DEMO-011": "train",
+          "DEMO-012": "train",
+          "DEMO-013": "train",
+          "DEMO-014": "train",
+          "DEMO-015": "train",
+          "DEMO-016": "train",
+          "DEMO-017": "validation",
+          "DEMO-018": "validation",
+          "DEMO-019": "validation",
+          "DEMO-020": "validation",
+          "DEMO-021": "test",
+          "DEMO-022": "test",
+          "DEMO-023": "test",
+          "DEMO-024": "test"
+        }
+      },
+      "features": {
+        "id": "feature-uni-demo",
+        "encoder": "uni",
+        "checkpoint_uri": "demo://checkpoints/uni",
+        "patch_coordinates_uri": "demo://coordinates/uni",
+        "artifact_uri": "demo://features/uni",
+        "dataset_version_id": "crc-demo-v1"
+      },
+      "experiment": {
+        "id": "experiment-demo-03",
+        "cohort_id": "cohort-demo-all",
+        "split_id": "split-demo-42",
+        "feature_set_id": "feature-uni-demo",
+        "mil": "abmil"
+      },
+      "run": {
+        "id": "run-demo-03",
+        "experiment_id": "experiment-demo-03",
+        "seed": 42,
+        "mil_checkpoint_uri": "demo://checkpoints/mil-03",
+        "code_commit": "placeholder:not-recorded",
+        "environment": "placeholder:not-captured"
+      },
+      "result": {
+        "id": "result-demo-03",
+        "run_id": "run-demo-03",
+        "metrics": {
+          "auroc": 0.693,
+          "auprc": 0.581,
+          "accuracy": 0.657
+        },
+        "predictions_uri": "demo://predictions/03",
+        "attention_uri": "demo://attention/03"
+      },
+      "sources": [
+        {
+          "slide_id": "DEMO-001-A",
+          "specimen_id": "DEMO-001-SP1",
+          "patient_id": "DEMO-001",
+          "wsi_uri": "demo://slides/DEMO-001-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-001-B",
+          "specimen_id": "DEMO-001-SP2",
+          "patient_id": "DEMO-001",
+          "wsi_uri": "demo://slides/DEMO-001-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-002-A",
+          "specimen_id": "DEMO-002-SP1",
+          "patient_id": "DEMO-002",
+          "wsi_uri": "demo://slides/DEMO-002-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-002-B",
+          "specimen_id": "DEMO-002-SP2",
+          "patient_id": "DEMO-002",
+          "wsi_uri": "demo://slides/DEMO-002-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-003-A",
+          "specimen_id": "DEMO-003-SP1",
+          "patient_id": "DEMO-003",
+          "wsi_uri": "demo://slides/DEMO-003-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-003-B",
+          "specimen_id": "DEMO-003-SP2",
+          "patient_id": "DEMO-003",
+          "wsi_uri": "demo://slides/DEMO-003-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-004-A",
+          "specimen_id": "DEMO-004-SP1",
+          "patient_id": "DEMO-004",
+          "wsi_uri": "demo://slides/DEMO-004-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-004-B",
+          "specimen_id": "DEMO-004-SP2",
+          "patient_id": "DEMO-004",
+          "wsi_uri": "demo://slides/DEMO-004-B.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-005-A",
+          "specimen_id": "DEMO-005-SP1",
+          "patient_id": "DEMO-005",
+          "wsi_uri": "demo://slides/DEMO-005-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-006-A",
+          "specimen_id": "DEMO-006-SP1",
+          "patient_id": "DEMO-006",
+          "wsi_uri": "demo://slides/DEMO-006-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-007-A",
+          "specimen_id": "DEMO-007-SP1",
+          "patient_id": "DEMO-007",
+          "wsi_uri": "demo://slides/DEMO-007-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-008-A",
+          "specimen_id": "DEMO-008-SP1",
+          "patient_id": "DEMO-008",
+          "wsi_uri": "demo://slides/DEMO-008-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-009-A",
+          "specimen_id": "DEMO-009-SP1",
+          "patient_id": "DEMO-009",
+          "wsi_uri": "demo://slides/DEMO-009-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-010-A",
+          "specimen_id": "DEMO-010-SP1",
+          "patient_id": "DEMO-010",
+          "wsi_uri": "demo://slides/DEMO-010-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-011-A",
+          "specimen_id": "DEMO-011-SP1",
+          "patient_id": "DEMO-011",
+          "wsi_uri": "demo://slides/DEMO-011-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-012-A",
+          "specimen_id": "DEMO-012-SP1",
+          "patient_id": "DEMO-012",
+          "wsi_uri": "demo://slides/DEMO-012-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-013-A",
+          "specimen_id": "DEMO-013-SP1",
+          "patient_id": "DEMO-013",
+          "wsi_uri": "demo://slides/DEMO-013-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-014-A",
+          "specimen_id": "DEMO-014-SP1",
+          "patient_id": "DEMO-014",
+          "wsi_uri": "demo://slides/DEMO-014-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-015-A",
+          "specimen_id": "DEMO-015-SP1",
+          "patient_id": "DEMO-015",
+          "wsi_uri": "demo://slides/DEMO-015-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-016-A",
+          "specimen_id": "DEMO-016-SP1",
+          "patient_id": "DEMO-016",
+          "wsi_uri": "demo://slides/DEMO-016-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-017-A",
+          "specimen_id": "DEMO-017-SP1",
+          "patient_id": "DEMO-017",
+          "wsi_uri": "demo://slides/DEMO-017-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-018-A",
+          "specimen_id": "DEMO-018-SP1",
+          "patient_id": "DEMO-018",
+          "wsi_uri": "demo://slides/DEMO-018-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-019-A",
+          "specimen_id": "DEMO-019-SP1",
+          "patient_id": "DEMO-019",
+          "wsi_uri": "demo://slides/DEMO-019-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-020-A",
+          "specimen_id": "DEMO-020-SP1",
+          "patient_id": "DEMO-020",
+          "wsi_uri": "demo://slides/DEMO-020-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-021-A",
+          "specimen_id": "DEMO-021-SP1",
+          "patient_id": "DEMO-021",
+          "wsi_uri": "demo://slides/DEMO-021-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-022-A",
+          "specimen_id": "DEMO-022-SP1",
+          "patient_id": "DEMO-022",
+          "wsi_uri": "demo://slides/DEMO-022-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-023-A",
+          "specimen_id": "DEMO-023-SP1",
+          "patient_id": "DEMO-023",
+          "wsi_uri": "demo://slides/DEMO-023-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        },
+        {
+          "slide_id": "DEMO-024-A",
+          "specimen_id": "DEMO-024-SP1",
+          "patient_id": "DEMO-024",
+          "wsi_uri": "demo://slides/DEMO-024-A.svs",
+          "ground_truth_uri": "demo://labels.csv"
+        }
+      ]
+    }
+  ]
+}
