@@ -96,6 +96,9 @@ class MemoryStore:
     def get_configuration(self, _identity):
         return copy.deepcopy(self.feature)
 
+    def configuration_publication(self, _operation_id):
+        return None
+
 
 def preview(store=None):
     return ProtocolService(store or MemoryStore()).preview("draft-test", 1)
@@ -325,6 +328,74 @@ def test_imported_partition_leakage_is_blocked():
     assert "IMPORTED_PATIENT_LEAKAGE" in codes(preview(store))
 
 
+def imported_alias_store(version, *, target_alias=False):
+    store = MemoryStore()
+    store.dataset["manifest"]["dictionary"].extend(
+        {"key": key, "sourceColumn": "assignment_code", "owner": "slide", "type": "text"}
+        for key in ("cohort", "covariate")
+    )
+    mappings = {}
+    labels = {}
+    for row in store.rows:
+        patient = int(row["patientId"][1:])
+        role = "train" if patient < 8 else "val" if patient < 12 else "test"
+        value = f"{role}-{patient % 2}" if target_alias else role
+        row["attributes"].update(cohort=value, covariate=value)
+        mappings[value] = role
+        labels[value] = "low" if patient % 2 == 0 else "high"
+    imported = {"partitionField": "cohort", "partitionLabels": mappings}
+    split = {"version": version, "mode": "imported", "seeds": [7, 42], "imported": imported}
+    if version == 2:
+        split.update(mode="held_out", heldOutSource="imported")
+    elif version == 3:
+        split.pop("imported")
+        split.update(
+            mode="held_out",
+            pools={"source": "imported", "validationSource": "fixed", "imported": imported},
+        )
+    store.draft["payload"]["spec"]["split"] = split
+    if target_alias:
+        store.draft["payload"]["spec"]["target"].update(field="covariate", labels=labels)
+    else:
+        store.draft["payload"]["spec"]["predictors"] = ["covariate"]
+    return store
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_imported_partition_source_alias_cannot_be_a_predictor_in_any_version(version):
+    result = preview(imported_alias_store(version))
+    assert "FORBIDDEN_PREDICTOR" in codes(result)
+    assert not result["canFreeze"]
+    assert result["memberships"] == []
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_imported_assignment_source_cannot_be_target_even_with_valid_balanced_mapping(version):
+    result = preview(imported_alias_store(version, target_alias=True))
+    assert codes(result) == {"SPLIT_TARGET_LEAKAGE"}
+    assert not result["canFreeze"]
+    assert result["memberships"] == []
+
+
+def test_legacy_imported_fold_source_alias_cannot_be_a_predictor():
+    store = imported_alias_store(1)
+    for row in store.rows:
+        patient = int(row["patientId"][1:])
+        value = str((patient // 2) % 3) if patient < 12 else "external"
+        row["attributes"].update(cohort=value, covariate=value)
+    store.draft["payload"]["spec"]["split"].update(
+        folds=3,
+        imported={
+            "foldField": "cohort",
+            "foldLabels": {"0": 0, "1": 1, "2": 2},
+            "testFoldLabels": ["external"],
+        },
+    )
+    result = preview(store)
+    assert codes(result) == {"FORBIDDEN_PREDICTOR"}
+    assert not result["canFreeze"]
+
+
 @pytest.mark.parametrize(
     "condition,expected",
     [
@@ -427,6 +498,70 @@ def test_feature_binding_requires_same_dataset_and_complete_cohort_coverage():
     assert "FEATURE_DATASET_MISMATCH" in codes(preview(store))
 
 
+def test_unselected_pack_preserves_existing_protocol_preview_hash():
+    store = MemoryStore()
+    before = preview(store)
+    store.draft["payload"]["spec"]["featurePackId"] = None
+    assert preview(store) == before
+    with pytest.raises(ValidationError, match="Select a feature version"):
+        ProtocolSpec.model_validate({**specification(), "featurePackId": "pack-" + "c" * 64})
+
+
+def test_protocol_pins_explicit_pack_and_blocks_changed_pack(monkeypatch):
+    from types import SimpleNamespace
+
+    store = MemoryStore()
+    feature_id, pack_id = "configuration-" + "f" * 64, "pack-" + "c" * 64
+    store.draft["payload"]["spec"].update(featureSetId=feature_id, featurePackId=pack_id)
+    store.feature = {
+        "contentHash": "f" * 64,
+        "manifest": {
+            "kind": "feature",
+            "datasetId": DATASET_ID,
+            "files": [{"slideId": row["slideId"]} for row in store.rows],
+        },
+    }
+    artifact = {
+        "id": pack_id,
+        "materializationId": "pack-" + "d" * 64,
+        "featureSetId": feature_id,
+        "outputPath": "/data/reusable-pack",
+        "outputDtype": "float32",
+        "sourceContentHash": "e" * 64,
+        "verification": "full",
+        "files": {"large": "inventory"},
+    }
+    resolved = {"artifact": artifact, "current": True, "findings": []}
+
+    def resolve(feature, pack):
+        assert (feature, pack) == (feature_id, pack_id)
+        return resolved
+
+    monkeypatch.setattr(
+        "histopilot.application.protocols.FeaturePackService",
+        lambda *_: SimpleNamespace(resolve_artifact=resolve),
+    )
+    result = preview(store)
+    assert result["canFreeze"], result["findings"]
+    assert result["featurePack"]["id"] == pack_id
+    assert "files" not in result["featurePack"]
+    assert "FEATURE_VALUES_UNVERIFIED" not in {row["code"] for row in result["findings"]}
+    store.publish_configuration = lambda *args, **kwargs: kwargs
+    frozen = ProtocolService(store).freeze("draft-test", 1, result["previewHash"], "freeze")
+    assert frozen["manifest"]["featurePack"] == result["featurePack"]
+    assert frozen["manifest"]["spec"]["featurePackId"] == pack_id
+    resolved.update(
+        current=False,
+        findings=[
+            {"severity": "warning", "code": "PACK_SOURCE_CHANGED", "message": "Pack bytes changed"}
+        ],
+    )
+    stale = preview(store)
+    assert not stale["canFreeze"]
+    assert "PACK_SOURCE_CHANGED" in codes(stale)
+    assert stale["previewHash"] != result["previewHash"]
+
+
 def test_multiclass_target_and_explicit_class_mapping():
     store = MemoryStore()
     for row in store.rows:
@@ -490,6 +625,124 @@ def test_changed_draft_revision_and_blocking_findings_prevent_publication():
     assert error.value.code == "PROTOCOL_PREFLIGHT_BLOCKED"
 
 
+def test_completed_protocol_retry_ignores_later_pack_drift_and_checks_original_intent(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    store = ScientificStore(tmp_path, "project-replay")
+    imported = store.create_draft("import", "Source", {})
+    dataset = store.publish_dataset(
+        imported["id"],
+        expected_revision=1,
+        manifest=MemoryStore().dataset["manifest"],
+        artifacts={"records.json": json.dumps(records()).encode()},
+        operation_id="import-replay",
+    )
+    feature = store.publish_configuration(
+        manifest={
+            "kind": "feature",
+            "datasetId": dataset["id"],
+            "files": [{"slideId": row["slideId"]} for row in records()],
+        },
+        operation_id="feature-replay",
+    )
+    pack_id = "pack-" + "c" * 64
+    resolved = {
+        "current": True,
+        "findings": [],
+        "artifact": {
+            "id": pack_id,
+            "materializationId": pack_id,
+            "featureSetId": feature["id"],
+            "outputPath": "/synthetic/pack",
+            "outputDtype": "float32",
+            "sourceContentHash": "d" * 64,
+            "verification": "exact-source-values",
+        },
+    }
+    monkeypatch.setattr(
+        "histopilot.application.protocols.FeaturePackService",
+        lambda *_: SimpleNamespace(resolve_artifact=lambda *args: resolved),
+    )
+    spec = specification()
+    spec.update(datasetId=dataset["id"], featureSetId=feature["id"], featurePackId=pack_id)
+    draft = store.create_draft(
+        "experiment", "Protocol", {"type": "analysis-protocol", "spec": spec}
+    )
+    service = ProtocolService(store)
+    review = service.preview(draft["id"], 1)
+    label = {"tag": "Original intent", "note": "Reviewed"}
+    frozen = service.freeze(
+        draft["id"], 1, review["previewHash"], "retry-protocol", version_label=label
+    )
+    resolved.update(
+        current=False,
+        findings=[{"severity": "error", "code": "PACK_SOURCE_CHANGED", "message": "Changed"}],
+    )
+    assert (
+        service.freeze(draft["id"], 1, review["previewHash"], "retry-protocol", version_label=label)
+        == frozen
+    )
+
+    # Replay must not depend on scanning either the live source or dataset rows again.
+    monkeypatch.setattr(store, "read_artifact", lambda *_: pytest.fail("Replay reread the dataset"))
+    assert (
+        service.freeze(draft["id"], 1, review["previewHash"], "retry-protocol", version_label=label)
+        == frozen
+    )
+    for changed in (
+        {"draft_id": "draft-another"},
+        {"expected_revision": 2},
+        {"preview_hash": "0" * 64},
+        {"version_label": {"tag": "Different intent", "note": "Reviewed"}},
+    ):
+        request = {
+            "draft_id": draft["id"],
+            "expected_revision": 1,
+            "preview_hash": review["previewHash"],
+            "operation_id": "retry-protocol",
+            "version_label": label,
+        }
+        with pytest.raises(StorageError) as caught:
+            service.freeze(**{**request, **changed})
+        assert caught.value.code == "OPERATION_CONFLICT"
+    assert store.get_configuration(frozen["id"])["manifest"] == frozen["manifest"]
+
+
+@pytest.mark.parametrize("positive", [None, "unknown"])
+def test_binary_target_never_defaults_its_positive_class(positive):
+    spec = specification()
+    if positive is None:
+        spec["target"].pop("positiveClass")
+    else:
+        spec["target"]["positiveClass"] = positive
+    with pytest.raises(ValidationError, match="explicit positiveClass"):
+        ProtocolSpec.model_validate(spec)
+
+
+def test_protocol_validation_errors_name_fields_without_exposing_raw_draft_values():
+    store = MemoryStore()
+    spec = store.draft["payload"]["spec"]
+    spec["target"].pop("positiveClass")
+    spec["target"]["labels"] = {"sensitive-source-class": "low", "another-secret": "high"}
+    spec["split"]["folds"] = 1
+    with pytest.raises(StorageError) as caught:
+        preview(store)
+    assert caught.value.code == "INVALID_PROTOCOL_SPEC"
+    message = str(caught.value)
+    assert "target: Binary targets require two classes and an explicit positiveClass." in message
+    assert "split.folds:" in message
+    for technical_or_private in (
+        "input_value",
+        "input_type",
+        "pydantic.dev",
+        "sensitive-source-class",
+        "another-secret",
+    ):
+        assert technical_or_private not in message
+
+
 def test_protocol_identity_does_not_depend_on_draft_identity_revision_or_seed_order():
     store = MemoryStore()
     service = ProtocolService(store)
@@ -514,6 +767,50 @@ def test_arbitrarily_named_source_identifiers_and_oceanpath_k_fold_are_not_predi
             row["attributes"][key] = row["patientId"]
         result = preview(store)
         assert "FORBIDDEN_PREDICTOR" in codes(result)
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+@pytest.mark.parametrize(
+    "identity_column,record_key",
+    [
+        ("slideIdColumn", "slideId"),
+        ("patientIdColumn", "patientId"),
+        ("patientSourceSlideIdColumn", "slideId"),
+        ("patientSourcePatientIdColumn", "patientId"),
+    ],
+)
+def test_renaming_an_identity_source_cannot_make_it_a_target(version, identity_column, record_key):
+    store = MemoryStore()
+    spec = store.draft["payload"]["spec"]
+    if version >= 2:
+        spec["split"] = {"version": version, "mode": "kfold", "folds": 3, "seeds": [42]}
+    if version == 3:
+        spec["split"]["pools"] = {
+            "source": "rules",
+            "trainSelection": "remaining",
+            "rules": {"test": [{"field": "grade", "op": "eq", "value": "2"}]},
+        }
+    store.dataset["manifest"]["dictionary"].append(
+        {"key": "SubjectCode", "sourceColumn": "Registry number", "owner": "slide", "type": "text"}
+    )
+    spec["target"]["field"] = "SubjectCode"
+    spec["target"]["labels"] = {}
+    for row in store.rows:
+        value = row[record_key]
+        row["attributes"]["SubjectCode"] = value
+        spec["target"]["labels"][value] = "low" if row["attributes"]["label"] == "0" else "high"
+
+    # The arbitrary spelling and valid class mapping pass name/label checks. The
+    # reviewed identity mapping must still prevent this source becoming a target.
+    assert preview(store)["canFreeze"]
+    store.dataset["manifest"]["provenance"] = {"mapping": {identity_column: "Registry number"}}
+    result = preview(store)
+    assert codes(result) == {"IDENTIFIER_TARGET"}
+    assert not result["canFreeze"]
+    assert result["memberships"] == []
+    with pytest.raises(StorageError) as error:
+        ProtocolService(store).freeze("draft-test", 1, result["previewHash"], "identity-target")
+    assert error.value.code == "PROTOCOL_PREFLIGHT_BLOCKED"
 
 
 def test_nondefault_holdout_ratios_cannot_silently_create_or_imply_a_kfold_test_set():

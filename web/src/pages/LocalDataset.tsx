@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react';
 import type { Workspace } from '../api/types';
 import type {
-  AttributeMapping,
   ImportPreview,
   ImportSpec,
   Inspection,
   ScientificDraft,
+  VersionLabelInput,
 } from '../api/scientific';
 import { scientific } from '../api/scientific';
 import { sameJSON } from '../lib/json';
@@ -34,6 +34,12 @@ import DatasetExplorer from '../components/DatasetExplorer';
 import ServerFolderPicker from '../components/ServerFolderPicker';
 import PatientTableOption from '../components/PatientTableOption';
 import PatientFallbackDialog from '../components/PatientFallbackDialog';
+import VersionLabelEditor from '../components/VersionLabelEditor';
+import FreezeVersionDialog from '../components/FreezeVersionDialog';
+import { datasetVersionLabel } from '../lib/versionLabels';
+import { scientificReviewInvalidated } from '../lib/scientificReview';
+import { canReuseImportMapping, inspectedAttributes } from '../lib/datasetImport';
+import './dataset-workflow.css';
 
 const newSpec = (workspace: Workspace): ImportSpec => ({
   source: { path: '' },
@@ -52,11 +58,17 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   const refresh = useRefreshScientific(project);
   const [view, setView] = useState<'import' | 'dataset'>(w.dataset.id ? 'dataset' : 'import');
   const [versionId, setVersionId] = useState(w.dataset.id);
+  const [freezeReview, setFreezeReview] = useState<{
+    draftId: string; revision: number; preview: ImportPreview; name: string; operationId: string;
+  } | null>(null);
+  const [freezeLabel, setFreezeLabel] = useState<VersionLabelInput>({ tag: '', note: '' });
   const [name, setName] = useState(`${w.project.name} dataset`);
   const [spec, setSpec] = useState<ImportSpec>(() => newSpec(w));
   const [draft, setDraft] = useState<ScientificDraft<ImportSpec> | null>(null);
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [patientInspection, setPatientInspection] = useState<Inspection | null>(null);
+  const mappedMainSource = useRef<{ source: ImportSpec['source']; fingerprint: string } | null>(null);
+  const mappedPatientSource = useRef<{ source: ImportSpec['source']; fingerprint: string } | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -71,6 +83,9 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   const version = versions.data?.datasets.find((item) => item.id === datasetId);
   const dirty = !draft || draft.name !== name || !sameJSON(draft.payload.spec, spec);
   const frozen = draft?.status === 'frozen';
+  const sourceReady =
+    Boolean(inspection?.headers.length) &&
+    !inspection?.findings.some((finding) => finding.severity === 'error');
   function goTo(section: HTMLDivElement | null) {
     section?.scrollIntoView({ block: 'start' });
     section?.focus({ preventScroll: true });
@@ -150,6 +165,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
     }
   }
   function reset() {
+    setFreezeLabel({ tag: '', note: '' });
     setDraft(null);
     setSpec(newSpec(w));
     setName(`${w.project.name} dataset`);
@@ -161,6 +177,27 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
     setView('import');
     setFallbackCount(null);
     showStep(1);
+  }
+  async function loadDraft(id: string) {
+    const reloading = draft?.id === id;
+    setPreview(null);
+    setFreezeReview(null);
+    const loaded = await scientific.draft<ImportSpec>(project, id);
+    setDraft(loaded);
+    if (!reloading) setFreezeLabel({ tag: '', note: '' });
+    setSpec({
+      ...newSpec(w),
+      ...loaded.payload.spec,
+      attributes: loaded.payload.spec.attributes ?? [],
+    });
+    setName(loaded.name);
+    setInspection(null);
+    setPatientInspection(null);
+    setView('import');
+    setFallbackCount(null);
+    if (reloading) setMessage(`Reloaded saved draft revision ${loaded.revision}.`);
+    showStep(1);
+    await savedDrafts.refetch();
   }
   async function save(nextSpec = spec) {
     if (draft && draft.name === name && sameJSON(draft.payload.spec, nextSpec)) return draft;
@@ -175,6 +212,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
     return next;
   }
   async function previewDataset(nextSpec = spec) {
+    setPreview(null);
     const current = await save(nextSpec);
     const next = await scientific.importPreview(project, current.id, current.revision);
     if (next.summary.unlinkedSlideCount > 0 && nextSpec.patientIdFallback !== 'slide_id') {
@@ -191,45 +229,40 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
     setPreview(null);
     const next = await scientific.inspect(project, spec.source);
     setInspection(next);
-    const slide = next.headers.includes(spec.slideIdColumn)
+    const prior = mappedMainSource.current;
+    const parent = versions.data?.datasets.find((item) => item.id === spec.parentId);
+    const savedMapping = draft?.payload.spec ?? (parent?.manifest.provenance as { mapping?: ImportSpec } | undefined)?.mapping;
+    const preserve = canReuseImportMapping(spec.source, prior?.source, savedMapping?.attributes != null ? savedMapping.source : undefined);
+    mappedMainSource.current = { source: spec.source, fingerprint: next.fingerprint };
+    const slide = preserve ? spec.slideIdColumn : next.headers.includes(spec.slideIdColumn)
       ? spec.slideIdColumn
       : next.headers.includes('Slide_ID')
         ? 'Slide_ID'
         : next.headers.includes('De ID')
           ? 'De ID'
           : '';
-    const patient =
+    const patient = preserve ? spec.patientIdColumn :
       spec.patientIdColumn && next.headers.includes(spec.patientIdColumn)
         ? spec.patientIdColumn
         : next.headers.includes('Patient_ID')
           ? 'Patient_ID'
           : undefined;
-    const attributes: AttributeMapping[] = next.headers
-      .filter((column) => column !== slide && column !== patient)
-      .map(
-        (column) =>
-          spec.attributes.find((item) => item.sourceColumn === column) ?? {
-            key: column,
-            sourceColumn: column,
-            owner: 'slide',
-            type: 'text',
-          },
-      );
+    const attributes = inspectedAttributes(next.headers, spec.attributes, [slide, patient], preserve, 'slide');
     edit({
       slideIdColumn: slide,
       patientIdColumn: patient,
       attributes,
-      ...(inspection && inspection.fingerprint !== next.fingerprint
+      ...(prior && prior.source === spec.source && prior.fingerprint !== next.fingerprint
         ? { patientIdFallback: 'unresolved' as const }
         : {}),
     });
   }
   return (
-    <>
+    <div className="clinical-workspace dataset-workspace">
       <PageHeader
-        eyebrow="DATA FOUNDATION"
+        eyebrow="YOUR RESEARCH · DATA"
         title="Dataset workspace"
-        description="Connect your tables and slides, review identities and attributes, then preserve a dataset version."
+        description="Bring your slide information together, check the details, and save a dataset you can return to."
         actions={
           <button type="button" className="btn btn-primary" disabled={busy} onClick={reset}>
             <Icon name="plus" /> New import
@@ -249,35 +282,33 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
             }
           }}
         />
-        <DraftSelect
-          drafts={(savedDrafts.data?.drafts ?? []).filter(
-            (item) => item.payload.type === 'dataset-import',
-          )}
-          value={draft?.id ?? ''}
-          disabled={busy}
-          onChange={(id) => {
-            if (!id) {
-              reset();
-              return;
-            }
-            void run(async () => {
-              const loaded = await scientific.draft<ImportSpec>(project, id);
-              setDraft(loaded);
-              setSpec({
-                ...newSpec(w),
-                ...loaded.payload.spec,
-                attributes: loaded.payload.spec.attributes ?? [],
-              });
-              setName(loaded.name);
-              setInspection(null);
-              setPatientInspection(null);
-              setPreview(null);
-              setView('import');
-              setFallbackCount(null);
-              showStep(1);
-            });
-          }}
-        />
+        <div className="stack" style={{ minWidth: 0, gap: 10 }}>
+          <DraftSelect
+            drafts={(savedDrafts.data?.drafts ?? []).filter(
+              (item) => item.payload.type === 'dataset-import',
+            )}
+            value={draft?.id ?? ''}
+            disabled={busy}
+            onChange={(id) => {
+              if (!id) {
+                reset();
+                return;
+              }
+              void run(() => loadDraft(id));
+            }}
+          />
+          {draft ? <div className="inline-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-small"
+              disabled={busy}
+              title="Reload the latest saved revision and discard unsaved local edits. Your version tag and note are kept."
+              onClick={() => void run(() => loadDraft(draft.id))}
+            >
+              <Icon name="reset" size={15} /> Reload saved draft
+            </button>
+          </div> : null}
+        </div>
       </div>
       <ErrorNotice error={error ?? versions.error ?? savedDrafts.error} />
       <SavedNotice>{message}</SavedNotice>
@@ -288,16 +319,22 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
               <Badge tone="purple">
                 <Icon name="lock" size={12} /> Frozen dataset
               </Badge>
-              <strong>{version.manifest.name ?? 'Dataset version'}</strong>
-              <span className="mono">{version.id}</span>
+              <strong title={version.id}>{datasetVersionLabel(version)}</strong>
               <small>{new Date(version.createdAt).toLocaleString()}</small>
             </div>
+            {version.versionLabel?.note ? <p className="version-tag-note">{version.versionLabel.note}</p> : null}
+            <VersionLabelEditor
+              project={project}
+              resourceType="dataset"
+              resource={version}
+              tagLabel="Dataset version tag"
+            />
             {version.manifest.summary ? (
               <ImportMetrics summary={version.manifest.summary} />
             ) : null}
             <Panel
               title="Explore your dataset"
-              subtitle="Attributes remain separate from targets and model inputs."
+              subtitle="Browse slide records and explore the values in your table. Choose the prediction target later."
             >
               <DatasetExplorer
                 key={datasetId}
@@ -307,8 +344,8 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
               />
             </Panel>
             <Panel
-              title="Dataset provenance"
-              subtitle="A frozen version retains source fingerprints, mapping decisions and artifact hashes."
+              title="Saved dataset details"
+              subtitle="The source files and column mapping are recorded with this version."
             >
               <button
                 type="button"
@@ -334,6 +371,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                       : undefined,
                   });
                   setDraft(null);
+                  setFreezeLabel({ tag: '', note: '' });
                   setPreview(null);
                   setInspection(null);
                   setPatientInspection(null);
@@ -381,24 +419,30 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
             <button
               type="button"
               disabled={busy}
+              className={sourceReady && step !== 1 ? 'is-complete' : undefined}
               aria-current={step === 1 ? 'step' : undefined}
               onClick={() => showStep(1)}
             >
-              <span>1</span>
+              <span aria-hidden="true">
+                {sourceReady && step !== 1 ? <Icon name="check" size={16} /> : '1'}
+              </span>
               <strong>Choose files</strong>
-              <small>{inspection ? 'File read' : 'Start here'}</small>
+              <small>
+                {sourceReady ? 'File read · ready to map' : 'Table and slide folder'}
+              </small>
             </button>
             <button
               type="button"
               disabled={busy || !columns.length}
+              className={preview && step !== 2 ? 'is-complete' : undefined}
               aria-current={step === 2 ? 'step' : undefined}
               onClick={() => showStep(2)}
             >
-              <span>2</span>
+              <span aria-hidden="true">
+                {preview && step !== 2 ? <Icon name="check" size={16} /> : '2'}
+              </span>
               <strong>Map columns</strong>
-              <small>
-                {columns.length ? 'Review IDs and attributes' : 'Read your file first'}
-              </small>
+              <small>{preview ? 'Mapping reviewed' : 'IDs and attributes'}</small>
             </button>
             <button
               type="button"
@@ -406,9 +450,9 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
               aria-current={step === 3 ? 'step' : undefined}
               onClick={() => showStep(3)}
             >
-              <span>3</span>
-              <strong>Preview & freeze</strong>
-              <small>{preview ? 'Review your dataset' : 'Preview after mapping'}</small>
+              <span aria-hidden="true">3</span>
+              <strong>Review & freeze</strong>
+              <small>{preview ? 'Check your dataset' : 'Save a fixed version'}</small>
             </button>
           </nav>
           {frozen ? (
@@ -419,6 +463,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                 className="text-button"
                 onClick={() => {
                   setDraft(null);
+                  setFreezeLabel({ tag: '', note: '' });
                   setPreview(null);
                   setSpec((current) => ({ ...current, patientIdFallback: 'unresolved' }));
                   setMessage('Copied into a new editable import. Save when ready.');
@@ -438,7 +483,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
             >
               <Panel
                 title="1. Choose your metadata and slides"
-                subtitle="Select a CSV or XLSX, then read it to see its columns. Add a slide folder here or keep rows for an existing feature store."
+                subtitle="Start with your spreadsheet. Slide images stay in their existing folder."
               >
                 <div className="stack">
                   <label className="label">
@@ -454,65 +499,95 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                       }}
                     />
                   </label>
-                  <SourceFields
-                    label="Metadata"
-                    source={spec.source}
-                    inspection={inspection}
-                    busy={busy}
-                    reading={readingSource === 'main'}
-                    onChange={(source) => {
-                      edit({ source });
-                      setInspection(null);
-                    }}
-                    onInspect={() => {
-                      setReadingSource('main');
-                      void run(inspect);
-                    }}
-                  />
-                  {inspection?.findings.length ? (
-                    <Findings findings={inspection.findings} />
-                  ) : null}
-                  <div className="science-grid-two">
-                    <label className="label">
-                      Slide folder (optional)
-                      <input
-                        className="field mono"
-                        value={spec.slideRoot ?? ''}
-                        placeholder="/path/to/slides"
-                        onChange={(event) =>
-                          edit({ slideRoot: event.target.value || undefined })
-                        }
+                  <div className="dataset-file-layout">
+                    <section className="dataset-file-card" aria-label="Metadata table">
+                      <div className="dataset-file-heading">
+                        <span className="dataset-file-icon">
+                          <Icon name="dataset" size={20} />
+                        </span>
+                        <div>
+                          <h3>Metadata table</h3>
+                          <p>A CSV or XLSX with one row per slide.</p>
+                        </div>
+                        <span className="dataset-requirement">Required</span>
+                      </div>
+                      <SourceFields
+                        label="Metadata"
+                        source={spec.source}
+                        inspection={inspection}
+                        busy={busy}
+                        reading={readingSource === 'main'}
+                        onChange={(source) => {
+                          edit({ source });
+                          setInspection(null);
+                        }}
+                        onInspect={() => {
+                          setReadingSource('main');
+                          void run(inspect);
+                        }}
                       />
-                    </label>
-                    <div className="science-field-actions">
-                      <ServerFolderPicker
-                        label="Browse slide folders"
-                        onSelect={(slideRoot) => edit({ slideRoot })}
-                      />
-                    </div>
+                      {inspection?.findings.length ? (
+                        <Findings findings={inspection.findings} />
+                      ) : null}
+                    </section>
+                    <section
+                      className="dataset-file-card dataset-slide-card"
+                      aria-label="Slide images"
+                    >
+                      <div className="dataset-file-heading">
+                        <span className="dataset-file-icon">
+                          <Icon name="folder" size={20} />
+                        </span>
+                        <div>
+                          <h3>Slide images</h3>
+                          <p>Connect the folder containing your slide files.</p>
+                        </div>
+                        <span className="dataset-requirement is-optional">Optional</span>
+                      </div>
+                      <div className="dataset-slide-path">
+                        <label className="label">
+                          Slide folder
+                          <input
+                            className="field mono"
+                            value={spec.slideRoot ?? ''}
+                            placeholder="/path/to/slides"
+                            onChange={(event) =>
+                              edit({ slideRoot: event.target.value || undefined })
+                            }
+                          />
+                        </label>
+                        <div className="science-field-actions">
+                          <ServerFolderPicker
+                            label="Browse slide folders"
+                            onSelect={(slideRoot) => edit({ slideRoot })}
+                          />
+                        </div>
+                      </div>
+                      <label className="science-check">
+                        <input
+                          type="checkbox"
+                          checked={spec.recursive}
+                          onChange={(event) => edit({ recursive: event.target.checked })}
+                        />{' '}
+                        Include subfolders in the slide scan
+                      </label>
+                      <label className="science-check">
+                        <input
+                          type="checkbox"
+                          checked={spec.includeMissingSlides}
+                          onChange={(event) =>
+                            edit({ includeMissingSlides: event.target.checked })
+                          }
+                        />{' '}
+                        Keep metadata rows without matching slide files (for example, existing
+                        features)
+                      </label>
+                      <p className="dataset-field-note">
+                        Files are matched by Slide_ID and file extension. Without the option
+                        above, rows with no matching file are excluded from the dataset.
+                      </p>
+                    </section>
                   </div>
-                  <label className="science-check">
-                    <input
-                      type="checkbox"
-                      checked={spec.recursive}
-                      onChange={(event) => edit({ recursive: event.target.checked })}
-                    />{' '}
-                    Include subfolders in the slide scan
-                  </label>
-                  <label className="science-check">
-                    <input
-                      type="checkbox"
-                      checked={spec.includeMissingSlides}
-                      onChange={(event) => edit({ includeMissingSlides: event.target.checked })}
-                    />{' '}
-                    Keep metadata rows without matching slide files (for example, existing
-                    features)
-                  </label>
-                  <p className="muted">
-                    When this option is off, unmatched metadata rows are listed as exclusions.
-                    Exact filenames are joined using the declared slide ID and a recognized file
-                    extension.
-                  </p>
                   <div className="dataset-source-next">
                     <p className="muted">
                       {spec.slideRoot || spec.includeMissingSlides
@@ -556,11 +631,20 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
             >
               <Panel
                 title="2. Tell us what each column means"
-                subtitle="Choose the slide and patient identifiers, then review the attributes and their example values. Labels and model inputs are chosen later in Target & split."
+                subtitle="First identify each slide and patient. Then choose which other information to keep."
               >
                 {columns.length ? (
                   <div className="stack">
-                    <div className="science-grid-two">
+                    <div className="dataset-subsection-heading">
+                      <span className="dataset-subsection-marker">
+                        <Icon name="patient" size={17} />
+                      </span>
+                      <div>
+                        <h3>Link slides to patients</h3>
+                        <p>Slides from the same patient should share the same Patient_ID.</p>
+                      </div>
+                    </div>
+                    <div className="science-grid-two dataset-identity-fields">
                       <label className="label">
                         Slide_ID source column
                         <select
@@ -580,6 +664,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                             <option key={column}>{column}</option>
                           ))}
                         </select>
+                        <small>Identifies each slide or case. Required.</small>
                       </label>
                       <label className="label">
                         Patient_ID source column (optional)
@@ -602,23 +687,27 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                               <option key={column}>{column}</option>
                             ))}
                         </select>
+                        <small>Identifies the person the slide belongs to.</small>
                       </label>
                     </div>
-                    <div className="callout">
-                      {spec.patientIdFallback === 'slide_id'
-                        ? 'Slide_ID fallback confirmed. Slides without a patient ID will each form a separate split group; known patients still stay together.'
-                        : 'Map Patient_ID if available. If any patient IDs remain missing, the next step asks whether to use Slide_ID for those slides or return here to change the mapping.'}
-                      {spec.patientIdFallback === 'slide_id' ? (
-                        <button
-                          type="button"
-                          className="text-button"
-                          onClick={() => edit({ patientIdFallback: 'unresolved' })}
-                        >
-                          Change this choice
-                        </button>
-                      ) : null}
+                    <div className="callout dataset-identity-note">
+                      <Icon name="info" size={17} />
+                      <div>
+                        {spec.patientIdFallback === 'slide_id'
+                          ? 'Slide_ID fallback confirmed. Slides without a patient ID will each form a separate split group; known patients still stay together.'
+                          : 'Map Patient_ID if available. If any patient IDs remain missing, the next step asks whether to use Slide_ID for those slides or return here to change the mapping.'}
+                        {spec.patientIdFallback === 'slide_id' ? (
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() => edit({ patientIdFallback: 'unresolved' })}
+                          >
+                            Change this choice
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
-                    <label className="label">
+                    <label className="label dataset-missing-values">
                       Treat these values as missing (optional)
                       <input
                         className="field"
@@ -726,10 +815,15 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                               spec.patientSource!,
                             );
                             setPatientInspection(inspected);
+                            const prior = mappedPatientSource.current;
+                            const parent = versions.data?.datasets.find((item) => item.id === spec.parentId);
+                            const savedMapping = draft?.payload.spec ?? (parent?.manifest.provenance as { mapping?: ImportSpec } | undefined)?.mapping;
+                            const preserve = canReuseImportMapping(spec.patientSource!, prior?.source, savedMapping?.patientAttributes != null ? savedMapping.patientSource : undefined);
+                            mappedPatientSource.current = { source: spec.patientSource!, fingerprint: inspected.fingerprint };
                             const slide =
                               spec.patientSourceKind === 'patients'
                                 ? undefined
-                                : spec.patientSourceSlideIdColumn &&
+                                : preserve ? spec.patientSourceSlideIdColumn : spec.patientSourceSlideIdColumn &&
                                     inspected.headers.includes(spec.patientSourceSlideIdColumn)
                                   ? spec.patientSourceSlideIdColumn
                                   : inspected.headers.includes('Slide_ID')
@@ -738,32 +832,20 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                                       ? 'De ID'
                                       : '';
                             const patient =
-                              spec.patientSourcePatientIdColumn &&
+                              preserve ? spec.patientSourcePatientIdColumn : spec.patientSourcePatientIdColumn &&
                               inspected.headers.includes(spec.patientSourcePatientIdColumn)
                                 ? spec.patientSourcePatientIdColumn
                                 : inspected.headers.includes('Patient_ID')
                                   ? 'Patient_ID'
                                   : '';
                             edit({
-                              ...(patientInspection &&
-                              patientInspection.fingerprint !== inspected.fingerprint
+                              ...(prior && prior.source === spec.patientSource &&
+                              prior.fingerprint !== inspected.fingerprint
                                 ? { patientIdFallback: 'unresolved' as const }
                                 : {}),
                               patientSourceSlideIdColumn: slide,
                               patientSourcePatientIdColumn: patient,
-                              patientAttributes: inspected.headers
-                                .filter((column) => column !== slide && column !== patient)
-                                .map(
-                                  (column) =>
-                                    spec.patientAttributes?.find(
-                                      (item) => item.sourceColumn === column,
-                                    ) ?? {
-                                      key: column,
-                                      sourceColumn: column,
-                                      owner: 'patient',
-                                      type: 'text',
-                                    },
-                                ),
+                              patientAttributes: inspectedAttributes(inspected.headers, spec.patientAttributes ?? [], [slide, patient], preserve, 'patient'),
                             });
                           });
                         }}
@@ -831,8 +913,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                     : 'New import draft'}
                 </strong>
                 <p>
-                  Save draft keeps your setup for later. Preview dataset saves the draft and
-                  checks slide matches, patient IDs and attribute values before you freeze.
+                  Save your progress, or preview to check slide matches, patient IDs and values.
                 </p>
               </div>
               <div className="inline-actions">
@@ -874,7 +955,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
             >
               <Panel
                 title="3. Preview your dataset"
-                subtitle="Check the included slides, file matches and patient links. Review any exclusions or warnings, then freeze to save a fixed dataset version."
+                subtitle="Check the counts and explore your data. Resolve any blocking findings before saving this version."
                 actions={
                   <div className="inline-actions">
                     <button
@@ -898,39 +979,21 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                   total={preview.summary.slideCount}
                   dictionary={preview.dictionary}
                 />
-                <div className="science-savebar">
+                <div className="science-savebar dataset-freeze-bar">
                   <div>
-                    <strong>Freeze this dataset version</strong>
+                    <strong>Ready to keep this dataset?</strong>
                     <p>
-                      Save this reviewed dataset as a fixed version you can reopen. To change it
-                      later, create a revised version. Training is configured separately.
+                      Next, choose a required version tag and an optional commit note. Then
+                      freeze this reviewed dataset in one save.
                     </p>
                   </div>
                   <button
                     type="button"
                     className="btn btn-primary"
                     disabled={busy || dirty || !preview.canFreeze || frozen}
-                    onClick={() =>
-                      void run(async () => {
-                        const version = await scientific.importFreeze(
-                          project,
-                          draft!.id,
-                          draft!.revision,
-                          preview.previewHash,
-                        );
-                        setVersionId(version.id);
-                        setView('dataset');
-                        setDraft(await scientific.draft(project, draft!.id));
-                        setPreview(null);
-                        await refresh();
-                        setMessage(
-                          'Dataset version frozen. Its records and mapping will reload from this experiment folder.',
-                        );
-                        window.scrollTo({ top: 0 });
-                      })
-                    }
+                    onClick={() => setFreezeReview({ draftId: draft!.id, revision: draft!.revision, preview, name, operationId: `import:${crypto.randomUUID()}` })}
                   >
-                    <Icon name="lock" /> {busy ? 'Freezing…' : 'Freeze dataset'}
+                    <Icon name="lock" /> Name & freeze dataset
                   </button>
                 </div>
               </Panel>
@@ -938,6 +1001,38 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
           ) : null}
         </>
       )}
+      {freezeReview ? (
+        <FreezeVersionDialog
+          kind="dataset"
+          initialLabel={freezeLabel}
+          onLabelChange={setFreezeLabel}
+          onClose={() => setFreezeReview(null)}
+          onFreeze={async (versionLabel) => {
+            setBusy(true);
+            try {
+              const version = await scientific.importFreeze(project, freezeReview.draftId, freezeReview.revision, freezeReview.preview.previewHash, versionLabel, freezeReview.operationId);
+              setVersionId(version.id);
+              setView('dataset');
+              setDraft((current) => current?.id === freezeReview.draftId ? { ...current, status: 'frozen', revision: freezeReview.revision + 1 } : current);
+              setPreview(null);
+              await refresh();
+              setMessage(`Dataset “${version.versionLabel?.tag || versionLabel.tag}” frozen. Its tag and commit note were saved with it.`);
+              window.scrollTo({ top: 0 });
+            } catch (reason) {
+              if (scientificReviewInvalidated(reason)) {
+                setFreezeReview(null);
+                setPreview(null);
+                showStep(2);
+                setError(new Error(`${reason.message} Your tag and note have been kept. Review the dataset again before freezing.`));
+              }
+              throw reason;
+            } finally { setBusy(false); }
+          }}
+        >
+          <p><strong>{freezeReview.name}</strong></p>
+          <p>{freezeReview.preview.summary.slideCount.toLocaleString()} slides · {freezeReview.preview.summary.mappedPatientCount.toLocaleString()} mapped patients</p>
+        </FreezeVersionDialog>
+      ) : null}
       <PatientFallbackDialog
         count={fallbackCount}
         busy={busy}
@@ -955,7 +1050,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
           })
         }
       />
-    </>
+    </div>
   );
 }
 function ImportMetrics({

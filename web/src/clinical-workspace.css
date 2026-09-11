@@ -1,0 +1,296 @@
+/* Shared presentation for the scientific workspaces. */
+.clinical-workspace {
+  --ink: #26333d;
+  --muted: #626e79;
+  --line: #e0e5e9;
+  --accent: #665087;
+  --accent-light: #f1edf6;
+  --green: #24776b;
+  color: var(--ink);
+  font-size: 14px;
+  max-width: 1240px;
+  margin-inline: auto;
+}
+.clinical-workspace > .page-header {
+  align-items: flex-start;
+  margin-bottom: 28px;
+}
+.clinical-workspace .page-header h1 {
+  font-size: clamp(26px, 2.5vw, 34px);
+  font-weight: 650;
+  letter-spacing: -1px;
+}
+.clinical-workspace .eyebrow {
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 1.8px;
+  margin-bottom: 8px;
+}
+.clinical-workspace .page-header p {
+  font-size: 14px;
+  max-width: 660px;
+  line-height: 1.65;
+}
+.clinical-workspace .page-actions {
+  padding-top: 18px;
+}
+.clinical-workspace .card {
+  border-radius: 16px;
+  box-shadow: 0 3px 14px #26333d03;
+}
+.clinical-workspace > .card {
+  margin-bottom: 24px;
+}
+.clinical-workspace .panel-header {
+  align-items: flex-start;
+  padding: 26px 28px 22px;
+  gap: 16px;
+}
+.clinical-workspace .panel-header h2 {
+  font-size: 19px;
+  line-height: 1.4;
+  letter-spacing: -0.4px;
+}
+.clinical-workspace .panel-header p {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 6px;
+  max-width: 760px;
+}
+.clinical-workspace .panel-body {
+  padding: 0 28px 28px;
+}
+.clinical-workspace .panel-body > .table-wrap {
+  margin-inline: 0;
+}
+.clinical-workspace .label {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+}
+.clinical-workspace .label small {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.clinical-workspace .field {
+  min-height: 44px;
+  padding: 10px 12px;
+  border-color: #d4dce1;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 400;
+  background-color: white;
+}
+.clinical-workspace .field:hover:not(:disabled) {
+  border-color: #a4a3b5;
+}
+.clinical-workspace .field:focus-visible {
+  outline: 3px solid #b8a6d3;
+  outline-offset: 2px;
+}
+.clinical-workspace .field::placeholder {
+  color: #707985;
+}
+.clinical-workspace .field:disabled,
+.clinical-workspace .field-readonly {
+  background-color: #f4f6f7;
+}
+.clinical-workspace .btn {
+  min-height: 42px;
+  padding: 10px 16px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.clinical-workspace .btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 2px 4px #49315e15;
+}
+.clinical-workspace .btn-primary:hover:not(:disabled) {
+  background: #543e74;
+}
+.clinical-workspace .btn-secondary {
+  border-color: #d4dce1;
+  box-shadow: none;
+}
+.clinical-workspace .btn-small {
+  min-height: 36px;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.clinical-workspace .text-button,
+.clinical-workspace .text-link {
+  color: var(--accent);
+}
+.clinical-workspace .science-toolbar {
+  padding: 16px 20px;
+  background: #eef1f4;
+  border-color: transparent;
+  border-radius: 12px;
+  margin-bottom: 24px;
+}
+.clinical-workspace .science-toolbar .label {
+  font-size: 12px;
+}
+.clinical-workspace .science-toolbar .field {
+  font-size: 13px;
+  min-height: 40px;
+}
+.clinical-workspace .science-fieldset {
+  gap: 26px;
+}
+.clinical-workspace .science-metrics .metric-card {
+  padding: 18px 20px;
+  border-radius: 12px;
+}
+.clinical-workspace .metric-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.clinical-workspace .metric-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 30px;
+  color: var(--ink);
+}
+.clinical-workspace .metric-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.clinical-workspace .badge {
+  font-size: 11px;
+  font-weight: 550;
+}
+.clinical-workspace .badge-purple {
+  background: var(--accent-light);
+  color: #654b87;
+  border-color: #e2d9ee;
+}
+.clinical-workspace .callout {
+  background: #f5f6f8;
+  border-color: #e3e6ec;
+  color: #56606e;
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+.clinical-workspace .callout-warning {
+  background: #fff8ea;
+  border-color: #eedbb3;
+  color: #805819;
+}
+.clinical-workspace .finding {
+  font-size: 13px;
+  border-radius: 10px;
+}
+.clinical-workspace .finding small {
+  font-size: 11px;
+  opacity: 1;
+}
+.clinical-workspace .finding > div {
+  min-width: 0;
+}
+.clinical-workspace .science-savebar {
+  background: #f2f6f5;
+  border-color: #d9e7e2;
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-top: 24px;
+}
+.clinical-workspace .science-savebar p {
+  font-size: 13px;
+  color: var(--muted);
+}
+.clinical-workspace table {
+  font-size: 13px;
+}
+.clinical-workspace th {
+  color: #616c78;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.clinical-workspace td {
+  color: #394651;
+}
+.clinical-workspace .table-wrap {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.clinical-workspace .science-bar {
+  font-size: 13px;
+}
+.clinical-workspace .science-bar-track {
+  background: #eef0f3;
+}
+.clinical-workspace .science-bar-track > span {
+  background: #8872a3;
+}
+.clinical-workspace .source-inspection {
+  font-size: 13px;
+}
+.clinical-workspace .science-version {
+  padding: 16px 20px;
+  border: 1px solid #d9e7e2;
+  border-radius: 12px;
+  background: #f2f6f5;
+}
+.clinical-workspace .science-check {
+  font-size: 13px;
+}
+.clinical-workspace .science-check input {
+  width: 18px;
+  height: 18px;
+}
+.clinical-workspace .mono {
+  font-size: 12px;
+}
+.clinical-workspace .science-fieldset details > summary,
+.clinical-workspace .panel-body details > summary {
+  color: var(--ink);
+  font-size: 13px;
+  min-height: 40px;
+}
+.clinical-workspace .empty-state p {
+  color: var(--muted);
+  font-size: 14px;
+}
+@media (max-width: 900px) {
+  .clinical-workspace .panel-header {
+    padding: 22px 20px 18px;
+  }
+  .clinical-workspace .panel-body {
+    padding: 0 20px 22px;
+  }
+}
+@media (max-width: 600px) {
+  .clinical-workspace .page-header {
+    gap: 14px;
+  }
+  .clinical-workspace .page-actions {
+    padding-top: 0;
+  }
+  .clinical-workspace .panel-header {
+    flex-wrap: wrap;
+    padding: 20px 16px 16px;
+  }
+  .clinical-workspace .panel-body {
+    padding: 0 16px 20px;
+  }
+  .clinical-workspace .panel-header h2 {
+    font-size: 18px;
+  }
+  .clinical-workspace .field {
+    font-size: 16px;
+  }
+  .clinical-workspace .science-toolbar {
+    padding: 14px;
+  }
+  .clinical-workspace .science-savebar {
+    padding: 18px;
+  }
+}

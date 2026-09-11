@@ -94,14 +94,14 @@ export default function System() {
               subtitle="Execution boundary"
               actions={
                 <Badge tone="amber">
-                  {data.workers.executionEnabled ? 'Enabled' : 'Not implemented'}
+                  {data.workers.executionEnabled ? 'TRIDENT connected' : 'Setup required'}
                 </Badge>
               }
             >
               <p className="muted">
-                Worker status: <strong>{data.workers.status}</strong>. This skeleton does not
-                execute WSI preprocessing, feature extraction, or MIL training. GPU inventory and
-                live worker diagnostics will be reported here when connected.
+                Worker status: <strong>{data.workers.status}</strong>. Start segmentation, patching,
+                and feature extraction in PFM &amp; features. Each TRIDENT job has persistent logs
+                and a tmux session. Checkpoint access is checked when its worker starts.
               </p>
               <div className="callout">
                 Saving an experiment creates a persisted draft. It does not launch a compute

@@ -156,6 +156,7 @@ class ImportService:
         content, provenance = self._source_bytes(source)
         findings = _Findings()
         numeric_columns, formula_columns = set(), set()
+        error_cells = defaultdict(set)
         sheets, sheet = [], None
         workbook = None
         try:
@@ -212,12 +213,14 @@ class ImportService:
                     raise _error("The worksheet exceeds 128 columns.", "TABLE_COLUMN_LIMIT", 413)
 
                 def cells():
-                    for row in worksheet.iter_rows():
+                    for row_number, row in enumerate(worksheet.iter_rows(), start=1):
                         values, numeric, formulas = [], [], []
                         for index, cell in enumerate(row):
                             value = cell.value
                             if cell.data_type == "f":
                                 formulas.append(index)
+                            elif cell.data_type == "e" and row_number > 1:
+                                error_cells[row_number].add(index)
                             if isinstance(value, (int, float)) and not isinstance(value, bool):
                                 numeric.append(index)
                             if isinstance(value, (datetime, date)):
@@ -269,7 +272,13 @@ class ImportService:
                 numeric_columns.update(headers[index] for index in numeric)
                 formula_columns.update(headers[index] for index in formulas)
                 records.append(
-                    {"row": row_number, "values": dict(zip(headers, values, strict=True))}
+                    {
+                        "row": row_number,
+                        "values": dict(zip(headers, values, strict=True)),
+                        "errors": [
+                            headers[index] for index in sorted(error_cells.get(row_number, ()))
+                        ],
+                    }
                 )
             if not records:
                 raise _error("The table contains no data rows.", "TABLE_EMPTY")
@@ -279,6 +288,13 @@ class ImportService:
                     "Formula cells are preserved as text and never evaluated; mapped formula fields must be replaced with reviewed values.",
                     severity="warning",
                     count=len(formula_columns),
+                )
+            if any(error_cells.values()):
+                findings.add(
+                    "SPREADSHEET_ERROR_CELLS",
+                    "Spreadsheet error cells are preserved as source evidence. Replace mapped errors with reviewed values or explicitly map their tokens to missing.",
+                    severity="warning",
+                    count=sum(len(columns) for columns in error_cells.values()),
                 )
             provenance["sheet"] = sheet
             return {
@@ -419,6 +435,49 @@ class ImportService:
     def _value(value, missing):
         return None if value is None or value in missing else value
 
+    def _identifier(self, value, missing, findings, *, column, row):
+        # Attribute missing-value policies may deliberately preserve empty strings.
+        # An empty identity can never establish a patient group or a join key.
+        value = self._value(value, missing)
+        if value is None or value == "":
+            return None
+        if not value.strip():
+            findings.add(
+                "IDENTIFIER_BLANK",
+                f"Identifiers in {column} contain only whitespace; replace them with reviewed IDs or explicitly mark that token as missing.",
+                example=f"row {row}",
+            )
+            return None
+        if value != value.strip():
+            findings.add(
+                "IDENTIFIER_WHITESPACE",
+                "Identifiers contain leading or trailing whitespace; values are preserved without implicit normalization.",
+                severity="warning",
+                example=value,
+            )
+        return value
+
+    def _mapped_errors(self, table, identities, mappings, missing, findings):
+        policies = defaultdict(list)
+        for column in identities:
+            if column is not None:
+                policies[column].append(missing)
+        for field in mappings:
+            policies[field.sourceColumn].append(
+                field.missingValues if field.missingValues is not None else missing
+            )
+        for row in table["rows"]:
+            for column in row["errors"]:
+                if any(
+                    self._value(row["values"][column], policy) is not None
+                    for policy in policies[column]
+                ):
+                    findings.add(
+                        "MAPPED_SPREADSHEET_ERROR",
+                        "A mapped field contains a spreadsheet error. Replace it with a reviewed value or explicitly declare that token missing before freezing.",
+                        example=f"{column}, row {row['row']}",
+                    )
+
     def _attributes(self, mappings, values, missing, findings, row_id):
         result = {}
         for field in mappings:
@@ -479,8 +538,16 @@ class ImportService:
         try:
             return draft, ImportSpec.model_validate(payload["spec"])
         except ValidationError as error:
+            errors = error.errors(include_input=False, include_url=False)
+            details = [
+                f"{'.'.join(str(part) for part in item['loc']) or 'import'}: "
+                f"{item['msg'].removeprefix('Value error, ')}"
+                for item in errors[:8]
+            ]
+            if len(errors) > 8:
+                details.append(f"{len(errors) - 8} more fields need correction.")
             raise _error(
-                "The saved import specification is invalid. Review its source and mappings.",
+                "Review the import source and mappings. " + " ".join(details),
                 "IMPORT_SPEC_INVALID",
             ) from error
 
@@ -533,6 +600,13 @@ class ImportService:
             findings.add(
                 "MAPPED_FORMULA", "A mapped primary-table field contains unevaluated formulas."
             )
+        self._mapped_errors(
+            primary,
+            {spec.slideIdColumn, spec.patientIdColumn},
+            main_fields,
+            spec.missingValues,
+            findings,
+        )
         if {spec.slideIdColumn, spec.patientIdColumn} & primary["numeric"]:
             findings.add(
                 "NUMERIC_IDENTIFIER",
@@ -593,6 +667,13 @@ class ImportService:
                 findings.add(
                     "MAPPED_FORMULA", "A mapped patient-source field contains unevaluated formulas."
                 )
+            self._mapped_errors(
+                secondary,
+                {key_column, spec.patientSourcePatientIdColumn},
+                spec.patientAttributes,
+                spec.missingValues,
+                findings,
+            )
             if {key_column, spec.patientSourcePatientIdColumn} & secondary["numeric"]:
                 findings.add(
                     "NUMERIC_IDENTIFIER",
@@ -600,9 +681,23 @@ class ImportService:
                     severity="warning",
                 )
             for row in secondary["rows"]:
-                key = self._value(row["values"][key_column], spec.missingValues)
-                patient = self._value(
-                    row["values"][spec.patientSourcePatientIdColumn], spec.missingValues
+                key = self._identifier(
+                    row["values"][key_column],
+                    spec.missingValues,
+                    findings,
+                    column=key_column,
+                    row=row["row"],
+                )
+                patient = (
+                    key
+                    if key_column == spec.patientSourcePatientIdColumn
+                    else self._identifier(
+                        row["values"][spec.patientSourcePatientIdColumn],
+                        spec.missingValues,
+                        findings,
+                        column=spec.patientSourcePatientIdColumn,
+                        row=row["row"],
+                    )
                 )
                 if key is None or patient is None:
                     findings.add(
@@ -622,7 +717,13 @@ class ImportService:
         record_bytes = 2
         for row in primary["rows"]:
             values = row["values"]
-            slide_id = self._value(values[spec.slideIdColumn], spec.missingValues)
+            slide_id = self._identifier(
+                values[spec.slideIdColumn],
+                spec.missingValues,
+                findings,
+                column=spec.slideIdColumn,
+                row=row["row"],
+            )
             if slide_id is None:
                 findings.add(
                     "SLIDE_ID_MISSING",
@@ -638,15 +739,14 @@ class ImportService:
                 )
                 continue
             source_ids.add(slide_id)
-            if slide_id != slide_id.strip():
-                findings.add(
-                    "IDENTIFIER_WHITESPACE",
-                    "Identifiers contain leading or trailing whitespace; values are preserved without implicit normalization.",
-                    severity="warning",
-                    example=slide_id,
-                )
             patient_id = (
-                self._value(values[spec.patientIdColumn], spec.missingValues)
+                self._identifier(
+                    values[spec.patientIdColumn],
+                    spec.missingValues,
+                    findings,
+                    column=spec.patientIdColumn,
+                    row=row["row"],
+                )
                 if spec.patientIdColumn
                 else None
             )
@@ -675,6 +775,13 @@ class ImportService:
                 continue
             if patient_values:
                 secondary_used.add(join_key)
+            elif secondary and join_key is not None:
+                findings.add(
+                    "PATIENT_SOURCE_MATCH_MISSING",
+                    "Some included slides have no matching row in the selected patient source; review their patient links and missing patient-source attributes.",
+                    severity="warning",
+                    example=slide_id,
+                )
             # Resolve true patient identities and joins before applying the opted-in
             # fallback. A slide identifier must never join a patient attribute table.
             if patient_id is None and spec.patientIdFallback == "slide_id":
@@ -707,6 +814,17 @@ class ImportService:
                     413,
                 )
             records.append(record)
+        patient_spellings = defaultdict(set)
+        for record in records:
+            if record["patientId"] is not None:
+                patient_spellings[record["patientId"].strip()].add(record["patientId"])
+        for spellings in patient_spellings.values():
+            if len(spellings) > 1:
+                findings.add(
+                    "PATIENT_ID_WHITESPACE_COLLISION",
+                    "Patient IDs differ only in leading or trailing whitespace and would form separate split groups. Reconcile these identities explicitly before freezing.",
+                    example=", ".join(repr(value) for value in sorted(spellings)),
+                )
         verified_patients = {
             record["patientId"]
             for record in records
@@ -878,31 +996,20 @@ class ImportService:
             "recordsTruncated": len(result["records"]) > 200,
         }
 
-    def freeze(self, draft_id, expected_revision, preview_hash, operation_id):
+    def freeze(
+        self, draft_id, expected_revision, preview_hash, operation_id, *, version_label=None
+    ):
         if type(expected_revision) is not int or expected_revision < 1:
             raise _error("Supply a positive draft revision.", "INVALID_REVISION")
-        previous = next(
-            (
-                operation
-                for operation in self.store.status()["operations"]
-                if operation["id"] == operation_id
-            ),
-            None,
+        previous = self.store.replay_dataset_publication(
+            operation_id,
+            draft_id=draft_id,
+            expected_revision=expected_revision,
+            preview_hash=preview_hash,
+            version_label=version_label,
         )
-        if previous is not None and previous["status"] == "published":
-            dataset = self.store.get_dataset(previous["datasetId"])
-            draft = self.store.get_draft(draft_id)
-            if (
-                previous["draftId"] == draft_id
-                and draft["revision"] == expected_revision + 1
-                and dataset["manifest"].get("previewHash") == preview_hash
-            ):
-                return dataset
-            raise _error(
-                "The publication operation was used with different inputs.",
-                "OPERATION_CONFLICT",
-                409,
-            )
+        if previous is not None:
+            return previous
         _, spec = self._draft(draft_id, expected_revision)
         result, manifest, artifacts = self._build(spec)
         if manifest["previewHash"] != preview_hash:
@@ -919,6 +1026,7 @@ class ImportService:
             manifest=manifest,
             artifacts=artifacts,
             operation_id=operation_id,
+            version_label=version_label,
         )
 
     def records(self, dataset_id):

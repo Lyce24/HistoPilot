@@ -1,0 +1,17 @@
+.mil-workspace { display: grid; gap: 20px; }
+.mil-plan-fields { min-width: 0; display: grid; gap: 20px; border: 0; padding: 0; margin: 0; }
+.mil-loading-options { border: 0; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.mil-loading-options legend { margin-bottom: 12px; font-weight: 600; }
+.mil-loading-option { display: flex; align-items: flex-start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.mil-loading-option.is-selected { border-color: var(--accent); background: var(--accent-light); }
+.mil-loading-option:has(input:disabled) { opacity: .6; cursor: default; }
+.mil-loading-option input { margin-top: 4px; flex: 0 0 auto; }
+.mil-loading-option span { display: grid; gap: 8px; }
+.mil-loading-option small { color: var(--muted); line-height: 1.5; }
+.mil-pack-select { margin-top: 18px; }
+.mil-memory-note, .mil-execution-note { margin-top: 18px; }
+.mil-bundle-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.mil-plan-review { margin-bottom: 18px; }
+.mil-workspace code { overflow-wrap: anywhere; }
+.mil-initial-settings summary { cursor: pointer; font-weight: 600; margin-bottom: 14px; }
+@media (max-width: 850px) { .mil-loading-options { grid-template-columns: 1fr; } }

@@ -6,9 +6,10 @@ import threading
 import webbrowser
 from dataclasses import asdict
 from pathlib import Path
-from urllib.error import URLError
-from urllib.parse import urlsplit
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 import typer
 
@@ -76,7 +77,7 @@ def serve(
         with service_lock(settings.workspace):
             url = f"http://{settings.host}:{settings.port}"
             typer.echo(
-                f"HistoPilot · local control service\nWorkspace  {settings.workspace}\nBrowser    {url}\nCompute    adapters not connected"
+                f"HistoPilot · local control service\nWorkspace  {settings.workspace}\nBrowser    {url}\nCompute    TRIDENT extraction in PFM & features; MIL training not connected"
             )
             if settings.data_roots:
                 typer.echo("Sources    Read-only folders available in the data/slide picker:")
@@ -193,6 +194,138 @@ def jobs(
     except (URLError, OSError, KeyError, ValueError) as exc:
         typer.echo(f"Cannot read jobs from the local service: {exc}", err=True)
         raise typer.Exit(1) from exc
+
+
+def _feature_api(url: str, path: str, payload: dict | None = None) -> dict | None:
+    """Use the browser's authenticated local API without opening external URLs."""
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"localhost", "127.0.0.1"}
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise typer.BadParameter("Use an HTTP loopback service URL without credentials or a path.")
+    base = url.rstrip("/")
+    try:
+        with urlopen(f"{base}/api/v1/session", timeout=5) as response:
+            token = json.load(response)["token"]
+        request = Request(
+            f"{base}/api/v1{path}",
+            data=json.dumps(payload).encode() if payload is not None else None,
+            headers={"X-HistoPilot-Token": token, "Content-Type": "application/json"},
+            method="POST" if payload is not None else "GET",
+        )
+        with urlopen(request, timeout=45) as response:
+            return json.load(response)
+    except HTTPError as exc:
+        try:
+            message = json.loads(exc.read(65536)).get("detail", str(exc))
+        except (ValueError, AttributeError):
+            message = str(exc)
+        typer.echo(f"Feature operation failed: {message}", err=True)
+        raise typer.Exit(1) from exc
+    except (URLError, OSError, KeyError, ValueError) as exc:
+        typer.echo(f"Cannot contact the local service: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+
+@app.command("pack-features")
+def pack_features(
+    feature_set_id: str = typer.Argument(..., help="Frozen feature configuration ID."),
+    project: str = typer.Option(..., help="Saved project ID."),
+    output: Path | None = typer.Option(
+        None, help="New or empty destination folder on the service."
+    ),
+    existing_pack: Path | None = typer.Option(
+        None, help="Verify and register an existing pack folder against these features."
+    ),
+    dtype: str = typer.Option(
+        "preserve", help="preserve (default) or float16 (reduced precision)."
+    ),
+    validate_only: bool = typer.Option(
+        False, help="Run a full content-validation job without a pack."
+    ),
+    preview: bool = typer.Option(
+        False, help="Inspect inputs and estimated space without starting a job."
+    ),
+    operation_id: str | None = typer.Option(
+        None, help="Reuse an ID to retry the same submission safely."
+    ),
+    url: str = typer.Option("http://127.0.0.1:8787", help="Running local control service URL."),
+) -> None:
+    """Validate, create, or verify an existing pack in a durable CPU worker."""
+    from histopilot.schemas.feature_packs import FeaturePackSpec
+
+    if existing_pack and (output or validate_only or dtype != "preserve"):
+        raise typer.BadParameter(
+            "--existing-pack cannot be combined with --output, --validate-only or dtype conversion."
+        )
+    try:
+        spec = FeaturePackSpec(
+            featureSetId=feature_set_id,
+            action="attach" if existing_pack else "validate" if validate_only else "pack",
+            outputPath=str(output) if output else None,
+            existingPath=str(existing_pack) if existing_pack else None,
+            dtype=dtype,
+        ).model_dump(mode="json")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    route = f"/projects/{quote(project, safe='')}/feature-packs"
+    checked = _feature_api(url, route + "/preview", spec)
+    if preview or not checked["canRun"]:
+        typer.echo(json.dumps(checked, indent=2))
+        if not checked["canRun"]:
+            raise typer.Exit(1)
+        return
+    result = _feature_api(
+        url,
+        route,
+        {
+            **spec,
+            "previewHash": checked["previewHash"],
+            "operationId": operation_id or f"packing:{uuid4()}",
+        },
+    )
+    typer.echo(json.dumps(result, indent=2))
+
+
+@app.command("feature-jobs")
+def feature_jobs(
+    project: str = typer.Option(..., help="Saved project ID."),
+    job: str | None = typer.Option(
+        None, help="Read one packing/validation job, including its log."
+    ),
+    cancel: bool = typer.Option(False, help="Cancel the specified job cooperatively."),
+    url: str = typer.Option("http://127.0.0.1:8787", help="Running local control service URL."),
+) -> None:
+    """List feature jobs or inspect/cancel one through the local API."""
+    if cancel and not job:
+        raise typer.BadParameter("--cancel requires --job.")
+    route = f"/projects/{quote(project, safe='')}/feature-packs"
+    if job:
+        route += f"/{quote(job, safe='')}"
+    if cancel:
+        route += "/cancel"
+    typer.echo(json.dumps(_feature_api(url, route, {} if cancel else None), indent=2))
+
+
+@app.command("verify-feature-pack")
+def verify_feature_pack(
+    path: Path = typer.Argument(..., exists=True, file_okay=False),
+) -> None:
+    """Verify all packed bytes and metadata locally, including a relocated pack."""
+    from histopilot.storage.packed import validate_pack
+
+    try:
+        manifest = validate_pack(path, full=True)
+    except (OSError, ValueError) as exc:
+        typer.echo(f"Pack verification failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(manifest, indent=2))
 
 
 if __name__ == "__main__":

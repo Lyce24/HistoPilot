@@ -62,4 +62,33 @@ describe('control service client', () => {
     await expect(api.deleteExperiment('draft/one')).resolves.toBeUndefined();
     expect(fetcher.mock.calls[2][0]).toBe('/api/v1/experiments/draft%2Fone');
   });
+  it('creates folders in the selected purpose and surfaces existing-folder conflicts', async () => {
+    const created = { path: '/data/features/Bladder Ω', parent: '/data/features', name: 'Bladder Ω' };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(json({ token: 'session' }))
+      .mockResolvedValueOnce(json(created, 201))
+      .mockResolvedValueOnce(json({ detail: 'A folder with this name already exists.' }, 409));
+    vi.stubGlobal('fetch', fetcher);
+    const { api } = await import('./client');
+    await expect(api.createDirectory('/data/features', 'Bladder Ω')).resolves.toEqual(created);
+    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/filesystem/directories');
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({
+      parentPath: '/data/features', name: 'Bladder Ω', purpose: 'source',
+    });
+    await expect(api.createDirectory('/workspace', 'existing', 'storage')).rejects.toMatchObject({
+      status: 409, message: 'A folder with this name already exists.',
+    });
+    expect(JSON.parse(fetcher.mock.calls[2][1].body).purpose).toBe('storage');
+  });
+  it.each(['PREVIEW_STALE', 'FEATURE_BUNDLE_INVALID', 'VERSION_TAG_CONFLICT'])('preserves structured %s errors for the correct recovery flow', async (code) => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(json({ token: 'session' }))
+      .mockResolvedValueOnce(json({ detail: 'Review could not be saved.', code }, 409));
+    vi.stubGlobal('fetch', fetcher);
+    const { request } = await import('./client');
+    await expect(request('/projects/project/feature-bundles/freeze', { method: 'POST', body: '{}' }))
+      .rejects.toMatchObject({ status: 409, message: 'Review could not be saved.', code });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
 });

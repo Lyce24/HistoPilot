@@ -10,13 +10,20 @@ import os
 import re
 import sqlite3
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from threading import RLock
 from uuid import uuid4
 
+from pydantic import ValidationError
+
+from histopilot.schemas.version_labels import (
+    FreezeVersionLabel,
+    SetVersionLabelRequest,
+    VersionLabelValues,
+)
 from histopilot.storage.project_lock import (
     StorageError,
     ensure_managed_directory,
@@ -24,7 +31,7 @@ from histopilot.storage.project_lock import (
     writer_lock,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 DATASET_FORMAT_VERSION = 1
 APPLICATION_ID = 0x48535054
 DATABASE_FILE = "histopilot-state.sqlite"
@@ -61,7 +68,7 @@ _SCHEMA_V1 = (
         FOREIGN KEY(draft_id) REFERENCES drafts(id)
     )""",
 )
-_SCHEMA = (
+_SCHEMA_V2 = (
     *_SCHEMA_V1,
     """CREATE TABLE configurations (
         id TEXT PRIMARY KEY, content_hash TEXT NOT NULL UNIQUE, document TEXT NOT NULL
@@ -69,6 +76,24 @@ _SCHEMA = (
     """CREATE TABLE configuration_publications (
         id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, configuration_id TEXT NOT NULL,
         FOREIGN KEY(configuration_id) REFERENCES configurations(id)
+    )""",
+)
+_SCHEMA_V3 = (
+    *_SCHEMA_V2,
+    """CREATE TABLE version_labels (
+        resource_type TEXT NOT NULL CHECK(resource_type IN ('dataset','configuration')),
+        resource_id TEXT NOT NULL, kind TEXT NOT NULL,
+        tag TEXT NOT NULL, normalized_tag TEXT, note TEXT NOT NULL,
+        revision INTEGER NOT NULL CHECK(revision>0),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY(resource_type,resource_id), UNIQUE(kind,normalized_tag)
+    )""",
+)
+_SCHEMA = (
+    *_SCHEMA_V3,
+    """CREATE TABLE publication_labels (
+        operation_id TEXT PRIMARY KEY, tag TEXT NOT NULL, normalized_tag TEXT NOT NULL,
+        note TEXT NOT NULL, FOREIGN KEY(operation_id) REFERENCES publications(id)
     )""",
 )
 _COLUMNS_V1 = {
@@ -89,10 +114,28 @@ _COLUMNS_V1 = {
         "updated_at",
     ),
 }
-_COLUMNS = {
+_COLUMNS_V2 = {
     **_COLUMNS_V1,
     "configurations": ("id", "content_hash", "document"),
     "configuration_publications": ("id", "request_hash", "configuration_id"),
+}
+_COLUMNS_V3 = {
+    **_COLUMNS_V2,
+    "version_labels": (
+        "resource_type",
+        "resource_id",
+        "kind",
+        "tag",
+        "normalized_tag",
+        "note",
+        "revision",
+        "created_at",
+        "updated_at",
+    ),
+}
+_COLUMNS = {
+    **_COLUMNS_V3,
+    "publication_labels": ("operation_id", "tag", "normalized_tag", "note"),
 }
 
 
@@ -383,12 +426,13 @@ class ScientificStore:
                     connection.execute(f"PRAGMA application_id={APPLICATION_ID}")
                     connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                 fsync_directory(self.folder)
-            elif version == 1 and app_id == APPLICATION_ID:
+            elif version in {1, 2, 3} and app_id == APPLICATION_ID:
                 # Validate the complete old schema before making an atomic additive migration.
-                self._validate_schema(connection, version=1)
+                self._validate_schema(connection, version=version)
                 self._validate_integrity(connection)
                 with self._transaction(connection):
-                    for statement in _SCHEMA[len(_SCHEMA_V1) :]:
+                    previous_schema = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3}[version]
+                    for statement in _SCHEMA[len(previous_schema) :]:
                         connection.execute(statement)
                     connection.execute(
                         "UPDATE metadata SET value=? WHERE key='schema_version'",
@@ -421,8 +465,8 @@ class ScientificStore:
     def _validate_schema(
         self, connection: sqlite3.Connection, version: int = SCHEMA_VERSION
     ) -> None:
-        columns_by_name = _COLUMNS_V1 if version == 1 else _COLUMNS
-        schema = _SCHEMA_V1 if version == 1 else _SCHEMA
+        columns_by_name = {1: _COLUMNS_V1, 2: _COLUMNS_V2, 3: _COLUMNS_V3, 4: _COLUMNS}[version]
+        schema = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA}[version]
         objects = list(
             connection.execute(
                 "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
@@ -573,6 +617,256 @@ class ScientificStore:
         if draft["status"] != "editable":
             raise _error("A frozen draft cannot be modified.", "DRAFT_FROZEN")
 
+    def _version_target(
+        self, connection: sqlite3.Connection, resource_type: str, resource_id: str
+    ) -> tuple[str, dict]:
+        if resource_type == "dataset":
+            return "dataset", self._get_dataset(connection, resource_id)
+        if resource_type == "configuration":
+            document = self._configuration(connection, resource_id)
+            kind = document["manifest"].get("kind")
+            if not isinstance(kind, str) or not kind:
+                raise _error("The configuration kind is invalid.", "STORAGE_CORRUPT")
+            return kind, document
+        raise _error(
+            "Labels belong to a frozen dataset or configuration.", "INVALID_RESOURCE_TYPE", 422
+        )
+
+    @staticmethod
+    def _version_label_record(row: sqlite3.Row | None, kind: str) -> dict | None:
+        if row is None:
+            return None
+        try:
+            values = VersionLabelValues.model_validate({"tag": row["tag"], "note": row["note"]})
+            if (
+                row["kind"] != kind
+                or values.tag != row["tag"]
+                or values.note != row["note"]
+                or row["normalized_tag"] != (values.tag.casefold() or None)
+                or type(row["revision"]) is not int
+                or not 1 <= row["revision"] <= 2**63 - 1
+            ):
+                raise ValueError
+            for key in ("created_at", "updated_at"):
+                if datetime.fromisoformat(row[key].replace("Z", "+00:00")).tzinfo is None:
+                    raise ValueError
+            return {
+                "tag": row["tag"],
+                "note": row["note"],
+                "revision": row["revision"],
+                "createdAt": row["created_at"],
+                "updatedAt": row["updated_at"],
+            }
+        except (ValueError, TypeError, AttributeError, KeyError) as error:
+            raise _error("Version label metadata is invalid.", "STORAGE_CORRUPT") from error
+
+    def _version_label(
+        self, connection: sqlite3.Connection, resource_type: str, resource_id: str, kind: str
+    ) -> dict | None:
+        row = connection.execute(
+            "SELECT * FROM version_labels WHERE resource_type=? AND resource_id=?",
+            (resource_type, resource_id),
+        ).fetchone()
+        return self._version_label_record(row, kind)
+
+    def _with_version_label(
+        self, connection: sqlite3.Connection, resource_type: str, document: dict
+    ) -> dict:
+        kind = "dataset" if resource_type == "dataset" else document["manifest"].get("kind")
+        label = self._version_label(connection, resource_type, document["id"], kind)
+        return {**document, "versionLabel": label} if label is not None else document
+
+    def get_version_label(self, resource_type: str, resource_id: str) -> dict | None:
+        self.initialize()
+        with self._connection() as connection:
+            kind, _document = self._version_target(connection, resource_type, resource_id)
+            return self._version_label(connection, resource_type, resource_id, kind)
+
+    @staticmethod
+    def _publication_label_values(value: dict | None) -> VersionLabelValues | None:
+        if value is None:
+            return None
+        try:
+            return FreezeVersionLabel.model_validate(value)
+        except ValidationError as error:
+            raise _error(
+                "Supply a nonempty version tag of at most 80 characters and a commit "
+                "note of at most 2000 characters.",
+                "INVALID_VERSION_LABEL",
+                422,
+            ) from error
+
+    def _check_version_tag(
+        self,
+        connection: sqlite3.Connection,
+        resource_type: str,
+        resource_id: str,
+        kind: str,
+        tag: str,
+    ) -> None:
+        normalized = tag.casefold() or None
+        if not normalized:
+            return
+        used = connection.execute(
+            "SELECT 1 FROM version_labels WHERE kind=? AND normalized_tag=? "
+            "AND NOT (resource_type=? AND resource_id=?)",
+            (kind, normalized, resource_type, resource_id),
+        ).fetchone()
+        # A recoverable dataset publication owns its tag before the dataset becomes
+        # visible. Presentation edits and other publishers must respect that claim.
+        reserved = (
+            kind == "dataset"
+            and connection.execute(
+                "SELECT 1 FROM publication_labels labels JOIN publications publication "
+                "ON publication.id=labels.operation_id WHERE publication.status='preparing' "
+                "AND labels.normalized_tag=? AND publication.dataset_id!=?",
+                (normalized, resource_id if resource_type == "dataset" else ""),
+            ).fetchone()
+        )
+        if used or reserved:
+            raise _error(
+                f"This tag is already used or reserved for another {kind} version in this "
+                "project. Choose a different tag.",
+                "VERSION_TAG_CONFLICT",
+            )
+
+    def _check_publication_label(
+        self,
+        connection: sqlite3.Connection,
+        resource_type: str,
+        resource_id: str,
+        kind: str,
+        values: VersionLabelValues | None,
+    ) -> dict | None:
+        current = self._version_label(connection, resource_type, resource_id, kind)
+        if values is None:
+            return current
+        if current and (current["tag"] or current["note"]):
+            if (current["tag"], current["note"]) != (values.tag, values.note):
+                raise _error(
+                    f"These scientific contents are already saved as {resource_id} with "
+                    f"the tag {current['tag']!r}. Reuse that version, or edit its existing "
+                    "tag and commit note before freezing identical contents.",
+                    "VERSION_LABEL_MISMATCH",
+                )
+        self._check_version_tag(connection, resource_type, resource_id, kind, values.tag)
+        return current
+
+    @staticmethod
+    def _write_version_label(
+        connection: sqlite3.Connection,
+        resource_type: str,
+        resource_id: str,
+        kind: str,
+        values: VersionLabelValues,
+        current: dict | None,
+    ) -> None:
+        revision = current["revision"] if current else 0
+        if revision >= 2**63 - 1:
+            raise _error("The version label revision limit was reached.", "REVISION_LIMIT")
+        now = _now()
+        connection.execute(
+            "INSERT INTO version_labels VALUES (?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(resource_type,resource_id) DO UPDATE SET "
+            "tag=excluded.tag,normalized_tag=excluded.normalized_tag,note=excluded.note,"
+            "revision=excluded.revision,updated_at=excluded.updated_at",
+            (
+                resource_type,
+                resource_id,
+                kind,
+                values.tag,
+                values.tag.casefold() or None,
+                values.note,
+                revision + 1,
+                current["createdAt"] if current else now,
+                now,
+            ),
+        )
+
+    def _apply_publication_label(
+        self,
+        connection: sqlite3.Connection,
+        resource_type: str,
+        resource_id: str,
+        kind: str,
+        values: VersionLabelValues | None,
+    ) -> None:
+        current = self._check_publication_label(
+            connection, resource_type, resource_id, kind, values
+        )
+        if values is not None and not (current and (current["tag"] or current["note"])):
+            self._write_version_label(connection, resource_type, resource_id, kind, values, current)
+            self._checkpoint("publication_label_written")
+
+    def _journal_label(
+        self, connection: sqlite3.Connection, operation_id: str
+    ) -> VersionLabelValues | None:
+        row = connection.execute(
+            "SELECT * FROM publication_labels WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            values = self._publication_label_values({"tag": row["tag"], "note": row["note"]})
+            if (
+                row["tag"] != values.tag
+                or row["note"] != values.note
+                or row["normalized_tag"] != values.tag.casefold()
+            ):
+                raise ValueError
+            return values
+        except (StorageError, ValueError) as error:
+            raise _error("The publication label journal is invalid.", "STORAGE_CORRUPT") from error
+
+    def set_version_label(
+        self,
+        resource_type: str,
+        resource_id: str,
+        *,
+        tag: str,
+        note: str = "",
+        expected_revision: int,
+    ) -> dict:
+        """Edit only presentation metadata; version IDs and scientific inputs remain immutable.
+
+        Revision zero creates the first label. Empty tags release their uniqueness claim,
+        retaining a revision tombstone so another editor cannot overwrite a cleared label.
+        """
+        try:
+            values = SetVersionLabelRequest.model_validate(
+                {
+                    "tag": tag,
+                    "note": note,
+                    "expectedRevision": expected_revision,
+                }
+            )
+        except ValidationError as error:
+            raise _error(
+                "Supply a version tag of at most 80 characters, a note of at most "
+                "2000 characters, and the current label revision.",
+                "INVALID_VERSION_LABEL",
+                422,
+            ) from error
+        with writer_lock(self.folder):
+            self._initialize_locked()
+            with self._connection() as connection, self._transaction(connection):
+                kind, _document = self._version_target(connection, resource_type, resource_id)
+                current = self._version_label(connection, resource_type, resource_id, kind)
+                revision = current["revision"] if current else 0
+                if revision != values.expectedRevision:
+                    raise _error(
+                        "The version label changed. Reload it before saving your edits.",
+                        "REVISION_CONFLICT",
+                    )
+                self._check_version_tag(connection, resource_type, resource_id, kind, values.tag)
+                self._write_version_label(
+                    connection, resource_type, resource_id, kind, values, current
+                )
+                self._checkpoint("version_label_before_commit")
+                result = self._version_label(connection, resource_type, resource_id, kind)
+            self._checkpoint("version_label_committed")
+            return result
+
     def _configuration(self, connection: sqlite3.Connection, identity: str) -> dict:
         row = connection.execute("SELECT * FROM configurations WHERE id=?", (identity,)).fetchone()
         if row is None:
@@ -600,18 +894,39 @@ class ScientificStore:
     def get_configuration(self, identity: str) -> dict:
         self.initialize()
         with self._connection() as connection:
-            return self._configuration(connection, identity)
+            return self._with_version_label(
+                connection, "configuration", self._configuration(connection, identity)
+            )
 
     def list_configurations(self, kind: str | None = None) -> list[dict]:
         self.initialize()
         with self._connection() as connection:
             documents = [
-                self._configuration(connection, row[0])
+                self._with_version_label(
+                    connection, "configuration", self._configuration(connection, row[0])
+                )
                 for row in connection.execute(
                     "SELECT id FROM configurations ORDER BY id"
                 ).fetchall()
             ]
         return [item for item in documents if kind is None or item["manifest"].get("kind") == kind]
+
+    def configuration_publication(self, operation_id: str) -> dict | None:
+        """Return a completed publication for caller-side immutable intent replay."""
+        _label(operation_id, "operation ID")
+        self.initialize()
+        with self._connection() as connection:
+            operation = connection.execute(
+                "SELECT configuration_id FROM configuration_publications WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+            return (
+                self._with_version_label(
+                    connection, "configuration", self._configuration(connection, operation[0])
+                )
+                if operation
+                else None
+            )
 
     def publish_configuration(
         self,
@@ -620,17 +935,20 @@ class ScientificStore:
         expected_revision: int | None = None,
         manifest: dict,
         operation_id: str,
+        version_label: dict | None = None,
+        before_publish: Callable[[], None] | None = None,
     ) -> dict:
-        """Atomically pin a server-validated protocol or feature binding and freeze its draft.
+        """Atomically pin a server-validated scientific binding and freeze its draft.
 
         Memberships and feature headers are bounded JSON in SQLite, so one FULL-sync
         transaction commits the complete snapshot, retry receipt and draft transition.
         Large embedding arrays remain in the read-only source directory.
         """
         _label(operation_id, "operation ID")
+        label_values = self._publication_label_values(version_label)
         if draft_id is not None:
             _revision(expected_revision)
-        if manifest.get("kind") not in {"protocol", "feature"}:
+        if manifest.get("kind") not in {"protocol", "feature", "feature-bundle"}:
             raise _error("Unsupported scientific configuration kind.", "INVALID_CONFIGURATION", 422)
         content = _json(manifest, MAX_CONFIGURATION_BYTES)
         digest = hashlib.sha256(content).hexdigest()
@@ -641,6 +959,7 @@ class ScientificStore:
                     "draftId": draft_id,
                     "revision": expected_revision,
                     "contentHash": digest,
+                    **({"versionLabel": label_values.model_dump()} if label_values else {}),
                 }
             )
         ).hexdigest()
@@ -656,7 +975,13 @@ class ScientificStore:
                             "This operation ID belongs to a different request.",
                             "OPERATION_CONFLICT",
                         )
-                    return self._configuration(connection, prior["configuration_id"])
+                    return self._with_version_label(
+                        connection,
+                        "configuration",
+                        self._configuration(connection, prior["configuration_id"]),
+                    )
+                if before_publish is not None:
+                    before_publish()
                 self._get_dataset(connection, manifest.get("datasetId", ""))
                 if draft_id is not None:
                     draft = self._draft(
@@ -671,6 +996,9 @@ class ScientificStore:
                             "INVALID_DRAFT_KIND",
                             422,
                         )
+                self._check_publication_label(
+                    connection, "configuration", identity, manifest["kind"], label_values
+                )
                 document = {
                     "id": identity,
                     "projectId": self.project_id,
@@ -682,6 +1010,9 @@ class ScientificStore:
                     "INSERT INTO configurations VALUES (?,?,?) ON CONFLICT(id) DO NOTHING",
                     (identity, digest, _json(document, MAX_CONFIGURATION_BYTES).decode()),
                 )
+                self._apply_publication_label(
+                    connection, "configuration", identity, manifest["kind"], label_values
+                )
                 connection.execute(
                     "INSERT INTO configuration_publications VALUES (?,?,?)",
                     (operation_id, request_hash, identity),
@@ -692,7 +1023,9 @@ class ScientificStore:
                         (_now(), draft_id),
                     )
                 self._checkpoint("configuration_before_commit")
-                result = self._configuration(connection, identity)
+                result = self._with_version_label(
+                    connection, "configuration", self._configuration(connection, identity)
+                )
             self._checkpoint("configuration_committed")
             return result
 
@@ -835,13 +1168,17 @@ class ScientificStore:
     def get_dataset(self, identity: str) -> dict:
         self.initialize()
         with self._connection() as connection:
-            return self._get_dataset(connection, identity)
+            return self._with_version_label(
+                connection, "dataset", self._get_dataset(connection, identity)
+            )
 
     def list_datasets(self) -> list[dict]:
         self.initialize()
         with self._connection() as connection:
             return [
-                self._get_dataset(connection, row["id"])
+                self._with_version_label(
+                    connection, "dataset", self._get_dataset(connection, row["id"])
+                )
                 for row in connection.execute("SELECT id FROM datasets ORDER BY id").fetchall()
             ]
 
@@ -865,6 +1202,72 @@ class ScientificStore:
             raise _error("A dataset artifact failed checksum validation.", "ARTIFACT_CORRUPT")
         return content
 
+    @staticmethod
+    def _dataset_request_hash(
+        draft_id: str,
+        expected_revision: int,
+        manifest: dict,
+        metadata: dict,
+        label_values: VersionLabelValues | None,
+    ) -> str:
+        return hashlib.sha256(
+            _json(
+                {
+                    "draftId": draft_id,
+                    "revision": expected_revision,
+                    "manifest": manifest,
+                    "artifacts": metadata,
+                    **({"versionLabel": label_values.model_dump()} if label_values else {}),
+                }
+            )
+        ).hexdigest()
+
+    def replay_dataset_publication(
+        self,
+        operation_id: str,
+        *,
+        draft_id: str,
+        expected_revision: int,
+        preview_hash: str,
+        version_label: dict | None = None,
+    ) -> dict | None:
+        """Replay a completed import without reopening its original external source files."""
+        _revision(expected_revision)
+        _label(operation_id, "operation ID")
+        label_values = self._publication_label_values(version_label)
+        self.initialize()
+        with self._connection() as connection:
+            operation = connection.execute(
+                "SELECT * FROM publications WHERE id=?", (operation_id,)
+            ).fetchone()
+            if operation is None or operation["status"] != "published":
+                return None
+            document = self._get_dataset(connection, operation["dataset_id"])
+            request_hash = self._dataset_request_hash(
+                draft_id,
+                expected_revision,
+                document["manifest"],
+                document["artifacts"],
+                label_values,
+            )
+            if (
+                operation["draft_id"] != draft_id
+                or operation["expected_revision"] != expected_revision
+                or document["manifest"].get("previewHash") != preview_hash
+                or operation["request_hash"] != request_hash
+            ):
+                raise _error(
+                    "The publication operation was used with different inputs or a "
+                    "different version tag or commit note.",
+                    "OPERATION_CONFLICT",
+                )
+            draft = self._draft(
+                connection.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
+            )
+            if draft["status"] != "frozen" or draft["revision"] != expected_revision + 1:
+                raise _error("The publication draft is inconsistent.", "STORAGE_CORRUPT")
+            return self._with_version_label(connection, "dataset", document)
+
     def publish_dataset(
         self,
         draft_id: str,
@@ -873,22 +1276,17 @@ class ScientificStore:
         manifest: dict,
         artifacts: dict[str, bytes],
         operation_id: str,
+        version_label: dict | None = None,
     ) -> dict:
         _revision(expected_revision)
         _label(operation_id, "operation ID")
+        label_values = self._publication_label_values(version_label)
         manifest = _load_json(_json(manifest))
         metadata = _artifact_metadata(artifacts)
         content_hash = _hash_content(manifest, metadata)
-        request_hash = hashlib.sha256(
-            _json(
-                {
-                    "draftId": draft_id,
-                    "revision": expected_revision,
-                    "manifest": manifest,
-                    "artifacts": metadata,
-                }
-            )
-        ).hexdigest()
+        request_hash = self._dataset_request_hash(
+            draft_id, expected_revision, manifest, metadata, label_values
+        )
         with writer_lock(self.folder):
             self._initialize_locked()
             with self._connection() as connection, self._transaction(connection):
@@ -902,7 +1300,11 @@ class ScientificStore:
                             "OPERATION_CONFLICT",
                         )
                     if previous["status"] == "published":
-                        return self._get_dataset(connection, previous["dataset_id"], checksums=True)
+                        return self._with_version_label(
+                            connection,
+                            "dataset",
+                            self._get_dataset(connection, previous["dataset_id"], checksums=True),
+                        )
                 draft = self._draft(
                     connection.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
                 )
@@ -944,6 +1346,9 @@ class ScientificStore:
                     document = self._get_dataset(connection, document["id"], checksums=True)
                 elif previous is not None:
                     document = self._dataset_document(previous["document"])
+                self._check_publication_label(
+                    connection, "dataset", document["id"], "dataset", label_values
+                )
                 self._disk_manifest(document)  # Bound the complete envelope before journaling.
                 stage_name = f"operation-{uuid4().hex}"
                 if previous is None:
@@ -963,6 +1368,16 @@ class ScientificStore:
                             now,
                         ),
                     )
+                    if label_values is not None:
+                        connection.execute(
+                            "INSERT INTO publication_labels VALUES (?,?,?,?)",
+                            (
+                                operation_id,
+                                label_values.tag,
+                                label_values.tag.casefold(),
+                                label_values.note,
+                            ),
+                        )
                 else:
                     connection.execute(
                         "UPDATE publications SET stage_name=?,status='preparing',error=NULL,updated_at=? WHERE id=?",
@@ -975,7 +1390,8 @@ class ScientificStore:
             self._checkpoint("journal_committed")
             if existing:
                 self._finish_locked(operation_id, document)
-                return document
+                with self._connection() as connection:
+                    return self._with_version_label(connection, "dataset", document)
             stage = self.folder / ".staging" / stage_name
             ensure_managed_directory(stage)
             try:
@@ -992,7 +1408,8 @@ class ScientificStore:
                 self._checkpoint("directory_published")
                 self._finish_locked(operation_id, document)
                 self._checkpoint("database_committed")
-                return document
+                with self._connection() as connection:
+                    return self._with_version_label(connection, "dataset", document)
             except OSError as error:
                 raise _error(
                     "Dataset publication was interrupted; reopen to recover.",
@@ -1041,6 +1458,15 @@ class ScientificStore:
                 ).fetchone()
             )
             self._editable(draft, operation["expected_revision"])
+            label_values = self._journal_label(connection, operation_id)
+            if operation["request_hash"] != self._dataset_request_hash(
+                operation["draft_id"],
+                operation["expected_revision"],
+                document["manifest"],
+                document["artifacts"],
+                label_values,
+            ):
+                raise _error("The publication label journal is inconsistent.", "STORAGE_CORRUPT")
             connection.execute(
                 "INSERT INTO datasets VALUES (?,?,?) ON CONFLICT(id) DO NOTHING",
                 (
@@ -1048,6 +1474,9 @@ class ScientificStore:
                     document["contentHash"],
                     _json(document).decode(),
                 ),
+            )
+            self._apply_publication_label(
+                connection, "dataset", document["id"], "dataset", label_values
             )
             connection.execute(
                 "UPDATE drafts SET status='frozen',revision=revision+1,updated_at=? WHERE id=?",
@@ -1105,6 +1534,8 @@ class ScientificStore:
                     "PUBLICATION_CONFLICT",
                     "REVISION_CONFLICT",
                     "DRAFT_FROZEN",
+                    "VERSION_TAG_CONFLICT",
+                    "VERSION_LABEL_MISMATCH",
                 }:
                     # Complete publications remain recoverable if synchronization
                     # or database access is temporarily unavailable.

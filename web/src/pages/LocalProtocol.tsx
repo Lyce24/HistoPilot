@@ -2,8 +2,16 @@ import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import { scientific } from '../api/scientific';
+import { packing } from '../api/packing';
 import { resetImportedForDataset, validationFractionDefault } from '../lib/split';
 import { sameJSON } from '../lib/json';
+import {
+  configurationVersionLabel,
+  datasetVersionLabel,
+  versionLabelText,
+} from '../lib/versionLabels';
+import VersionLabelEditor from '../components/VersionLabelEditor';
+import FreezeVersionDialog from '../components/FreezeVersionDialog';
 import { SplitStrategy, newSplit, strategyNames } from '../components/SplitStrategy';
 import { SplitPools } from '../components/SplitPools';
 import { inferTargetSettings, preservePositiveClass } from '../lib/protocol';
@@ -14,6 +22,7 @@ import type {
   ProtocolPreview,
   ProtocolSpec,
   ScientificDraft,
+  VersionLabelInput,
 } from '../api/scientific';
 import {
   Badge,
@@ -44,6 +53,8 @@ import {
   useDrafts,
   useRefreshScientific,
 } from '../components/ScientificUI';
+import './protocol-workflow.css';
+import { scientificReviewInvalidated } from '../lib/scientificReview';
 
 const initialSpec = (workspace: Workspace): ProtocolSpec => ({
   datasetId: workspace.dataset.id,
@@ -62,6 +73,7 @@ const initialSpec = (workspace: Workspace): ProtocolSpec => ({
   split: newSplit([workspace.project.config.seed ?? 42], workspace.project.config.folds ?? 5),
   constraints: { minPatientsPerClass: 1, minPatientsPerPartition: 1 },
   featureSetId: null,
+  featurePackId: null,
 });
 export default function LocalProtocol({ workspace: w }: { workspace: Workspace }) {
   const project = w.project.id;
@@ -73,6 +85,11 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
   const features = useConfigurations(project, 'feature');
   const refresh = useRefreshScientific(project);
   const [spec, setSpec] = useState<ProtocolSpec>(() => initialSpec(w));
+  const featurePacks = useQuery({
+    queryKey: ['feature-packs', project],
+    queryFn: () => packing.jobs(project),
+  });
+  const legacyPack = featurePacks.data?.artifacts.find((artifact) => artifact.id === spec.featurePackId);
   const [name, setName] = useState(`${w.project.name} protocol`);
   const [draft, setDraft] = useState<ScientificDraft<ProtocolSpec> | null>(null);
   const [seedsText, setSeedsText] = useState(initialSpec(w).split.seeds.join(', '));
@@ -85,6 +102,10 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
   const [message, setMessage] = useState('');
   const [preflight, setPreflight] = useState<ExecutionPreflight | null>(null);
   const [showSaved, setShowSaved] = useState<string | null>(null);
+  const [freezeReview, setFreezeReview] = useState<{
+    draftId: string; revision: number; preview: ProtocolPreview; name: string; operationId: string;
+  } | null>(null);
+  const [freezeLabel, setFreezeLabel] = useState<VersionLabelInput>({ tag: '', note: '' });
   const dataset = datasets.data?.datasets.find((item) => item.id === spec.datasetId);
   const dictionary = dataset?.manifest.dictionary ?? [];
   const columns = dictionary.map((item) => item.key);
@@ -115,6 +136,13 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
   const dirty = !draft || draft.name !== name || !sameJSON(draft.payload.spec, spec);
   const frozen = draft?.status === 'frozen';
   const saved = configurations.data?.configurations.find((item) => item.id === showSaved);
+  const savedDataset = datasets.data?.datasets.find(
+    (item) => item.id === saved?.manifest.datasetId,
+  );
+  const savedFeatureId = (saved?.manifest.spec as ProtocolSpec | undefined)?.featureSetId;
+  const savedPackId = (saved?.manifest.spec as ProtocolSpec | undefined)?.featurePackId;
+  const savedPack = featurePacks.data?.artifacts.find((artifact) => artifact.id === savedPackId);
+  const savedFeature = features.data?.configurations.find((item) => item.id === savedFeatureId);
   function edit(update: Partial<ProtocolSpec>) {
     if (update.target || update.datasetId !== undefined) targetRequest.current += 1;
     setSpec((current) => ({ ...current, ...update }));
@@ -122,6 +150,11 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
     setMessage('');
     setError(null);
     setShowSaved(null);
+  }
+  function chooseFeature(featureSetId: string) {
+    if ((spec.featureSetId ?? '') !== featureSetId) {
+      edit({ featureSetId: featureSetId || null, featurePackId: null });
+    }
   }
   function target(update: Partial<ProtocolSpec['target']>) {
     edit({ target: { ...spec.target, ...update } });
@@ -176,6 +209,7 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
     }
   }
   function reset() {
+    setFreezeLabel({ tag: '', note: '' });
     targetRequest.current += 1;
     setSpec(initialSpec(w));
     setSeedsText(initialSpec(w).split.seeds.join(', '));
@@ -185,6 +219,22 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
     setShowSaved(null);
     setMessage('');
     setError(null);
+  }
+  async function loadDraft(id: string) {
+    const reloading = draft?.id === id;
+    targetRequest.current += 1;
+    setPreview(null);
+    setFreezeReview(null);
+    setPreflight(null);
+    const next = await scientific.draft<ProtocolSpec>(project, id);
+    setDraft(next);
+    if (!reloading) setFreezeLabel({ tag: '', note: '' });
+    setSpec(next.payload.spec);
+    setSeedsText(next.payload.spec.split.seeds.join(', '));
+    setName(next.name);
+    setShowSaved(null);
+    if (reloading) setMessage(`Reloaded saved draft revision ${next.revision}.`);
+    await drafts.refetch();
   }
   async function save() {
     if (draft && !dirty) return draft;
@@ -203,11 +253,11 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
     return next;
   }
   return (
-    <>
+    <div className="clinical-workspace protocol-workspace">
       <PageHeader
-        eyebrow="ANALYSIS DESIGN"
+        eyebrow="EXPERIMENT DESIGN"
         title="Target & split"
-        description="Choose what to predict, which slides to include, and how to divide them into training, validation and test sets."
+        description="Define your question. Choose your slides. Build an evaluation you can trust."
         actions={
           <button type="button" className="btn btn-primary" disabled={busy} onClick={reset}>
             <Icon name="plus" /> New protocol
@@ -215,41 +265,47 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
         }
       />
       <div className="science-toolbar">
-        <DraftSelect
-          drafts={(drafts.data?.drafts ?? []).filter(
-            (item) => item.payload.type === 'analysis-protocol',
-          )}
-          value={draft?.id ?? ''}
-          disabled={busy}
-          onChange={(id) => {
-            if (!id) {
-              reset();
-              return;
-            }
-            targetRequest.current += 1;
-            void run(async () => {
-              const next = await scientific.draft<ProtocolSpec>(project, id);
-              setDraft(next);
-              setSpec(next.payload.spec);
-              setSeedsText(next.payload.spec.split.seeds.join(', '));
-              setName(next.name);
-              setPreview(null);
-              setShowSaved(null);
-            });
-          }}
-        />
+        <div className="stack" style={{ minWidth: 0, gap: 10 }}>
+          <DraftSelect
+            drafts={(drafts.data?.drafts ?? []).filter(
+              (item) => item.payload.type === 'analysis-protocol',
+            )}
+            value={draft?.id ?? ''}
+            disabled={busy}
+            onChange={(id) => {
+              if (!id) {
+                reset();
+                return;
+              }
+              void run(() => loadDraft(id));
+            }}
+          />
+          {draft ? <div className="inline-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-small"
+              disabled={busy}
+              title="Reload the latest saved revision and discard unsaved local edits. Your version tag and note are kept."
+              onClick={() => void run(() => loadDraft(draft.id))}
+            >
+              <Icon name="reset" size={15} /> Reload saved draft
+            </button>
+          </div> : null}
+        </div>
         <label className="label">
           Frozen protocols
           <select
             className="field"
             value={showSaved ?? ''}
             disabled={busy}
-            onChange={(event) => setShowSaved(event.target.value || null)}
+            onChange={(event) => {
+              setShowSaved(event.target.value || null);
+            }}
           >
             <option value="">Choose a saved protocol</option>
             {configurations.data?.configurations.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.id.slice(-10)} · {new Date(item.createdAt).toLocaleString()}
+                {configurationVersionLabel(item)} · {new Date(item.createdAt).toLocaleString()}
               </option>
             ))}
           </select>
@@ -261,12 +317,97 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
         }
       />
       <SavedNotice>{message}</SavedNotice>
+      <nav className="protocol-route" aria-label="Protocol sections" hidden={Boolean(saved)}>
+        {[
+          {
+            id: 'protocol-target',
+            number: '01',
+            title: 'Prediction target',
+            detail: spec.target.field || 'What should the model predict?',
+            icon: 'evaluation',
+          },
+          {
+            id: 'protocol-cohort',
+            number: '02',
+            title: 'Study cohort',
+            detail: live.loading
+              ? 'Updating slide counts…'
+              : live.data?.cohort
+                ? `${live.data.cohort.totalSlides.toLocaleString()} eligible slides`
+                : 'Which slides belong in this study?',
+            icon: 'cohort',
+          },
+          {
+            id: 'protocol-split',
+            number: '03',
+            title: 'Evaluation design',
+            detail: strategyNames[spec.split.mode] || 'Training, validation and test',
+            icon: 'branch',
+          },
+          {
+            id: preview ? 'protocol-preflight' : 'protocol-review',
+            number: '04',
+            title: 'Review & save',
+            detail: preview
+              ? 'Review assignments and findings'
+              : 'Check the design before freezing',
+            icon: 'check',
+          },
+        ].map((section) => (
+          <button
+            type="button"
+            key={section.id}
+            className="protocol-route-card"
+            onClick={() => {
+              const destination = document.getElementById(section.id);
+              destination?.scrollIntoView({ block: 'start' });
+              destination?.focus({ preventScroll: true });
+            }}
+          >
+            <span className="protocol-route-number">{section.number}</span>
+            <span>
+              <strong>{section.title}</strong>
+              <small>{section.detail}</small>
+            </span>
+            <Icon name={section.icon} size={19} />
+          </button>
+        ))}
+      </nav>
       {saved ? (
         <Panel
-          title="Frozen protocol"
+          title={configurationVersionLabel(saved)}
           subtitle="Assignments and scientific settings are immutable. Copy this configuration to create another draft."
           actions={<Badge tone="purple">Frozen</Badge>}
         >
+          <VersionLabelEditor
+            key={saved.id}
+            project={project}
+            resourceType="configuration"
+            resource={saved}
+            tagLabel="Cohort / protocol tag"
+            description="Name this frozen cohort, prediction target and split together. Add a note explaining what changed in this version."
+          />
+          <ul className="detail-list" aria-label="Frozen protocol inputs">
+            <li>
+              <span>Dataset version</span>
+              <strong title={saved.manifest.datasetId}>
+                {savedDataset
+                  ? datasetVersionLabel(savedDataset)
+                  : versionLabelText({ id: saved.manifest.datasetId }, 'Dataset')}
+              </strong>
+            </li>
+            <li>
+              <span>Feature version</span>
+              <strong title={savedFeatureId ?? undefined}>
+                {savedFeature
+                  ? configurationVersionLabel(savedFeature)
+                  : savedFeatureId
+                    ? versionLabelText({ id: savedFeatureId }, 'Features')
+                    : 'Not selected'}
+              </strong>
+            </li>
+            {savedPackId ? <li><span>Legacy pack binding</span><strong title={savedPack?.outputPath ?? savedPackId}>{savedPack ? `${savedPack.outputDtype} pack · ${savedPack.outputPath}` : `Saved pack · ${savedPackId.slice(-12)}`}</strong></li> : null}
+          </ul>
           {saved.manifest.partitions ? (
             <>
               <PlanSummary summary={saved.manifest.summary as ProtocolPreview['summary']} />
@@ -278,12 +419,13 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
             className="btn btn-secondary"
             onClick={() => {
               targetRequest.current += 1;
+              setFreezeLabel({ tag: '', note: '' });
               setSpec(saved.manifest.spec as ProtocolSpec);
               setSeedsText((saved.manifest.spec as ProtocolSpec).split.seeds.join(', '));
               setDraft(null);
               setPreview(null);
               setShowSaved(null);
-              setName(`${w.project.name} protocol copy`);
+              setName(`${configurationVersionLabel(saved)} copy`);
             }}
           >
             Copy into a new draft
@@ -308,8 +450,8 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
               <Findings findings={preflight.findings} />
             ) : null}
             <p className="muted">
-              Rechecks the selected feature files and eligible-slide coverage. Full tensor
-              validation and model execution remain unavailable.
+              Rechecks the selected feature files and eligible-slide coverage. Validate full
+              feature contents and freeze a bundle in PFM &amp; features. Model execution remains unavailable.
             </p>
           </div>
           <details>
@@ -318,6 +460,7 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
           </details>
         </Panel>
       ) : null}
+      <div className="protocol-editor" hidden={Boolean(saved)}>
       {!datasets.data?.datasets.length && !datasets.isPending ? (
         <Panel title="Start with a frozen dataset">
           <EmptyState
@@ -346,917 +489,964 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
         </div>
       ) : null}
       <fieldset className="science-fieldset" disabled={busy || frozen}>
-        <Panel
-          title="1. Dataset and target"
-          subtitle="Original attributes stay intact. The label map defines their meaning for this experiment."
-        >
-          <div className="stack">
-            <div className="science-grid-two">
-              <label className="label">
-                Protocol name
-                <input
-                  className="field"
-                  value={name}
-                  maxLength={120}
-                  onChange={(event) => {
-                    setName(event.target.value);
-                    setPreview(null);
-                    setMessage('');
-                  }}
+        <div id="protocol-target" className="protocol-section" tabIndex={-1}>
+          <Panel
+            title="1. What should the model predict?"
+            subtitle="Choose a dataset and target column. Review the classes suggested from your data."
+            actions={<Badge>Prediction target</Badge>}
+          >
+            <div className="stack">
+              <div className="science-grid-two">
+                <label className="label">
+                  Protocol name
+                  <input
+                    className="field"
+                    value={name}
+                    maxLength={120}
+                    onChange={(event) => {
+                      setName(event.target.value);
+                      setPreview(null);
+                      setMessage('');
+                    }}
+                  />
+                </label>
+                <DatasetSelect
+                  versions={datasets.data?.datasets ?? []}
+                  value={spec.datasetId}
+                  onChange={(datasetId) =>
+                    edit({
+                      datasetId,
+                      featureSetId: null,
+                      featurePackId: null,
+                      target: { ...spec.target, field: '', ...inferTargetSettings([]) },
+                      predictors: [],
+                      eligibility: [],
+                      split: {
+                        ...spec.split,
+                        pools: spec.split.version === 3 ? newSplit().pools : undefined,
+                        rules: { train: [], val: [], test: [] },
+                        imported: resetImportedForDataset(spec.split),
+                        domainField: undefined,
+                        heldOutDomains: [],
+                      },
+                    })
+                  }
                 />
-              </label>
-              <DatasetSelect
-                versions={datasets.data?.datasets ?? []}
-                value={spec.datasetId}
-                onChange={(datasetId) =>
-                  edit({
-                    datasetId,
-                    featureSetId: null,
-                    target: { ...spec.target, field: '', ...inferTargetSettings([]) },
-                    predictors: [],
-                    eligibility: [],
-                    split: {
-                      ...spec.split,
-                      pools: spec.split.version === 3 ? newSplit().pools : undefined,
-                      rules: { train: [], val: [], test: [] },
-                      imported: resetImportedForDataset(spec.split),
-                      domainField: undefined,
-                      heldOutDomains: [],
-                    },
-                  })
-                }
-              />
-            </div>
-            {dataset?.manifest.summary?.unlinkedSlideCount ? (
-              <div className="callout callout-warning">
-                <strong>
-                  {dataset.manifest.summary.unlinkedSlideCount} slides have unresolved
-                  Patient_ID.
-                </strong>{' '}
-                Revise this dataset to supply a patient mapping or explicitly confirm Slide ID
-                fallback. Fallback creates one group per unresolved slide; it cannot establish
-                which slides belong to the same patient.
               </div>
-            ) : null}
-            <div className="science-grid-two">
-              <label className="label">
-                Target attribute
-                <select
-                  className="field"
-                  value={spec.target.field}
-                  onChange={(event) => void chooseTarget(event.target.value)}
-                >
-                  <option value="">Choose a target</option>
-                  {columns.map((column) => (
-                    <option key={column}>{column}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="label">
-                Task
-                <select
-                  className="field"
-                  value={spec.target.task}
-                  onChange={(event) =>
+              {dataset?.manifest.summary?.unlinkedSlideCount ? (
+                <div className="callout callout-warning">
+                  <strong>
+                    {dataset.manifest.summary.unlinkedSlideCount} slides have unresolved
+                    Patient_ID.
+                  </strong>{' '}
+                  Revise this dataset to supply a patient mapping or explicitly confirm Slide ID
+                  fallback. Fallback creates one group per unresolved slide; it cannot establish
+                  which slides belong to the same patient.
+                </div>
+              ) : null}
+              <div className="science-grid-two">
+                <label className="label">
+                  Target attribute
+                  <small>The column containing the answer you want to predict.</small>
+                  <select
+                    className="field"
+                    value={spec.target.field}
+                    onChange={(event) => void chooseTarget(event.target.value)}
+                  >
+                    <option value="">Choose a target</option>
+                    {columns.map((column) => (
+                      <option key={column}>{column}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="label">
+                  Task
+                  <select
+                    className="field"
+                    value={spec.target.task}
+                    onChange={(event) =>
+                      target({
+                        task: event.target.value as ProtocolSpec['target']['task'],
+                        positiveClass:
+                          event.target.value === 'binary_classification'
+                            ? preservePositiveClass(
+                                spec.target.positiveClass,
+                                spec.target.classes,
+                              )
+                            : undefined,
+                      })
+                    }
+                  >
+                    <option value="">Choose a task</option>
+                    <option value="binary_classification">Binary classification</option>
+                    <option value="multiclass_classification">Multiclass classification</option>
+                  </select>
+                </label>
+                <label className="label">
+                  Label unit
+                  <select
+                    className="field"
+                    value={spec.target.unit}
+                    onChange={(event) =>
+                      target({ unit: event.target.value as 'patient' | 'slide' })
+                    }
+                  >
+                    <option value="patient">
+                      Patient — consistent label across their slides
+                    </option>
+                    <option value="slide">Slide / case — keep known patients together</option>
+                  </select>
+                </label>
+                <label className="label">
+                  Class names, separated by |
+                  <input
+                    className="field"
+                    value={spec.target.classes.join(' | ')}
+                    onChange={(event) =>
+                      target({
+                        classes:
+                          event.target.value === ''
+                            ? []
+                            : event.target.value.split('|').map((value) => value.trim()),
+                        positiveClass: preservePositiveClass(
+                          spec.target.positiveClass,
+                          event.target.value.split('|').map((value) => value.trim()),
+                        ),
+                      })
+                    }
+                    placeholder="Filled from the selected target"
+                  />
+                </label>
+                <label className="label">
+                  Positive class
+                  <select
+                    className="field"
+                    value={
+                      spec.target.task === 'binary_classification'
+                        ? (spec.target.positiveClass ?? '')
+                        : ''
+                    }
+                    disabled={spec.target.task !== 'binary_classification'}
+                    onChange={(event) =>
+                      target({ positiveClass: event.target.value || undefined })
+                    }
+                  >
+                    <option value="">
+                      {spec.target.task === 'multiclass_classification'
+                        ? 'Not used for multiclass'
+                        : 'Choose positive class'}
+                    </option>
+                    {spec.target.task === 'binary_classification'
+                      ? spec.target.classes.map((value, index) => (
+                          <option key={index}>{value}</option>
+                        ))
+                      : null}
+                  </select>
+                  <small>Choose explicitly for binary tasks; source value order does not determine the positive outcome.</small>
+                </label>
+              </div>
+              {spec.target.field ? (
+                <div className="stack">
+                  <FieldProfile {...fieldContext} field={spec.target.field} />
+                  {labelValues.isPending ? (
+                    <p className="protocol-live-status" role="status">
+                      Reading target values…
+                    </p>
+                  ) : labelValues.data ? (
+                    <DistributionBars
+                      values={labelValues.data.valueCounts}
+                      caption={`${spec.target.field} · source values across all dataset slides`}
+                      distinctCount={
+                        labelValues.data.valuesTruncated
+                          ? undefined
+                          : labelValues.data.valueCounts.length
+                      }
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="science-subheading">
+                <h3>Match source values to classes</h3>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-small"
+                  disabled={!rawValues.length || labelValues.data?.valuesTruncated}
+                  onClick={() =>
                     target({
-                      task: event.target.value as ProtocolSpec['target']['task'],
+                      ...inferTargetSettings(rawValues),
                       positiveClass:
-                        event.target.value === 'binary_classification'
-                          ? (preservePositiveClass(
-                              spec.target.positiveClass,
-                              spec.target.classes,
-                            ) ?? spec.target.classes[0])
+                        rawValues.length === 2
+                          ? preservePositiveClass(spec.target.positiveClass, rawValues)
                           : undefined,
                     })
                   }
                 >
-                  <option value="">Choose a task</option>
-                  <option value="binary_classification">Binary classification</option>
-                  <option value="multiclass_classification">Multiclass classification</option>
-                </select>
-              </label>
-              <label className="label">
-                Label unit
-                <select
-                  className="field"
-                  value={spec.target.unit}
-                  onChange={(event) =>
-                    target({ unit: event.target.value as 'patient' | 'slide' })
-                  }
-                >
-                  <option value="patient">
-                    Patient — consistent label across their slides
-                  </option>
-                  <option value="slide">Slide / case — keep known patients together</option>
-                </select>
-              </label>
-              <label className="label">
-                Class names, separated by |
-                <input
-                  className="field"
-                  value={spec.target.classes.join(' | ')}
-                  onChange={(event) =>
-                    target({
-                      classes:
-                        event.target.value === ''
-                          ? []
-                          : event.target.value.split('|').map((value) => value.trim()),
-                      positiveClass: preservePositiveClass(
-                        spec.target.positiveClass,
-                        event.target.value.split('|').map((value) => value.trim()),
-                      ),
-                    })
-                  }
-                  placeholder="Filled from the selected target"
-                />
-              </label>
-              <label className="label">
-                Positive class
-                <select
-                  className="field"
-                  value={
-                    spec.target.task === 'binary_classification'
-                      ? (spec.target.positiveClass ?? '')
-                      : ''
-                  }
-                  disabled={spec.target.task !== 'binary_classification'}
-                  onChange={(event) =>
-                    target({ positiveClass: event.target.value || undefined })
-                  }
-                >
-                  <option value="">
-                    {spec.target.task === 'multiclass_classification'
-                      ? 'Not used for multiclass'
-                      : 'Choose positive class'}
-                  </option>
-                  {spec.target.task === 'binary_classification'
-                    ? spec.target.classes.map((value, index) => (
-                        <option key={index}>{value}</option>
-                      ))
-                    : null}
-                </select>
-              </label>
-            </div>
-            {spec.target.field ? (
-              <div className="stack">
-                <FieldProfile {...fieldContext} field={spec.target.field} />
-                {labelValues.isPending ? (
-                  <p className="protocol-live-status" role="status">
-                    Reading target values…
-                  </p>
-                ) : labelValues.data ? (
-                  <DistributionBars
-                    values={labelValues.data.valueCounts}
-                    caption={`${spec.target.field} · source values across all dataset slides`}
-                    distinctCount={
-                      labelValues.data.valuesTruncated
-                        ? undefined
-                        : labelValues.data.valueCounts.length
-                    }
-                  />
-                ) : null}
+                  Use observed source values
+                </button>
               </div>
-            ) : null}
-            <div className="science-subheading">
-              <h3>Explicit label mapping</h3>
-              <button
-                type="button"
-                className="btn btn-secondary btn-small"
-                disabled={!rawValues.length || labelValues.data?.valuesTruncated}
-                onClick={() =>
-                  target({
-                    ...inferTargetSettings(rawValues),
-                    positiveClass:
-                      rawValues.length === 2
-                        ? (preservePositiveClass(spec.target.positiveClass, rawValues) ??
-                          rawValues[0])
-                        : undefined,
-                  })
-                }
-              >
-                Use observed source values
-              </button>
-            </div>
-            <p className="muted">
-              Selecting a target fills the task, class names and label mapping from its source
-              values. For binary classification, check the suggested positive class. You can
-              edit these settings before previewing.
-            </p>
-            <ErrorNotice error={labelValues.error} />
-            {labelValues.data?.valuesTruncated ? (
-              <p className="callout callout-warning">
-                This field has more than 200 distinct source values. Choose a categorical target
-                or enter the task, classes and label mapping yourself.
+              <p className="muted">
+                Classes are filled from the source values. Choose the positive class for a binary
+                task, and edit any mapping below. Original dataset values stay unchanged.
               </p>
-            ) : null}
-            {spec.target.field &&
-            labelValues.data &&
-            !labelValues.data.valuesTruncated &&
-            rawValues.length < 2 ? (
-              <p className="callout callout-warning">
-                {rawValues.length
-                  ? 'This target has only one non-missing value.'
-                  : 'This target has no non-missing values.'}{' '}
-                Choose a target with at least two classes for classification.
-              </p>
-            ) : null}
-            <div className="science-label-map">
-              {Object.entries(spec.target.labels).map(([raw, mapped], index) => (
-                <div className="science-label-row" key={index}>
-                  <label className="label">
-                    Source value
-                    <input
-                      className="field"
-                      value={raw}
-                      onChange={(event) =>
+              <ErrorNotice error={labelValues.error} />
+              {labelValues.data?.valuesTruncated ? (
+                <p className="callout callout-warning">
+                  This field has more than 200 distinct source values. Choose a categorical
+                  target or enter the task, classes and label mapping yourself.
+                </p>
+              ) : null}
+              {spec.target.field &&
+              labelValues.data &&
+              !labelValues.data.valuesTruncated &&
+              rawValues.length < 2 ? (
+                <p className="callout callout-warning">
+                  {rawValues.length
+                    ? 'This target has only one non-missing value.'
+                    : 'This target has no non-missing values.'}{' '}
+                  Choose a target with at least two classes for classification.
+                </p>
+              ) : null}
+              <div className="science-label-map">
+                {Object.entries(spec.target.labels).map(([raw, mapped], index) => (
+                  <div className="science-label-row" key={index}>
+                    <label className="label">
+                      Source value
+                      <input
+                        className="field"
+                        value={raw}
+                        onChange={(event) =>
+                          target({
+                            labels: Object.fromEntries(
+                              Object.entries(spec.target.labels).map(([key, value]) => [
+                                key === raw ? event.target.value : key,
+                                value,
+                              ]),
+                            ),
+                          })
+                        }
+                      />
+                    </label>
+                    <Icon name="arrow" />
+                    <label className="label">
+                      Class
+                      <select
+                        className="field"
+                        value={mapped}
+                        onChange={(event) =>
+                          target({
+                            labels: {
+                              ...spec.target.labels,
+                              [raw]: event.target.value,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">Choose class</option>
+                        {spec.target.classes.map((value, at) => (
+                          <option key={at}>{value}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`Remove mapping ${raw}`}
+                      onClick={() =>
                         target({
                           labels: Object.fromEntries(
-                            Object.entries(spec.target.labels).map(([key, value]) => [
-                              key === raw ? event.target.value : key,
-                              value,
-                            ]),
+                            Object.entries(spec.target.labels).filter(([key]) => key !== raw),
                           ),
                         })
                       }
-                    />
-                  </label>
-                  <Icon name="arrow" />
-                  <label className="label">
-                    Class
-                    <select
-                      className="field"
-                      value={mapped}
-                      onChange={(event) =>
-                        target({
-                          labels: {
-                            ...spec.target.labels,
-                            [raw]: event.target.value,
-                          },
-                        })
-                      }
                     >
-                      <option value="">Choose class</option>
-                      {spec.target.classes.map((value, at) => (
-                        <option key={at}>{value}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    aria-label={`Remove mapping ${raw}`}
-                    onClick={() =>
+                      <Icon name="close" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-small science-fit"
+                onClick={() => {
+                  const raw =
+                    rawValues.find((value) => !(value in spec.target.labels)) ??
+                    `value_${Object.keys(spec.target.labels).length + 1}`;
+                  target({
+                    labels: {
+                      ...spec.target.labels,
+                      [raw]: spec.target.classes[0] ?? '',
+                    },
+                  });
+                }}
+              >
+                <Icon name="plus" size={15} /> Add label mapping
+              </button>
+              <div className="science-grid-two">
+                <label className="label">
+                  Missing target values
+                  <select
+                    className="field"
+                    value={spec.target.missing}
+                    onChange={(event) =>
                       target({
-                        labels: Object.fromEntries(
-                          Object.entries(spec.target.labels).filter(([key]) => key !== raw),
-                        ),
+                        missing: event.target.value as 'block' | 'exclude',
                       })
                     }
                   >
-                    <Icon name="close" />
-                  </button>
-                </div>
-              ))}
+                    <option value="block">Block until resolved</option>
+                    <option value="exclude">Exclude and record the reason</option>
+                  </select>
+                </label>
+                <label className="label">
+                  Unmapped target values
+                  <select
+                    className="field"
+                    value={spec.target.unmapped}
+                    onChange={(event) =>
+                      target({
+                        unmapped: event.target.value as 'block' | 'exclude',
+                      })
+                    }
+                  >
+                    <option value="block">Block until resolved</option>
+                    <option value="exclude">Exclude and record the reason</option>
+                  </select>
+                </label>
+              </div>
             </div>
-            <button
-              type="button"
-              className="btn btn-secondary btn-small science-fit"
-              onClick={() => {
-                const raw =
-                  rawValues.find((value) => !(value in spec.target.labels)) ??
-                  `value_${Object.keys(spec.target.labels).length + 1}`;
-                target({
-                  labels: {
-                    ...spec.target.labels,
-                    [raw]: spec.target.classes[0] ?? '',
-                  },
-                });
-              }}
-            >
-              <Icon name="plus" size={15} /> Add label mapping
-            </button>
-            <div className="science-grid-two">
-              <label className="label">
-                Missing target values
-                <select
-                  className="field"
-                  value={spec.target.missing}
-                  onChange={(event) =>
-                    target({
-                      missing: event.target.value as 'block' | 'exclude',
-                    })
-                  }
-                >
-                  <option value="block">Block until resolved</option>
-                  <option value="exclude">Exclude and record the reason</option>
-                </select>
-              </label>
-              <label className="label">
-                Unmapped target values
-                <select
-                  className="field"
-                  value={spec.target.unmapped}
-                  onChange={(event) =>
-                    target({
-                      unmapped: event.target.value as 'block' | 'exclude',
-                    })
-                  }
-                >
-                  <option value="block">Block until resolved</option>
-                  <option value="exclude">Exclude and record the reason</option>
-                </select>
-              </label>
-            </div>
-          </div>
-        </Panel>
-        <Panel
-          title="2. Choose slides and optional extra inputs"
-          subtitle="The cohort is the set of slides included in this experiment. Start with all slides, then add conditions only if you want a smaller group."
-        >
-          <div className="stack">
-            <ConditionEditor
-              title="Which slides should be included?"
-              description="Optional. Keep every condition true on the same slide. For example, Age is at least 18 includes only slides whose linked age meets that condition."
-              emptyMessage="All dataset slides are included. Add a condition only to narrow the cohort."
-              conditions={spec.eligibility}
-              columns={columns}
-              fieldContext={fieldContext}
-              onChange={(eligibility) => edit({ eligibility })}
-            />
-            {!spec.datasetId ? (
-              <p className="protocol-live-status">
-                Choose a frozen dataset to see available slides and patients.
-              </p>
-            ) : live.loading ? (
-              <p className="protocol-live-status" role="status">
-                Updating cohort and split counts…
-              </p>
-            ) : live.error ? (
-              <ErrorNotice error={live.error} />
-            ) : live.data?.cohort ? (
-              <div className="stack" aria-live="polite">
-                <CohortStats stats={live.data.cohort} total={live.data.dataset.totalSlides} />
-                <p className="muted">
-                  These counts apply eligibility conditions only. Missing labels, label mappings
-                  and final assignment constraints are checked in Preview & preflight.
+          </Panel>
+        </div>
+        <div id="protocol-cohort" className="protocol-section" tabIndex={-1}>
+          <Panel
+            title="2. Which slides belong in the study?"
+            subtitle="Start with all dataset slides. Add conditions only to narrow your study cohort."
+            actions={<Badge>All slides by default</Badge>}
+          >
+            <div className="stack">
+              <ConditionEditor
+                title="Which slides should be included?"
+                description="Optional. A slide is included when it matches every condition below."
+                emptyMessage="All dataset slides are included. Add a condition only to narrow the cohort."
+                conditions={spec.eligibility}
+                columns={columns}
+                fieldContext={fieldContext}
+                onChange={(eligibility) => edit({ eligibility })}
+              />
+              {!spec.datasetId ? (
+                <p className="protocol-live-status">
+                  Choose a frozen dataset to see available slides and patients.
                 </p>
-                {live.data.target ? (
-                  <DistributionBars
-                    values={live.data.target.values.map((item) => ({
-                      value: item.value,
-                      count: item.slides,
-                    }))}
-                    caption={`${live.data.target.field} · values in the eligible cohort (slides)`}
-                    distinctCount={live.data.target.distinctCount}
-                  />
-                ) : null}
-                <CohortSample
-                  stats={live.data.cohort}
-                  fields={[...spec.eligibility.map((item) => item.field), spec.target.field]}
-                />
-              </div>
-            ) : (
-              <p className="protocol-live-status">
-                Counts are unavailable until the eligibility conditions are valid.
-              </p>
-            )}
-            {live.data?.findings.length && live.data.selectionBasis !== 'pools' ? (
-              <Findings findings={live.data.findings} />
-            ) : null}
-            <details
-              className="protocol-extra-inputs"
-              open={spec.predictors.length > 0 ? true : undefined}
-            >
-              <summary>
-                Extra spreadsheet inputs (optional)
-                {spec.predictors.length
-                  ? ` · ${spec.predictors.length} selected`
-                  : ' · none selected'}
-              </summary>
-              <p className="muted">
-                Choose extra columns for the model, such as age. Leave empty to use slide image
-                features only.
-              </p>
-              <p className="muted">
-                These choices do not filter slides. Avoid IDs, split columns, and columns that
-                reveal the target.
-              </p>
-              <div className="science-checkbox-grid">
-                {dictionary.map((item) => (
-                  <label className="science-check" key={item.key}>
-                    <input
-                      type="checkbox"
-                      checked={spec.predictors.includes(item.key)}
-                      disabled={item.key === spec.target.field}
-                      onChange={(event) =>
-                        edit({
-                          predictors: event.target.checked
-                            ? [...spec.predictors, item.key]
-                            : spec.predictors.filter((value) => value !== item.key),
-                        })
-                      }
+              ) : live.loading ? (
+                <p className="protocol-live-status" role="status">
+                  Updating cohort and split counts…
+                </p>
+              ) : live.error ? (
+                <ErrorNotice error={live.error} />
+              ) : live.data?.cohort ? (
+                <div className="stack" aria-live="polite">
+                  <CohortStats stats={live.data.cohort} total={live.data.dataset.totalSlides} />
+                  <p className="muted">
+                    These counts apply eligibility conditions only. Missing labels, label
+                    mappings and final assignment constraints are checked in Preview &
+                    preflight.
+                  </p>
+                  {live.data.target ? (
+                    <DistributionBars
+                      values={live.data.target.values.map((item) => ({
+                        value: item.value,
+                        count: item.slides,
+                      }))}
+                      caption={`${live.data.target.field} · values in the eligible cohort (slides)`}
+                      distinctCount={live.data.target.distinctCount}
                     />
-                    <span>
-                      {item.key}
-                      <small>
-                        {item.owner === 'patient' ? 'Patient' : 'Slide / case'} ·{' '}
-                        {item.type.replaceAll('_', ' ')}
-                        {item.key === spec.target.field ? ' · prediction target' : ''}
-                      </small>
-                    </span>
-                  </label>
-                ))}
-              </div>
-              {spec.predictors.map((field) => (
-                <FieldProfile key={field} {...fieldContext} field={field} />
-              ))}
-            </details>
-            <label className="label">
-              Slide image features (optional for saving this protocol)
-              <select
-                className="field"
-                value={spec.featureSetId ?? ''}
-                onChange={(event) => edit({ featureSetId: event.target.value || null })}
+                  ) : null}
+                  <CohortSample
+                    stats={live.data.cohort}
+                    fields={[...spec.eligibility.map((item) => item.field), spec.target.field]}
+                  />
+                </div>
+              ) : (
+                <p className="protocol-live-status">
+                  Counts are unavailable until the eligibility conditions are valid.
+                </p>
+              )}
+              {live.data?.findings.length && live.data.selectionBasis !== 'pools' ? (
+                <Findings findings={live.data.findings} />
+              ) : null}
+              <details
+                className="protocol-extra-inputs"
+                open={spec.predictors.length > 0 ? true : undefined}
               >
-                <option value="">Choose later — protocol can be saved without features</option>
-                {features.data?.configurations
-                  .filter((item) => item.manifest.datasetId === spec.datasetId)
-                  .map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.id.slice(-10)} ·{' '}
-                      {(item.manifest.spec as { encoderId?: string }).encoderId ??
-                        'Existing HDF5 features'}
-                    </option>
+                <summary>
+                  Extra spreadsheet inputs (optional)
+                  {spec.predictors.length
+                    ? ` · ${spec.predictors.length} selected`
+                    : ' · none selected'}
+                </summary>
+                <p className="muted">
+                  Choose extra columns for the model, such as age. Leave empty to use slide
+                  image features only.
+                </p>
+                <p className="muted">
+                  These choices do not filter slides. Avoid IDs, split columns, and columns that
+                  reveal the target.
+                </p>
+                <div className="science-checkbox-grid">
+                  {dictionary.map((item) => (
+                    <label className="science-check" key={item.key}>
+                      <input
+                        type="checkbox"
+                        checked={spec.predictors.includes(item.key)}
+                        disabled={item.key === spec.target.field}
+                        onChange={(event) =>
+                          edit({
+                            predictors: event.target.checked
+                              ? [...spec.predictors, item.key]
+                              : spec.predictors.filter((value) => value !== item.key),
+                          })
+                        }
+                      />
+                      <span>
+                        {item.key}
+                        <small>
+                          {item.owner === 'patient' ? 'Patient' : 'Slide / case'} ·{' '}
+                          {item.type.replaceAll('_', ' ')}
+                          {item.key === spec.target.field ? ' · prediction target' : ''}
+                        </small>
+                      </span>
+                    </label>
                   ))}
-              </select>
-            </label>
-            <p className="muted">
-              Choose the image embeddings attached in PFM & features, such as UNI patch
-              features. This is separate from the optional spreadsheet inputs above.
-            </p>
-          </div>
-        </Panel>
-        <Panel
-          title="3. Assign training, validation and test sets"
-          subtitle="Known patients stay together. A matching slide selects all eligible slides in its group. Confirmed Slide ID fallbacks each form a separate group."
-        >
-          <div className="stack">
-            {(spec.split.version ?? 1) >= 2 ? (
-              <>
-                {spec.split.version === 2 ? (
+                </div>
+                {spec.predictors.map((field) => (
+                  <FieldProfile key={field} {...fieldContext} field={field} />
+                ))}
+              </details>
+              <label className="label">
+                Slide image features (optional for saving this protocol)
+                <select
+                  className="field"
+                  value={spec.featureSetId ?? ''}
+                  onChange={(event) => chooseFeature(event.target.value)}
+                >
+                  <option value="">
+                    Choose later — protocol can be saved without features
+                  </option>
+                  {features.data?.configurations
+                    .filter((item) => item.manifest.datasetId === spec.datasetId)
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {configurationVersionLabel(item)} ·{' '}
+                        {(item.manifest.spec as { encoderId?: string }).encoderId ??
+                          'Existing HDF5 features'}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <p className="muted">
+                Select image features attached in PFM & features. You can save the protocol and
+                choose these later.
+              </p>
+              <p className="muted">
+                Feature bundles and loading settings are selected in MIL experiments.
+              </p>
+              {spec.featurePackId ? <div className="callout">
+                <strong>Legacy pack binding</strong>
+                <p>This protocol already records a pack. Its binding is preserved when you save this draft and must be honored in MIL experiments.</p>
+                <code>{legacyPack?.outputPath ?? spec.featurePackId}</code>
+                {legacyPack?.findings?.length ? <Findings findings={legacyPack.findings} /> : null}
+                <ErrorNotice error={featurePacks.error} />
+              </div> : null}
+            </div>
+          </Panel>
+        </div>
+        <div id="protocol-split" className="protocol-section" tabIndex={-1}>
+          <Panel
+            title="3. How will the model be evaluated?"
+            subtitle="Reserve test data, choose the training pool, then configure the evaluation strategy."
+            actions={<Badge>Patient groups stay together</Badge>}
+          >
+            <div className="stack">
+              {(spec.split.version ?? 1) >= 2 ? (
+                <>
+                  {spec.split.version === 2 ? (
+                    <div className="callout">
+                      <p>
+                        This saved design keeps its existing assignments. Create a new draft to
+                        define separate training and final test sets.
+                      </p>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => {
+                          edit({
+                            split: {
+                              ...spec.split,
+                              version: 3,
+                              pools: newSplit().pools,
+                              rules: { train: [], val: [], test: [] },
+                              imported: undefined,
+                            },
+                          });
+                          setDraft(null);
+                        }}
+                      >
+                        Create a draft with training and test selections
+                      </button>
+                    </div>
+                  ) : null}
+                  <SplitStrategy
+                    split={spec.split}
+                    onChange={split}
+                    seedsText={seedsText}
+                    seedsValid={seedsValid}
+                    onSeedsChange={(text) => {
+                      setSeedsText(text);
+                      setPreview(null);
+                      setMessage('');
+                      if (text.split(',').every((value) => /^\d+$/.test(value.trim())))
+                        split({ seeds: text.split(',').map((value) => Number(value.trim())) });
+                    }}
+                    fieldContext={fieldContext}
+                    pools={
+                      spec.split.pools ? (
+                        <SplitPools
+                          pools={spec.split.pools}
+                          validationFraction={
+                            spec.split.validationFraction ??
+                            validationFractionDefault(spec.split.version)
+                          }
+                          onFractionChange={(validationFraction) =>
+                            split({ validationFraction })
+                          }
+                          onChange={(update, validationFraction) =>
+                            split({
+                              pools: { ...spec.split.pools!, ...update },
+                              ...(validationFraction === undefined
+                                ? {}
+                                : { validationFraction }),
+                            })
+                          }
+                          live={live}
+                          targetField={spec.target.field}
+                          imported={
+                            spec.split.pools.imported ? (
+                              <ImportedSplit
+                                spec={{
+                                  ...spec,
+                                  split: { ...spec.split, imported: spec.split.pools.imported },
+                                }}
+                                columns={columns}
+                                fieldContext={fieldContext}
+                                heldOutOnly
+                                onChange={(imported) =>
+                                  split({ pools: { ...spec.split.pools!, imported } })
+                                }
+                              />
+                            ) : null
+                          }
+                          renderConditions={(role) => (
+                            <ConditionEditor
+                              title={
+                                role === 'train'
+                                  ? 'Training set conditions (required)'
+                                  : role === 'test'
+                                    ? 'Test set conditions (required)'
+                                    : 'Fixed validation conditions (required)'
+                              }
+                              description={
+                                role === 'train'
+                                  ? 'Select the groups available for fitting and cross-validation.'
+                                  : role === 'test'
+                                    ? 'Reserve these groups for final evaluation.'
+                                    : 'Select separate groups for early stopping.'
+                              }
+                              emptyMessage="Add a condition to define this set."
+                              columns={columns}
+                              fieldContext={fieldContext}
+                              conditions={spec.split.pools!.rules[role]}
+                              onChange={(conditions) =>
+                                split({
+                                  pools: {
+                                    ...spec.split.pools!,
+                                    rules: { ...spec.split.pools!.rules, [role]: conditions },
+                                  },
+                                })
+                              }
+                            />
+                          )}
+                        />
+                      ) : null
+                    }
+                    imported={
+                      spec.split.imported ? (
+                        <ImportedSplit
+                          spec={spec}
+                          columns={columns}
+                          fieldContext={fieldContext}
+                          heldOutOnly
+                          onChange={(imported) => split({ imported })}
+                        />
+                      ) : null
+                    }
+                    rules={
+                      <>
+                        {(['test', 'val', 'train'] as const).map((role) => (
+                          <div className="stack" key={role}>
+                            <ConditionEditor
+                              title={`${role === 'val' ? 'Early-stop validation' : role === 'train' ? 'Training' : 'Test'} selection${role === 'test' ? '' : ' (optional)'}`}
+                              description={
+                                role === 'test'
+                                  ? 'Reserve groups for the reported test set.'
+                                  : role === 'val'
+                                    ? 'Optionally choose fixed groups for early stopping.'
+                                    : 'Optionally limit the training pool with conditions.'
+                              }
+                              emptyMessage={
+                                role === 'train'
+                                  ? 'Use every eligible group outside test and fixed validation. Early-stop validation is taken from this pool when no validation rules are set.'
+                                  : role === 'val'
+                                    ? 'Use the selected early-stop percentage of the remaining training pool.'
+                                    : 'Add a test rule to reserve the reported test set.'
+                              }
+                              columns={columns}
+                              fieldContext={fieldContext}
+                              conditions={spec.split.rules[role]}
+                              onChange={(conditions) =>
+                                split({ rules: { ...spec.split.rules, [role]: conditions } })
+                              }
+                            />
+                            {role === 'val' && !spec.split.rules.val.length ? (
+                              <p className="muted">
+                                The exact early-stop selection appears in Preview & preflight.
+                              </p>
+                            ) : live.loading ? (
+                              <p className="protocol-live-status" role="status">
+                                Updating selection…
+                              </p>
+                            ) : live.data?.partitions && live.data.cohort ? (
+                              <PartitionLive
+                                partition={live.data.partitions[role]}
+                                label={
+                                  role === 'train' && !spec.split.rules.val.length
+                                    ? 'training pool before early-stop validation'
+                                    : role === 'val'
+                                      ? 'early-stop validation'
+                                      : role
+                                }
+                                fields={[
+                                  ...spec.split.rules[role].map((item) => item.field),
+                                  spec.target.field,
+                                ]}
+                                total={live.data.cohort.totalSlides}
+                              />
+                            ) : (
+                              <p className="muted">
+                                Set counts are unavailable until the rules are valid.
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                        <p className="muted">
+                          All conditions must match on a slide; its whole group is selected.
+                          Overlapping selections block freezing.
+                        </p>
+                        {live.data?.unassigned?.totalSlides ? (
+                          <p className="callout callout-warning">
+                            {live.data.unassigned.totalSlides} eligible slides remain
+                            unassigned. Broaden the training rules or leave them empty.
+                          </p>
+                        ) : null}
+                      </>
+                    }
+                  />
+                </>
+              ) : (
+                <>
                   <div className="callout">
+                    <strong>Earlier split design</strong>
                     <p>
-                      This saved design keeps its existing assignments. Create a new draft to
-                      define separate training and final test sets.
+                      This saved protocol keeps its original split behavior. Its K-fold
+                      validation folds are not reported test folds.
                     </p>
                     <button
                       type="button"
                       className="btn btn-secondary"
                       onClick={() => {
-                        edit({
-                          split: {
-                            ...spec.split,
-                            version: 3,
-                            pools: newSplit().pools,
-                            rules: { train: [], val: [], test: [] },
-                            imported: undefined,
-                          },
-                        });
+                        edit({ split: newSplit(spec.split.seeds, spec.split.folds) });
                         setDraft(null);
+                        setMessage(
+                          'Created a new draft with K-fold test rotation and early-stop validation. Review the settings before freezing.',
+                        );
                       }}
                     >
-                      Create a draft with training and test selections
+                      Create a draft with the new strategies
                     </button>
                   </div>
-                ) : null}
-                <SplitStrategy
-                  split={spec.split}
-                  onChange={split}
-                  seedsText={seedsText}
-                  seedsValid={seedsValid}
-                  onSeedsChange={(text) => {
-                    setSeedsText(text);
-                    setPreview(null);
-                    setMessage('');
-                    if (text.split(',').every((value) => /^\d+$/.test(value.trim())))
-                      split({ seeds: text.split(',').map((value) => Number(value.trim())) });
-                  }}
-                  fieldContext={fieldContext}
-                  pools={
-                    spec.split.pools ? (
-                      <SplitPools
-                        pools={spec.split.pools}
-                        validationFraction={
-                          spec.split.validationFraction ??
-                          validationFractionDefault(spec.split.version)
-                        }
-                        onFractionChange={(validationFraction) => split({ validationFraction })}
-                        onChange={(update, validationFraction) =>
+                  <div className="science-grid-two">
+                    <label className="label">
+                      Split strategy
+                      <select
+                        className="field"
+                        value={spec.split.mode}
+                        onChange={(event) => {
+                          const mode = event.target.value as ProtocolSpec['split']['mode'];
+                          const seeds =
+                            mode === 'rules' ? [spec.split.seeds[0] ?? 42] : spec.split.seeds;
+                          if (mode === 'rules') setSeedsText(seeds.join(', '));
                           split({
-                            pools: { ...spec.split.pools!, ...update },
-                            ...(validationFraction === undefined ? {} : { validationFraction }),
-                          })
-                        }
-                        live={live}
-                        targetField={spec.target.field}
-                        imported={
-                          spec.split.pools.imported ? (
-                            <ImportedSplit
-                              spec={{
-                                ...spec,
-                                split: { ...spec.split, imported: spec.split.pools.imported },
-                              }}
-                              columns={columns}
-                              fieldContext={fieldContext}
-                              heldOutOnly
-                              onChange={(imported) =>
-                                split({ pools: { ...spec.split.pools!, imported } })
-                              }
-                            />
-                          ) : null
-                        }
-                        renderConditions={(role) => (
-                          <ConditionEditor
-                            title={
-                              role === 'train'
-                                ? 'Training set conditions (required)'
-                                : role === 'test'
-                                  ? 'Test set conditions (required)'
-                                  : 'Fixed validation conditions (required)'
-                            }
-                            description={
-                              role === 'train'
-                                ? 'Select the groups available for fitting and cross-validation.'
-                                : role === 'test'
-                                  ? 'Reserve these groups for final evaluation.'
-                                  : 'Select separate groups for early stopping.'
-                            }
-                            emptyMessage="Add a condition to define this set."
-                            columns={columns}
-                            fieldContext={fieldContext}
-                            conditions={spec.split.pools!.rules[role]}
-                            onChange={(conditions) =>
+                            mode,
+                            seeds,
+                            ratios: { train: 0.8, val: 0.2, test: 0 },
+                            imported:
+                              event.target.value === 'imported'
+                                ? {
+                                    partitionLabels: {},
+                                    foldLabels: {},
+                                    testFoldLabels: [],
+                                  }
+                                : undefined,
+                          });
+                        }}
+                      >
+                        <option value="rules">
+                          Choose sets with rules — train is the remainder
+                        </option>
+                        <option value="kfold">Generate reproducible K-fold assignments</option>
+                        <option value="holdout">
+                          Generate reproducible train / validation / test ratios
+                        </option>
+                        <option value="imported">Validate existing split columns</option>
+                      </select>
+                    </label>
+                    {spec.split.mode !== 'rules' ? (
+                      <label className="label">
+                        Seeds, separated by commas
+                        <input
+                          className="field"
+                          value={seedsText}
+                          onChange={(event) => {
+                            const text = event.target.value;
+                            setSeedsText(text);
+                            setPreview(null);
+                            setMessage('');
+                            if (text.split(',').every((value) => /^\d+$/.test(value.trim())))
                               split({
-                                pools: {
-                                  ...spec.split.pools!,
-                                  rules: { ...spec.split.pools!.rules, [role]: conditions },
+                                seeds: text.split(',').map((value) => Number(value.trim())),
+                              });
+                          }}
+                        />
+                      </label>
+                    ) : null}
+                    {['kfold', 'imported'].includes(spec.split.mode) ? (
+                      <label className="label">
+                        Number of folds
+                        <input
+                          className="field"
+                          type="number"
+                          min={2}
+                          max={10}
+                          value={spec.split.folds}
+                          onChange={(event) => split({ folds: Number(event.target.value) })}
+                        />
+                      </label>
+                    ) : null}
+                  </div>
+                  {spec.split.mode === 'rules' && spec.split.seeds.length > 1 ? (
+                    <p className="muted">
+                      This saved draft has multiple seeds. Rules determine the same assignments
+                      for every seed; seeds do not randomize this strategy.
+                    </p>
+                  ) : null}
+                  <div className="callout">
+                    {spec.split.mode === 'rules'
+                      ? 'Choose test slides first. Validation rules are optional. Leave training rules empty to use every eligible group outside test and validation for training. No validation set is created unless you select one.'
+                      : spec.split.mode === 'kfold'
+                        ? 'Fixed rules reserve groups first. The remaining groups are divided into training and validation for each fold using the listed seeds. Add a fixed test rule if you want a separate test set.'
+                        : spec.split.mode === 'holdout'
+                          ? 'Fixed rules reserve groups first. Ratios apply to the remaining groups and must add up to 1. Preview & preflight shows the final generated assignments.'
+                          : 'Existing partition and fold columns are checked against patient grouping. Map only the columns you use. Preview & preflight validates the final imported assignments.'}
+                  </div>
+                  {!seedsValid ? (
+                    <p className="callout callout-warning" role="alert">
+                      Enter one or more integer seeds from 0 to 4294967295, separated by commas.
+                    </p>
+                  ) : null}
+                  {spec.split.mode === 'holdout' ? (
+                    <div className="science-grid-three">
+                      {(['train', 'val', 'test'] as const).map((role) => (
+                        <label className="label" key={role}>
+                          {role === 'val'
+                            ? 'Validation'
+                            : role === 'train'
+                              ? 'Training'
+                              : 'Test'}{' '}
+                          ratio
+                          <input
+                            className="field"
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={spec.split.ratios[role]}
+                            onChange={(event) =>
+                              split({
+                                ratios: {
+                                  ...spec.split.ratios,
+                                  [role]: Number(event.target.value),
                                 },
                               })
                             }
                           />
-                        )}
-                      />
-                    ) : null
-                  }
-                  imported={
-                    spec.split.imported ? (
-                      <ImportedSplit
-                        spec={spec}
-                        columns={columns}
-                        fieldContext={fieldContext}
-                        heldOutOnly
-                        onChange={(imported) => split({ imported })}
-                      />
-                    ) : null
-                  }
-                  rules={
-                    <>
-                      {(['test', 'val', 'train'] as const).map((role) => (
-                        <div className="stack" key={role}>
-                          <ConditionEditor
-                            title={`${role === 'val' ? 'Early-stop validation' : role === 'train' ? 'Training' : 'Test'} selection${role === 'test' ? '' : ' (optional)'}`}
-                            description={
-                              role === 'test'
-                                ? 'Reserve groups for the reported test set.'
-                                : role === 'val'
-                                  ? 'Optionally choose fixed groups for early stopping.'
-                                  : 'Optionally limit the training pool with conditions.'
-                            }
-                            emptyMessage={
-                              role === 'train'
-                                ? 'Use every eligible group outside test and fixed validation. Early-stop validation is taken from this pool when no validation rules are set.'
-                                : role === 'val'
-                                  ? 'Use the selected early-stop percentage of the remaining training pool.'
-                                  : 'Add a test rule to reserve the reported test set.'
-                            }
-                            columns={columns}
-                            fieldContext={fieldContext}
-                            conditions={spec.split.rules[role]}
-                            onChange={(conditions) =>
-                              split({ rules: { ...spec.split.rules, [role]: conditions } })
-                            }
-                          />
-                          {role === 'val' && !spec.split.rules.val.length ? (
-                            <p className="muted">
-                              The exact early-stop selection appears in Preview & preflight.
-                            </p>
-                          ) : live.loading ? (
-                            <p className="protocol-live-status" role="status">
-                              Updating selection…
-                            </p>
-                          ) : live.data?.partitions && live.data.cohort ? (
-                            <PartitionLive
-                              partition={live.data.partitions[role]}
-                              label={
-                                role === 'train' && !spec.split.rules.val.length
-                                  ? 'training pool before early-stop validation'
-                                  : role === 'val'
-                                    ? 'early-stop validation'
-                                    : role
-                              }
-                              fields={[
-                                ...spec.split.rules[role].map((item) => item.field),
-                                spec.target.field,
-                              ]}
-                              total={live.data.cohort.totalSlides}
-                            />
-                          ) : (
-                            <p className="muted">
-                              Set counts are unavailable until the rules are valid.
-                            </p>
-                          )}
-                        </div>
+                        </label>
                       ))}
-                      <p className="muted">
-                        All conditions must match on a slide; its whole group is selected.
-                        Overlapping selections block freezing.
-                      </p>
-                      {live.data?.unassigned?.totalSlides ? (
-                        <p className="callout callout-warning">
-                          {live.data.unassigned.totalSlides} eligible slides remain unassigned.
-                          Broaden the training rules or leave them empty.
-                        </p>
-                      ) : null}
-                    </>
-                  }
-                />
-              </>
-            ) : (
-              <>
-                <div className="callout">
-                  <strong>Earlier split design</strong>
-                  <p>
-                    This saved protocol keeps its original split behavior. Its K-fold validation
-                    folds are not reported test folds.
-                  </p>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => {
-                      edit({ split: newSplit(spec.split.seeds, spec.split.folds) });
-                      setDraft(null);
-                      setMessage(
-                        'Created a new draft with K-fold test rotation and early-stop validation. Review the settings before freezing.',
-                      );
-                    }}
-                  >
-                    Create a draft with the new strategies
-                  </button>
-                </div>
-                <div className="science-grid-two">
-                  <label className="label">
-                    Split strategy
-                    <select
-                      className="field"
-                      value={spec.split.mode}
-                      onChange={(event) => {
-                        const mode = event.target.value as ProtocolSpec['split']['mode'];
-                        const seeds =
-                          mode === 'rules' ? [spec.split.seeds[0] ?? 42] : spec.split.seeds;
-                        if (mode === 'rules') setSeedsText(seeds.join(', '));
-                        split({
-                          mode,
-                          seeds,
-                          ratios: { train: 0.8, val: 0.2, test: 0 },
-                          imported:
-                            event.target.value === 'imported'
-                              ? {
-                                  partitionLabels: {},
-                                  foldLabels: {},
-                                  testFoldLabels: [],
-                                }
-                              : undefined,
-                        });
-                      }}
-                    >
-                      <option value="rules">
-                        Choose sets with rules — train is the remainder
-                      </option>
-                      <option value="kfold">Generate reproducible K-fold assignments</option>
-                      <option value="holdout">
-                        Generate reproducible train / validation / test ratios
-                      </option>
-                      <option value="imported">Validate existing split columns</option>
-                    </select>
-                  </label>
-                  {spec.split.mode !== 'rules' ? (
-                    <label className="label">
-                      Seeds, separated by commas
-                      <input
-                        className="field"
-                        value={seedsText}
-                        onChange={(event) => {
-                          const text = event.target.value;
-                          setSeedsText(text);
-                          setPreview(null);
-                          setMessage('');
-                          if (text.split(',').every((value) => /^\d+$/.test(value.trim())))
-                            split({
-                              seeds: text.split(',').map((value) => Number(value.trim())),
-                            });
-                        }}
-                      />
-                    </label>
+                    </div>
                   ) : null}
-                  {['kfold', 'imported'].includes(spec.split.mode) ? (
-                    <label className="label">
-                      Number of folds
-                      <input
-                        className="field"
-                        type="number"
-                        min={2}
-                        max={10}
-                        value={spec.split.folds}
-                        onChange={(event) => split({ folds: Number(event.target.value) })}
-                      />
-                    </label>
-                  ) : null}
-                </div>
-                {spec.split.mode === 'rules' && spec.split.seeds.length > 1 ? (
-                  <p className="muted">
-                    This saved draft has multiple seeds. Rules determine the same assignments
-                    for every seed; seeds do not randomize this strategy.
-                  </p>
-                ) : null}
-                <div className="callout">
-                  {spec.split.mode === 'rules'
-                    ? 'Choose test slides first. Validation rules are optional. Leave training rules empty to use every eligible group outside test and validation for training. No validation set is created unless you select one.'
-                    : spec.split.mode === 'kfold'
-                      ? 'Fixed rules reserve groups first. The remaining groups are divided into training and validation for each fold using the listed seeds. Add a fixed test rule if you want a separate test set.'
-                      : spec.split.mode === 'holdout'
-                        ? 'Fixed rules reserve groups first. Ratios apply to the remaining groups and must add up to 1. Preview & preflight shows the final generated assignments.'
-                        : 'Existing partition and fold columns are checked against patient grouping. Map only the columns you use. Preview & preflight validates the final imported assignments.'}
-                </div>
-                {!seedsValid ? (
-                  <p className="callout callout-warning" role="alert">
-                    Enter one or more integer seeds from 0 to 4294967295, separated by commas.
-                  </p>
-                ) : null}
-                {spec.split.mode === 'holdout' ? (
-                  <div className="science-grid-three">
-                    {(['train', 'val', 'test'] as const).map((role) => (
-                      <label className="label" key={role}>
-                        {role === 'val' ? 'Validation' : role === 'train' ? 'Training' : 'Test'}{' '}
-                        ratio
-                        <input
-                          className="field"
-                          type="number"
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          value={spec.split.ratios[role]}
-                          onChange={(event) =>
-                            split({
-                              ratios: {
-                                ...spec.split.ratios,
-                                [role]: Number(event.target.value),
-                              },
-                            })
-                          }
-                        />
-                      </label>
-                    ))}
-                  </div>
-                ) : null}
-                {spec.split.mode === 'imported' && spec.split.imported ? (
-                  <ImportedSplit
-                    spec={spec}
-                    columns={columns}
-                    fieldContext={fieldContext}
-                    onChange={(imported) => split({ imported })}
-                  />
-                ) : null}
-                {(['test', 'val', 'train'] as const).map((role) => (
-                  <div className="stack" key={role}>
-                    <ConditionEditor
-                      title={`${role === 'val' ? 'Validation' : role === 'train' ? 'Training' : 'Test'} selection${role === 'test' ? '' : ' (optional)'}`}
-                      description={
-                        role === 'test'
-                          ? 'Reserve slides for the final evaluation.'
-                          : role === 'val'
-                            ? 'Optionally reserve a separate set for choosing model settings.'
-                            : 'Optionally limit the training set with explicit conditions.'
-                      }
-                      emptyMessage={
-                        role === 'train' && spec.split.mode === 'rules'
-                          ? 'Every eligible group outside test and validation belongs to training.'
-                          : role === 'val' && spec.split.mode === 'rules'
-                            ? 'No validation set selected. This is optional.'
-                            : spec.split.mode === 'rules'
-                              ? 'No test set selected.'
-                              : 'No fixed groups selected. The split strategy controls generated or imported assignments.'
-                      }
+                  {spec.split.mode === 'imported' && spec.split.imported ? (
+                    <ImportedSplit
+                      spec={spec}
                       columns={columns}
                       fieldContext={fieldContext}
-                      conditions={spec.split.rules[role]}
-                      onChange={(conditions) =>
-                        split({
-                          rules: { ...spec.split.rules, [role]: conditions },
-                        })
-                      }
+                      onChange={(imported) => split({ imported })}
                     />
-                    {live.loading ? (
-                      <p className="protocol-live-status" role="status">
-                        Updating {role === 'val' ? 'validation' : role} selection…
-                      </p>
-                    ) : live.data?.partitions && live.data.cohort ? (
-                      <PartitionLive
-                        partition={live.data.partitions[role]}
-                        label={
-                          role === 'val' ? 'validation' : role === 'train' ? 'training' : 'test'
+                  ) : null}
+                  {(['test', 'val', 'train'] as const).map((role) => (
+                    <div className="stack" key={role}>
+                      <ConditionEditor
+                        title={`${role === 'val' ? 'Validation' : role === 'train' ? 'Training' : 'Test'} selection${role === 'test' ? '' : ' (optional)'}`}
+                        description={
+                          role === 'test'
+                            ? 'Reserve slides for the final evaluation.'
+                            : role === 'val'
+                              ? 'Optionally reserve a separate set for choosing model settings.'
+                              : 'Optionally limit the training set with explicit conditions.'
                         }
-                        fields={[
-                          ...spec.split.rules[role].map((item) => item.field),
-                          spec.target.field,
-                        ]}
-                        total={live.data.cohort.totalSlides}
+                        emptyMessage={
+                          role === 'train' && spec.split.mode === 'rules'
+                            ? 'Every eligible group outside test and validation belongs to training.'
+                            : role === 'val' && spec.split.mode === 'rules'
+                              ? 'No validation set selected. This is optional.'
+                              : spec.split.mode === 'rules'
+                                ? 'No test set selected.'
+                                : 'No fixed groups selected. The split strategy controls generated or imported assignments.'
+                        }
+                        columns={columns}
+                        fieldContext={fieldContext}
+                        conditions={spec.split.rules[role]}
+                        onChange={(conditions) =>
+                          split({
+                            rules: { ...spec.split.rules, [role]: conditions },
+                          })
+                        }
                       />
-                    ) : (
-                      <p className="protocol-live-status">
-                        Set counts are unavailable. Choose a dataset and resolve any rule
-                        findings above.
-                      </p>
-                    )}
-                  </div>
-                ))}
-                <p className="muted">
-                  Within a rule group, all conditions must match. A matching eligible slide
-                  reserves its whole group. Overlapping test, validation and training selections
-                  block freezing. Counts above are before target-label exclusions and final
-                  feasibility checks.
-                </p>
-                {live.data?.unassigned && live.data.unassigned.totalSlides > 0 ? (
-                  <p className="callout callout-warning">
-                    {live.data.unassigned.totalSlides} eligible slides remain outside the fixed
-                    sets.
-                    {spec.split.mode === 'rules'
-                      ? ' Broaden the training conditions or leave them empty to include the remainder.'
-                      : ' Their final roles are determined by the selected split strategy in Preview & preflight.'}
+                      {live.loading ? (
+                        <p className="protocol-live-status" role="status">
+                          Updating {role === 'val' ? 'validation' : role} selection…
+                        </p>
+                      ) : live.data?.partitions && live.data.cohort ? (
+                        <PartitionLive
+                          partition={live.data.partitions[role]}
+                          label={
+                            role === 'val'
+                              ? 'validation'
+                              : role === 'train'
+                                ? 'training'
+                                : 'test'
+                          }
+                          fields={[
+                            ...spec.split.rules[role].map((item) => item.field),
+                            spec.target.field,
+                          ]}
+                          total={live.data.cohort.totalSlides}
+                        />
+                      ) : (
+                        <p className="protocol-live-status">
+                          Set counts are unavailable. Choose a dataset and resolve any rule
+                          findings above.
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                  <p className="muted">
+                    Within a rule group, all conditions must match. A matching eligible slide
+                    reserves its whole group. Overlapping test, validation and training
+                    selections block freezing. Counts above are before target-label exclusions
+                    and final feasibility checks.
                   </p>
-                ) : null}
-              </>
-            )}
-            <div className="science-grid-two">
-              <label className="label">
-                Minimum groups per class in each set
-                <input
-                  className="field"
-                  type="number"
-                  min={1}
-                  value={spec.constraints.minPatientsPerClass}
-                  onChange={(event) =>
-                    edit({
-                      constraints: {
-                        ...spec.constraints,
-                        minPatientsPerClass: Number(event.target.value),
-                      },
-                    })
-                  }
-                />
-              </label>
-              <label className="label">
-                Minimum groups in each set
-                <input
-                  className="field"
-                  type="number"
-                  min={1}
-                  value={spec.constraints.minPatientsPerPartition}
-                  onChange={(event) =>
-                    edit({
-                      constraints: {
-                        ...spec.constraints,
-                        minPatientsPerPartition: Number(event.target.value),
-                      },
-                    })
-                  }
-                />
-              </label>
+                  {live.data?.unassigned && live.data.unassigned.totalSlides > 0 ? (
+                    <p className="callout callout-warning">
+                      {live.data.unassigned.totalSlides} eligible slides remain outside the
+                      fixed sets.
+                      {spec.split.mode === 'rules'
+                        ? ' Broaden the training conditions or leave them empty to include the remainder.'
+                        : ' Their final roles are determined by the selected split strategy in Preview & preflight.'}
+                    </p>
+                  ) : null}
+                </>
+              )}
+              <div className="protocol-constraints-heading">
+                <Icon name="check" />
+                <div>
+                  <h3>Minimum set sizes</h3>
+                  <p className="muted">
+                    Check that every required set has enough groups and classes.
+                  </p>
+                </div>
+              </div>
+              <div className="science-grid-two">
+                <label className="label">
+                  Minimum groups per class in each set
+                  <input
+                    className="field"
+                    type="number"
+                    min={1}
+                    value={spec.constraints.minPatientsPerClass}
+                    onChange={(event) =>
+                      edit({
+                        constraints: {
+                          ...spec.constraints,
+                          minPatientsPerClass: Number(event.target.value),
+                        },
+                      })
+                    }
+                  />
+                </label>
+                <label className="label">
+                  Minimum groups in each set
+                  <input
+                    className="field"
+                    type="number"
+                    min={1}
+                    value={spec.constraints.minPatientsPerPartition}
+                    onChange={(event) =>
+                      edit({
+                        constraints: {
+                          ...spec.constraints,
+                          minPatientsPerPartition: Number(event.target.value),
+                        },
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <p className="muted">
+                A group is one verified patient or one confirmed Slide ID fallback. These
+                minimums check feasibility in each required training, early-stop validation,
+                tuning and test set.
+              </p>
             </div>
-            <p className="muted">
-              A group is one verified patient or one confirmed Slide ID fallback. These minimums
-              check feasibility in each required training, early-stop validation, tuning and
-              test set.
-            </p>
-          </div>
-        </Panel>
-        <div className="science-savebar">
+          </Panel>
+        </div>
+        <div id="protocol-review" className="science-savebar protocol-section" tabIndex={-1}>
           <div>
             <strong>
               {draft
                 ? `Revision ${draft.revision} · ${frozen ? 'Frozen protocol' : dirty ? 'Unsaved changes' : 'Saved draft'}`
                 : 'New protocol draft'}
             </strong>
-            <p>Changing any setting invalidates the current preview.</p>
+            <p>
+              Save your progress, or check labels, group overlap and set sizes. Changes require
+              a new preview.
+            </p>
           </div>
           <div className="inline-actions">
             <button
@@ -1278,6 +1468,7 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
               disabled={!spec.datasetId || !spec.target.field || !name.trim() || !seedsValid}
               onClick={() =>
                 void run(async () => {
+                  setPreview(null);
                   const current = await save();
                   setPreview(
                     await scientific.protocolPreview(project, current.id, current.revision),
@@ -1291,79 +1482,96 @@ export default function LocalProtocol({ workspace: w }: { workspace: Workspace }
         </div>
       </fieldset>
       {preview ? (
-        <Panel
-          title="Preflight and partition review"
-          subtitle="Assignments are derived by the service and checked for patient overlap, label validity and feasibility."
-          actions={
-            <Badge tone={preview.canFreeze ? 'green' : 'orange'}>
-              {preview.canFreeze ? 'Protocol can freeze' : 'Blocked'}
-            </Badge>
-          }
-        >
-          <div className="science-metrics">
-            <Metric
-              label="Verified patients"
-              value={preview.summary.includedPatients}
-              note="Distinct supplied patient IDs"
-            />
-            <Metric
-              label="Included slides"
-              value={preview.summary.includedSlides}
-              note={`${preview.summary.totalSlides} total dataset slides`}
-            />
-            <Metric
-              label="Excluded slides"
-              value={preview.summary.excludedSlides}
-              note="Reasons retained in the protocol"
-            />
-            <Metric
-              label="Assignment groups"
-              value={preview.summary.includedGroups ?? preview.summary.includedPatients}
-              note={
-                preview.summary.fallbackSlideCount
-                  ? `${preview.summary.fallbackSlideCount} Slide ID fallback groups included`
-                  : 'Known patients stay together'
-              }
-            />
-          </div>
-          <Findings findings={preview.findings} />
-          <PlanSummary summary={preview.summary} />
-          <PartitionTable partitions={preview.partitions} />
-          <div className="callout">
-            Training execution is not connected. Freezing preserves this analysis design and its
-            assignments; it does not start a job.
-          </div>
-          <div className="science-savebar">
-            <p>Freeze after reviewing every blocking finding and partition.</p>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || dirty || frozen || !preview.canFreeze}
-              onClick={() =>
-                void run(async () => {
-                  const result = await scientific.protocolFreeze(
-                    project,
-                    draft!.id,
-                    draft!.revision,
-                    preview.previewHash,
-                  );
-                  setDraft(await scientific.draft(project, draft!.id));
-                  await refresh();
-                  setShowSaved(result.id);
-                  setPreview(null);
-                  setMessage(
-                    'Protocol frozen. Group assignments and target settings are preserved.',
-                  );
-                  window.scrollTo({ top: 0 });
-                })
-              }
-            >
-              <Icon name="lock" /> {busy ? 'Freezing…' : 'Freeze protocol'}
-            </button>
-          </div>
-        </Panel>
+        <div id="protocol-preflight" className="protocol-section" tabIndex={-1}>
+          <Panel
+            title="Preflight and partition review"
+            subtitle="Assignments are derived by the service and checked for patient overlap, label validity and feasibility."
+            actions={
+              <Badge tone={preview.canFreeze ? 'green' : 'orange'}>
+                {preview.canFreeze ? 'Protocol can freeze' : 'Blocked'}
+              </Badge>
+            }
+          >
+            <div className="science-metrics">
+              <Metric
+                label="Verified patients"
+                value={preview.summary.includedPatients}
+                note="Distinct supplied patient IDs"
+              />
+              <Metric
+                label="Included slides"
+                value={preview.summary.includedSlides}
+                note={`${preview.summary.totalSlides} total dataset slides`}
+              />
+              <Metric
+                label="Excluded slides"
+                value={preview.summary.excludedSlides}
+                note="Reasons retained in the protocol"
+              />
+              <Metric
+                label="Assignment groups"
+                value={preview.summary.includedGroups ?? preview.summary.includedPatients}
+                note={
+                  preview.summary.fallbackSlideCount
+                    ? `${preview.summary.fallbackSlideCount} Slide ID fallback groups included`
+                    : 'Known patients stay together'
+                }
+              />
+            </div>
+            <Findings findings={preview.findings} />
+            <PlanSummary summary={preview.summary} />
+            <PartitionTable partitions={preview.partitions} />
+            <div className="callout">
+              Training execution is not connected. Freezing preserves this analysis design and
+              its assignments; it does not start a job.
+            </div>
+            <div className="science-savebar">
+              <p>Next, name this cohort / protocol version. Your required tag, optional note and reviewed design are saved together.</p>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy || dirty || frozen || !preview.canFreeze}
+                onClick={() => setFreezeReview({ draftId: draft!.id, revision: draft!.revision, preview, name, operationId: `protocol:${crypto.randomUUID()}` })}
+              >
+                <Icon name="lock" /> Name & freeze protocol
+              </button>
+            </div>
+          </Panel>
+        </div>
       ) : null}
-    </>
+      </div>
+      {freezeReview ? (
+        <FreezeVersionDialog
+          kind="protocol"
+          initialLabel={freezeLabel}
+          onLabelChange={setFreezeLabel}
+          onClose={() => setFreezeReview(null)}
+          onFreeze={async (versionLabel) => {
+            setBusy(true);
+            try {
+              const result = await scientific.protocolFreeze(project, freezeReview.draftId, freezeReview.revision, freezeReview.preview.previewHash, versionLabel, freezeReview.operationId);
+              setDraft((current) => current?.id === freezeReview.draftId ? { ...current, status: 'frozen', revision: freezeReview.revision + 1 } : current);
+              await refresh();
+              setShowSaved(result.id);
+              setPreview(null);
+              setMessage(`Cohort / protocol “${result.versionLabel?.tag || versionLabel.tag}” frozen with its commit note.`);
+              window.scrollTo({ top: 0 });
+            } catch (reason) {
+              if (scientificReviewInvalidated(reason)) {
+                setFreezeReview(null);
+                setPreview(null);
+                setError(new Error(`${reason.message} Your tag and note have been kept. Review the protocol again before freezing.`));
+              }
+              throw reason;
+            } finally { setBusy(false); }
+          }}
+        >
+          <p><strong>{freezeReview.name}</strong></p>
+          <p>{freezeReview.preview.summary.includedSlides.toLocaleString()} included slides · {freezeReview.preview.summary.includedPatients.toLocaleString()} included patients</p>
+          <p>Cohort, prediction target and split assignments are kept as one version.</p>
+        </FreezeVersionDialog>
+      ) : null}
+    </div>
   );
 }
 function ConditionEditor({

@@ -70,22 +70,22 @@ export default function PatientTableOption({
         </button>
       </div>
       <p className="muted">
-        Optional. Skip this if your main table already has the patient information you need.
+        Optional · Use this only when the patient information is in a separate spreadsheet.
       </p>
       {open ? (
         <div id={helpId} role="tooltip" className="patient-table-help">
-          <strong>Two ways to use a separate CSV or XLSX</strong>
+          <strong>Add information from a second table</strong>
           <p>
-            <b>Patient crosswalk:</b> links each Slide_ID to a verified Patient_ID, so slides
-            from the same person stay together when splitting data.
+            <b>Link slides to patients.</b> A patient crosswalk pairs each Slide_ID with a
+            verified Patient_ID. Slides from the same person can then stay together in a split.
           </p>
           <pre>
             {'Slide_ID       Patient_ID\nexample_A      patient_01\nexample_B      patient_01'}
           </pre>
           <p className="muted">Illustrative values: both slides belong to one patient.</p>
           <p>
-            <b>Patient attribute table:</b> adds information such as age or sex by matching
-            Patient_ID. Your main table must already contain Patient_ID for this option.
+            <b>Add patient details.</b> A patient attribute table adds information such as age
+            by matching Patient_ID. Your main table must already contain Patient_ID.
           </p>
           <p>
             You can also keep everything in one table. Use the same Patient_ID for all slides

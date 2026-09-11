@@ -93,7 +93,7 @@ def test_initialization_preserves_descriptor_and_uses_local_durable_metadata(sto
     assert reopened(store).list_drafts() == [saved]
     assert (store.folder / "histopilot-project.json").read_bytes() == original
     status = store.status()
-    assert status["schemaVersion"] == 2
+    assert status["schemaVersion"] == 4
     assert status["journalMode"] == "wal"
     assert status["database"] == DATABASE_FILE
     assert status["draftCount"] == 1
@@ -418,7 +418,7 @@ def test_only_empty_version_zero_databases_can_initialize(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
     (empty / DATABASE_FILE).touch()
-    assert ScientificStore(empty, "project-empty").status()["schemaVersion"] == 2
+    assert ScientificStore(empty, "project-empty").status()["schemaVersion"] == 4
     foreign = tmp_path / "foreign"
     foreign.mkdir()
     connection = sqlite3.connect(foreign / DATABASE_FILE)
@@ -452,7 +452,7 @@ def test_initial_schema_failure_rolls_back_and_can_retry(tmp_path, monkeypatch):
         assert (
             connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == []
         )
-    assert store.status()["schemaVersion"] == 2
+    assert store.status()["schemaVersion"] == 4
     assert legacy.read_bytes() == b"legacy setup sentinel"
 
 
@@ -466,7 +466,7 @@ def test_future_schema_wrong_owner_and_missing_constraints_fail_closed(store):
         reopened(store).initialize()
     assert error.value.code == "STORAGE_SCHEMA_UNSUPPORTED"
     with database(store) as connection:
-        connection.execute("PRAGMA user_version=2")
+        connection.execute("PRAGMA user_version=4")
         connection.execute("DROP TABLE drafts")
         connection.execute(
             "CREATE TABLE drafts (id TEXT, kind TEXT, name TEXT, payload TEXT, revision TEXT, status TEXT, created_at TEXT, updated_at TEXT)"

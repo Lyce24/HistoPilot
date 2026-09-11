@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from histopilot.api import create_app
 from histopilot.application.project_workspace import DESCRIPTOR
 from histopilot.config import Settings
+from histopilot.storage.scientific import SCHEMA_VERSION
 
 API = "/api/v1"
 ARTIFACT_NAME = "tables/slides.json"
@@ -99,7 +100,7 @@ def test_create_initializes_project_database_and_empty_scientific_state(client, 
     status = response.json()
     assert status == client.app.state.projects.scientific_store(project["id"]).status()
     assert status["projectId"] == project["id"]
-    assert status["schemaVersion"] == 2
+    assert status["schemaVersion"] == SCHEMA_VERSION
     assert status["database"] == "histopilot-state.sqlite"
     assert status["journalMode"] == "wal"
     assert status["draftCount"] == status["datasetCount"] == 0

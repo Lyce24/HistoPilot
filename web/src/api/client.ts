@@ -15,11 +15,17 @@ import type {
 } from './types';
 
 const BASE = '/api/v1';
-let session: Promise<string> | null = null;
+type ScientificCapability = 'versionLabels' | 'taggedFreeze';
+interface Session {
+  token: string;
+  scientificCapabilities?: Partial<Record<ScientificCapability, boolean>>;
+}
+let session: Promise<Session> | null = null;
 export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -27,8 +33,10 @@ export class ApiError extends Error {
 }
 async function responseError(response: Response): Promise<ApiError> {
   let message = `The control service returned HTTP ${response.status}.`;
+  let code: string | undefined;
   try {
     const body = await response.json();
+    if (typeof body.code === 'string') code = body.code;
     if (typeof body.detail === 'string') message = body.detail;
     else if (Array.isArray(body.detail))
       message = body.detail
@@ -37,16 +45,16 @@ async function responseError(response: Response): Promise<ApiError> {
   } catch {
     /* A proxy may return a non-JSON error page. */
   }
-  return new ApiError(message, response.status);
+  return new ApiError(message, response.status, code);
 }
-function sessionToken(): Promise<string> {
+function sessionDetails(): Promise<Session> {
   if (!session) {
     session = fetch(`${BASE}/session`, { credentials: 'same-origin', cache: 'no-store' })
       .then(async (response) => {
         if (!response.ok) throw await responseError(response);
-        const body: { token: string } = await response.json();
+        const body: Session = await response.json();
         if (!body.token) throw new ApiError('The service did not return a session token.', 401);
-        return body.token;
+        return body;
       })
       .catch((error) => {
         session = null;
@@ -60,10 +68,15 @@ export async function request<T>(
   path: string,
   init: RequestInit = {},
   retrySession = true,
+  scientificCapability?: ScientificCapability,
 ): Promise<T> {
-  const token = await sessionToken();
+  const activeSession = await sessionDetails();
+  if (scientificCapability && !activeSession.scientificCapabilities?.[scientificCapability]) {
+    session = null;
+    throw new ApiError(SCIENTIFIC_SAVE_RESTART, 405);
+  }
   const headers = new Headers(init.headers);
-  headers.set('X-HistoPilot-Token', token);
+  headers.set('X-HistoPilot-Token', activeSession.token);
   if (init.body) headers.set('Content-Type', 'application/json');
   const response = await fetch(`${BASE}${path}`, {
     ...init,
@@ -73,11 +86,29 @@ export async function request<T>(
   });
   if (response.status === 401 && retrySession) {
     session = null;
-    return request<T>(path, init, false);
+    return request<T>(path, init, false, scientificCapability);
   }
   if (!response.ok) throw await responseError(response);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+const SCIENTIFIC_SAVE_RESTART = 'The running HistoPilot server does not support this save. Restart HistoPilot, then try saving again here. Your entered tag and note have been kept; you do not need to reload this page.';
+
+/** Gate metadata-aware writes so an older running server cannot freeze without the label. */
+export async function requestScientificSave<T>(
+  path: string,
+  init: RequestInit,
+  capability: ScientificCapability,
+): Promise<T> {
+  try {
+    return await request<T>(path, init, true, capability);
+  } catch (reason) {
+    if (reason instanceof ApiError && (reason.status === 405 || (reason.status === 404 && reason.message === 'Not Found'))) {
+      session = null;
+      throw new ApiError(SCIENTIFIC_SAVE_RESTART, reason.status);
+    }
+    throw reason;
+  }
 }
 export const api = {
   workspace: () => request<Workspace>('/workspace'),
@@ -103,6 +134,11 @@ export const api = {
     request<DirectoryListing>(
       `/filesystem/list?path=${encodeURIComponent(path)}&purpose=${purpose === 'data' ? 'source' : purpose}`,
     ),
+  createDirectory: (parentPath: string, name: string, purpose: 'data' | 'storage' = 'data') =>
+    request<{ path: string; name: string; parent: string }>('/filesystem/directories', {
+      method: 'POST',
+      body: JSON.stringify({ parentPath, name, purpose: purpose === 'data' ? 'source' : purpose }),
+    }),
   addSource: (path: string, projectId?: string, role: Source['role'] = 'slides') =>
     request<Source>(projectId ? `/projects/${encodeURIComponent(projectId)}/sources` : '/sources', {
       method: 'POST',

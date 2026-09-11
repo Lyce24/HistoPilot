@@ -1,4 +1,4 @@
-import { request } from './client';
+import { request, requestScientificSave } from './client';
 
 export interface Finding {
   severity: 'error' | 'warning' | 'info';
@@ -56,7 +56,7 @@ export interface ScientificDraft<T = ImportSpec | ProtocolSpec> {
   projectId: string;
   kind: 'import' | 'experiment';
   name: string;
-  payload: { type: 'dataset-import' | 'analysis-protocol'; spec: T };
+  payload: { type: 'dataset-import' | 'analysis-protocol' | 'mil-experiment'; spec: T };
   revision: number;
   status: 'editable' | 'frozen';
   createdAt: string;
@@ -93,11 +93,25 @@ export interface ImportPreview {
   records: DataRecord[];
   recordsTruncated: boolean;
 }
+export interface VersionLabelInput {
+  tag: string;
+  note: string;
+}
+export interface VersionLabel extends VersionLabelInput {
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface VersionLabelResource {
+  id: string;
+  versionLabel?: VersionLabel | null;
+}
 export interface DatasetVersion {
   id: string;
   projectId: string;
   createdAt: string;
   contentHash: string;
+  versionLabel?: VersionLabel | null;
   manifest: {
     name?: string;
     kind?: string;
@@ -257,6 +271,7 @@ export interface ProtocolSpec {
   };
   constraints: { minPatientsPerClass: number; minPatientsPerPartition: number };
   featureSetId?: string | null;
+  featurePackId?: string | null;
 }
 export interface PartitionCounts {
   slides: number;
@@ -324,21 +339,34 @@ export interface ExecutionPreflight {
   scientificReady: boolean;
   executionEnabled: false;
   executionReady: false;
+  tensorValidationComplete?: boolean;
+  fullFeatureValidationComplete?: boolean;
+  provenanceComplete?: boolean;
   findings: Finding[];
 }
 export interface FeatureSpec {
   datasetId: string;
   path: string;
   encoderId?: string;
-  fileSuffix: '.h5';
+  fileSuffix: '.h5' | '.hdf5';
   idSuffix: string;
   recursive: boolean;
+  layout?: 'auto' | 'flat' | 'trident';
+  coordinatesPath?: string | null;
+  sourceExtractionJobId?: string | null;
 }
 export interface FeaturePreview {
   previewHash: string;
   canFreeze: boolean;
   findings: Finding[];
   validationLevel: 'headers';
+  layout?: {
+    kind: 'flat' | 'trident';
+    featureDirectory: string;
+    coordinatesDirectory: string | null;
+    encoderId: string | null;
+    jobDirectory: string | null;
+  };
   summary: {
     slideCount: number;
     matchedSlides: number;
@@ -355,6 +383,14 @@ export interface FeaturePreview {
     dtype: string;
     sizeBytes: number;
     mtimeNs: number;
+    coordinatePath?: string | null;
+    coordinateSource?: 'embedded' | 'trident-patches' | null;
+    coordinateSpace?: 'level0_pixels' | 'unspecified';
+    attributes?: {
+      file: Record<string, unknown>;
+      features: Record<string, unknown>;
+      coords: Record<string, unknown>;
+    };
   }[];
 }
 export interface Configuration {
@@ -362,6 +398,7 @@ export interface Configuration {
   projectId: string;
   contentHash: string;
   createdAt: string;
+  versionLabel?: VersionLabel | null;
   manifest: {
     kind: 'protocol' | 'feature';
     datasetId: string;
@@ -369,6 +406,7 @@ export interface Configuration {
     summary: ProtocolPreview['summary'] | FeaturePreview['summary'];
     partitions?: ProtocolPreview['partitions'];
     files?: FeaturePreview['files'];
+    layout?: FeaturePreview['layout'];
     findings?: Finding[];
     [key: string]: unknown;
   };
@@ -383,7 +421,7 @@ export const scientific = {
     input: {
       kind: 'import' | 'experiment';
       name: string;
-      payload: { type: 'dataset-import' | 'analysis-protocol'; spec: T };
+      payload: { type: 'dataset-import' | 'analysis-protocol' | 'mil-experiment'; spec: T };
     },
     current?: { id: string; revision: number },
   ) =>
@@ -404,6 +442,18 @@ export const scientific = {
     request<ScientificDraft<T>>(`${prefix(project)}/drafts/${encodeURIComponent(id)}`),
   datasets: (project: string) =>
     request<{ datasets: DatasetVersion[] }>(`${prefix(project)}/datasets`),
+  dataset: (project: string, id: string) =>
+    request<DatasetVersion>(`${prefix(project)}/datasets/${encodeURIComponent(id)}`),
+  setVersionLabel: (
+    project: string,
+    resourceType: 'dataset' | 'configuration',
+    id: string,
+    label: { tag: string; note: string; expectedRevision: number },
+  ) => requestScientificSave<VersionLabel>(
+    `${prefix(project)}/${resourceType === 'dataset' ? 'datasets' : 'configurations'}/${encodeURIComponent(id)}/label`,
+    { method: 'PUT', body: JSON.stringify(label) },
+    'versionLabels',
+  ),
   records: (project: string, id: string, offset = 0) =>
     request<RecordsPage>(
       `${prefix(project)}/datasets/${encodeURIComponent(id)}/records?offset=${offset}&limit=200`,
@@ -420,14 +470,16 @@ export const scientific = {
       `${prefix(project)}/imports/${encodeURIComponent(id)}/preview`,
       body({ expectedRevision }),
     ),
-  importFreeze: (project: string, id: string, expectedRevision: number, previewHash: string) =>
-    request<DatasetVersion>(
+  importFreeze: (project: string, id: string, expectedRevision: number, previewHash: string, versionLabel: VersionLabelInput, operationId: string) =>
+    requestScientificSave<DatasetVersion>(
       `${prefix(project)}/imports/${encodeURIComponent(id)}/freeze`,
       body({
         expectedRevision,
         previewHash,
-        operationId: `import:${id}:${expectedRevision}:${previewHash}`,
+        versionLabel,
+        operationId,
       }),
+      'taggedFreeze',
     ),
   protocolPreflight: (project: string, id: string) =>
     request<ExecutionPreflight>(
@@ -445,14 +497,18 @@ export const scientific = {
     id: string,
     expectedRevision: number,
     previewHash: string,
+    versionLabel: VersionLabelInput,
+    operationId: string,
   ) =>
-    request<Configuration>(
+    requestScientificSave<Configuration>(
       `${prefix(project)}/protocols/${encodeURIComponent(id)}/freeze`,
       body({
         expectedRevision,
         previewHash,
-        operationId: `protocol:${id}:${expectedRevision}:${previewHash}`,
+        versionLabel,
+        operationId,
       }),
+      'taggedFreeze',
     ),
   configurations: (project: string, kind: 'protocol' | 'feature') =>
     request<{ configurations: Configuration[] }>(
@@ -462,9 +518,10 @@ export const scientific = {
     request<Configuration>(`${prefix(project)}/configurations/${encodeURIComponent(id)}`),
   featurePreview: (project: string, spec: FeatureSpec) =>
     request<FeaturePreview>(`${prefix(project)}/features/preview`, body(spec)),
-  featureFreeze: (project: string, spec: FeatureSpec, previewHash: string) =>
-    request<Configuration>(
+  featureFreeze: (project: string, spec: FeatureSpec, previewHash: string, versionLabel: VersionLabelInput, operationId: string) =>
+    requestScientificSave<Configuration>(
       `${prefix(project)}/features/freeze`,
-      body({ ...spec, previewHash, operationId: `feature:${previewHash}` }),
+      body({ ...spec, previewHash, versionLabel, operationId }),
+      'taggedFreeze',
     ),
 };

@@ -20,7 +20,7 @@ def configure_browser_boundary(app: FastAPI, settings: Settings, token: str) -> 
         CORSMiddleware,
         allow_origins=sorted(origins),
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "X-HistoPilot-Token"],
     )
 

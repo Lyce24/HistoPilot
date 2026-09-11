@@ -1,15 +1,17 @@
 import { useId, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { ErrorNotice, Icon } from './ui';
+import './ServerFolderPicker.css';
 
 interface Props {
   onSelect: (path: string) => void | Promise<void>;
   title?: string;
   label?: string;
   purpose?: 'data' | 'storage';
-  selection?: 'folder' | 'table';
+  selection?: 'folder' | 'table' | 'file';
+  initialPath?: string;
 }
 
 export default function ServerFolderPicker({
@@ -18,18 +20,30 @@ export default function ServerFolderPicker({
   label = 'Browse server',
   purpose = 'data',
   selection = 'folder',
+  initialPath,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [path, setPath] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState('');
   const pathInputId = useId();
+  const folderNameId = useId();
+  const folderDestinationId = useId();
+  const client = useQueryClient();
   const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [folderName, setFolderName] = useState('');
+  const [notice, setNotice] = useState('');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const navigate = (next: string | null) => {
+    if (busy) return;
     setPath(next);
     setPathInput(next ?? '');
     setSelectedFile(null);
     setError(null);
+    setNewFolderOpen(false);
+    setFolderName('');
+    setNotice('');
   };
   const [error, setError] = useState<Error | null>(null);
   const roots = useQuery({
@@ -43,8 +57,8 @@ export default function ServerFolderPicker({
     enabled: open && path !== null,
   });
   async function select() {
-    const selected = selection === 'table' ? selectedFile : directory.data?.path;
-    if (!selected) return;
+    const selected = selection === 'folder' ? directory.data?.path : selectedFile;
+    if (!selected || busy || newFolderOpen) return;
     setBusy(true);
     setError(null);
     try {
@@ -56,6 +70,32 @@ export default function ServerFolderPicker({
       setBusy(false);
     }
   }
+  async function createFolder() {
+    const parent = directory.data?.path;
+    if (!parent || !folderName.trim() || busy || directory.isFetching || directory.isError || pathInput.trim() !== path) return;
+    setBusy(true);
+    setCreating(true);
+    setError(null);
+    setNotice('');
+    try {
+      const created = await api.createDirectory(parent, folderName.trim(), purpose);
+      await client.invalidateQueries({
+        queryKey: ['filesystem', 'directory'],
+        predicate: (query) => query.queryKey[3] === parent || query.queryKey[3] === created.path,
+      });
+      setPath(created.path);
+      setPathInput(created.path);
+      setSelectedFile(null);
+      setFolderName('');
+      setNewFolderOpen(false);
+      setNotice(`Created “${created.name}”. ${selection === 'folder' ? 'Use this folder to select it.' : 'You are now inside the new folder.'}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason : new Error('The folder could not be created.'));
+    } finally {
+      setCreating(false);
+      setBusy(false);
+    }
+  }
   return (
     <Dialog.Root
       open={open}
@@ -63,6 +103,14 @@ export default function ServerFolderPicker({
         if (!busy) {
           setOpen(next);
           setError(null);
+          setNotice('');
+          setNewFolderOpen(false);
+          setFolderName('');
+          if (next && initialPath) {
+            setPath(initialPath);
+            setPathInput(initialPath);
+            setSelectedFile(null);
+          }
         }
       }}
     >
@@ -81,7 +129,7 @@ export default function ServerFolderPicker({
               <Dialog.Description>
                 Folders on the computer running HistoPilot.{' '}
                 {purpose === 'storage'
-                  ? 'Choose where to keep your experiment.'
+                  ? 'Browse a location or create a new folder.'
                   : 'Source data stays in place and is referenced read-only.'}
               </Dialog.Description>
             </div>
@@ -98,7 +146,7 @@ export default function ServerFolderPicker({
           </div>
           <div className="folder-body">
             <div className="folder-roots">
-              <button type="button" className="folder-entry" onClick={() => navigate(null)}>
+              <button type="button" className="folder-entry" disabled={busy} onClick={() => navigate(null)}>
                 <Icon name="system" /> Available locations
               </button>
               {roots.data?.roots.map((root) => (
@@ -106,6 +154,7 @@ export default function ServerFolderPicker({
                   type="button"
                   key={root.path}
                   className="folder-entry"
+                  disabled={busy}
                   onClick={() => navigate(root.path)}
                 >
                   <Icon name="folder" />
@@ -146,6 +195,7 @@ export default function ServerFolderPicker({
                 </div>
               </form>
               <ErrorNotice error={roots.error ?? directory.error} />
+              {notice ? <p className="folder-create-notice" role="status"><Icon name="check" size={16} />{notice}</p> : null}
               {roots.isPending || (path !== null && directory.isPending) ? (
                 <p role="status" className="muted">
                   Reading folders…
@@ -187,6 +237,7 @@ export default function ServerFolderPicker({
                       type="button"
                       key={root.path}
                       className="folder-entry"
+                      disabled={busy}
                       onClick={() => navigate(root.path)}
                     >
                       <Icon name="folder" />
@@ -200,18 +251,68 @@ export default function ServerFolderPicker({
                 : null}
               {directory.data && path !== null ? (
                 <>
-                  <button
-                    type="button"
-                    className="folder-entry"
-                    disabled={!directory.data.parent}
-                    onClick={() => navigate(directory.data!.parent)}
-                  >
-                    <Icon name="arrowUp" /> Parent directory
-                  </button>
+                  <div className="folder-directory-actions">
+                    <button
+                      type="button"
+                      className="folder-entry"
+                      disabled={!directory.data.parent || busy}
+                      onClick={() => navigate(directory.data!.parent)}
+                    >
+                      <Icon name="arrowUp" /> Parent directory
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      disabled={busy || directory.isFetching || directory.isError || pathInput.trim() !== path}
+                      aria-expanded={newFolderOpen}
+                      onClick={() => { setNewFolderOpen(true); setError(null); setNotice(''); }}
+                    >
+                      <Icon name="plus" size={16} /> New folder
+                    </button>
+                  </div>
+                  {newFolderOpen ? (
+                    <form
+                      className="folder-create-form"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void createFolder();
+                      }}
+                    >
+                      <label className="label" htmlFor={folderNameId}>New folder name</label>
+                      <input
+                        id={folderNameId}
+                        className="field"
+                        value={folderName}
+                        placeholder="e.g. blca"
+                        onChange={(event) => { setFolderName(event.target.value); setError(null); }}
+                        disabled={busy}
+                        required
+                        maxLength={255}
+                        autoFocus
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        aria-describedby={folderDestinationId}
+                      />
+                      <p id={folderDestinationId} className="folder-create-destination">
+                        <span>{folderName.trim() ? 'Create in this location' : 'Parent directory'}</span>
+                        <span className="mono">{directory.data.path.replace(/\/$/, '') || '/'}{folderName.trim() ? `${directory.data.path === '/' ? '' : '/'}${folderName.trim()}` : ''}</span>
+                      </p>
+                      <div className="inline-actions">
+                        <button type="submit" className="btn btn-primary btn-small" disabled={busy || !folderName.trim() || directory.isFetching || directory.isError || pathInput.trim() !== path}>
+                          <Icon name="folder" size={16} /> {creating ? 'Creating…' : 'Create folder'}
+                        </button>
+                        <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => { setNewFolderOpen(false); setFolderName(''); setError(null); }}>
+                          Cancel new folder
+                        </button>
+                      </div>
+                    </form>
+                  ) : null}
                   {directory.data.entries
                     .filter(
                       (entry) =>
                         ['directory', 'dir'].includes(entry.kind) ||
+                        (selection === 'file' && entry.kind === 'file') ||
                         (selection === 'table' && /\.(csv|xlsx)$/i.test(entry.name)),
                     )
                     .map((entry) => (
@@ -224,6 +325,7 @@ export default function ServerFolderPicker({
                             : selectedFile === entry.path
                         }
                         key={entry.path}
+                        disabled={busy}
                         onClick={() =>
                           ['directory', 'dir'].includes(entry.kind)
                             ? navigate(entry.path)
@@ -255,7 +357,7 @@ export default function ServerFolderPicker({
               {selectedFile
                 ? selectedFile
                 : purpose === 'storage'
-                  ? 'Experiment files will be stored on this computer.'
+                  ? 'The selected path is on this computer.'
                   : 'Choosing a folder does not upload or import its contents.'}
             </p>
             <div className="inline-actions">
@@ -270,15 +372,16 @@ export default function ServerFolderPicker({
                 disabled={
                   !path ||
                   pathInput.trim() !== path ||
-                  (selection === 'table' && !selectedFile) ||
+                  (selection !== 'folder' && !selectedFile) ||
                   !directory.data ||
                   directory.isError ||
                   directory.isFetching ||
+                  newFolderOpen ||
                   busy
                 }
                 onClick={() => void select()}
               >
-                {busy ? 'Selecting…' : selection === 'table' ? 'Use this file' : 'Use this folder'}
+                {busy && !creating ? 'Selecting…' : selection === 'folder' ? 'Use this folder' : 'Use this file'}
               </button>
             </div>
           </div>

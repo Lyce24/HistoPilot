@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StrictInt, model_validator
 
+from histopilot.schemas.version_labels import FreezeVersionLabel
 from histopilot.schemas.workspace import RequestModel
 
 
@@ -70,3 +71,4 @@ class PreviewRequest(RequestModel):
 class FreezeRequest(PreviewRequest):
     previewHash: str = Field(pattern=r"^[a-f0-9]{64}$")
     operationId: str = Field(min_length=1, max_length=200)
+    versionLabel: FreezeVersionLabel

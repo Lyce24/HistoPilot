@@ -157,3 +157,37 @@ def test_binding_preflight_reports_unvalidated_files_when_time_budget_expires(
     ticks = iter([0, 31])
     monkeypatch.setattr("histopilot.application.features.time.monotonic", lambda: next(ticks))
     assert service.verify_binding(frozen)[0]["code"] == "FEATURE_SCAN_LIMIT"
+
+
+def test_completed_attachment_retry_keeps_original_snapshot_after_source_changes(attached):
+    service, spec, root = attached
+    hdf5(root / "001.A.h5")
+    preview = service.preview(spec)
+    frozen = service.freeze(spec, preview["previewHash"], "completed-attach")
+    hdf5(root / "001.A.h5", dimensions=8)
+    assert service.freeze(spec, preview["previewHash"], "completed-attach") == frozen
+    assert service.verify_binding(frozen)[0]["code"] == "FEATURE_SOURCE_CHANGED"
+    with pytest.raises(StorageError) as caught:
+        service.freeze(
+            spec.model_copy(update={"encoderId": "different"}),
+            preview["previewHash"],
+            "completed-attach",
+        )
+    assert caught.value.code == "OPERATION_CONFLICT"
+
+
+def test_source_change_at_publication_boundary_cannot_publish_stale_headers(attached, monkeypatch):
+    service, spec, root = attached
+    hdf5(root / "001.A.h5")
+    preview = service.preview(spec)
+    publish = service.store.publish_configuration
+
+    def replace_then_publish(*args, **kwargs):
+        hdf5(root / "001.A.h5", dimensions=8)
+        return publish(*args, **kwargs)
+
+    monkeypatch.setattr(service.store, "publish_configuration", replace_then_publish)
+    with pytest.raises(StorageError) as caught:
+        service.freeze(spec, preview["previewHash"], "raced-attach")
+    assert caught.value.code == "PREVIEW_STALE"
+    assert service.store.configuration_publication("raced-attach") is None

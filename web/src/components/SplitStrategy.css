@@ -3,6 +3,289 @@
   grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
   gap: 12px;
 }
+.split-strategy-workbench .split-section-caption {
+  display: block;
+  margin-bottom: 9px;
+  color: #795483;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.3px;
+}
+.split-strategy-workbench .split-strategy-heading h3 {
+  margin: 0;
+  font-size: 17px;
+  color: #26333d;
+}
+.split-strategy-workbench .split-strategy-heading p {
+  margin: 7px 0 0;
+  max-width: 78ch;
+}
+.split-strategy-workbench .split-strategy-choices {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.split-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.split-strategy-workbench .split-strategy-choice {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 18px 14px;
+  border: 1px solid #dfdce5;
+  border-radius: 12px;
+  cursor: pointer;
+  color: #26333d;
+  background: #fff;
+}
+.split-strategy-workbench .split-strategy-choice.is-selected {
+  border-color: #876c92;
+  background: #f8f4fa;
+  box-shadow: inset 0 0 0 1px #876c92;
+}
+.split-strategy-workbench .split-strategy-choice:focus-within {
+  outline: 2px solid #795483;
+  outline-offset: 3px;
+}
+.split-strategy-workbench .split-strategy-choice:has(input:disabled) {
+  cursor: default;
+}
+.split-strategy-workbench .split-strategy-choice input {
+  position: absolute;
+  top: 15px;
+  right: 12px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #795483;
+}
+.split-strategy-workbench .split-strategy-choice strong {
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 650;
+}
+.split-strategy-workbench .split-strategy-choice small {
+  color: #626e79;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.split-strategy-workbench .split-strategy-motif {
+  display: flex;
+  gap: 3px;
+  height: 26px;
+  align-items: flex-end;
+  margin: 0 28px 4px 0;
+}
+.split-strategy-workbench .split-strategy-motif i {
+  width: 9px;
+  height: 22px;
+  border-radius: 3px;
+  background: #d7cbdc;
+}
+.split-strategy-workbench .split-strategy-motif i:last-child {
+  background: #4f8b85;
+}
+.split-strategy-workbench .split-strategy-motif.motif-cv-assessment i:last-child {
+  background: #82a4b5;
+}
+.split-strategy-workbench .motif-monte_carlo i:nth-child(even) {
+  height: 13px;
+}
+.split-strategy-workbench .motif-leave_one_domain_out i:nth-child(3) {
+  margin-right: 6px;
+}
+.split-strategy-workbench .motif-nested_kfold i:nth-child(-n + 3) {
+  height: 15px;
+}
+.split-strategy-workbench .motif-held_out i:first-child {
+  width: 22px;
+}
+.split-strategy-workbench .motif-held_out i:nth-child(3),
+.split-strategy-workbench .motif-held_out i:nth-child(4) {
+  display: none;
+}
+.split-strategy-workbench .split-role-guide {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0;
+  padding: 15px 0;
+  border-top: 1px solid #ebe7ed;
+  border-bottom: 1px solid #ebe7ed;
+}
+.split-strategy-workbench .split-role-guide > div {
+  border: 0;
+  border-left: 3px solid #c8b9d2;
+  border-radius: 0;
+  padding: 4px 14px;
+  margin: 7px 0;
+  background: transparent;
+  font-size: 12px;
+}
+.split-strategy-workbench .split-role-guide span {
+  font-size: 12px;
+}
+.split-strategy-workbench .split-role-guide .split-role-validation {
+  border-color: #d7b776;
+}
+.split-strategy-workbench .split-role-guide .split-role-test {
+  border-color: #38887c;
+}
+.split-strategy-workbench .split-role-guide .split-role-assessment {
+  border-color: #82a4b5;
+}
+.split-strategy-workbench .split-group-note {
+  margin: -4px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #626e79;
+}
+.split-strategy-workbench .split-group-note > span {
+  display: inline-block;
+  margin-right: 8px;
+  font-weight: 600;
+  color: #37695f;
+}
+.split-strategy-workbench .split-pools {
+  gap: 20px;
+  padding-bottom: 28px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #dfdce5;
+}
+.split-strategy-workbench .split-pool-card {
+  padding: 22px;
+  border: 1px solid #dfdce5;
+  border-left: 3px solid #b3a3c4;
+  border-radius: 13px;
+  background: #fff;
+  gap: 16px;
+}
+.split-strategy-workbench .split-pool-test {
+  border-left-color: #428b7f;
+}
+.split-strategy-workbench .split-pool-val {
+  border-left-color: #c29b5e;
+}
+.split-strategy-workbench .split-pool-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.split-strategy-workbench .split-pool-heading h4 {
+  font-size: 15px;
+  margin: 0;
+}
+.split-strategy-workbench .split-pool-heading p {
+  color: #626e79;
+  font-size: 12px;
+  margin: 5px 0 0;
+}
+.split-strategy-workbench .split-pool-symbol {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  height: 36px;
+  background: #f1ebf5;
+  color: #795483;
+  border-radius: 10px;
+}
+.split-strategy-workbench .split-pool-test .split-pool-symbol {
+  color: #2b7468;
+  background: #eaf5f1;
+}
+.split-strategy-workbench .split-pool-card .condition-editor {
+  padding: 0;
+  border: 0;
+}
+.split-strategy-workbench .split-pool-card .science-subheading h3 {
+  font-size: 13px;
+}
+.split-strategy-workbench .split-pool-card .protocol-partition-live {
+  border: 0;
+  border-top: 1px solid #e9e6eb;
+  border-radius: 0;
+  background: transparent;
+  padding: 16px 0 0;
+}
+.split-strategy-workbench .split-validation-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  align-items: start;
+  gap: 18px;
+  padding: 20px 22px;
+  border-radius: 13px;
+  background: #faf7f1;
+  border: 1px solid #eee5d6;
+}
+.split-strategy-workbench .split-validation-control .split-pool-symbol {
+  background: #f2e7d1;
+  color: #8d6c2f;
+}
+.split-strategy-workbench .split-percent-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.split-strategy-workbench .split-percent-field .field {
+  max-width: 105px;
+  font-variant-numeric: tabular-nums;
+}
+.split-strategy-workbench .split-allocation {
+  padding: 20px;
+  background: #fbfafc;
+  border-color: #e4dfe8;
+}
+.split-strategy-workbench .split-allocation figcaption {
+  font-size: 13px;
+}
+.split-strategy-workbench .split-allocation-bar {
+  height: 30px;
+  border-radius: 6px;
+}
+.split-strategy-workbench .split-train {
+  background: #896b97;
+}
+.split-strategy-workbench .split-val {
+  background: #d5b477;
+}
+.split-strategy-workbench .split-test {
+  background: #4b8b83;
+}
+.split-strategy-workbench .split-assessment {
+  background: #82a4b5;
+}
+@media (max-width: 1180px) {
+  .split-strategy-workbench .split-strategy-choices {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .split-strategy-workbench .split-strategy-choices {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .split-strategy-workbench .split-validation-control {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .split-strategy-workbench .split-pool-card {
+    padding: 16px;
+  }
+}
+@media (max-width: 390px) {
+  .split-strategy-workbench .split-strategy-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .split-role-guide > div {
   display: flex;
   flex-direction: column;

@@ -1,3 +1,5 @@
+import type { VersionLabel } from './scientific';
+
 export type Page =
   | 'overview'
   | 'dataset'
@@ -141,6 +143,8 @@ export interface Workspace {
   scientificSummary?: { datasetCount: number; protocolCount: number; featureCount: number };
   dataset: {
     id: string;
+    name?: string;
+    versionLabel?: VersionLabel | null;
     patientCount: number;
     specimenCount: number;
     slideCount: number;

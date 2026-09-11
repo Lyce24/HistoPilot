@@ -1,0 +1,53 @@
+.folder-directory-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+}
+.folder-directory-actions > .folder-entry {
+  width: auto;
+}
+.folder-directory-actions > .btn {
+  flex-shrink: 0;
+}
+.folder-create-form {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #ddd6f4;
+  border-radius: 9px;
+  padding: 16px;
+  margin-bottom: 16px;
+  background: #faf8ff;
+}
+.folder-create-destination {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.folder-create-destination > .mono {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.folder-create-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #237761;
+  padding: 12px 0;
+  font-size: 12px;
+}
+.folder-create-notice > svg {
+  margin-top: 2px;
+}
+@media (max-width: 480px) {
+  .folder-directory-actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .folder-create-form {
+    padding: 12px;
+  }
+}

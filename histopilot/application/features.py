@@ -2,9 +2,11 @@
 
 import hashlib
 import json
+import math
 import os
 import stat
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from histopilot.schemas.features import FeatureSpec
@@ -14,6 +16,8 @@ from histopilot.storage.scientific import ScientificStore
 
 MAX_FILES = 10000
 SCAN_SECONDS = 30
+MAX_METADATA_BYTES = 262144
+ENCODER_ALIASES = {"uni": "uni_v1", "uni2": "uni_v2"}
 
 
 def _hash(value: object) -> str:
@@ -22,10 +26,205 @@ def _hash(value: object) -> str:
     ).hexdigest()
 
 
+def _stamp(info: os.stat_result) -> dict:
+    return {
+        "sizeBytes": info.st_size,
+        "mtimeNs": info.st_mtime_ns,
+        "ctimeNs": info.st_ctime_ns,
+        "deviceId": info.st_dev,
+        "inode": info.st_ino,
+    }
+
+
+@contextmanager
+def _regular_file(path: Path):
+    """Pin the opened inode and reject links or files replaced during inspection."""
+    if any(component.is_symlink() for component in (path, *path.parents)):
+        raise ValueError("Feature input cannot traverse symbolic links.")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("Feature input is not a regular file.")
+        yield stream, _stamp(before)
+        opened_after = os.fstat(stream.fileno())
+    after = path.lstat()
+    if (
+        not stat.S_ISREG(after.st_mode)
+        or _stamp(before) != _stamp(after)
+        or _stamp(before) != _stamp(opened_after)
+    ):
+        raise ValueError("Feature source changed during inspection; preview again.")
+
+
+def _attributes(handle) -> dict:
+    """Keep TRIDENT's dataset attributes JSON-safe, without reading embedding arrays."""
+
+    def plain(value):
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        if isinstance(value, (tuple, list)):
+            return [plain(item) for item in value]
+        if value is None or isinstance(value, (str, bool, int)):
+            return value
+        if isinstance(value, float) and math.isfinite(value):
+            return value
+        raise ValueError("HDF5 attributes must contain finite, JSON-compatible values.")
+
+    if len(handle.attrs) > 128:
+        raise ValueError("HDF5 attribute metadata exceeds the inspection limit.")
+    attributes = {}
+    for key in handle.attrs:
+        attribute = handle.attrs.get_id(key)
+        if attribute.shape is None:
+            raise ValueError("HDF5 attributes cannot contain null dataspaces.")
+        if math.prod(attribute.shape) * attribute.dtype.itemsize > MAX_METADATA_BYTES:
+            raise ValueError("HDF5 attribute metadata exceeds the inspection limit.")
+        attributes[key] = plain(handle.attrs[key])
+        if len(json.dumps(attributes).encode()) > MAX_METADATA_BYTES:
+            raise ValueError("HDF5 attribute metadata exceeds the inspection limit.")
+    return attributes
+
+
 class FeatureService:
     def __init__(self, store: ScientificStore, filesystem: LocalFilesystem):
         self.store = store
         self.filesystem = filesystem
+
+    def _directory(self, value: str) -> Path:
+        path = Path(value)
+        if any(component.is_symlink() for component in (path, *path.parents)):
+            raise FilesystemError("Feature folders must not traverse symbolic links.", 403)
+        return self.filesystem.directory(value)
+
+    def _layout(self, root: Path, spec: FeatureSpec) -> dict:
+        """Recognize a TRIDENT job, coordinate run, or one encoder's feature directory."""
+        feature_root = root
+        kind = "flat"
+        inferred_encoder = None
+        selected_encoder = ENCODER_ALIASES.get(spec.encoderId, spec.encoderId)
+        if spec.layout != "flat":
+            candidates: list[Path] = []
+            scanned = 0
+            started = time.monotonic()
+            pending = [(root, 0)]
+            if root.name.startswith("features_"):
+                candidates = [root]
+                pending = []
+            while pending:
+                folder, depth = pending.pop()
+                with os.scandir(folder) as entries:
+                    for item in entries:
+                        scanned += 1
+                        if scanned > MAX_FILES or time.monotonic() - started > SCAN_SECONDS:
+                            raise StorageError(
+                                "Feature discovery exceeded its limit; select a smaller folder.",
+                                "FEATURE_SCAN_LIMIT",
+                                413,
+                            )
+                        if item.is_symlink():
+                            raise FilesystemError(
+                                "Feature folders must not contain symbolic links.", 403
+                            )
+                        if item.is_dir(follow_symlinks=False):
+                            path = Path(item.path)
+                            if item.name.startswith("features_"):
+                                candidates.append(path)
+                            elif depth == 0:
+                                pending.append((path, depth + 1))
+            native_candidates = bool(candidates)
+            if selected_encoder:
+                candidates = [
+                    path
+                    for path in candidates
+                    if ENCODER_ALIASES.get(
+                        path.name.removeprefix("features_"), path.name.removeprefix("features_")
+                    )
+                    == selected_encoder
+                ]
+            if len(candidates) > 1:
+                raise StorageError(
+                    "Multiple TRIDENT feature sets found; choose an encoder and its specific "
+                    "feature folder: " + ", ".join(str(path) for path in sorted(candidates)),
+                    "FEATURE_LAYOUT_AMBIGUOUS",
+                    422,
+                )
+            if candidates:
+                feature_root = self._directory(str(candidates[0]))
+                kind = "trident"
+                name = feature_root.name.removeprefix("features_")
+                inferred_encoder = ENCODER_ALIASES.get(name, name)
+            elif spec.layout == "trident" or root.name.startswith("features_") or native_candidates:
+                raise StorageError(
+                    "No TRIDENT features_<encoder> directory matches the selected encoder.",
+                    "FEATURE_LAYOUT_NOT_FOUND",
+                    422,
+                )
+        coords_root = None
+        if spec.coordinatesPath:
+            coords_root = self._directory(spec.coordinatesPath)
+        elif kind == "trident":
+            candidate = feature_root.parent / "patches"
+            if self.filesystem._contains(candidate) and (
+                candidate.exists() or candidate.is_symlink()
+            ):
+                coords_root = self._directory(str(candidate))
+        # Metadata paths come from the selected layout, never from untrusted savetodir attrs.
+        job_root = feature_root.parent.parent if kind == "trident" else None
+        if job_root is not None and not self.filesystem._contains(job_root):
+            job_root = None
+        return {
+            "kind": kind,
+            "featureDirectory": str(feature_root),
+            "coordinatesDirectory": str(coords_root) if coords_root else None,
+            "jobDirectory": str(job_root) if job_root else None,
+            "encoderId": selected_encoder or inferred_encoder,
+        }
+
+    def _provenance(self, layout: dict) -> list[dict]:
+        if layout["kind"] != "trident":
+            return []
+        feature_root = Path(layout["featureDirectory"])
+        paths = [
+            feature_root.parent / "_config_coords.json",
+            feature_root.parent
+            / f"_config_feats_{feature_root.name.removeprefix('features_')}.json",
+        ]
+        if layout["jobDirectory"]:
+            job_root = Path(layout["jobDirectory"])
+            paths.extend(
+                [
+                    job_root / "_config_segmentation.json",
+                    job_root / "manifest.json",
+                    job_root / "_run" / "provenance.json",
+                ]
+            )
+        provenance = []
+        for path in paths:
+            if not path.exists() and not path.is_symlink():
+                continue
+            if not self.filesystem._contains(path):
+                continue
+            with _regular_file(path) as (stream, stamp):
+                if stamp["sizeBytes"] > MAX_METADATA_BYTES:
+                    raise ValueError("TRIDENT configuration exceeds the metadata size limit.")
+                raw = stream.read(MAX_METADATA_BYTES + 1)
+                if len(raw) > MAX_METADATA_BYTES:
+                    raise ValueError("TRIDENT configuration exceeds the metadata size limit.")
+                data = json.loads(raw)
+                # Reject non-finite JSON numbers before including the source in a preview hash.
+                json.dumps(data, allow_nan=False)
+                provenance.append(
+                    {
+                        "path": str(path),
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                        "configuration": data,
+                        **stamp,
+                    }
+                )
+        return provenance
 
     def _files(self, root: Path, spec: FeatureSpec) -> list[Path]:
         found: list[Path] = []
@@ -59,26 +258,26 @@ class FeatureService:
         return sorted(found)
 
     @staticmethod
-    def _header(path: Path) -> dict:
+    def _header(path: Path, coordinates_path: Path | None = None) -> dict:
         import h5py
 
-        if any(component.is_symlink() for component in (path, *path.parents)):
-            raise ValueError("Feature input cannot traverse symbolic links.")
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        with os.fdopen(descriptor, "rb") as stream:
-            before = os.fstat(stream.fileno())
-            if not stat.S_ISREG(before.st_mode):
-                raise ValueError("Feature input is not a regular file.")
-            # Inspect the opened inode rather than reopening an independently
-            # replaceable path; the file-object driver still reads only metadata.
+        def dataset(handle, key):
+            if not isinstance(handle.get(key, getlink=True), h5py.HardLink):
+                raise ValueError(f"{key} must be an embedded HDF5 dataset.")
+            value = handle[key]
+            if not isinstance(value, h5py.Dataset) or value.is_virtual or value.external:
+                raise ValueError(f"{key} cannot use external or virtual storage.")
+            return value
+
+        def coordinates(handle, count):
+            coords = dataset(handle, "coords")
+            if coords.shape != (count, 2) or coords.dtype.kind not in {"i", "u"}:
+                raise ValueError("coords must contain one integer (x, y) pair per feature row.")
+            return _attributes(coords)
+
+        with _regular_file(path) as (stream, stamp):
             with h5py.File(stream, "r") as handle:
-                for key in ("features", "coords"):
-                    if not isinstance(handle.get(key, getlink=True), h5py.HardLink):
-                        raise ValueError(f"{key} must be an embedded HDF5 dataset.")
-                    value = handle[key]
-                    if not isinstance(value, h5py.Dataset) or value.is_virtual or value.external:
-                        raise ValueError(f"{key} cannot use external or virtual storage.")
-                features, coords = handle["features"], handle["coords"]
+                features = dataset(handle, "features")
                 if (
                     len(features.shape) != 2
                     or not all(features.shape)
@@ -87,31 +286,97 @@ class FeatureService:
                     raise ValueError(
                         "features must be a nonempty, two-dimensional floating-point matrix."
                     )
-                if coords.shape != (features.shape[0], 2) or coords.dtype.kind not in {"i", "u"}:
-                    raise ValueError("coords must contain one integer (x, y) pair per feature row.")
                 result = {
                     "patchCount": features.shape[0],
                     "dimensions": features.shape[1],
                     "dtype": str(features.dtype),
-                    "sizeBytes": before.st_size,
-                    "mtimeNs": before.st_mtime_ns,
-                    "ctimeNs": before.st_ctime_ns,
-                    "deviceId": before.st_dev,
-                    "inode": before.st_ino,
+                    **stamp,
+                    "attributes": {"file": _attributes(handle), "features": _attributes(features)},
                 }
-            opened_after = os.fstat(stream.fileno())
-        after = path.lstat()
-
-        def stamp(info):
-            return (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_dev, info.st_ino)
-
-        if (
-            not stat.S_ISREG(after.st_mode)
-            or stamp(before) != stamp(after)
-            or stamp(before) != stamp(opened_after)
-        ):
-            raise ValueError("Feature file changed during inspection; preview again.")
+                if handle.get("coords", getlink=True) is not None:
+                    result["attributes"]["coords"] = coordinates(handle, features.shape[0])
+                    result["coordinatePath"] = str(path)
+                    result["coordinateSource"] = "embedded"
+                elif coordinates_path is not None:
+                    with _regular_file(coordinates_path) as (coords_stream, coords_stamp):
+                        with h5py.File(coords_stream, "r") as coords_handle:
+                            result["attributes"]["coords"] = coordinates(
+                                coords_handle, features.shape[0]
+                            )
+                            result["coordinateFile"] = {
+                                **coords_stamp,
+                                "attributes": _attributes(coords_handle),
+                            }
+                    result["coordinatePath"] = str(coordinates_path)
+                    result["coordinateSource"] = "trident-patches"
+                else:
+                    raise ValueError(
+                        "coords is missing; select a TRIDENT folder with patches/ or supply "
+                        "the coordinate directory."
+                    )
+                coord_attrs = result["attributes"]["coords"]
+                result["coordinateSpace"] = (
+                    "level0_pixels"
+                    if "patch_size_level0" in coord_attrs or "level0_magnification" in coord_attrs
+                    else "unspecified"
+                )
         return result
+
+    def _source_extraction(self, spec: FeatureSpec, layout: dict) -> dict | None:
+        """Capture immutable run evidence when attachment follows an in-app extraction."""
+        if spec.sourceExtractionJobId is None:
+            return None
+        from histopilot.application.extraction_artifacts import complete_coverage
+
+        folder = self.store.folder / "extractions" / spec.sourceExtractionJobId
+        try:
+            documents = {}
+            for name in ("job.json", "result.json", "validation.json"):
+                documents[name] = json.loads(self.store._read_file(folder / name, 8 * 1024 * 1024))
+                if not isinstance(documents[name], dict):
+                    raise ValueError("Invalid extraction record.")
+            job, result, validation = (
+                documents["job.json"],
+                documents["result.json"],
+                documents["validation.json"],
+            )
+            options = job.get("spec", {}).get("options", {})
+            encoder = options.get("patch_encoder", "uni_v1")
+            if (
+                job.get("id") != spec.sourceExtractionJobId
+                or job.get("spec", {}).get("datasetId") != spec.datasetId
+                or options.get("task", "all") not in {"feat", "all"}
+                or options.get("slide_encoder")
+                or not isinstance(encoder, str)
+                or (
+                    layout.get("encoderId")
+                    and ENCODER_ALIASES.get(encoder, encoder) != layout["encoderId"]
+                )
+                or result.get("state") != "succeeded"
+                or validation.get("jobId") != job["id"]
+                or not complete_coverage(validation, job.get("slideCount"))
+                or job.get("outputLayout", {}).get("featureKind") != "patch"
+                or Path(job.get("outputLayout", {}).get("featuresDir", "")).resolve()
+                != Path(layout["featureDirectory"]).resolve()
+            ):
+                raise ValueError(
+                    "The extraction must have completed patch features for this dataset and folder."
+                )
+            evidence = {
+                "jobId": job["id"],
+                "spec": job["spec"],
+                "command": job.get("command"),
+                "runtime": job.get("runtime"),
+                "inputFiles": job.get("inputFiles", []),
+                "validation": validation,
+            }
+            return {**evidence, "snapshotHash": _hash(evidence)}
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise StorageError(
+                f"The linked extraction cannot be verified: {error}",
+                "INVALID_SOURCE_EXTRACTION",
+                422,
+            ) from error
 
     def preview(self, spec: FeatureSpec) -> dict:
         dataset = self.store.get_dataset(spec.datasetId)
@@ -121,13 +386,27 @@ class FeatureService:
             )
         records = json.loads(self.store.read_artifact(spec.datasetId, "records.json"))
         expected = {row["slideId"] for row in records}
-        root = self.filesystem.directory(spec.path)
+        root = self._directory(spec.path)
+        layout = self._layout(root, spec)
+        extraction = self._source_extraction(spec, layout)
+        root = Path(layout["featureDirectory"])
         findings: list[dict] = []
         files: list[dict] = []
         orphan = 0
         seen: set[str] = set()
         inventory = []
+        provenance = []
         try:
+            try:
+                provenance = self._provenance(layout)
+            except (OSError, ValueError, RuntimeError) as error:
+                findings.append(
+                    {
+                        "severity": "error",
+                        "code": "INVALID_FEATURE_PROVENANCE",
+                        "message": f"TRIDENT configuration cannot be inspected: {error}",
+                    }
+                )
             paths = self._files(root, spec)
             started = time.monotonic()
             for path in paths:
@@ -164,7 +443,27 @@ class FeatureService:
                     continue
                 seen.add(slide_id)
                 try:
-                    files.append({"slideId": slide_id, "path": str(path), **self._header(path)})
+                    coords_path = (
+                        Path(layout["coordinatesDirectory"]) / f"{slide_id}_patches.h5"
+                        if layout["coordinatesDirectory"]
+                        else None
+                    )
+                    header = self._header(path, coords_path)
+                    encoder = header["attributes"]["features"].get("encoder")
+                    if encoder is not None and (
+                        not isinstance(encoder, str)
+                        or (
+                            layout["encoderId"]
+                            and ENCODER_ALIASES.get(encoder, encoder) != layout["encoderId"]
+                        )
+                    ):
+                        raise ValueError(
+                            "The feature encoder attribute differs from the selection."
+                        )
+                    for attrs in (header["attributes"]["features"], header["attributes"]["coords"]):
+                        if "name" in attrs and attrs["name"] != slide_id:
+                            raise ValueError("The stored slide name differs from the selected ID.")
+                    files.append({"slideId": slide_id, "path": str(path), **header})
                 except (OSError, ValueError, KeyError, RuntimeError) as error:
                     findings.append(
                         {
@@ -176,6 +475,27 @@ class FeatureService:
         except OSError as error:
             raise FilesystemError("Feature files cannot be inspected.", 403) from error
         dimensions = {item["dimensions"] for item in files}
+        encoders = {
+            ENCODER_ALIASES.get(
+                item["attributes"]["features"]["encoder"], item["attributes"]["features"]["encoder"]
+            )
+            for item in files
+            if item["attributes"]["features"].get("encoder")
+        }
+        if len(encoders) > 1:
+            findings.append(
+                {
+                    "severity": "error",
+                    "code": "INCONSISTENT_ENCODERS",
+                    "message": "Selected feature files contain different encoder attributes.",
+                }
+            )
+        elif encoders and not layout["encoderId"]:
+            layout["encoderId"] = next(iter(encoders))
+        if extraction is not None:
+            # Flat imports can discover the encoder only after reading HDF5 headers.
+            # Check that final identity against the run before calling the review valid.
+            extraction = self._source_extraction(spec, layout)
         if len({(item["deviceId"], item["inode"]) for item in files}) != len(files):
             findings.append(
                 {
@@ -221,7 +541,9 @@ class FeatureService:
             {
                 "severity": "warning",
                 "code": "HEADER_VALIDATION_ONLY",
-                "message": "Headers and coverage checked. Full tensor checksums, finite-value checks, and encoder provenance remain unverified.",
+                "message": "Headers and coverage checked; TRIDENT attributes and configuration "
+                "are recorded when present. Full tensor checksums, finite values, coordinate "
+                "contents, and encoder checkpoint provenance remain unverified.",
             }
         )
         summary = {
@@ -236,13 +558,37 @@ class FeatureService:
             "spec": spec.model_dump(mode="json"),
             "summary": summary,
             "files": files,
+            "layout": layout,
+            "provenance": provenance,
+            **({"sourceExtraction": extraction} if extraction is not None else {}),
             "findings": findings,
             "validationLevel": "headers",
             "canFreeze": not any(item["severity"] == "error" for item in findings),
         }
         return {**result, "previewHash": _hash({**result, "inventory": inventory})}
 
-    def freeze(self, spec: FeatureSpec, preview_hash: str, operation_id: str) -> dict:
+    def freeze(
+        self,
+        spec: FeatureSpec,
+        preview_hash: str,
+        operation_id: str,
+        *,
+        version_label: dict | None = None,
+    ) -> dict:
+        prior = self.store.configuration_publication(operation_id)
+        if prior:
+            manifest = prior["manifest"]
+            if (
+                manifest.get("kind") != "feature"
+                or manifest.get("spec") != spec.model_dump(mode="json")
+                or manifest.get("previewHash") != preview_hash
+            ):
+                raise StorageError(
+                    "This operation ID belongs to another feature request.", "OPERATION_CONFLICT"
+                )
+            return self.store.publish_configuration(
+                manifest=manifest, operation_id=operation_id, version_label=version_label
+            )
         preview = self.preview(spec)
         if preview["previewHash"] != preview_hash:
             raise StorageError(
@@ -252,24 +598,50 @@ class FeatureService:
             raise StorageError(
                 "Resolve feature inspection errors before freezing.", "FEATURES_INVALID", 422
             )
-        return self.store.publish_configuration(
-            manifest={
-                "kind": "feature",
-                "schemaVersion": 1,
-                "datasetId": spec.datasetId,
-                **{
-                    key: value
-                    for key, value in preview.items()
-                    if key not in {"canFreeze", "previewHash"}
-                },
-                "previewHash": preview_hash,
+        manifest = {
+            "kind": "feature",
+            "schemaVersion": 1,
+            "datasetId": spec.datasetId,
+            **{
+                key: value
+                for key, value in preview.items()
+                if key not in {"canFreeze", "previewHash"}
             },
+            "previewHash": preview_hash,
+        }
+
+        def check_sources():
+            if self.verify_binding({"manifest": manifest}):
+                raise StorageError(
+                    "Feature inputs changed before publication. Preview again.", "PREVIEW_STALE"
+                )
+
+        return self.store.publish_configuration(
+            manifest=manifest,
             operation_id=operation_id,
+            version_label=version_label,
+            before_publish=check_sources,
         )
 
     def verify_binding(self, configuration: dict) -> list[dict]:
         """Recheck the saved eligible files at preflight; never silently replace the binding."""
         findings = []
+        manifest = configuration["manifest"]
+        if manifest.get("sourceExtraction"):
+            try:
+                current = self._source_extraction(
+                    FeatureSpec.model_validate(manifest["spec"]), manifest["layout"]
+                )
+                if current != manifest["sourceExtraction"]:
+                    raise ValueError("Recorded extraction evidence changed.")
+            except (ValueError, KeyError, OSError) as error:
+                findings.append(
+                    {
+                        "severity": "error",
+                        "code": "FEATURE_SOURCE_CHANGED",
+                        "message": f"Extraction provenance: {error}",
+                    }
+                )
         started = time.monotonic()
         if len(configuration["manifest"]["files"]) > MAX_FILES:
             raise StorageError(
@@ -290,8 +662,16 @@ class FeatureService:
                 resolved = path.resolve(strict=True)
                 if not self.filesystem._contains(resolved) or resolved != path:
                     raise ValueError("File moved outside its declared path or permitted roots.")
-                header = self._header(path)
-                if any(header[key] != item[key] for key in header):
+                coordinate_path = Path(item.get("coordinatePath", item["path"]))
+                coordinate_resolved = coordinate_path.resolve(strict=True)
+                if (
+                    not self.filesystem._contains(coordinate_resolved)
+                    or coordinate_resolved != coordinate_path
+                ):
+                    raise ValueError("Coordinate file moved outside its path or permitted roots.")
+                header = self._header(path, coordinate_path if coordinate_path != path else None)
+                # Older flat imports lack TRIDENT metadata; still validate their original stamps.
+                if any(header[key] != item[key] for key in header if key in item):
                     raise ValueError("File header or modification metadata changed.")
             except (OSError, ValueError, KeyError, RuntimeError) as error:
                 findings.append(
@@ -299,6 +679,26 @@ class FeatureService:
                         "severity": "error",
                         "code": "FEATURE_SOURCE_CHANGED",
                         "message": f"{item['slideId']}: {error}",
+                    }
+                )
+        for source in configuration["manifest"].get("provenance", []):
+            try:
+                path = Path(source["path"])
+                resolved = path.resolve(strict=True)
+                if not self.filesystem._contains(resolved) or resolved != path:
+                    raise ValueError("Configuration moved outside its path or permitted roots.")
+                with _regular_file(path) as (stream, stamp):
+                    if stamp["sizeBytes"] > MAX_METADATA_BYTES:
+                        raise ValueError("Configuration exceeds its metadata size limit.")
+                    checksum = hashlib.sha256(stream.read(MAX_METADATA_BYTES + 1)).hexdigest()
+                if any(stamp[key] != source[key] for key in stamp) or checksum != source["sha256"]:
+                    raise ValueError("Recorded TRIDENT configuration changed.")
+            except (OSError, ValueError, KeyError, RuntimeError) as error:
+                findings.append(
+                    {
+                        "severity": "error",
+                        "code": "FEATURE_SOURCE_CHANGED",
+                        "message": f"TRIDENT provenance: {error}",
                     }
                 )
         return findings

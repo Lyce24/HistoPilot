@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 
 from histopilot import __version__
+from histopilot.adapters.trident import discover_runtime
 from histopilot.application.local_workspace import LocalWorkspace, WorkspaceError
 from histopilot.application.project_workspace import ProjectWorkspace
 from histopilot.config import Settings, load_settings
@@ -16,6 +17,7 @@ from histopilot.doctor import system_report
 from histopilot.schemas.scientific import CreateDraftRequest, UpdateDraftRequest
 from histopilot.schemas.workspace import (
     CohortRequest,
+    CreateDirectoryRequest,
     ExperimentRequest,
     OpenProjectRequest,
     ProjectRequest,
@@ -26,6 +28,7 @@ from histopilot.schemas.workspace import (
 from histopilot.storage.database import SCHEMA_VERSION, Database
 from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
 from histopilot.storage.project_lock import StorageError
+from histopilot.workers.extraction_process import TmuxExtractionExecutor
 
 from .scientific import scientific_router
 from .security import configure_browser_boundary
@@ -78,7 +81,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/session")
     def session():
-        return {"token": token}
+        return {
+            "token": token,
+            "scientificCapabilities": {"versionLabels": True, "taggedFreeze": True},
+        }
 
     @app.get("/api/v1/workspace")
     def get_workspace():
@@ -191,18 +197,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         return (storage if purpose == "storage" else filesystem).list_directory(path)
 
+    @app.post("/api/v1/filesystem/directories", status_code=201)
+    def create_directory(payload: CreateDirectoryRequest):
+        selected_filesystem = storage if payload.purpose == "storage" else filesystem
+        return selected_filesystem.create_directory(payload.parentPath, payload.name)
+
     @app.post("/api/v1/sources", status_code=201)
     def register_source(payload: SourceRequest):
         return workspace.add_source(payload.path)
 
     @app.get("/api/v1/system")
     def system():
+        trident = discover_runtime()
+        extraction_ready = trident["available"] and TmuxExtractionExecutor().available()
         return {
             "mode": "local-first",
             "workspace": str(settings.workspace),
             "storage": {"engine": "sqlite", "journalMode": "wal", "schemaVersion": SCHEMA_VERSION},
             "control": {"cudaModelsLoaded": False, "process": "control-service"},
-            "workers": {"executionEnabled": False, "status": "not-implemented"},
+            "workers": {
+                "executionEnabled": extraction_ready,
+                "status": "TRIDENT extraction available; MIL training not connected"
+                if extraction_ready
+                else "TRIDENT runtime setup required; MIL training not connected",
+                "trident": trident,
+            },
             "sourcesReadOnly": True,
             "diagnostics": system_report(),
         }
@@ -220,6 +239,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raise HTTPException(501, "Compute execution is not implemented. No job was submitted.")
 
     app.include_router(scientific_router(projects, filesystem))
+    from histopilot.api.mil import mil_router
+
+    app.include_router(mil_router(projects, filesystem))
 
     @app.get("/{path:path}")
     def frontend(path: str):

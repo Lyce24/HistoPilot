@@ -209,6 +209,27 @@ def test_external_test_is_reserved_until_final_evaluation_for_every_strategy(mod
 
 
 @pytest.mark.parametrize("mode", MODES)
+def test_unstratified_multiseed_plans_reserve_external_and_outer_test_patients(mode):
+    result = successful(Store(mode, stratify=False, seeds=[0, 7, 4294967295]))
+    assert_grouped(result)
+    grouped = list(plan_rows(result).values())
+    assert {row["seed"] for row in result["memberships"]} == {0, 7, 4294967295}
+    for rows in grouped:
+        if rows[0]["phase"] == "final":
+            assert patients(rows, "test") == EXTERNAL_TEST
+        else:
+            assert patients(rows).isdisjoint(EXTERNAL_TEST)
+        if rows[0]["phase"] == "outer":
+            for inner in grouped:
+                if (
+                    inner[0]["phase"] == "inner"
+                    and inner[0]["seed"] == rows[0]["seed"]
+                    and inner[0]["outerFold"] == rows[0]["outerFold"]
+                ):
+                    assert patients(inner).isdisjoint(patients(rows, "test"))
+
+
+@pytest.mark.parametrize("mode", MODES)
 def test_fixed_validation_never_becomes_cv_test_tuning_or_training(mode):
     result = successful(Store(mode, fixed_validation=True))
     for rows in plan_rows(result).values():
@@ -463,6 +484,7 @@ def test_version_three_pool_protocol_freezes_and_reopens_through_api(tmp_path):
             "expectedRevision": 1,
             "previewHash": result["previewHash"],
             "operationId": "freeze-pools",
+            "versionLabel": {"tag": "Nested split pools"},
         }
         frozen = post(client, protocol_url + "/freeze", intent, 201)
         assert frozen["manifest"]["memberships"] == result["memberships"]

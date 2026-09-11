@@ -1,0 +1,538 @@
+.pfm-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0 0 24px;
+}
+.pfm-mode {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px;
+  text-align: left;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.pfm-mode > svg {
+  color: var(--accent);
+}
+.pfm-mode > span {
+  display: grid;
+  gap: 4px;
+}
+.pfm-mode strong {
+  font-size: 14px;
+}
+.pfm-mode small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.pfm-mode.is-selected {
+  border-color: #a59adf;
+  background: #f8f6ff;
+  box-shadow: 0 0 0 1px #a59adf;
+}
+.pfm-content[hidden] {
+  display: none;
+}
+.pfm-content:not([hidden]) {
+  display: grid;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+.trident-workflow {
+  display: grid;
+  gap: 24px;
+}
+.pfm-source-details {
+  margin-top: 0;
+}
+.trident-workflow,
+.trident-preview,
+.trident-job-detail,
+.trident-form,
+.trident-option {
+  min-width: 0;
+}
+.trident-workflow > .callout {
+  margin-bottom: 20px;
+}
+.trident-form {
+  gap: 26px;
+}
+.trident-inputs {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.75fr) minmax(0, 1.25fr);
+  gap: 22px;
+}
+.trident-output-input {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+.trident-output-input > .label {
+  flex: 1;
+  min-width: 0;
+}
+.trident-output-input > .btn {
+  flex-shrink: 0;
+}
+.trident-stage-fieldset,
+.trident-option-group {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.trident-stage-fieldset > legend,
+.trident-option-group > legend {
+  font-weight: 600;
+  margin-bottom: 12px;
+  padding: 0;
+}
+.trident-stages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.trident-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 15px 12px;
+  cursor: pointer;
+}
+.trident-stage input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.trident-stage:focus-within {
+  outline: 3px solid #a39aeb;
+  outline-offset: 3px;
+}
+.trident-stage.is-selected {
+  color: #6550b1;
+  border-color: #b7ace5;
+  background: #f6f3fe;
+}
+.trident-stage strong,
+.trident-stage small {
+  display: block;
+}
+.trident-stage strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.trident-stage small {
+  color: var(--muted);
+  margin-top: 3px;
+  font-size: 10px;
+}
+.trident-basic-options {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 0.85fr 0.85fr;
+  gap: 20px;
+}
+.trident-option > .field {
+  width: 100%;
+  margin-top: 7px;
+}
+.trident-option > small,
+.trident-toggle small {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  line-height: 1.65;
+  font-size: 11px;
+  font-weight: 400;
+}
+.trident-path-picker {
+  margin-top: 10px;
+}
+.trident-path-picker .btn,
+.pfm-coordinate-picker > .btn {
+  font-size: 11px;
+  padding: 8px 10px;
+}
+.pfm-coordinate-picker > .btn {
+  margin-top: 10px;
+}
+.trident-option.is-inactive > .label {
+  color: var(--muted);
+}
+.trident-option code,
+.trident-toggle code {
+  display: block;
+  color: #8b829b;
+  font-size: 10px;
+  font-weight: 400;
+  margin-top: 2px;
+}
+.trident-toggle {
+  padding-top: 2px;
+  font-size: 12px;
+}
+.trident-advanced {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 18px;
+  background: #fcfcfe;
+}
+.trident-advanced > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  align-items: center;
+  padding: 17px 0 !important;
+  list-style: none;
+}
+.trident-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.trident-advanced > summary > span {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.trident-advanced > summary > small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.trident-advanced > summary::after {
+  content: '+';
+  font-size: 20px;
+  font-weight: 400;
+}
+.trident-advanced[open] > summary::after {
+  content: '−';
+}
+.trident-advanced > summary > span {
+  flex: 1;
+}
+.trident-help {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 22px;
+  max-width: 750px;
+}
+.trident-option-group {
+  margin: 0 0 26px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.trident-option-group > legend {
+  float: left;
+  width: 100%;
+  font-size: 12px;
+  color: #625877;
+}
+.trident-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  clear: both;
+}
+.trident-advanced > .btn {
+  margin: 0 0 18px;
+}
+.trident-review-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+.trident-review-bar p {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+  max-width: 650px;
+}
+.trident-review-bar > .btn {
+  flex-shrink: 0;
+}
+.trident-layout {
+  padding: 18px;
+  border: 1px solid #e6e1f1;
+  background: #faf9fe;
+  border-radius: 9px;
+  margin: 20px 0;
+}
+.trident-layout > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #675791;
+}
+.trident-layout dl {
+  display: grid;
+  gap: 9px;
+  margin: 15px 0 0;
+}
+.trident-layout dl > div {
+  display: grid;
+  grid-template-columns: 145px minmax(0, 1fr);
+  gap: 12px;
+}
+.trident-layout dt {
+  color: var(--muted);
+  text-transform: capitalize;
+  font-size: 11px;
+}
+.trident-layout dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+.trident-command {
+  margin-bottom: 20px;
+}
+.trident-jobs {
+  display: grid;
+  grid-template-columns: minmax(205px, 0.48fr) minmax(0, 1.52fr);
+  gap: 24px;
+}
+.trident-job-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 620px;
+  overflow: auto;
+}
+.trident-job-navigation {
+  min-width: 0;
+}
+.trident-job-group-label {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.trident-job-history {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.trident-job-history > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.trident-job-history > summary > span {
+  margin-left: auto;
+  color: var(--muted);
+}
+.trident-job-history > summary::before {
+  content: '+';
+  font-size: 17px;
+}
+.trident-job-history[open] > summary::before {
+  content: '−';
+}
+.trident-completion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0 0 20px;
+  padding: 18px;
+  border: 1px solid #cfe3d7;
+  border-radius: 9px;
+  background: #f4faf6;
+}
+.trident-completion strong {
+  color: #34634b;
+  font-size: 13px;
+}
+.trident-completion p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.trident-completion > .btn {
+  flex-shrink: 0;
+}
+.trident-job-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  padding: 14px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.trident-job-row > .badge {
+  flex-shrink: 0;
+}
+.trident-job-row > span:not(.badge) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.trident-job-model,
+.trident-job-stage {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: #71638f;
+}
+.trident-job-stage {
+  font-size: 10px;
+  color: var(--muted);
+}
+.trident-activity {
+  scroll-margin-top: 92px;
+  min-width: 0;
+}
+.trident-run-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 30px;
+  margin: 0 0 20px;
+}
+.trident-run-settings dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+.trident-run-settings dd {
+  margin: 3px 0 0;
+  font-size: 12px;
+  font-weight: 550;
+}
+.trident-run-error {
+  margin-bottom: 18px;
+}
+.trident-run-error p {
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+}
+.trident-job-actions {
+  margin-bottom: 20px;
+}
+.trident-run-details {
+  border-top: 1px solid var(--line);
+}
+.trident-run-details > summary {
+  font-size: 12px;
+}
+.trident-job-row.is-selected {
+  border-color: #b7ace5;
+  background: #f8f6fd;
+}
+.trident-job-row strong,
+.trident-job-row small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.trident-job-row small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.trident-job-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin-bottom: 16px;
+}
+.trident-job-heading strong {
+  overflow-wrap: anywhere;
+}
+.trident-job-heading p {
+  font-size: 11px;
+  margin-top: 4px;
+}
+.trident-job-paths {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 22px;
+}
+.trident-job-coverage {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 16px;
+}
+.trident-job-paths dt {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+.trident-job-paths dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.trident-log-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.trident-log-heading > span {
+  font-size: 10px;
+  color: var(--muted);
+}
+.trident-log-heading i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--green);
+}
+.trident-log {
+  padding: 16px;
+  background: #1d2030;
+  color: #d8daeb;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 340px;
+  overflow: auto;
+  min-height: 130px;
+  margin: 0 0 18px;
+}
+.pfm-coordinate-note {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.pfm-feature-files {
+  max-height: 480px;
+  overflow: auto;
+}
+.pfm-feature-files th {
+  position: sticky;
+  top: 0;
+  background: #f7f8fb;
+}
+@media (max-width: 1100px) {
+  .trident-inputs { grid-template-columns: minmax(0, 1fr); }
+  .trident-stages, .trident-basic-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trident-advanced-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trident-jobs { grid-template-columns: minmax(0, 1fr); }
+  .trident-job-list { max-height: 240px; }
+}
+@media (max-width: 720px) {
+  .pfm-modes, .trident-advanced-grid { grid-template-columns: minmax(0, 1fr); }
+  .pfm-mode { padding: 15px; }
+  .trident-output-input, .trident-review-bar { flex-direction: column; align-items: stretch; }
+  .trident-output-input > .btn { align-self: flex-start; }
+  .trident-layout dl > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .trident-log-heading { align-items: flex-start; flex-direction: column; }
+  .trident-completion { align-items: flex-start; flex-direction: column; }
+}

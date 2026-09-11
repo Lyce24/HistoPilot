@@ -36,6 +36,12 @@ class SourceRequest(RequestModel):
     path: str = Field(min_length=1, max_length=4096)
 
 
+class CreateDirectoryRequest(RequestModel):
+    parentPath: str = Field(min_length=1, max_length=4096)
+    name: str = Field(min_length=1, max_length=255)
+    purpose: Literal["source", "storage"] = "source"
+
+
 class ProjectConfig(RequestModel):
     """Optional planning choices, never an executable experiment specification."""
 

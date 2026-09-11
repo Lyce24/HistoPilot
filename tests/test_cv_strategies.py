@@ -154,6 +154,33 @@ def test_every_plan_keeps_all_slides_of_a_patient_together(mode):
     assert result["executionEnabled"] is False
 
 
+@pytest.mark.parametrize("mode", MODES)
+def test_unstratified_plans_keep_patients_disjoint_across_seed_boundaries(mode):
+    result = preview(Store(mode, stratify=False, seeds=[0, 7, 4294967295]))
+    assert_disjoint(result)
+    assert {row["seed"] for row in result["memberships"]} == {0, 7, 4294967295}
+    assignments = list(plans(result).values())
+    for outer in assignments:
+        if outer[0]["phase"] != "outer":
+            continue
+        for inner in assignments:
+            if (
+                inner[0]["phase"] == "inner"
+                and inner[0]["seed"] == outer[0]["seed"]
+                and inner[0]["outerFold"] == outer[0]["outerFold"]
+            ):
+                assert patients(inner).isdisjoint(patients(outer, "test"))
+    if mode == "nested_kfold":
+        # This deterministic unstratified seed gives a validation group one class.
+        # Disabling stratification must not disable the minimum-class safeguard.
+        assert not result["canFreeze"]
+        assert {
+            item["code"] for item in result["findings"] if item["severity"] == "error"
+        } == {"PARTITION_CLASS_TOO_SMALL"}
+    else:
+        assert result["canFreeze"], result["findings"]
+
+
 def test_stratification_and_early_stopping_are_enabled_by_default():
     spec = specification()
     spec["split"].pop("stratify")
@@ -450,6 +477,36 @@ def test_predefined_test_is_preserved_with_optional_validation(field):
     assert len(patients(assignments, "val")) == 12
     assert len(patients(assignments, "train")) == 36
     assert_disjoint(result)
+
+
+@pytest.mark.parametrize("excluded_by", ["eligibility", "missing_target"])
+def test_excluding_predefined_validation_cannot_silently_generate_a_replacement(excluded_by):
+    store = Store(
+        "held_out",
+        heldOutSource="imported",
+        imported={
+            "partitionField": "explicit",
+            "partitionLabels": {"train": "train", "test": "test", "val": "val"},
+        },
+    )
+    spec = store.draft["payload"]["spec"]
+    if excluded_by == "eligibility":
+        spec["eligibility"] = [{"field": "explicit", "op": "ne", "value": "val"}]
+    else:
+        for row in store.rows:
+            if row["attributes"]["explicit"] == "val":
+                row["attributes"]["label"] = None
+        spec["target"]["missing"] = "exclude"
+    result = preview(store)
+    assert not result["canFreeze"]
+    assert "EMPTY_IMPORTED_VALIDATION" in {finding["code"] for finding in result["findings"]}
+    assert result["memberships"] == []
+
+    # Revising the mapping makes the change of validation policy explicit.
+    spec["split"]["imported"]["partitionLabels"]["val"] = "train"
+    revised = successful(store)
+    assert_disjoint(revised)
+    assert revised["partitions"][0]["val"]["groups"] > 0
 
 
 def test_predefined_split_cannot_put_one_patients_slides_in_different_roles():

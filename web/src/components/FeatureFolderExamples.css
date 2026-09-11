@@ -1,0 +1,100 @@
+.feature-folder-examples {
+  border: 1px solid #e5e0f3;
+  border-radius: 10px;
+  background: #fcfbff;
+  min-width: 0;
+}
+.pfm-content .feature-folder-examples > summary,
+.feature-packing .feature-folder-examples > summary {
+  padding: 14px 18px;
+  color: #6d59bc;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.feature-folder-examples-body {
+  display: grid;
+  gap: 14px;
+  padding: 0 18px 18px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.feature-folder-examples-body code {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.feature-folder-example-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.feature-folder-example {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e9e5f2;
+  border-radius: 8px;
+  background: #fff;
+}
+.feature-folder-example h3 {
+  color: var(--ink);
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.feature-folder-example pre {
+  margin: 14px 0;
+  padding: 12px;
+  border-radius: 6px;
+  background: #f6f4fb;
+  font-size: 11px;
+  line-height: 1.75;
+  overflow-x: auto;
+}
+.feature-folder-example pre strong {
+  color: #6d59bc;
+}
+.feature-folder-example-path {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.feature-folder-example-path > span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.feature-file-example {
+  border-top: 1px solid #e9e5f2;
+  padding-top: 12px;
+}
+.feature-file-example summary {
+  color: #6d59bc;
+  font-weight: 600;
+  cursor: pointer;
+}
+.feature-file-example p,
+.feature-file-example dl {
+  margin-top: 12px;
+}
+.feature-folder-examples-body > dl { display: grid; gap: 10px; margin: 0; }
+.feature-folder-examples-body > dl dt { font-weight: 600; }
+.feature-folder-examples-body > dl dd { margin: 0; }
+.feature-file-example dl {
+  display: grid;
+  gap: 10px;
+}
+.feature-file-example dt {
+  font-weight: 600;
+}
+.feature-file-example dd {
+  margin: 0;
+}
+@media (max-width: 800px) {
+  .feature-folder-example-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .pfm-content .feature-folder-examples > summary,
+  .feature-packing .feature-folder-examples > summary { padding: 12px; }
+  .feature-folder-examples-body { padding: 0 12px 12px; }
+  .feature-folder-example { padding: 12px; }
+}

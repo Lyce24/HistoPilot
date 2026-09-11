@@ -106,6 +106,158 @@
   height: 8px;
   margin: 8px 0;
 }
+.protocol-workspace .protocol-distribution {
+  background: #fcfbfd;
+  border-color: #e5e1e9;
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+.protocol-workspace .protocol-distribution figcaption {
+  font-size: 13px;
+  color: #47505c;
+  margin-bottom: 16px;
+}
+.protocol-workspace .protocol-distribution .science-bar {
+  font-size: 13px;
+  min-height: 34px;
+}
+.protocol-workspace .protocol-distribution .science-bar-track {
+  height: 14px;
+  background: #efebf2;
+  border-radius: 4px;
+}
+.protocol-workspace .protocol-distribution .science-bar-track > span {
+  background: #9379a0;
+  border-radius: 4px;
+}
+.protocol-workspace .protocol-field-profile {
+  padding: 14px 16px;
+  gap: 8px;
+  border: 1px solid #e7e3e9;
+  border-radius: 10px;
+  background: #faf9fb;
+  color: #626e79;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.protocol-workspace .protocol-field-profile strong {
+  color: #47505c;
+  font-weight: 600;
+}
+.protocol-workspace .protocol-field-profile code {
+  padding: 2px 8px;
+  color: #684e75;
+  border-color: #e5dfe9;
+  border-radius: 5px;
+  font-size: 12px;
+}
+.protocol-workspace .protocol-population {
+  padding: 20px;
+  background: #f8faf9;
+  border: 1px solid #dce8e3;
+  border-radius: 12px;
+  gap: 18px;
+}
+.protocol-workspace .protocol-population-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+.protocol-workspace .protocol-population-heading > span {
+  color: #34766a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.protocol-workspace .protocol-population-heading > small {
+  color: #626e79;
+  font-size: 12px;
+}
+.protocol-workspace .protocol-metrics {
+  margin: 0;
+  gap: 18px;
+}
+.protocol-workspace .protocol-metrics .metric-card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  margin: 0;
+}
+.protocol-workspace .protocol-metrics .metric-value {
+  font-size: 31px;
+  letter-spacing: -1px;
+  color: #2f655d;
+  margin: 7px 0;
+}
+.protocol-workspace .protocol-metrics .metric-label {
+  color: #55655f;
+  font-size: 12px;
+}
+.protocol-workspace .protocol-metrics .metric-note {
+  font-size: 11px;
+  color: #65776f;
+}
+.protocol-workspace .protocol-coverage,
+.protocol-workspace .protocol-partition-live {
+  font-size: 12px;
+}
+.protocol-workspace .protocol-population progress,
+.protocol-workspace .protocol-partition-live progress {
+  height: 8px;
+  accent-color: #529387;
+}
+.protocol-workspace .protocol-sample {
+  min-width: 0;
+  overflow: hidden;
+  padding: 12px 0 0;
+}
+.protocol-workspace .protocol-sample summary {
+  color: #5f536d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.protocol-workspace .protocol-sample .table-wrap {
+  border: 1px solid #e7e3e9;
+  border-radius: 8px;
+}
+.protocol-workspace .protocol-sample table caption {
+  padding: 10px 12px;
+  color: #626e79;
+  font-size: 11px;
+  text-align: left;
+}
+.protocol-workspace .protocol-condition {
+  padding: 16px;
+  border: 1px solid #e3dee9;
+  border-radius: 10px;
+  background: #fcfbfd;
+}
+.protocol-workspace .protocol-condition + .protocol-condition {
+  border-top: 1px solid #e3dee9;
+}
+.protocol-workspace .protocol-extra-inputs {
+  padding: 18px 20px;
+  background: #faf9fb;
+  border-color: #e5e0e9;
+  border-radius: 12px;
+}
+.protocol-workspace .protocol-extra-inputs summary {
+  color: #5d496b;
+  font-size: 13px;
+}
+.protocol-workspace .protocol-extra-inputs .protocol-field-profile {
+  margin-top: 10px;
+  background: #fff;
+}
+.protocol-workspace .protocol-live-status {
+  background: #f6f5f8;
+  border: 1px dashed #dcd6e3;
+  color: #626e79;
+  font-size: 13px;
+}
 @media (max-width: 560px) {
   .protocol-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));

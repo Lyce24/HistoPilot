@@ -10,6 +10,7 @@ dist/
 
 # Frontend tooling and local artifacts
 node_modules/
+*.tsbuildinfo
 .cache/
 coverage/
 .DS_Store

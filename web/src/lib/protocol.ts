@@ -25,6 +25,7 @@ export function inferTargetSettings(values: (string | null)[], truncated = false
     task,
     classes,
     labels: Object.fromEntries(classes.map((value) => [value, value])),
-    positiveClass: task === 'binary_classification' ? classes[0] : undefined,
+    // Value ordering is not evidence of which clinical outcome is positive.
+    positiveClass: undefined as string | undefined,
   };
 }

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import {
   changeHeldOutSource,
   changeSplitStrategy,
@@ -23,6 +23,13 @@ export const strategyNames: Partial<Record<Split['mode'], string>> = {
   leave_one_domain_out: 'Leave-one-site/cohort-out CV (LOSO/LOCO)',
   nested_kfold: 'Nested K-fold cross-validation',
   held_out: 'Held-out validation',
+};
+const strategyDescriptions: Partial<Record<Split['mode'], string>> = {
+  kfold: 'Rotate held-out assessment folds.',
+  monte_carlo: 'Repeat independent random splits.',
+  leave_one_domain_out: 'Assess one unseen site or cohort at a time.',
+  nested_kfold: 'Separate model tuning from assessment.',
+  held_out: 'Use one fixed train, validation and test design.',
 };
 export function newSplit(seeds: number[] = [42], folds = 5): Split {
   return {
@@ -72,6 +79,7 @@ export function SplitStrategy({
   imported: ReactNode;
   pools?: ReactNode;
 }) {
+  const strategyGroup = useId();
   const explicitPools = split.version === 3;
   const validation = split.validationFraction ?? validationFractionDefault(split.version);
   const test =
@@ -94,48 +102,80 @@ export function SplitStrategy({
   const predefined =
     !explicitPools && split.mode === 'held_out' && split.heldOutSource === 'imported';
   return (
-    <div className="stack">
-      <label className="label">
-        Split strategy
-        <select
-          className="field"
-          value={split.mode}
-          onChange={(event) =>
-            onChange(changeSplitStrategy(split, event.target.value as Split['mode']))
-          }
-        >
-          {Object.entries(strategyNames).map(([value, name]) => (
-            <option value={value} key={value}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="split-role-guide">
+    <div className="stack split-strategy-workbench">
+      {explicitPools ? pools : null}
+      <div className="split-strategy-heading">
         <div>
+          <span className="split-section-caption">
+            {explicitPools ? 'B · EVALUATION STRATEGY' : 'EVALUATION STRATEGY'}
+          </span>
+          <h3>Choose how to evaluate</h3>
+          <p className="muted">
+            {explicitPools
+              ? 'Cross-validation runs within your training pool. The final test set stays reserved.'
+              : 'Choose how training, early-stop validation and reported test sets are assigned.'}
+          </p>
+        </div>
+      </div>
+      <fieldset className="split-strategy-choices">
+        <legend className="split-visually-hidden">Split strategy</legend>
+        {Object.entries(strategyNames).map(([value, name]) => (
+          <label
+            className={`split-strategy-choice${split.mode === value ? ' is-selected' : ''}`}
+            key={value}
+          >
+            <input
+              type="radio"
+              name={strategyGroup}
+              value={value}
+              checked={split.mode === value}
+              onChange={(event) =>
+                onChange(changeSplitStrategy(split, event.target.value as Split['mode']))
+              }
+            />
+            <span
+              className={`split-strategy-motif motif-${value}${explicitPools && value !== 'held_out' ? ' motif-cv-assessment' : ''}`}
+              aria-hidden="true"
+            >
+              {[0, 1, 2, 3, 4].map((part) => (
+                <i key={part} />
+              ))}
+            </span>
+            <strong>{name}</strong>
+            <small>{strategyDescriptions[value as Split['mode']]}</small>
+          </label>
+        ))}
+      </fieldset>
+      <div className="split-role-guide">
+        <div className="split-role-training">
           <strong>Training</strong>
           <span>Fits the model.</span>
         </div>
-        <div>
+        <div className="split-role-validation">
           <strong>Early-stop validation</strong>
           <span>Decides when training stops.</span>
         </div>
         {split.mode === 'nested_kfold' ? (
-          <div>
+          <div className="split-role-tuning">
             <strong>Inner tuning</strong>
             <span>Compares model settings inside the outer training data.</span>
           </div>
         ) : null}
-        <div>
+        {explicitPools && split.mode !== 'held_out' ? (
+          <div className="split-role-assessment">
+            <strong>CV assessment</strong>
+            <span>Held out within the training pool for each CV plan.</span>
+          </div>
+        ) : null}
+        <div className="split-role-test">
           <strong>{explicitPools ? 'Final test' : 'Reported test'}</strong>
           <span>Evaluates the selected model on unseen data.</span>
         </div>
       </div>
-      <p className="muted">
-        Patients stay together in every set. Confirmed Slide ID fallbacks each form a separate
-        group. Choose the stopping metric and model settings later in MIL experiments.
+      <p className="split-group-note">
+        <span>Patient grouping</span> Known patients stay together. Each confirmed Slide ID
+        fallback forms one group. Choose the stopping metric later in MIL experiments.
       </p>
-      {explicitPools ? pools : null}
       <div className="science-grid-two">
         <label className="label">
           Seeds, separated by commas
@@ -368,7 +408,10 @@ function AllocationPreview({
       <div className="split-allocation-bar" aria-hidden="true">
         <span className="split-train" style={{ width: percent(train) }} />
         <span className="split-val" style={{ width: percent(val) }} />
-        <span className="split-test" style={{ width: percent(test) }} />
+        <span
+          className={trainingOnly ? 'split-assessment' : 'split-test'}
+          style={{ width: percent(test) }}
+        />
       </div>
       <div className="split-allocation-legend">
         <span>
@@ -380,7 +423,7 @@ function AllocationPreview({
           Early-stop validation <strong>{percent(val)}</strong>
         </span>
         <span>
-          <i className="split-test" />
+          <i className={trainingOnly ? 'split-assessment' : 'split-test'} />
           {trainingOnly ? 'CV assessment' : 'Reported test'} <strong>{percent(test)}</strong>
         </span>
       </div>

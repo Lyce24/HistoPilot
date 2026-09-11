@@ -352,6 +352,14 @@ class ProjectWorkspace:
             "project": self._summary(document, path),
             "dataset": {
                 "id": latest["id"] if latest else "",
+                **(
+                    {
+                        "name": latest["manifest"].get("name", "Dataset version"),
+                        "versionLabel": latest.get("versionLabel"),
+                    }
+                    if latest
+                    else {}
+                ),
                 "patientCount": summary.get(
                     "verifiedPatientCount", summary.get("mappedPatientCount", 0)
                 ),

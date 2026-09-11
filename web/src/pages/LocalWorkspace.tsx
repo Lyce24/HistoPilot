@@ -1,9 +1,16 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { InitialConfig, Page, Source, Workspace } from '../api/types';
+import type { ProtocolSpec } from '../api/scientific';
 import { api } from '../api/client';
 import { workspaceKey } from '../api/queries';
 import ServerFolderPicker from '../components/ServerFolderPicker';
+import { useConfigurations, useDatasets } from '../components/ScientificUI';
+import {
+  configurationVersionLabel,
+  datasetVersionLabel,
+  versionLabelText,
+} from '../lib/versionLabels';
 import {
   Badge,
   EmptyState,
@@ -122,7 +129,7 @@ function Sources({ workspace: w }: { workspace: Workspace }) {
   );
 }
 
-function Settings({ workspace: w }: { workspace: Workspace }) {
+export function Settings({ workspace: w }: { workspace: Workspace }) {
   const initial = w.project.config;
   const [task, setTask] = useState(initial.task ?? '');
   const [target, setTarget] = useState(initial.targetColumn ?? '');
@@ -271,6 +278,102 @@ function Settings({ workspace: w }: { workspace: Workspace }) {
           <span className="muted">No model run starts when you save.</span>
         </div>
       </form>
+    </Panel>
+  );
+}
+
+function SavedExperimentInputs({ project }: { project: string }) {
+  const datasets = useDatasets(project);
+  const protocols = useConfigurations(project, 'protocol');
+  const features = useConfigurations(project, 'feature');
+  const datasetById = new Map(datasets.data?.datasets.map((item) => [item.id, item]) ?? []);
+  const featureById = new Map(features.data?.configurations.map((item) => [item.id, item]) ?? []);
+  const datasetLabel = (identity: string) => {
+    const dataset = datasetById.get(identity);
+    return dataset ? datasetVersionLabel(dataset) : versionLabelText({ id: identity }, 'Dataset');
+  };
+  const featureLabel = (identity: string | null | undefined) => {
+    if (!identity) return 'Not selected';
+    const feature = featureById.get(identity);
+    return feature
+      ? configurationVersionLabel(feature)
+      : versionLabelText({ id: identity }, 'Features');
+  };
+  const loading = datasets.isPending || protocols.isPending || features.isPending;
+
+  return (
+    <Panel
+      title="Saved inputs for MIL experiments"
+      subtitle="Use version tags and notes to identify the datasets, cohorts and features behind your analysis."
+      actions={<Badge>Planning only</Badge>}
+    >
+      <ErrorNotice error={datasets.error ?? protocols.error ?? features.error} />
+      {loading ? <p className="muted" role="status">Loading saved versions…</p> : (
+        <div className="stack">
+          <section aria-label="Dataset versions">
+            <h3>Datasets</h3>
+            {datasets.data?.datasets.length ? (
+              <ul className="detail-list">
+                {datasets.data.datasets.map((dataset) => (
+                  <li key={dataset.id}>
+                    <div>
+                      <a className="text-link" href="#dataset" title={dataset.id}>
+                        {datasetVersionLabel(dataset)}
+                      </a>
+                      {dataset.versionLabel?.note ? <p className="muted">{dataset.versionLabel.note}</p> : null}
+                    </div>
+                    <span>{dataset.manifest.summary?.slideCount ?? '?'} slides</span>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="muted">Freeze a dataset in <a href="#dataset">Dataset</a> to add an input version.</p>}
+          </section>
+          <section aria-label="Cohort and protocol versions">
+            <h3>Cohorts & protocols</h3>
+            <p className="muted">Each protocol preserves its study cohort, target and split together.</p>
+            {protocols.data?.configurations.length ? (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Cohort / protocol</th><th>Dataset</th><th>Bound features</th><th>Version note</th></tr></thead>
+                  <tbody>
+                    {protocols.data.configurations.map((protocol) => {
+                      const featureId = (protocol.manifest.spec as ProtocolSpec).featureSetId;
+                      return (
+                        <tr key={protocol.id}>
+                          <td><a className="text-link" href="#cohort" title={protocol.id}>{configurationVersionLabel(protocol)}</a></td>
+                          <td title={protocol.manifest.datasetId}>{datasetLabel(protocol.manifest.datasetId)}</td>
+                          <td title={featureId ?? undefined}>{featureLabel(featureId)}</td>
+                          <td>{protocol.versionLabel?.note || 'No note yet'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : <p className="muted">Save a cohort and evaluation design in <a href="#cohort">Target & split</a>.</p>}
+          </section>
+          <section aria-label="Feature versions">
+            <h3>Available features</h3>
+            {features.data?.configurations.length ? (
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Feature version</th><th>Dataset</th><th>Version note</th></tr></thead>
+                  <tbody>
+                    {features.data.configurations.map((feature) => (
+                      <tr key={feature.id}>
+                        <td><a className="text-link" href="#features" title={feature.id}>{configurationVersionLabel(feature)}</a></td>
+                        <td title={feature.manifest.datasetId}>{datasetLabel(feature.manifest.datasetId)}</td>
+                        <td>{feature.versionLabel?.note || 'No note yet'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <p className="muted">Inspect and attach embeddings in <a href="#features">PFM & features</a>.</p>}
+          </section>
+          <p className="muted">These frozen inputs are available for planning. MIL training is not connected yet.</p>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -459,6 +562,7 @@ export default function LocalWorkspace({
             </a>
           </div>
         </Panel>
+        <SavedExperimentInputs project={w.project.id} />
         <Settings workspace={w} />
       </>
     );

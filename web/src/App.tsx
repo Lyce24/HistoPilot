@@ -16,6 +16,7 @@ import LocalWorkspace from './pages/LocalWorkspace';
 import LocalDataset from './pages/LocalDataset';
 import LocalProtocol from './pages/LocalProtocol';
 import LocalFeatures from './pages/LocalFeatures';
+import LocalExperiments from './pages/LocalExperiments';
 
 const pages: Record<Page, string> = {
   overview: 'Overview',
@@ -37,6 +38,7 @@ function Content({ page, workspace }: { page: Page; workspace: Workspace }) {
     if (page === 'dataset') return <LocalDataset workspace={workspace} />;
     if (page === 'cohort') return <LocalProtocol workspace={workspace} />;
     if (page === 'features') return <LocalFeatures workspace={workspace} />;
+    if (page === 'experiments') return <LocalExperiments workspace={workspace} />;
     if (page !== 'system') return <LocalWorkspace page={page} workspace={workspace} />;
   }
   switch (page) {

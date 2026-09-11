@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { scientific } from '../api/scientific';
@@ -13,6 +13,8 @@ import type {
 } from '../api/scientific';
 import { Badge, ErrorNotice, Icon } from './ui';
 import ServerFolderPicker from './ServerFolderPicker';
+import { datasetVersionLabel } from '../lib/versionLabels';
+import { readTableUpload, UploadReadState } from '../lib/datasetImport';
 import './dataset-fields.css';
 
 export const scienceKey = (project: string) => ['scientific', project];
@@ -109,10 +111,9 @@ export function DatasetSelect({
             {versions.length ? 'Choose a frozen dataset' : 'No frozen datasets yet'}
           </option>
         ) : null}
-        {versions.map((version, index) => (
+        {versions.map((version) => (
           <option key={version.id} value={version.id}>
-            {version.manifest.name ?? `Dataset ${versions.length - index}`} ·{' '}
-            {version.manifest.summary?.slideCount ?? '?'} slides · {version.id.slice(-8)}
+            {datasetVersionLabel(version)} · {version.manifest.summary?.slideCount ?? '?'} slides
           </option>
         ))}
       </select>
@@ -169,6 +170,9 @@ export function SourceFields({
   reading?: boolean;
 }) {
   const [error, setError] = useState<Error | null>(null);
+  const [uploadReads] = useState(() => new UploadReadState(source));
+  uploadReads.synchronize(source);
+  useEffect(() => () => uploadReads.cancel(), [uploadReads]);
   const upload = source.contentBase64 !== undefined;
   const sheetsId = useId();
   const pathId = useId();
@@ -181,24 +185,11 @@ export function SourceFields({
   async function readFile(file?: File) {
     if (!file) return;
     setError(null);
-    onChange({ filename: file.name, contentBase64: '' });
-    if (file.size > 256 * 1024) {
-      setError(
-        new Error(
-          'Browser metadata uploads are limited to 256 KB. Use a server file path for larger tables (up to 16 MB).',
-        ),
-      );
-      return;
-    }
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      let text = '';
-      for (let offset = 0; offset < bytes.length; offset += 8192)
-        text += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
-      onChange({ filename: file.name, contentBase64: btoa(text) });
-    } catch {
-      setError(new Error('This metadata file could not be read.'));
-    }
+    await readTableUpload(file, uploadReads, onChange, setError);
+  }
+  function changeSource(next: TableSource) {
+    uploadReads.synchronize(next);
+    onChange(next);
   }
   return (
     <div className="source-fields dataset-source-fields">
@@ -209,15 +200,15 @@ export function SourceFields({
           value={upload ? 'upload' : 'server'}
           onChange={(event) => {
             setError(null);
-            onChange(
+            changeSource(
               event.target.value === 'upload'
                 ? { filename: '', contentBase64: '' }
                 : { path: '' },
             );
           }}
         >
-          <option value="server">File on the server</option>
-          <option value="upload">Upload metadata from this computer</option>
+          <option value="server">Choose a file on the server</option>
+          <option value="upload">Upload a file from this computer</option>
         </select>
       </label>
       {upload ? (
@@ -244,7 +235,7 @@ export function SourceFields({
               placeholder="/path/to/metadata.csv or workbook.xlsx"
               onChange={(event) => {
                 const path = event.target.value;
-                onChange({
+                changeSource({
                   ...source,
                   path,
                   sheet: /\.xlsx$/i.test(path.trim()) ? source.sheet : undefined,
@@ -255,7 +246,7 @@ export function SourceFields({
               selection="table"
               label="Browse metadata files"
               title="Choose a metadata file"
-              onSelect={(path) => onChange({ path })}
+              onSelect={(path) => changeSource({ path })}
             />
           </div>
         </div>
@@ -269,7 +260,7 @@ export function SourceFields({
             list={sheetsId}
             placeholder="First sheet"
             onChange={(event) =>
-              onChange({ ...source, sheet: event.target.value || undefined })
+              changeSource({ ...source, sheet: event.target.value || undefined })
             }
           />
           <small>
@@ -285,12 +276,10 @@ export function SourceFields({
       ) : null}
       <div className="dataset-read-action">
         <div>
-          <strong>
-            {inspection ? 'Review or refresh this file' : 'Next: read your metadata file'}
-          </strong>
+          <strong>{inspection ? 'File selected' : 'See what is in your file'}</strong>
           <p id={readHelpId}>
-            Read the column names and example values, then choose what each column means. Your
-            dataset is saved and frozen in the following steps.
+            Read the column names and example values before mapping. You will review the dataset
+            before saving a fixed version.
           </p>
         </div>
         <button
@@ -331,7 +320,7 @@ export function SourceFields({
                 Continue to column mapping <Icon name="arrow" size={15} />
               </button>
             ) : (
-              <p>Next, review the identity columns and attributes below.</p>
+              <p>Ready for column mapping.</p>
             )
           ) : null}
         </div>
@@ -405,13 +394,36 @@ export function DictionaryEditor({
     onChange(attributes.map((item, at) => (at === index ? { ...item, ...update } : item)));
   return (
     <div className="dictionary-editor dataset-dictionary-editor">
+      <div className="dataset-dictionary-heading">
+        <div>
+          <h3>Information to keep</h3>
+          <p>Review the suggested attributes. Remove any you do not need.</p>
+        </div>
+        <Badge tone="neutral">
+          {attributes.length} {attributes.length === 1 ? 'attribute' : 'attributes'}
+        </Badge>
+      </div>
+      <div className="dataset-mapping-key">
+        <span>
+          <b>Source column</b> Your spreadsheet header
+        </span>
+        <span>
+          <b>Attribute name</b> Name in this dataset
+        </span>
+        <span>
+          <b>Belongs to</b> Slide or patient information
+        </span>
+        <span>
+          <b>Data type</b> How values are checked
+        </span>
+      </div>
       <p className="dataset-dictionary-guide muted">
         {inspection?.columnSummaries
           ? `Examples show the most frequent source values across all ${inspection.rowCount.toLocaleString()} rows.`
           : inspection
             ? `Examples come from ${inspection.rows.length} preview rows, so other values may exist.`
             : 'Read the metadata file to see example values beside each column.'}{' '}
-        Choose who each attribute describes and how its values should be checked.
+        Allowed categories are checked without changing source values.
       </p>
       <div className="table-wrap dataset-dictionary-wrap">
         <table className="dataset-dictionary-table" role="table" aria-label="Attribute mapping">
@@ -574,9 +586,8 @@ export function DictionaryEditor({
         <Icon name="plus" size={15} /> Add attribute
       </button>
       <p className="muted">
-        Targets and model inputs are chosen later in Target & split. Numeric columns are not
-        automatically predictors. Patient attributes require consistent values within each
-        mapped patient.
+        Choose the prediction target and model inputs later in Target & split. Patient
+        attributes must have the same value across slides from that patient.
       </p>
     </div>
   );

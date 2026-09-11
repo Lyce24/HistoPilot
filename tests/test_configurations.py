@@ -36,12 +36,14 @@ def test_v1_migration_preserves_frozen_files_and_draft_bytes(store):
     editable = store.create_draft("experiment", "draft", {"seed": 42})
     original = (store.folder / "datasets" / frozen["id"] / "manifest.json").read_bytes()
     with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TABLE publication_labels")
+        connection.execute("DROP TABLE version_labels")
         connection.execute("DROP TABLE configuration_publications")
         connection.execute("DROP TABLE configurations")
         connection.execute("UPDATE metadata SET value='1' WHERE key='schema_version'")
         connection.execute("PRAGMA user_version=1")
     reopened = ScientificStore(store.folder, store.project_id)
-    assert reopened.status()["schemaVersion"] == 2
+    assert reopened.status()["schemaVersion"] == 4
     assert reopened.get_draft(editable["id"]) == editable
     assert reopened.get_dataset(frozen["id"]) == frozen
     assert (store.folder / "datasets" / frozen["id"] / "manifest.json").read_bytes() == original
@@ -49,6 +51,8 @@ def test_v1_migration_preserves_frozen_files_and_draft_bytes(store):
 
 def test_atomic_migration_rolls_back_on_failure(store):
     with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TABLE publication_labels")
+        connection.execute("DROP TABLE version_labels")
         connection.execute("DROP TABLE configuration_publications")
         connection.execute("DROP TABLE configurations")
         connection.execute("UPDATE metadata SET value='1' WHERE key='schema_version'")
@@ -69,6 +73,8 @@ def test_atomic_migration_rolls_back_on_failure(store):
 
 def test_invalid_v1_foreign_keys_are_rejected_before_any_schema_migration(store):
     with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TABLE publication_labels")
+        connection.execute("DROP TABLE version_labels")
         connection.execute("DROP TABLE configuration_publications")
         connection.execute("DROP TABLE configurations")
         connection.execute("UPDATE metadata SET value='1' WHERE key='schema_version'")

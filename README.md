@@ -4,7 +4,7 @@
 
 HistoPilot is a **local-first, self-hosted web application** for constructing, auditing, comparing, and interpreting pathology foundation model (PFM) and multiple instance learning (MIL) experiments. The browser is the interface; a local Python service owns projects and scientific configuration; isolated workers will execute WSI/PFM/MIL jobs; large artifacts stay on the local filesystem.
 
-This repository provides saved experiment workspaces and an interactive **synthetic demo**. Start a new experiment in a chosen server folder, or load an existing experiment, then continue to Overview, Dataset, and the rest of the workspace. Optional source paths and initial configuration are saved in that folder; SQLite tracks recent experiments and demo cohorts/drafts. Dataset ingestion, feature extraction, training, real evaluation, WSI tiles, and a job supervisor are still to be implemented. Job submission fails explicitly instead of simulating successful training.
+This repository provides saved experiment workspaces and an interactive **synthetic demo**. Local projects support dataset import, frozen protocols, existing feature attachment, TRIDENT extraction, full feature validation, and optional portable feature packs through isolated workers. Training, real evaluation, and WSI tiles remain to be connected; MIL job submission fails explicitly until its backend exists.
 
 ![HistoPilot local-first workspace](docs/assets/workspace.png)
 
@@ -53,10 +53,12 @@ Creating an experiment requires a name and an exact storage folder. Choose a new
 
 The folder picker browses the **Python service's filesystem**, including when the browser is on another computer. Storage browsing includes the application workspace; source browsing includes only explicitly configured data roots, with none allowed by default. Source selection records a read-only path reference without uploading, copying, modifying, or importing its contents. Load a saved experiment from the recent list or its folder. Its `?experiment=<id>#overview` URL restores the selected experiment on refresh; the sidebar experiment button returns to the start page. See [example configuration](examples/config.toml) and the [workspace layout](docs/workspace.md).
 
+To create a destination in any folder picker, browse to its existing parent, click **New folder**, enter a child name, and click **Create folder**. The picker opens the new empty folder; choose **Use this folder** to select it. For example, open `/mnt/wsl/oceanpath-hot/features` and create `blca`. Creation requires write permission within a configured root and never replaces an existing file or folder.
+
 If **Choose data folder** or **Choose slide folder** has no available locations, the service was started without source roots. Stop that service with **Ctrl+C** in its terminal and restart it with the containing directory allowed. For the Bladder files on this workstation, run from the repository root:
 
 ```bash
-uv run histopilot serve --data-root /mnt/d/YC.Liu --no-browser
+uv run histopilot serve --data-root /mnt/d --data-root /mnt/wsl/oceanpath-hot --no-browser
 ```
 
 Add `--dev` if using Vite on port 5173. Refresh the browser, reopen the picker, and choose `/mnt/d/YC.Liu/manifests/BLCA` for data or `/mnt/d/YC.Liu/slides/blca` for slides. Repeat `--data-root` to allow additional directories. The service prints its configured roots at startup. Experiment storage can also be selected within its workspace even when no source roots are configured.
@@ -65,12 +67,95 @@ To keep source access across restarts, add or update the following setting in `~
 
 ```toml
 [storage]
-data_roots = ["/mnt/d/YC.Liu"]
+data_roots = ["/mnt/d", "/mnt/wsl/oceanpath-hot"]
 ```
 
 Then restart with `uv run histopilot serve --no-browser`. Explicit `--data-root` arguments override the configured list.
 
 The service binds to loopback by default and rejects non-loopback bindings until authenticated server deployment is implemented. For a remote workstation, use SSH or VS Code port forwarding. This is currently a single-user local service.
+
+## Personal version tags
+
+After reviewing a dataset or cohort/protocol, choose **Name & freeze version**. For features, review coverage, choose optional packs, then choose **Name & freeze bundle**. The final save dialog asks for a required **Version tag** and an optional **Commit note**, then freezes the version and saves its name together. If a tag is already taken, the dialog keeps your entries so you can choose another name; the draft remains editable. You can also tag or rename existing saved versions from their details. Tags such as `curated-v2` or `encoder-baseline` appear in selectors, feature tables, extraction input references, and the MIL experiment planning view. A saved cohort currently includes its target and split protocol, so these share one tag.
+
+Tags are unique among versions of the same kind within a project, ignoring case. They can contain up to 80 characters; notes can contain up to 2,000. Clearing both fields removes the tag and note. Concurrent edits are detected so another tab cannot silently overwrite your changes. Tags and notes live in the project folder, separate from scientific content: renaming a tag preserves the version ID, frozen data, memberships, feature bindings, and existing references. Untagged versions retain a descriptive fallback and a short ID.
+
+Freezing identical content reuses the existing scientific version. If it already has a different tag or note, open that version to edit its label; creating a distinct scientific version requires a change to the data or settings. Interrupted saves recover the original tag together with the version. Retrying a completed save preserves any later label edits. After updating HistoPilot, restart the local server and reload the browser so the interface and save API use the same version; an older running server is detected before a tag or freeze request is sent.
+
+## TRIDENT PFM extraction
+
+In **PFM & features**, choose **Extract with TRIDENT**, select a frozen dataset with linked slide files, and preview a dedicated output folder. The stage selector runs segmentation, patch coordinates, feature extraction, or the full pipeline. **Advanced Options** exposes every other setting in TRIDENT's batch CLI: segmentation and artifact removal, tissue thresholds, patch overlap and image dumping, readers, custom MPP metadata/CSV selection, cache, GPU selection, workers/batches, checkpoint paths, and slide encoders. Source and output directories are derived from the dataset and selected output folder. Options are checked against the installed TRIDENT parser before submission.
+
+TRIDENT stays in its own environment. Configure its interpreter and checkout on the service process:
+
+```bash
+export HISTOPILOT_TRIDENT_PYTHON=/path/to/trident-environment/bin/python
+export HISTOPILOT_TRIDENT_ROOT=/path/to/TRIDENT
+uv run histopilot serve --data-root /mnt/d --data-root /mnt/wsl/oceanpath-hot --no-browser
+```
+
+The common `~/miniconda3/envs/trident` environment and an ignored `.local/TRIDENT` checkout are detected automatically. Install TRIDENT using its [official instructions](https://github.com/mahmoodlab/TRIDENT). Checkpoint access and model dependencies are checked inside the worker; gated models require access and authentication in that environment, or a supported local checkpoint. Runtime discovery never imports Torch into the control service.
+
+Jobs run in named tmux sessions (`histopilot-pfm-<run-id>`) and survive browser/service disconnections. The job panel shows pipeline stages, progress, the current slide, elapsed time, and an estimated time remaining for the current stage when TRIDENT reports it. Cached batches and parallel workers show their local progress explicitly; processed slide counts can include skips and errors, and output validation determines success. The dashboard also reads existing jobs' logs, so workers do not need restarting. Raw log output, job identifiers, and `tmux attach -t <session>` remain available under **Troubleshooting**. Each project's `extractions/<run-id>/` stores the exact command, selected-slide CSV, input stamps, settings, process/result records, and `worker.log`. A successful process exit is followed by native artifact validation; missing/corrupt outputs or unfinished locks fail the run. Cancelled/failed jobs retain their outputs for inspection and a compatible resume. Cache settings name a parent directory: HistoPilot passes a unique disposable child to TRIDENT. A restart can reconnect to live jobs; tmux cannot survive a workstation reboot.
+
+Outputs preserve TRIDENT's native structure, including the Bladder layout:
+
+```text
+output/
+  contours/                    contours_geojson/             thumbnails/
+  _config_segmentation.json    _logs_segmentation.txt
+  20x_256px_0px_overlap/
+    patches/<slide>_patches.h5
+    features_uni_v1/<slide>.h5
+    visualization/
+    _config_coords.json        _config_feats_uni_v1.json
+```
+
+Use **Attach existing features** with `/mnt/d/YC.Liu/features/blca`, its geometry folder, or its precise `features_uni_v1` directory. Auto-detection keeps encoders separate and preserves coordinate attributes and nearby TRIDENT configuration provenance. Both embedded feature coordinates and separate `patches/*_patches.h5` are supported. Header/coverage validation does not scan every tensor value. Slide encoders write native `slide_features_<encoder>` artifacts; current MIL feature binding accepts patch embeddings.
+
+## Prepare and freeze feature bundles
+
+**PFM & features** has two sections: **Prepare a bundle** and **Frozen bundles**. Preparation starts from an inspected feature source, an existing feature folder, or extraction with a PFM. Review coverage, choose optional packing, then name and freeze the complete bundle. Extraction settings, command, runtime and validation evidence follow the source into its bundle. Manually attached folders retain their available HDF5 attributes and TRIDENT configuration evidence.
+
+Each source offers three choices: **Features only — skip packing**, **Features + existing pack**, or **Features + new pack**. Features only validates all tensor contents without copying them. Existing pack lets you include previously verified packs or verify another folder. New pack starts with the destination, then reviews precision, estimated size and available space before building and verifying. Precision conversion is under Advanced; preserving source precision is the default. Include the completed pack in the bundle when ready. A bundle may include zero, one, or multiple verified packs. Partial feature coverage remains visible and is not repaired by packing. Current jobs stay visible; older jobs and provenance are available in collapsible details.
+
+If you already have a pack, select its folder beside the saved feature version. The interface includes example HistoPilot and OceanPath folder structures. The first review compares exact slide IDs, per-slide and total patch counts, dimensions, dtype, and expected dense payload lengths. Source HDF5 files and a packed folder usually have different total sizes because their metadata and coordinate storage differ. Matching sizes/counts do not prove matching features: an isolated verification job reads and compares every feature value and coordinate before the pack becomes selectable. Mismatches show warnings and prevent using an incompatible pack. HistoPilot's manifest and checksum files must both be present; incomplete verification metadata is rejected. Genuine four-file OceanPath packs remain supported through full content comparison. Verification references the existing folder without modifying or copying it, and permits relocated source folders.
+
+Freezing records an immutable feature source and exact pack identities, paths, precision and validation evidence. It references the source and pack folders in place; it does not copy them into an archive. Changing included packs requires another bundle. Renaming a bundle changes only its display label. Freeze rechecks source and pack freshness immediately before publication; changed or missing inputs appear as warnings and block MIL planning. Older job receipts without freshness evidence need a one-time verification. Current external-pack attachment requires matching feature dtype; explicit float16 conversion remains available when creating a new pack.
+
+**MIL experiments** owns loading policy. Choose a frozen target/split protocol and feature bundle, then choose **Auto**, original per-slide files, or a bundled memory-mapped pack. Auto uses original files for a features-only bundle and a sole pack that preserves precision; multiple packs or precision changes require an explicit choice. Planning checks dataset, feature source, eligible slide coverage and current bundle evidence. Save this choice as a MIL draft without changing the bundle. Older protocols that already pin a pack retain that binding and require a matching choice or a new protocol revision. Training and RAM/GPU preloading are not implemented yet; memory mapping does not load the entire pack into RAM.
+
+The default preserves float16 or float32 source precision. Explicit float16 conversion rounds higher precision values; overflow fails instead of clipping. Packs require consistent feature dimensions/dtype, nonempty finite tensors, and matching nonnegative integer coordinates representable as int32. Native validation accepts int64 coordinates without imposing the packed int32 limit. The original files stay in place. Packing preserves tensor data and recorded metadata, rather than creating a byte-for-byte archive of the HDF5 containers.
+
+Jobs run on CPU in `histopilot-pack-<run-id>` tmux sessions. Progress, cancellation, error details and saved artifacts appear below the selected version. Each project's `packing/<run-id>/` retains the immutable plan, worker log, progress and completion receipt; the interface reconnects after service/browser restarts. Failed or cancelled jobs can be reviewed and retried as new jobs. A pack is published only after validation and checksum readback, into a new or empty folder. Completed packs cannot be overwritten or used as another pack's output parent. Default destinations are inside the project's `feature-packs/` folder.
+
+```text
+feature-pack/
+  features.bin      # Contiguous little-endian float16 or float32 patch rows
+  coords.bin        # Corresponding little-endian int32 coordinate pairs
+  index.parquet     # Exact slide IDs, row offsets and patch counts
+  meta.json         # OceanPath schema-v1 tensor layout
+  manifest.json     # HistoPilot identity, source evidence and validation
+  checksums.json    # SHA-256 payload and manifest checksums
+```
+
+The pack remains independently verifiable after relocation or loss of the source folder. Historical pack contents remain valid when live sources change; validation of the live feature binding becomes stale and requires a new inspection/version. Tensor validation does not authenticate the model checkpoint or establish complete encoder provenance, and it does not enable MIL execution.
+
+The CLI submits the same reviewed job requests as the browser. Use the project and feature version IDs from the saved version details:
+
+```bash
+histopilot pack-features FEATURE_VERSION_ID --project PROJECT_ID --validate-only
+histopilot pack-features FEATURE_VERSION_ID --project PROJECT_ID --preview
+histopilot pack-features FEATURE_VERSION_ID --project PROJECT_ID --output /allowed/new-pack
+histopilot pack-features FEATURE_VERSION_ID --project PROJECT_ID --existing-pack /allowed/existing-pack
+histopilot feature-jobs --project PROJECT_ID
+histopilot feature-jobs --project PROJECT_ID --job PACKING_JOB_ID --cancel
+histopilot verify-feature-pack /path/to/relocated-pack
+```
+
+Submission needs the running local service and tmux; add `--url http://127.0.0.1:PORT` for a different service port. Standalone verification needs neither. OceanPath's native schema-v1 reader can consume the arrays on little-endian hosts. Its legacy live-directory fingerprint is different from HistoPilot's content identity in `meta.json`; use `verify-feature-pack` for integrity verification and open the OceanPath reader without its optional live-source comparison.
+
+For reproducible loader measurements, run `scripts/benchmark_feature_loading.py --help` using OceanPath's Python environment. The benchmark refuses unmatched tensors or non-float32 inputs, compares identical loader settings and row selections, and records warm-cache and file-cache-eviction timings separately. Packing accelerates data loading; it is optional and does not imply the same speedup for a complete training run.
 
 ## Explore the application
 
@@ -80,13 +165,13 @@ The service binds to loopback by default and rejects non-loopback bindings until
 | Overview | Selected experiment context; new experiments begin with an empty dataset |
 | Dataset workspace | CSV/XLSX source and patient-crosswalk mapping, attribute dictionary, reconciliation, frozen versions and exploration |
 | Target & split | Suggested target settings, explicit training/test selections, and five patient-grouped [CV/held-out strategies](docs/split-strategies.md) with sampled or fixed early-stop validation |
-| PFM & features | Attach existing HDF5 features, inspect headers/coverage and pin a feature binding |
-| MIL experiments | Save and freeze target/split protocols with fold counts, seeds, constraints and exact memberships |
+| PFM & features | Extract or attach features, validate contents, and freeze features alone or with verified packs as named bundles |
+| MIL experiments | Select a frozen protocol and feature bundle, review original-file or packed loading, and save experiment drafts |
 | Evaluation | Clearly labeled illustrative metrics and comparisons |
 | Slide explorer | Synthetic tissue and attention interactions; real tile serving is planned |
 | Provenance | Example lineage and JSON export |
 
-System information and a global jobs tray expose the local service context. The registry lists planned backend choices; an entry does not mean a model, checkpoint, or GPU is available. The job list is empty until execution is implemented.
+System information and a global MIL jobs tray expose the local service context. Extraction and packing jobs appear in **PFM & features**. The registry lists planned backend choices; an entry does not mean a model, checkpoint, or GPU is available. The MIL job list remains empty until training execution is implemented.
 
 The explicit **CRC KRAS demo** (`synthetic-v1`) contains **24 fictional patients, 28 specimens, and 28 slides**. Its data and illustrative results appear only when that demo is selected. All scores, tissue illustrations, and attention values are invented. Changing a draft does not retrain a model or alter existing example results. Exported example provenance uses placeholder artifact references, while experiment specifications have a shared validated GUI/CLI schema.
 
@@ -106,7 +191,7 @@ flowchart TD
     Explorer --> Provenance
 ```
 
-**No orphan results.** Every future metric, prediction, and attention region must resolve to its run, experiment, dataset version, cohort, split, features, checkpoints, seed/fold, and code/environment record. Patch coordinates must resolve to slide, specimen, patient, and ground-truth source. Real artifact verification remains future work.
+**No orphan results.** Every future metric, prediction, and attention region must resolve to its run, experiment, dataset version, cohort, split, features, checkpoints, seed/fold, and code/environment record. Patch coordinates must resolve to slide, specimen, patient, and ground-truth source. Feature tensor and pack verification are implemented; training-result verification remains future work.
 
 ## Architecture
 
@@ -158,9 +243,9 @@ HistoPilot/
 | Folder-local drafts, immutable datasets/protocols/feature bindings and interruption recovery | Resumable workers for large imports and full feature validation |
 | SQLite WAL persistence for synthetic cohorts, drafts, registry, and source references | Analytical cohort queries with DuckDB/Parquet and complete scientific audits |
 | Loopback Host/Origin checks, local session token, bounded root-restricted directory browsing | Authenticated multiuser/server deployment |
-| Canonical experiment specification and isolated execution contracts | Worker supervision, GPU scheduling, cancellation/resume, SSE progress |
+| TRIDENT tmux workers, cancellation, resume checks and persistent logs | MIL workers, GPU scheduling and SSE progress |
 | System/package diagnostics without loading CUDA models | Isolated NVML/GPU and backend capability probing |
-| Synthetic feature/result/attention display and provenance export | TRIDENT extraction, native Mean/ABMIL, CLAM/TorchMIL, OpenSlide tiles |
+| TRIDENT extraction and native feature/coordinate import with provenance | Native Mean/ABMIL, CLAM/TorchMIL, OpenSlide tiles |
 | Vite build packaged as Python static assets | Full Plotly, OpenSeadragon, and TanStack Table integration |
 
 Selected implementation pieces may come from **OceanPath**. No OceanPath code, dependencies, weights, or data are bundled. The [integration plan](docs/oceanpath.md) maps inspected source modules to isolated adapters and records the observed license status.

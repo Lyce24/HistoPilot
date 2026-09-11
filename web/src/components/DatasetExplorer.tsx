@@ -4,6 +4,7 @@ import { scientific } from '../api/scientific';
 import type { AttributeMapping, DatasetQuery } from '../api/scientific';
 import { ErrorNotice, Icon } from './ui';
 import { scienceKey } from './ScientificUI';
+import { categoryLabel } from '../lib/datasetValues';
 
 export default function DatasetExplorer({
   project,
@@ -37,6 +38,15 @@ export default function DatasetExplorer({
   const data = results.data;
   const maximum = Math.max(1, ...(data?.distribution.counts.map((item) => item.count) ?? []));
   const selected = filters.find((filter) => filter.field === field)?.values ?? [];
+  const availableQuery: DatasetQuery = {
+    field, search: deferredSearch, filters: filters.filter((filter) => filter.field !== field),
+    offset: 0, limit: 1,
+  };
+  const available = useQuery({
+    queryKey: [...scienceKey(project), 'dataset-query', datasetId, availableQuery],
+    queryFn: () => scientific.queryDataset(project, datasetId, availableQuery),
+    enabled: Boolean(field && selected.length),
+  });
   function toggle(value: string | null) {
     const values = selected.includes(value)
       ? selected.filter((item) => item !== value)
@@ -115,7 +125,7 @@ export default function DatasetExplorer({
                 setOffset(0);
               }}
             >
-              {filter.field}: {filter.values.map((value) => value ?? '(missing)').join(', ')}{' '}
+              {filter.field}: {filter.values.map(categoryLabel).join(', ')}{' '}
               <Icon name="close" size={13} />
             </button>
           ))}
@@ -131,6 +141,20 @@ export default function DatasetExplorer({
           </button>
         </div>
       ) : null}
+      {selected.length ? <fieldset className="science-filter-values">
+        <legend>Values to include for {field} (OR)</legend>
+        <p className="muted">Add another value without clearing this filter. Choices respect your search and other attribute filters; charts and the table show the selected records.</p>
+        <ErrorNotice error={available.error} />
+        {available.isPending ? <p role="status">Loading available values…</p> : null}
+        <div>
+          {[...new Set([...selected, ...(available.data?.valueCounts.map((item) => item.value) ?? [])])].map((value) => <label key={JSON.stringify(value)} className="science-check">
+            <input type="checkbox" checked={selected.includes(value)} disabled={!selected.includes(value) && selected.length >= 100} onChange={() => toggle(value)} />
+            {categoryLabel(value)}
+          </label>)}
+        </div>
+        {available.data?.valuesTruncated ? <p className="muted">Showing the 200 most frequent available values and your current selections.</p> : null}
+        {selected.length >= 100 ? <p className="muted">Up to 100 values can be selected per attribute.</p> : null}
+      </fieldset> : null}
       <ErrorNotice error={results.error} />
       {results.isFetching ? (
         <p className="muted" role="status">
@@ -194,7 +218,7 @@ export default function DatasetExplorer({
                   }
                   onClick={() => toggle(item.value)}
                 >
-                  <span>{item.value ?? '(missing)'}</span>
+                  <span>{data.distribution.kind === 'categorical' ? categoryLabel(item.value) : item.value ?? '(missing value)'}</span>
                   <span className="science-bar-track">
                     <span style={{ width: `${(item.count / maximum) * 100}%` }} />
                   </span>
@@ -228,14 +252,14 @@ export default function DatasetExplorer({
                   <tr>
                     <th>{field}</th>
                     {data.crossTab.columns.map((value, index) => (
-                      <th key={index}>{value ?? '(missing)'}</th>
+                      <th key={index}>{categoryLabel(value)}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {data.crossTab.rows.map((value, row) => (
                     <tr key={row}>
-                      <th>{value ?? '(missing)'}</th>
+                      <th>{categoryLabel(value)}</th>
                       {data.crossTab!.columns.map((_, column) => (
                         <td key={column}>{data.crossTab!.counts[row]?.[column] ?? 0}</td>
                       ))}

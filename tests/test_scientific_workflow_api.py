@@ -94,8 +94,12 @@ def test_import_feature_patient_split_freeze_and_new_registry_reopen(tmp_path):
             "expectedRevision": 1,
             "previewHash": preview["previewHash"],
             "operationId": "freeze-dataset",
+            "versionLabel": {"tag": "Reviewed slides v1", "note": "Initial reviewed data."},
         }
         dataset = post(client, import_url + "/freeze", freeze_intent, 201)
+        assert dataset["versionLabel"]["tag"] == "Reviewed slides v1"
+        assert dataset["versionLabel"]["note"] == "Initial reviewed data."
+        assert "versionLabel" not in dataset["manifest"]
         assert post(client, import_url + "/freeze", freeze_intent, 201) == dataset
         drafts_before = client.get(base + "/drafts").json()
         configurations_before = client.get(base + "/configurations").json()
@@ -131,6 +135,7 @@ def test_import_feature_patient_split_freeze_and_new_registry_reopen(tmp_path):
                 **feature_spec,
                 "previewHash": feature_preview["previewHash"],
                 "operationId": "features",
+                "versionLabel": {"tag": "Baseline features"},
             },
             201,
         )
@@ -152,6 +157,8 @@ def test_import_feature_patient_split_freeze_and_new_registry_reopen(tmp_path):
                 "rules": {"test": [{"field": "WHO 1973", "op": "eq", "value": "2"}]},
             },
         }
+        assert feature["versionLabel"]["tag"] == "Baseline features"
+        assert "versionLabel" not in feature["manifest"]
         protocol_draft = post(
             client,
             base + "/drafts",
@@ -174,8 +181,11 @@ def test_import_feature_patient_split_freeze_and_new_registry_reopen(tmp_path):
             "expectedRevision": 1,
             "previewHash": split["previewHash"],
             "operationId": "protocol",
+            "versionLabel": {"tag": "Grade-2 holdout"},
         }
         protocol = post(client, protocol_url + "/freeze", frozen_intent, 201)
+        assert protocol["versionLabel"]["tag"] == "Grade-2 holdout"
+        assert "versionLabel" not in protocol["manifest"]
         assert post(client, protocol_url + "/freeze", frozen_intent, 201) == protocol
         memberships = protocol["manifest"]["memberships"]
         assignments = {}
@@ -224,6 +234,7 @@ def test_import_feature_patient_split_freeze_and_new_registry_reopen(tmp_path):
                 "expectedRevision": 1,
                 "previewHash": rejected["previewHash"],
                 "operationId": "invalid",
+                "versionLabel": {"tag": "Invalid split"},
             },
         )
         assert response.status_code in {409, 422}
@@ -289,7 +300,12 @@ def cv_dataset(client, data):
     dataset = post(
         client,
         import_url + "/freeze",
-        {"expectedRevision": 1, "previewHash": inspected["previewHash"], "operationId": "source"},
+        {
+            "expectedRevision": 1,
+            "previewHash": inspected["previewHash"],
+            "operationId": "source",
+            "versionLabel": {"tag": "Source slides"},
+        },
         201,
     )
     return project, base, dataset
@@ -369,6 +385,7 @@ def test_nested_cv_api_freeze_and_reopen_preserves_inner_and_outer_memberships(t
             "expectedRevision": 1,
             "previewHash": result["previewHash"],
             "operationId": "nested",
+            "versionLabel": {"tag": "Nested CV v1"},
         }
         frozen = post(client, protocol_url + "/freeze", intent, 201)
         assert frozen["manifest"]["memberships"] == result["memberships"]

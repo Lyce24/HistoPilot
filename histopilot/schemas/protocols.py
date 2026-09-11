@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, JsonValue, StrictInt, field_validator, model_validator
 
+from histopilot.schemas.version_labels import FreezeVersionLabel
 from histopilot.schemas.workspace import RequestModel, Seed
 
 Partition = Literal["train", "val", "test"]
@@ -281,6 +282,13 @@ class ProtocolSpec(RequestModel):
     split: SplitSpec = Field(default_factory=SplitSpec)
     constraints: Constraints = Field(default_factory=Constraints)
     featureSetId: str | None = Field(default=None, max_length=128)
+    featurePackId: str | None = Field(default=None, pattern=r"^pack-[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def pack_requires_features(self):
+        if self.featurePackId and not self.featureSetId:
+            raise ValueError("Select a feature version before selecting its pack.")
+        return self
 
     @field_validator("predictors")
     @classmethod
@@ -321,3 +329,4 @@ class ProtocolPreviewRequest(RequestModel):
 class ProtocolFreezeRequest(ProtocolPreviewRequest):
     previewHash: str = Field(pattern=r"^[a-f0-9]{64}$")
     operationId: str = Field(min_length=1, max_length=200)
+    versionLabel: FreezeVersionLabel

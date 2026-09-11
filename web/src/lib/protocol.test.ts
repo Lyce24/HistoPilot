@@ -29,12 +29,12 @@ describe('target suggestions from observed values', () => {
     });
   });
 
-  it('infers binary classification and selects an observed positive class', () => {
+  it('infers binary classes but requires an explicit positive outcome', () => {
     expect(inferTargetSettings([null, '0', '1', '0', '', ' '])).toEqual({
       task: 'binary_classification',
       classes: ['0', '1'],
       labels: { '0': '0', '1': '1' },
-      positiveClass: '0',
+      positiveClass: undefined,
     });
   });
 
@@ -61,7 +61,13 @@ describe('target suggestions from observed values', () => {
       task: 'binary_classification',
       classes: ['High', 'high'],
       labels: { High: 'High', high: 'high' },
-      positiveClass: 'High',
+      positiveClass: undefined,
     });
+  });
+
+  it('never infers the positive outcome from frequency or source ordering', () => {
+    for (const values of [['negative', 'positive'], ['positive', 'negative'], ['1', '0']]) {
+      expect(inferTargetSettings(values).positiveClass).toBeUndefined();
+    }
   });
 });

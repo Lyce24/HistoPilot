@@ -80,7 +80,7 @@ export function FieldProfile({
         .slice(0, 5)
         .map((item) => item.value);
   return (
-    <div className="protocol-field-profile">
+    <div className="protocol-field-profile" aria-label={`${field} format and example values`}>
       <span>
         <strong>Format:</strong> {attribute?.type.replaceAll('_', ' ') ?? 'text identifier'}
         {attribute ? ` · ${attribute.owner === 'patient' ? 'Patient' : 'Slide / case'}` : ''}
@@ -150,6 +150,10 @@ export function DistributionBars({
 export function CohortStats({ stats, total }: { stats: ProtocolCohortStats; total?: number }) {
   return (
     <div className="protocol-population">
+      <div className="protocol-population-heading">
+        <span>YOUR STUDY COHORT</span>
+        <small>Counts update as you change conditions</small>
+      </div>
       <div className="science-metrics protocol-metrics">
         <Metric
           label="Eligible slides"

@@ -8,7 +8,7 @@ export default function JobTray({ inline = false }: { inline?: boolean }) {
   return (
     <aside
       className={`job-tray ${inline ? 'job-tray-inline' : ''} ${open ? 'open' : ''}`}
-      aria-label="Compute jobs"
+      aria-label="MIL training jobs"
     >
       <button
         className="job-tray-toggle"
@@ -17,7 +17,7 @@ export default function JobTray({ inline = false }: { inline?: boolean }) {
         aria-controls="job-tray-content"
       >
         <Icon name="clock" />
-        <strong>Compute jobs</strong>
+        <strong>MIL training jobs</strong>
         <span>
           {jobs.isError
             ? 'Status unavailable'
@@ -43,8 +43,8 @@ export default function JobTray({ inline = false }: { inline?: boolean }) {
             </ul>
           ) : !jobs.isError ? (
             <p className="muted">
-              No compute jobs. Experiment drafts are saved by the service; isolated worker
-              execution will be connected in a later implementation.
+              No MIL training jobs. Manage extraction, feature validation and packing jobs in PFM &amp;
+              features. MIL training execution is not connected yet.
             </p>
           ) : null}
           <a className="text-link" href="#system">

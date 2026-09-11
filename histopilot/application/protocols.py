@@ -22,6 +22,7 @@ from histopilot.application.explicit_pools import (
     pool_counts,
     select_pools,
 )
+from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.modern_splits import (
     ALGORITHM_V2,
     check_modern_plan,
@@ -35,6 +36,7 @@ from histopilot.schemas.protocols import (
     ProtocolExploreRequest,
     ProtocolSpec,
 )
+from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 
@@ -61,6 +63,8 @@ def _json(value) -> bytes:
 
 def _serialized_spec(spec):
     value = spec.model_dump(mode="json")
+    if spec.featurePackId is None:
+        value.pop("featurePackId", None)
     if spec.split.version == 1:
         # Preserve existing preview hashes and frozen retry behavior exactly.
         value["split"] = {
@@ -70,6 +74,23 @@ def _serialized_spec(spec):
     elif spec.split.version == 2:
         value["split"].pop("pools", None)
     return value
+
+
+def pack_binding_snapshot(artifact: dict) -> dict:
+    """Pin the selected physical representation without copying its large inventory."""
+    return {
+        key: artifact[key]
+        for key in (
+            "id",
+            "materializationId",
+            "featureSetId",
+            "outputPath",
+            "outputDtype",
+            "sourceContentHash",
+            "verification",
+        )
+        if key in artifact
+    }
 
 
 def _failure(message, code, status=409):
@@ -282,8 +303,9 @@ def _fixed_assignments(groups, rules, evaluator, finding):
 
 
 class ProtocolService:
-    def __init__(self, store: ScientificStore):
+    def __init__(self, store: ScientificStore, filesystem: LocalFilesystem | None = None):
         self.store = store
+        self.filesystem = filesystem or LocalFilesystem(())
 
     def _load(self, draft_id, expected_revision, allow_frozen):
         if type(expected_revision) is not int or expected_revision < 1:
@@ -311,8 +333,18 @@ class ProtocolService:
         try:
             spec = ProtocolSpec.model_validate(payload["spec"])
         except ValidationError as error:
+            errors = error.errors(include_input=False, include_url=False)
+            details = [
+                f"{'.'.join(str(part) for part in item['loc']) or 'protocol'}: "
+                f"{item['msg'].removeprefix('Value error, ')}"
+                for item in errors[:8]
+            ]
+            if len(errors) > 8:
+                details.append(f"{len(errors) - 8} more fields need correction.")
             raise _failure(
-                "The protocol specification is invalid: " + str(error), "INVALID_PROTOCOL_SPEC", 422
+                "The protocol specification is invalid: " + "; ".join(details),
+                "INVALID_PROTOCOL_SPEC",
+                422,
             ) from error
         dataset, fields, records = self._load_dataset(spec.datasetId)
         return spec, dataset, fields, records
@@ -647,9 +679,10 @@ class ProtocolService:
             finding(
                 "IDENTIFIER_TARGET", "Identifiers and partition fields cannot serve as the target."
             )
-        split_fields = set()
-        if imported:
-            split_fields = {imported.partitionField, imported.foldField} - {None}
+        assignment_fields = (
+            {imported.partitionField, imported.foldField} - {None} if imported else set()
+        )
+        split_fields = set(assignment_fields)
         if modern and spec.split.domainField:
             split_fields.add(spec.split.domainField)
             domain_source = fields.get(spec.split.domainField, {}).get(
@@ -682,6 +715,10 @@ class ProtocolService:
             )
             if isinstance(provenance_mapping.get(name), str)
         }
+        if _key(target_source) in source_identifiers:
+            finding(
+                "IDENTIFIER_TARGET", "Identifiers and partition fields cannot serve as the target."
+            )
         if modern and spec.split.domainField and _key(domain_source) in source_identifiers:
             finding(
                 "INVALID_DOMAIN_FIELD",
@@ -690,10 +727,13 @@ class ProtocolService:
         split_sources = {
             _key(fields.get(field, {}).get("sourceColumn", field)) for field in split_fields
         }
-        if explicit and (spec.target.field in split_fields or _key(target_source) in split_sources):
+        assignment_sources = {
+            _key(fields.get(field, {}).get("sourceColumn", field)) for field in assignment_fields
+        }
+        if spec.target.field in assignment_fields or _key(target_source) in assignment_sources:
             finding(
                 "SPLIT_TARGET_LEAKAGE",
-                "The pool assignment column cannot also be the prediction target.",
+                "An imported partition or fold column cannot also be the prediction target.",
             )
         for field in spec.predictors:
             source = fields.get(field, {}).get("sourceColumn", field)
@@ -705,8 +745,7 @@ class ProtocolService:
             elif (
                 field in CANONICAL
                 or field in split_fields
-                or modern
-                and _key(source) in split_sources
+                or _key(source) in split_sources
                 or _key(source) in source_identifiers
                 or _forbidden_name(field)
                 or _forbidden_name(source)
@@ -769,6 +808,25 @@ class ProtocolService:
             )
         if not included:
             finding("EMPTY_COHORT", "No slides remain after eligibility and target mapping.")
+        if modern and not explicit and imported:
+            # A predefined validation cohort remains an explicit scientific choice
+            # when filtering or label policies exclude it. Do not replace it with
+            # an automatic training subset simply because no validation rows remain.
+            def is_imported_validation(row):
+                return (
+                    imported.partitionLabels.get(evaluator.field(row, imported.partitionField))
+                    == "val"
+                )
+
+            if any(is_imported_validation(row) for row in rows) and not any(
+                is_imported_validation(row) for row in included
+            ):
+                finding(
+                    "EMPTY_IMPORTED_VALIDATION",
+                    "All predefined validation slides were excluded by eligibility or target "
+                    "mapping. Restore eligible validation groups or explicitly revise the "
+                    "partition mapping; automatic validation will not replace this cohort.",
+                )
         groups = defaultdict(list)
         for row in included:
             if _valid_patient(row):
@@ -833,6 +891,7 @@ class ProtocolService:
             except FilterFailure as error:
                 finding(error.code, str(error))
         feature_hash = None
+        feature_pack = None
         if spec.featureSetId:
             feature = self.store.get_configuration(spec.featureSetId)
             feature_hash = feature["contentHash"]
@@ -857,11 +916,29 @@ class ProtocolService:
                         "MISSING_FEATURE_COVERAGE",
                         "The selected feature set does not cover every included slide.",
                     )
-                finding(
-                    "FEATURE_VALUES_UNVERIFIED",
-                    "Feature attachment validation covers headers; execution still requires content and runtime preflight.",
-                    "warning",
-                )
+                if spec.featurePackId:
+                    try:
+                        resolved = FeaturePackService(self.store, self.filesystem).resolve_artifact(
+                            spec.featureSetId, spec.featurePackId
+                        )
+                        if resolved["current"]:
+                            feature_pack = pack_binding_snapshot(resolved["artifact"])
+                        else:
+                            finding(
+                                "FEATURE_PACK_UNAVAILABLE",
+                                "The selected pack needs verification in PFM & features.",
+                            )
+                            findings.extend(
+                                {**item, "severity": "error"} for item in resolved["findings"]
+                            )
+                    except StorageError as error:
+                        finding(error.code, str(error))
+                else:
+                    finding(
+                        "FEATURE_VALUES_UNVERIFIED",
+                        "Feature attachment validation covers headers; execution still requires content and runtime preflight.",
+                        "warning",
+                    )
         else:
             finding(
                 "FEATURE_SET_NOT_SELECTED",
@@ -1046,6 +1123,8 @@ class ProtocolService:
             "memberships": memberships,
             "executionEnabled": False,
         }
+        if feature_pack is not None:
+            result["featurePack"] = feature_pack
         if len(_json(result)) > MAX_PROTOCOL_BYTES:
             finding(
                 "PROTOCOL_DOCUMENT_LIMIT",
@@ -1313,8 +1392,32 @@ class ProtocolService:
         return result
 
     def freeze(
-        self, draft_id: str, expected_revision: int, preview_hash: str, operation_id: str
+        self,
+        draft_id: str,
+        expected_revision: int,
+        preview_hash: str,
+        operation_id: str,
+        *,
+        version_label: dict | None = None,
     ) -> dict:
+        prior = self.store.configuration_publication(operation_id)
+        if prior is not None:
+            manifest = prior["manifest"]
+            if manifest.get("kind") != "protocol" or manifest.get("previewHash") != preview_hash:
+                raise _failure(
+                    "This operation ID belongs to a different protocol freeze request.",
+                    "OPERATION_CONFLICT",
+                )
+            # A completed request replays its immutable result. Live pack/source
+            # freshness belongs to preflight, and cannot rewrite a frozen protocol.
+            # Publication validates the original draft/revision/tag/note intent.
+            return self.store.publish_configuration(
+                draft_id,
+                expected_revision=expected_revision,
+                manifest=manifest,
+                operation_id=operation_id,
+                version_label=version_label,
+            )
         preview = self._preview(draft_id, expected_revision, allow_frozen=True)
         if preview["previewHash"] != preview_hash:
             raise _failure(
@@ -1338,9 +1441,12 @@ class ProtocolService:
             "findings": preview["findings"],
             "executionEnabled": False,
         }
+        if "featurePack" in preview:
+            manifest["featurePack"] = preview["featurePack"]
         return self.store.publish_configuration(
             draft_id,
             expected_revision=expected_revision,
             manifest=manifest,
             operation_id=operation_id,
+            version_label=version_label,
         )

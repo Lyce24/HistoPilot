@@ -690,4 +690,250 @@ def test_user_draft_payload_cannot_assert_import_readiness(service, kind, payloa
     with pytest.raises(StorageError) as error:
         preview(service, saved)
     assert error.value.code == "IMPORT_DRAFT_REQUIRED"
+
+
+@pytest.mark.parametrize("missing_values", [[], ["NA"]])
+def test_empty_identifiers_cannot_become_real_ids_when_empty_is_not_a_missing_token(
+    service, missing_values
+):
+    source = table(service, "Slide_ID,Patient_ID,Label\ns1,,A\n,p2,B\n")
+    saved = draft(service, source, patientIdColumn="Patient_ID", missingValues=missing_values)
+    reviewed = preview(service, saved)
+    assert not reviewed["canFreeze"]
+    assert "SLIDE_ID_MISSING" in codes(reviewed)
+    assert reviewed["records"] == [
+        {
+            "slideId": "s1",
+            "patientId": None,
+            "patientIdSource": "unresolved",
+            "slidePath": None,
+            "attributes": {"Label": "A"},
+        }
+    ]
+    assert reviewed["summary"]["verifiedPatientCount"] == 0
+
+
+@pytest.mark.parametrize("kind", ["crosswalk", "patients"])
+def test_empty_secondary_join_identifiers_never_match_when_empty_missing_token_is_omitted(
+    service, kind
+):
+    source = table(service, "Slide_ID,Patient_ID\ns1,\n")
+    secondary = table(service, "Slide_ID,Patient_ID,Age\ns1,,70\n", "patients.csv")
+    reviewed = preview(
+        service,
+        draft(
+            service,
+            source,
+            patientIdColumn="Patient_ID",
+            missingValues=[],
+            patientSource=secondary,
+            patientSourceKind=kind,
+            patientAttributes=[field("Age", "patient", "integer")],
+        ),
+    )
+    assert not reviewed["canFreeze"]
+    assert "PATIENT_SOURCE_KEY_MISSING" in codes(reviewed)
+    assert reviewed["records"][0]["patientId"] is None
+    assert reviewed["records"][0]["attributes"]["Age"] is None
+
+
+@pytest.mark.parametrize("patient", [" ", "\t"])
+def test_whitespace_only_patient_identity_is_not_a_verified_group(service, patient):
+    source = table(service, f"Slide_ID,Patient_ID\ns1,{patient}\ns2,{patient}\n")
+    saved = draft(service, source, patientIdColumn="Patient_ID")
+    reviewed = preview(service, saved)
+    assert not reviewed["canFreeze"]
+    assert "IDENTIFIER_BLANK" in codes(reviewed)
+    assert reviewed["summary"]["verifiedPatientCount"] == 0
+    with pytest.raises(StorageError) as error:
+        freeze(service, saved, reviewed)
+    assert error.value.code == "IMPORT_BLOCKED"
+
+
+@pytest.mark.parametrize("use_crosswalk", [False, True])
+def test_patient_whitespace_variants_cannot_silently_form_separate_split_groups(
+    service, use_crosswalk
+):
+    if use_crosswalk:
+        source = table(service, "Slide_ID\ns1\ns2\n")
+        options = {
+            "patientSource": table(
+                service, "Slide_ID,Patient_ID\ns1,P1\ns2, P1 \n", "crosswalk.csv"
+            )
+        }
+    else:
+        source = table(service, "Slide_ID,Patient_ID\ns1,P1\ns2, P1 \n")
+        options = {"patientIdColumn": "Patient_ID"}
+    saved = draft(service, source, **options)
+    reviewed = preview(service, saved)
+    assert not reviewed["canFreeze"]
+    assert "PATIENT_ID_WHITESPACE_COLLISION" in codes(reviewed)
+    assert "IDENTIFIER_WHITESPACE" in codes(reviewed)
+    # Preserve the evidence; do not guess whether these strings denote one patient.
+    assert [row["patientId"] for row in reviewed["records"]] == ["P1", " P1 "]
+    with pytest.raises(StorageError) as error:
+        freeze(service, saved, reviewed)
+    assert error.value.code == "IMPORT_BLOCKED"
+
+
+def test_single_padded_patient_identity_warns_without_normalizing_source_values(service):
+    source = table(service, "Slide_ID,Patient_ID,Label\ns1, P1 , \ns2, P1 , \n")
+    reviewed = preview(service, draft(service, source, patientIdColumn="Patient_ID"))
+    assert reviewed["canFreeze"]
+    assert "IDENTIFIER_WHITESPACE" in codes(reviewed)
+    assert {row["patientId"] for row in reviewed["records"]} == {" P1 "}
+    assert all(row["attributes"]["Label"] == " " for row in reviewed["records"])
+
+
+@pytest.mark.parametrize("kind", ["crosswalk", "patients"])
+def test_missing_patient_source_matches_are_explicit_for_retained_slides(service, kind):
+    source = table(service, "Slide_ID,Patient_ID\ns1,p1\ns2,p2\n")
+    secondary = table(service, "Slide_ID,Patient_ID,Age\ns1,p1,70\n", "patients.csv")
+    reviewed = preview(
+        service,
+        draft(
+            service,
+            source,
+            patientIdColumn="Patient_ID",
+            patientSource=secondary,
+            patientSourceKind=kind,
+            patientAttributes=[field("Age", "patient", "integer")],
+        ),
+    )
+    assert reviewed["canFreeze"]
+    finding = next(
+        item for item in reviewed["findings"] if item["code"] == "PATIENT_SOURCE_MATCH_MISSING"
+    )
+    assert finding["severity"] == "warning"
+    assert finding["count"] == 1
+    assert finding["examples"] == ["s2"]
+    assert reviewed["records"][1]["patientId"] == "p2"
+    assert reviewed["records"][1]["attributes"]["Age"] is None
+
+
+@pytest.mark.parametrize("column", ["Slide_ID", "Patient_ID", "Label"])
+def test_excel_error_cells_cannot_become_mapped_identifiers_or_labels(service, column):
+    headers = ["Slide_ID", "Patient_ID", "Label"]
+    values = ["s1", "p1", "A"]
+    values[headers.index(column)] = "#N/A"
+    path = service.filesystem.roots[0] / "errors.xlsx"
+    book = Workbook()
+    book.active.append(headers)
+    book.active.append(values)
+    assert book.active.cell(2, headers.index(column) + 1).data_type == "e"
+    book.save(path)
+    inspected = service.inspect(TableSource(path=str(path)))
+    assert inspected["rows"][0][column] == "#N/A"
+    assert "SPREADSHEET_ERROR_CELLS" in codes(inspected)
+    saved = draft(service, {"path": str(path)}, patientIdColumn="Patient_ID")
+    reviewed = preview(service, saved)
+    assert not reviewed["canFreeze"]
+    assert "MAPPED_SPREADSHEET_ERROR" in codes(reviewed)
+    with pytest.raises(StorageError) as error:
+        freeze(service, saved, reviewed)
+    assert error.value.code == "IMPORT_BLOCKED"
+
+
+@pytest.mark.parametrize("column", ["Patient_ID", "Age"])
+def test_patient_source_excel_errors_require_review_for_join_keys_and_attributes(service, column):
+    source = table(service, "Slide_ID\ns1\n")
+    headers = ["Slide_ID", "Patient_ID", "Age"]
+    values = ["s1", "p1", "60"]
+    values[headers.index(column)] = "#DIV/0!"
+    path = service.filesystem.roots[0] / "crosswalk.xlsx"
+    book = Workbook()
+    book.active.append(headers)
+    book.active.append(values)
+    book.save(path)
+    reviewed = preview(
+        service,
+        draft(
+            service,
+            source,
+            patientSource={"path": str(path)},
+            patientAttributes=[field("Age", "patient")],
+        ),
+    )
+    assert not reviewed["canFreeze"]
+    assert "MAPPED_SPREADSHEET_ERROR" in codes(reviewed)
+
+
+@pytest.mark.parametrize("policy", ["global", "field", "unmapped"])
+def test_explicitly_missing_or_unmapped_excel_errors_do_not_prevent_freeze(service, policy):
+    path = service.filesystem.roots[0] / "errors.xlsx"
+    book = Workbook()
+    book.active.append(["Slide_ID", "Patient_ID", "Label"])
+    book.active.append(["s1", "p1", "#N/A"])
+    book.save(path)
+    original = path.read_bytes()
+    options = {"patientIdColumn": "Patient_ID"}
+    if policy == "global":
+        options["missingValues"] = ["", "#N/A"]
+    elif policy == "field":
+        options["attributes"] = [field("Label", missingValues=["#N/A"])]
+    else:
+        options["attributes"] = []
+    saved = draft(service, {"path": str(path)}, **options)
+    reviewed = preview(service, saved)
+    assert reviewed["canFreeze"]
+    assert "SPREADSHEET_ERROR_CELLS" in codes(reviewed)
+    assert "MAPPED_SPREADSHEET_ERROR" not in codes(reviewed)
+    assert reviewed["records"][0]["attributes"] == ({} if policy == "unmapped" else {"Label": None})
+    published = freeze(service, saved, reviewed)
+    assert service.store.read_artifact(published["id"], "sources/main.xlsx") == original
+
+
+def test_literal_csv_error_looking_tokens_keep_their_explicit_missing_value_policy(service):
+    source = table(service, "Slide_ID,Label\ns1,#N/A\n")
+    reviewed = preview(service, draft(service, source))
+    assert reviewed["canFreeze"]
+    assert reviewed["records"][0]["attributes"]["Label"] == "#N/A"
+    assert "SPREADSHEET_ERROR_CELLS" not in codes(reviewed)
+
+
+@pytest.mark.parametrize("physical_alias", [False, True])
+def test_distinct_slide_and_patient_ids_cannot_hide_a_shared_physical_wsi(service, physical_alias):
+    root = service.filesystem.roots[0] / "slides"
+    root.mkdir()
+    first = root / "s1.svs"
+    first.write_bytes(b"section one")
+    second = root / "s2.svs"
+    if physical_alias:
+        os.link(first, second)
+    else:
+        second.write_bytes(b"section two")
+    source = table(service, "Slide_ID,Patient_ID\ns1,p1\ns2,p2\n")
+    saved = draft(service, source, patientIdColumn="Patient_ID", slideRoot=str(root))
+    reviewed = preview(service, saved)
+    assert reviewed["canFreeze"] is not physical_alias
+    assert ("DUPLICATE_SLIDE_ALIAS" in codes(reviewed)) is physical_alias
+    if physical_alias:
+        with pytest.raises(StorageError) as error:
+            freeze(service, saved, reviewed)
+        assert error.value.code == "IMPORT_BLOCKED"
+
+
+def test_invalid_import_mapping_reports_fields_without_input_dump_or_validation_urls(service):
+    sensitive = "sensitive uploaded metadata must not appear in validation details"
+    saved = service.store.create_draft(
+        "import",
+        "Invalid mapping",
+        {
+            "type": "dataset-import",
+            "spec": {
+                "source": {"contentBase64": sensitive, "filename": "source.csv"},
+                "slideIdColumn": "",
+                "attributes": [{"key": "Age", "sourceColumn": "Age", "owner": sensitive}],
+            },
+        },
+    )
+    with pytest.raises(StorageError) as error:
+        preview(service, saved)
+    assert error.value.code == "IMPORT_SPEC_INVALID"
+    message = str(error.value)
+    assert "slideIdColumn:" in message
+    assert "attributes.0.owner:" in message
+    assert sensitive not in message
+    assert "input_value" not in message
+    assert "errors.pydantic.dev" not in message
     assert service.store.list_datasets() == []

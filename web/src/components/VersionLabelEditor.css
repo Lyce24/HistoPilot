@@ -1,0 +1,78 @@
+.version-label-editor {
+  border: 1px solid #e1ddee;
+  border-radius: 10px;
+  background: #fff;
+  min-width: 0;
+  width: 100%;
+}
+.version-label-editor > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 16px 18px !important;
+  list-style: none;
+  color: #7361ad;
+  cursor: pointer;
+}
+.version-label-editor > summary::-webkit-details-marker { display: none; }
+.version-label-editor > summary > span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.version-label-editor > summary strong { overflow-wrap: anywhere; }
+.version-label-editor > summary small { color: var(--muted); font-weight: 400; }
+.version-label-editor > summary::after { content: '+'; font-size: 18px; }
+.version-label-editor[open] > summary::after { content: '−'; }
+.version-label-editor > summary > small { margin-left: auto; }
+.version-label-body { padding: 0 18px 18px; }
+.version-label-description {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 18px;
+  max-width: 780px;
+}
+.version-label-fields {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  display: grid;
+  gap: 17px;
+  min-width: 0;
+}
+.version-label-fields .label > small { color: var(--muted); font-weight: 400; }
+.version-label-note {
+  width: 100%;
+  resize: vertical;
+  min-height: 85px;
+  font: inherit;
+  line-height: 1.6;
+}
+.version-label-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+  padding-top: 15px;
+}
+.version-label-actions p { color: var(--muted); font-size: 11px; }
+.version-label-actions .inline-actions { margin: 0; }
+.version-label-conflict {
+  border: 1px solid #ecd9b6;
+  background: #fff9ed;
+  color: #876335;
+  border-radius: 8px;
+  padding: 15px;
+  font-size: 12px;
+}
+.version-label-conflict p { margin: 8px 0; }
+.version-label-conflict .inline-actions { margin: 12px 0 0; }
+.version-label-latest-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+.version-label-saved { display: flex; align-items: center; gap: 8px; color: #327a60; font-size: 12px; }
+.version-tag-note { margin-top: 5px; color: var(--muted); font-size: 11px; white-space: pre-line; }
+.version-canonical-id { display: block; margin-top: 5px; font-size: 10px; color: var(--muted); }
