@@ -18,6 +18,7 @@ export interface ExperimentPredictorItem {
   key: string;
   source: { experimentId: string; batchId: string; candidateId: string; trainingSeed: number; splitSeed: number };
   method: PredictorMethod; configurationNumber: number; foldCount: number; runIds: string[];
+  refitPercentile?: number | null;
   status: 'waiting' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   recordId: string | null; predictorId: string | null;
   epochBudget: PredictorManifest['epochBudget'] | null; execution: ComputeExecution | null;
@@ -46,11 +47,12 @@ export interface ModelExperiment {
   stage?: ExperimentStage; configurationLocked?: boolean;
   batchPlans?: ExperimentBatchPlan[]; submission?: ExperimentSubmission | null;
   predictorPolicy?: ExperimentPredictorPolicy | null;
+  predictorPolicies?: Record<string, ExperimentPredictorPolicy> | null;
   predictorExecution?: ExperimentPredictorExecution | null;
 }
 export interface ExperimentBatchSummary extends Omit<ExperimentBatch, 'manifest' | 'inputSnapshot' | 'execution'> {
   manifest: Pick<BatchManifest, 'kind' | 'version' | 'summary'> & {
-    spec: Pick<DevelopmentBatchSpec, 'experimentId' | 'experimentRevision' | 'experimentName' | 'batchName' | 'inputs'>;
+    spec: Pick<DevelopmentBatchSpec, 'experimentId' | 'experimentRevision' | 'experimentName' | 'batchName' | 'inputs' | 'predictorPolicy'>;
   };
 }
 export interface ModelExperimentSummary extends Omit<ModelExperiment, 'batches' | 'drafts' | 'inputSnapshot'> {

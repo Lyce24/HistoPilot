@@ -15,6 +15,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from histopilot.application.development import development_plans
+from histopilot.application.experiment_policy import has_predictor_intent, policy_for_batch
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.training import membership_plan_id
 from histopilot.schemas.predictors import PredictorSelection
@@ -174,7 +175,7 @@ class PredictorService:
         if experiment_id.startswith("legacy-"):
             return
         submission = self.store.get_draft(experiment_id)["payload"].get("submission") or {}
-        if not submission.get("predictorPolicy"):
+        if not has_predictor_intent(submission):
             return
         from histopilot.application.experiment_predictors import ExperimentPredictorService
 
@@ -372,7 +373,7 @@ class PredictorService:
         policy = None
         if not experiment.get("legacy"):
             submission = self.store.get_draft(selection.experimentId)["payload"].get("submission")
-            policy = (submission or {}).get("predictorPolicy")
+            policy = policy_for_batch(submission or {}, selection.batchId, spec=manifest["spec"])
             if policy and (
                 selection.batchId not in submission["batchIds"]
                 or policy["method"] not in {selection.method, "both"}

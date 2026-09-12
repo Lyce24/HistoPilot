@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import Field, StrictInt, field_validator, model_serializer, model_validator
 
 from histopilot.schemas.mil import MILInputSpec
+from histopilot.schemas.predictor_policy import ExperimentPredictorPolicy
 from histopilot.schemas.version_labels import FreezeVersionLabel
 from histopilot.schemas.workspace import RequestModel, Seed
 
@@ -27,7 +28,7 @@ class TrainingRecipe(RequestModel):
     accumulateGradBatches: Annotated[StrictInt, Field(ge=1, le=4096)] = 1
     learningRate: PositiveFloat = 0.0003
     weightDecay: NonnegativeFloat = 0.0001
-    maxEpochs: Epochs = 100
+    maxEpochs: Epochs = 40
     optimizer: Literal["adam", "adamw", "sgd"] = "adamw"
     lrScheduler: Literal["none", "cosine"] = "none"
     warmupEpochs: Annotated[StrictInt, Field(ge=0, le=99999)] = 0
@@ -37,12 +38,19 @@ class TrainingRecipe(RequestModel):
         default=4096, description="Maximum training patches per slide; null uses the whole bag."
     )
     earlyStopping: bool = True
-    patience: Annotated[StrictInt, Field(ge=1, le=10000)] = 15
+    patience: Annotated[StrictInt, Field(ge=1, le=10000)] = 8
     earlyStoppingMinDelta: NonnegativeFloat = 0
     minEpochs: Epochs = 1
     checkpointMetric: Literal["validation_loss", "validation_auroc", "validation_accuracy"] = (
         "validation_loss"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def historical_defaults(cls, values, info):
+        if isinstance(values, dict) and (info.context or {}).get("legacy"):
+            return {"maxEpochs": 100, "patience": 15, **values}
+        return values
 
     @model_validator(mode="after")
     def coherent_epoch_budget(self):
@@ -62,7 +70,14 @@ class SearchGrid(RequestModel):
     weightDecays: list[NonnegativeFloat] = Field(
         default_factory=lambda: [0.0001], min_length=1, max_length=100
     )
-    maxEpochs: list[Epochs] = Field(default_factory=lambda: [100], min_length=1, max_length=100)
+    maxEpochs: list[Epochs] = Field(default_factory=lambda: [40], min_length=1, max_length=100)
+
+    @model_validator(mode="before")
+    @classmethod
+    def historical_defaults(cls, values, info):
+        if isinstance(values, dict) and (info.context or {}).get("legacy"):
+            return {"maxEpochs": [100], **values}
+        return values
 
     @field_validator("learningRates", "weightDecays", "maxEpochs")
     @classmethod
@@ -104,6 +119,14 @@ class DevelopmentBatchSpec(RequestModel):
     trainingSeeds: list[Seed] = Field(default_factory=lambda: [42], min_length=1, max_length=100)
     resources: ResourcePolicy = Field(default_factory=ResourcePolicy)
     notes: str = Field(default="", max_length=2000)
+    predictorPolicy: ExperimentPredictorPolicy | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def historical_defaults(cls, values, info):
+        if isinstance(values, dict) and (info.context or {}).get("legacy"):
+            return {"recipe": {}, "grid": {}, **values}
+        return values
 
     @field_validator("experimentName", "batchName")
     @classmethod
@@ -140,6 +163,8 @@ class DevelopmentBatchSpec(RequestModel):
         if self.experimentId is None:
             values.pop("experimentId", None)
             values.pop("experimentRevision", None)
+        if self.predictorPolicy is None:
+            values.pop("predictorPolicy", None)
         return values
 
 

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import LocalExperiments from '../src/pages/LocalExperiments';
 import type { Workspace } from '../src/api/types';
 import type { ExperimentBatch, ExperimentBatchPlan, ExperimentPredictorExecution, ModelExperiment } from '../src/api/experiments';
+import { batchPredictorPolicy } from '../src/lib/experimentPredictors';
 import type { FrozenPredictor } from '../src/api/predictors';
 import { defaultRecipe, defaultResources, type BatchPreview, type DevelopmentBatchSpec, type TrainingExecution } from '../src/api/development';
 import '../src/styles.css';
@@ -35,7 +36,7 @@ let loseSubmission = false;
 let losePredictorAction = false;
 
 function plan(id: string, name: string, rate = 0.0003): ExperimentBatchPlan {
-  return { id, spec: { version: 1, experimentName: 'Fixture', batchName: name, inputs, recipe: { ...defaultRecipe(), learningRate: rate, maxEpochs: 20 }, mode: 'single', grid: { learningRates: [rate], weightDecays: [0.0001], maxEpochs: [20] }, configurations: [], trainingSeeds: [42], resources: defaultResources(), notes: '' } };
+  return { id, spec: { version: 1, experimentName: 'Fixture', batchName: name, inputs, recipe: { ...defaultRecipe(), learningRate: rate, maxEpochs: 20 }, mode: 'single', grid: { learningRates: [rate], weightDecays: [0.0001], maxEpochs: [20] }, configurations: [], trainingSeeds: [42], resources: defaultResources(), predictorPolicy: { method: 'both', refitPercentile: 75 }, notes: '' } };
 }
 function preview(spec: DevelopmentBatchSpec): BatchPreview {
   return { kind: 'mil-batch', version: 1, datasetId: 'dataset-review', spec, configurations: [{ id: 'candidate-1', number: 1, recipe: spec.recipe }], splitPlans: Array.from({ length: 5 }, (_, i) => ({ id: `split-${i}`, planId: `split-${i}`, seed: 42, fold: i, phase: 'development', slideCount: 180, partitions: { training: 108, validation: 36, assessment: 36 } })), runs: Array.from({ length: 5 }, (_, i) => ({ id: `run-${i}`, candidateId: 'candidate-1', trainingSeed: 42, splitPlanId: `split-${i}`, status: 'planned' })), summary: { configurationCount: 1, trainingSeedCount: 1, splitPlanCount: 5, runCount: 5 }, executionImplemented: true, previewHash: 'offline-reviewed', resolvedInputs, canFreeze: true, findings: [] };
@@ -56,14 +57,17 @@ function make(id: string, name: string, stage: 'planning' | 'running' | 'finishe
   const plans = [plan('baseline', 'Baseline'), plan('low-rate', 'Lower learning rate', 0.0001)];
   const batches = stage === 'planning' ? [] : plans.map((item) => batch(id, item, stage === 'finished'));
   const record: ModelExperiment = { id, key: `draft:${id}`, name, notes: 'Compare learning rates using the same frozen development splits.', tags: ['abmil', 'baseline'], revision: 1, state: 'active', status: stage === 'planning' ? 'planned' : stage === 'finished' ? 'completed' : 'running', stage, configurationLocked: stage !== 'planning', createdAt: stamp, updatedAt: stamp, inputs, batches, batchPlans: plans, drafts: [], legacy: false, predictorId: null, predictorPolicy: { method: 'both', refitPercentile: 75 }, executionImplemented: true, submission: stage === 'planning' ? null : { operationId: `submit-${id}`, expectedRevision: 1, submittedAt: stamp, status: 'submitted', batchIds: batches.map((item) => item.id), error: null, retryable: false } };
+  if (stage !== 'planning') { record.predictorPolicies = Object.fromEntries(batches.map((item) => [item.id, batchPredictorPolicy(item.manifest.spec)])); record.predictorPolicy = null; }
   record.predictorExecution = predictorExecution(record, stage === 'finished' ? 'completed' : 'waiting');
   return record;
 }
 function predictorExecution(record: ModelExperiment, status: 'waiting' | 'running' | 'completed'): ExperimentPredictorExecution | null {
-  const policy = record.predictorPolicy;
-  if (!policy || policy.method === 'skip' || record.stage === 'planning') return null;
-  const methods = policy.method === 'both' ? ['ensemble', 'refit'] as const : [policy.method];
-  const items: NonNullable<ExperimentPredictorExecution['items']> = record.batches.flatMap((batch) => methods.map((method) => ({ key: `${batch.id}-${method}`, source: { experimentId: record.id, batchId: batch.id, candidateId: 'candidate-1', trainingSeed: 42, splitSeed: 42 }, method, configurationNumber: 1, foldCount: 5, runIds: batch.manifest.runs.map((run) => run.id), status: status === 'completed' || (status === 'running' && method === 'ensemble') ? 'completed' : status, recordId: status === 'waiting' ? null : `${batch.id}-${method}`, predictorId: status === 'completed' || (status === 'running' && method === 'ensemble') ? `${batch.id}-${method}` : null, epochBudget: method === 'refit' ? { epochs: 18, percentile: policy.refitPercentile!, foldBestEpochs: [8, 10, 14, 18, 20].map((epoch, index) => ({ runId: `run-${index}`, bestEpoch: epoch })), rounding: 'ceil', interpolation: 'linear' } : null, execution: status === 'running' && method === 'refit' ? { status: 'running', progress: { epoch: 8, maxEpochs: 18, trainingLoss: 0.271 } } : null, error: null })));
+  if (record.stage === 'planning') return null;
+  const items: NonNullable<ExperimentPredictorExecution['items']> = record.batches.flatMap((batch) => {
+    const policy = record.predictorPolicies?.[batch.id] ?? batchPredictorPolicy(batch.manifest.spec, record.predictorPolicy);
+    const methods = policy.method === 'skip' ? [] : policy.method === 'both' ? ['ensemble', 'refit'] as const : [policy.method];
+    return methods.map((method) => ({ key: `${batch.id}-${method}`, source: { experimentId: record.id, batchId: batch.id, candidateId: 'candidate-1', trainingSeed: 42, splitSeed: 42 }, method, refitPercentile: method === 'refit' ? policy.refitPercentile : null, configurationNumber: 1, foldCount: 5, runIds: batch.manifest.runs.map((run) => run.id), status: status === 'completed' || (status === 'running' && method === 'ensemble') ? 'completed' : status, recordId: status === 'waiting' ? null : `${batch.id}-${method}`, predictorId: status === 'completed' || (status === 'running' && method === 'ensemble') ? `${batch.id}-${method}` : null, epochBudget: method === 'refit' ? { epochs: 18, percentile: policy.refitPercentile!, foldBestEpochs: [8, 10, 14, 18, 20].map((epoch, index) => ({ runId: `run-${index}`, bestEpoch: epoch })), rounding: 'ceil', interpolation: 'linear' } : null, execution: status === 'running' && method === 'refit' ? { status: 'running', progress: { epoch: 8, maxEpochs: 18, trainingLoss: 0.271 } } : null, error: null })); });
+  if (!items.length) return null;
   if (status === 'running') for (const item of items.filter((row) => row.method === 'refit').slice(1)) { item.status = 'waiting'; item.execution = null; }
   return { status, counts: { total: items.length, ensemble: items.filter((item) => item.method === 'ensemble').length, refit: items.filter((item) => item.method === 'refit').length, completed: items.filter((item) => item.status === 'completed').length, waiting: items.filter((item) => item.status === 'waiting').length, active: items.filter((item) => item.status === 'running').length, failed: 0, cancelled: 0 }, items, error: null, updatedAt: stamp, sessionName: 'offline-no-predictor-worker', logPath: '/offline/predictor-worker.log', retryable: false, cancellable: status !== 'completed' };
 }
@@ -119,6 +123,8 @@ window.fetch = async (input, init) => {
         record.batches = (record.batchPlans ?? []).map((item) => batch(record.id, item, false));
         record.stage = 'running'; record.status = 'running'; record.configurationLocked = true; record.revision += 1;
         record.submission = { ...body, submittedAt: stamp, status: 'submitted', batchIds: record.batches.map((item) => item.id), error: null, retryable: false };
+        record.predictorPolicies = Object.fromEntries(record.batches.map((item) => [item.id, batchPredictorPolicy(item.manifest.spec, record.predictorPolicy)]));
+        record.predictorPolicy = null;
         record.predictorExecution = predictorExecution(record, 'waiting');
       }
       if (loseSubmission) { loseSubmission = false; throw new TypeError('Fixture accepted submission; response deliberately lost.'); }

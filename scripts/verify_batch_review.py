@@ -95,10 +95,18 @@ def main():
         opened = True
         browser("set", "viewport", "1440", "1100")
         click("Planning example")
-        click("Batches")
+        click("2. Batches")
         check(
             "Search modes, training and compute are grouped",
             "document.querySelectorAll('.batch-mode-option').length === 3 && document.body.innerText.includes('Training settings') && document.body.innerText.includes('Compute & parallelism')",
+        )
+        check(
+            "New batches start blank with forty epochs and patience eight",
+            f"{field('Start from a template', 'select')}.value === 'blank' && {field('Batch name')}.value === '' && {field('Maximum epochs')}.value === '40' && {field('Early-stopping patience')}.value === '8'",
+        )
+        check(
+            "Batch flow ends with predictor choices and one batch save",
+            "(() => { const sections = [...document.querySelector('.development-editor').children].filter(el => el.tagName === 'SECTION').map(el=>el.getAttribute('aria-label')); return JSON.stringify(sections) === JSON.stringify(['Parameter search and repeats', 'Settings', 'Parallel training', 'Configure predictors']) && !document.body.innerText.includes('Save predictor choices'); })()",
         )
         check(
             "Advanced settings begin collapsed",
@@ -122,11 +130,36 @@ def main():
             "Fifteen configurations and three seeds produce forty-five groups",
             "document.querySelector('.batch-size-summary').innerText.includes('15 configurations × 3 training seeds = 45 training groups')",
         )
+        evaluate(
+            "document.querySelector('.batch-predictor-settings input[value=both]').click(); true"
+        )
+        fill("Refit epoch budget", "75", "select")
+        check(
+            "This batch plans ninety predictors from its own both choice",
+            "document.querySelector('.batch-predictor-settings').innerText.includes('90 predictors planned for this batch') && document.querySelector('.batch-predictor-settings').innerText.includes('225 fold runs')",
+        )
+        fill("Refit epoch budget", "custom", "select")
+        fill("Custom percentile", "7e")
+        before = evaluate(patch_count)
+        click("Add batch to plan")
+        check(
+            "A partial custom percentile blocks the entire batch save",
+            f"{patch_count} === {before} && {field('Custom percentile')}.getAttribute('aria-invalid') === 'true' && {current}.batchPlans.length === 2",
+        )
+        fill("Refit epoch budget", "75", "select")
         click("Add batch to plan")
         check(
             "Grid and training seeds save together without changing sibling batches",
             f"{current}.batchPlans.length === 3 && {current}.batchPlans[2].spec.grid.learningRates.length === 5 && {current}.batchPlans[2].spec.trainingSeeds.length === 3 && {current}.batchPlans[0].spec.recipe.learningRate === 0.0003",
         )
+        check(
+            "Predictor method and percentile are saved in the same batch request",
+            f"{current}.batchPlans[2].spec.predictorPolicy.method === 'both' && {current}.batchPlans[2].spec.predictorPolicy.refitPercentile === 75",
+        )
+        evaluate(
+            "document.querySelector('.batch-predictor-settings').scrollIntoView({block:'start'}); true"
+        )
+        browser("screenshot", str(output / "batch-predictor-settings.png"))
         before = evaluate(patch_count)
         fill("Training seeds", "42, 42")
         click("Save batch changes")
@@ -185,6 +218,62 @@ def main():
             "document.querySelector('.batch-custom-configurations').scrollIntoView({block:'start'}); true"
         )
         browser("screenshot", str(output / "batch-editor-mobile.png"))
+        evaluate(
+            "document.querySelector('.batch-predictor-settings').scrollIntoView({block:'start'}); true"
+        )
+        browser("screenshot", str(output / "batch-predictors-mobile.png"))
+        click("Save batch changes")
+        click("New batch")
+        check(
+            "Starting another batch resets its predictor choice and training defaults",
+            f"document.querySelector('.batch-predictor-settings input[value=ensemble]').checked && {field('Maximum epochs')}.value === '40' && !document.querySelector('.experiment-refit-budget')",
+        )
+        fill("Batch name", "Cross-validation only")
+        evaluate(
+            "document.querySelector('.batch-predictor-settings input[value=skip]').click(); true"
+        )
+        click("Add batch to plan")
+        check(
+            "Different batch predictor choices remain independent",
+            f"{current}.batchPlans.length === 4 && {current}.batchPlans[3].spec.predictorPolicy.method === 'skip' && {current}.batchPlans[2].spec.predictorPolicy.method === 'both' && {current}.batchPlans[2].spec.predictorPolicy.refitPercentile === 75",
+        )
+        check(
+            "Batch cards compare predictor choices without opening settings",
+            "[...document.querySelectorAll('.batch-plan-card')].some(el=>el.querySelector('.batch-predictor-summary')?.innerText.includes('Predictors: Both · P75')) && [...document.querySelectorAll('.batch-plan-card')].some(el=>el.querySelector('.batch-predictor-summary')?.innerText.includes('Predictors: Skip'))",
+        )
+        browser("set", "viewport", "1440", "1100")
+        evaluate("document.querySelector('.batch-plan-list').scrollIntoView({block:'start'}); true")
+        browser("screenshot", str(output / "batch-plan-predictor-choices.png"))
+        evaluate(
+            "document.querySelectorAll('.batch-plan-card')[2].querySelector('button').click(); true"
+        )
+        browser("snapshot", "-i")
+        check(
+            "Editing a saved batch restores its own predictor percentile",
+            f"document.querySelector('.batch-predictor-settings input[value=both]').checked && {field('Refit epoch budget', 'select')}.value === '75'",
+        )
+        evaluate(
+            f"(() => {{ const record = {current}; const spec = {{...record.batchPlans[0].spec, batchName:'Earlier recipe', inputs:{{...record.inputs, featureBundleId:'older-bundle', loadingPolicy:'auto'}}, predictorPolicy:{{method:'refit',refitPercentile:90}}}}; record.drafts = [{{id:'older-draft',name:'Earlier recipe',payload:{{type:'development-batch',spec}}}}]; window.__experimentReview.refresh(); return true; }})()"
+        )
+        check(
+            "Earlier recipes remain available to copy into the current plan",
+            f"Boolean({button('Use draft settings')})",
+        )
+        click("Use draft settings")
+        check(
+            "A recipe with different inputs keeps verified inputs and remains editable",
+            f"document.querySelector('[role=tab][aria-selected=true]').textContent === '2. Batches' && !document.querySelector('.development-editor').disabled && {current}.inputs.featureBundleId === 'bundle-review' && {current}.inputs.loadingPolicy === 'native' && {field('Batch name')}.value === 'Earlier recipe' && document.querySelector('.batch-predictor-settings input[value=refit]').checked && {field('Refit epoch budget', 'select')}.value === '90' && document.body.innerText.includes('This batch will use this experiment’s verified inputs.')",
+        )
+        click("Check batch")
+        check(
+            "Copied settings are checked against the current experiment inputs",
+            "(() => { const request = window.__experimentReview.traffic.filter(item=>item.path.endsWith('/mil-experiments/batches/preview')).at(-1); return request?.body.inputs.featureBundleId === 'bundle-review' && request.body.inputs.loadingPolicy === 'native' && request.body.predictorPolicy.refitPercentile === 90; })()",
+        )
+        click("Add batch to plan")
+        check(
+            "The copied recipe saves with shared verified inputs and its own predictor policy",
+            f"{current}.batchPlans.length === 5 && {current}.batchPlans[4].spec.inputs.featureBundleId === 'bundle-review' && {current}.batchPlans[4].spec.inputs.loadingPolicy === 'native' && {current}.batchPlans[4].spec.predictorPolicy.method === 'refit' && {current}.batchPlans[4].spec.predictorPolicy.refitPercentile === 90",
+        )
         click("Running example")
         click("Batches")
         check(

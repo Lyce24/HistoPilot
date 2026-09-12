@@ -1,33 +1,40 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { bulkEvaluations, type BulkEvaluationSelection, type EvaluationBatch } from '../api/bulkEvaluations';
 import { predictorMethodLabel, type FrozenPredictor } from '../api/predictors';
+import type { ModelExperimentSummary } from '../api/experiments';
 import type { EvaluationCohort } from '../api/evaluation';
 import { versionLabelText } from '../lib/versionLabels';
 import { groupPredictors, predictorMatches, predictorConfigurationLabel, experimentPredictorLink } from '../lib/predictorGroups';
+import { evaluationExperiments, experimentPredictors, type EvaluationMethod } from '../lib/evaluationSelection';
 import { cleanupLink } from '../lib/hashRoute';
+import { shortRecordId } from '../lib/recordLabels';
 import { useBatchReview } from './useBatchReview';
+import EvaluationExperimentPicker from './EvaluationExperimentPicker';
 import { Badge, ErrorNotice } from './ui';
 import './RunWorkspace.css';
 
-export default function BulkEvaluationRunner({ project, predictors, cohorts, linkedCohort = '', linkedExperiment = '', onExperimentChange, onOpenEvaluation }: { project: string; predictors: FrozenPredictor[]; cohorts: EvaluationCohort[]; linkedCohort?: string; linkedExperiment?: string; onExperimentChange?: (id: string) => void; onOpenEvaluation: (id: string) => void }) {
+export default function BulkEvaluationRunner({ project, predictors, experiments = [], experimentsLoading, cohorts, linkedCohort = '', linkedExperiment = '', experimentIds, onExperimentsChange, onLockChange, onOpenEvaluation }: {
+  project: string; predictors: FrozenPredictor[]; experiments?: ModelExperimentSummary[]; experimentsLoading?: boolean;
+  cohorts: EvaluationCohort[]; linkedCohort?: string; linkedExperiment?: string; experimentIds?: string[];
+  onExperimentsChange?: (ids: string[]) => void; onLockChange?: (locked: boolean) => void; onOpenEvaluation: (id: string) => void;
+}) {
   const client = useQueryClient();
   const [cohortId, setCohortId] = useState(linkedCohort);
-  const [scope, setScope] = useState<'all' | 'selected'>('all');
+  const [localExperimentIds, setExperimentIds] = useState<string[]>(() => linkedExperiment ? [linkedExperiment] : []);
+  const sourceIds = experimentIds ?? localExperimentIds;
+  const [individual, setIndividual] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [search, setSearch] = useState('');
-  const [localExperimentId, setExperimentId] = useState(linkedExperiment);
-  const experimentId = onExperimentChange ? linkedExperiment : localExperimentId;
-  const [method, setMethod] = useState('all');
+  const [method, setMethod] = useState<EvaluationMethod>('both');
   const [name, setName] = useState('');
   const [batchId, setBatchId] = useState('');
-  const active = predictors.filter((item) => item.lifecycleState === 'active');
-  const visible = active.filter((item) => predictorMatches(item, experimentId, method, search));
+  const options = evaluationExperiments(experiments, predictors, sourceIds);
+  const candidates = experimentPredictors(predictors, sourceIds, method);
+  const eligibleIds = new Set(candidates.map((item) => item.id));
+  const draftIds = individual ? selected.filter((id) => eligibleIds.has(id)) : [...eligibleIds];
+  const visible = candidates.filter((item) => predictorMatches(item, '', 'all', search));
   const groups = groupPredictors(visible);
-  const experiments = groupPredictors(active);
-  const retainedSelected = selected.filter((id) => active.some((item) => item.id === id));
-  const selectedIds = scope === 'all' ? visible.map((item) => item.id) : retainedSelected;
-  const tooMany = selectedIds.length > 256;
   const cohort = cohorts.find((item) => item.id === cohortId);
   const ready = cohort?.current && !cohort.findings?.some((finding) => finding.severity === 'error');
   const batches = useQuery({ queryKey: ['evaluation-batches', project], queryFn: () => bulkEvaluations.list(project), refetchInterval: 5000 });
@@ -38,28 +45,42 @@ export default function BulkEvaluationRunner({ project, predictors, cohorts, lin
     (result) => result.items.every((item) => ['skipped', 'cancelled'].includes(item.status) || Boolean(item.execution && item.execution.status !== 'not_started')),
     async (result) => { setBatchId(result.id); await Promise.all(['evaluation-batches', 'model-evaluations', 'cleanup'].map((key) => client.invalidateQueries({ queryKey: [key, project] }))); },
   );
-  function reset() { action.reset(); }
+  const fixed = action.locked || Boolean(action.review);
+  useEffect(() => { onLockChange?.(fixed); }, [fixed, onLockChange]);
+  const selectedIds = action.review?.selection.predictorIds ?? draftIds;
+  const tooMany = selectedIds.length > 256;
+  const selectedSet = new Set(selectedIds);
+  const arrivals = action.review ? draftIds.filter((id) => !selectedSet.has(id)).length : 0;
+  const totals = candidates.reduce((value, item) => { value[item.manifest.method ?? 'ensemble']++; return value; }, { ensemble: 0, refit: 0 });
+  function changeExperiments(ids: string[]) { action.reset(); setExperimentIds(ids); onExperimentsChange?.(ids); }
+  const batchName = (source: FrozenPredictor['manifest']) => experiments.find((item) => item.id === source.experimentId)?.batches.find((item) => item.id === source.batchId)?.name ?? `Batch ${shortRecordId(source.batchId)}`;
   return <div className="run-workspace">
     <ErrorNotice error={action.error ?? batches.error} />
-    <fieldset className="chain-fields" disabled={action.locked} onChange={reset}>
-      <legend className="sr-only">Run predictors on a test cohort</legend>
-      <label className="label">Test cohort for all predictors<select className="field" value={cohortId} onChange={(event) => setCohortId(event.target.value)}><option value="">Choose a test cohort</option>{cohorts.map((item) => <option key={item.id} value={item.id} disabled={!item.current || item.findings?.some((finding) => finding.severity === 'error')}>{versionLabelText(item, 'Test cohort')} · {item.manifest.summary.includedSlides} slides</option>)}</select></label>
-      <label className="label">Evaluation batch name (optional)<input className="field" value={name} maxLength={60} onChange={(event) => setName(event.target.value)} placeholder="For example: External validation" /></label>
-      <div className="run-methods chain-wide" role="group" aria-label="Predictors to evaluate"><label className={scope === 'all' ? 'selected' : ''}><input type="radio" name="evaluation-scope" value="all" checked={scope === 'all'} onChange={() => setScope('all')} />All shown predictors ({visible.length})</label><label className={scope === 'selected' ? 'selected' : ''}><input type="radio" name="evaluation-scope" value="selected" checked={scope === 'selected'} onChange={() => setScope('selected')} />Selected predictors ({retainedSelected.length})</label></div>
-    </fieldset>
-    <p className="muted">Every selected predictor runs on the same test cohort, with separate results for each seed and method. The review lists incompatible predictors and excludes them explicitly. Each batch supports up to 256 predictors.</p>
-    <div className="run-toolbar">
-      <label className="label">Source experiment<select className="field" value={experimentId} disabled={action.locked} onChange={(event) => { reset(); setExperimentId(event.target.value); onExperimentChange?.(event.target.value); }}><option value="">All experiments</option>{experimentId && !experiments.some((item) => item.id === experimentId) ? <option value={experimentId}>Linked experiment · no ready predictors</option> : null}{experiments.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.items.length} predictors</option>)}</select></label>
-      <label className="label run-search">Find predictors<input className="field" value={search} disabled={action.locked} onChange={(event) => { reset(); setSearch(event.target.value); }} placeholder="Configuration, experiment, name or seed" /></label>
-      <label className="label">Predictor method filter<select className="field" value={method} disabled={action.locked} onChange={(event) => { reset(); setMethod(event.target.value); }}><option value="all">All methods</option><option value="ensemble">Ensemble</option><option value="refit">Refit</option></select></label>
-    </div>
-    <div className="run-selection-bar"><strong>{selectedIds.length} predictors to evaluate · {groups.length} source {groups.length === 1 ? 'experiment' : 'experiments'} shown</strong>{scope === 'selected' ? <><button className="text-button" disabled={action.locked} onClick={() => { reset(); setSelected([...new Set([...selected, ...visible.map((item) => item.id)])]); }}>Select all shown</button><button className="text-button" disabled={action.locked} onClick={() => { reset(); setSelected([]); }}>Clear selection</button></> : null}</div>
-    {scope === 'selected' && selectedIds.some((id) => !visible.some((item) => item.id === id)) ? <p className="muted">{selectedIds.filter((id) => !visible.some((item) => item.id === id)).length} selected predictors are hidden by the current filters and remain included.</p> : null}
-    {visible.length ? <div className="run-table-scroll evaluation-predictor-table"><table className="run-table"><thead><tr>{scope === 'selected' ? <th className="run-check"><span className="sr-only">Select</span></th> : null}<th>Configuration / predictor</th><th>Method</th><th className="run-number">Training seed</th><th className="run-number">Split seed</th><th>Weights</th></tr></thead><tbody>{groups.map((group) => <Fragment key={group.id}><tr className="run-group"><th colSpan={scope === 'selected' ? 6 : 5}><a href={experimentPredictorLink(group.id)}>{group.name}</a> · {group.items.length} predictors</th></tr>{group.items.map((item) => <tr key={item.id}>{scope === 'selected' ? <td><input type="checkbox" aria-label={`Evaluate ${item.manifest.name}`} disabled={action.locked} checked={selected.includes(item.id)} onChange={(event) => { reset(); setSelected(event.target.checked ? [...selected, item.id] : selected.filter((id) => id !== item.id)); }} /></td> : null}<td><strong title={item.manifest.candidateId}>{predictorConfigurationLabel(item.manifest)}</strong><small>{item.manifest.name}</small></td><td>{predictorMethodLabel(item.manifest.method)}</td><td>{item.manifest.trainingSeed}</td><td>{item.manifest.splitSeed}</td><td>{item.manifest.checkpoints.length} {item.manifest.method === 'refit' ? 'refit model' : 'fold models'}</td></tr>)}</Fragment>)}</tbody></table></div> : <p className="callout">{active.length ? 'No ready predictors match this experiment or filter.' : 'No active predictors are ready for evaluation.'} Open <a href="#experiments">Experiments</a> to follow automatic predictor generation. Experiments submitted with Skip produce no predictors; use one as a template and choose Ensemble, Refit or Both for new work.</p>}
-    {tooMany ? <p className="callout" role="status">This selection contains {selectedIds.length} predictors. Filter by experiment or method, or select up to 256 predictors per evaluation batch.</p> : null}
-    <button className="btn btn-primary" disabled={action.locked || !ready || !selectedIds.length || tooMany} onClick={() => void action.preview({ cohortId, scope: 'selected', predictorIds: selectedIds, ...(name.trim() ? { namePrefix: name.trim() } : {}) })}>{action.busy ? 'Checking compatibility…' : scope === 'all' ? 'Review all shown predictors' : 'Review selected predictors'}</button>
-    {action.review ? <div className="run-bulk-review"><h3>Review evaluation batch</h3><p><strong>{action.review.preview.eligibleCount}</strong> compatible predictors will run · <strong>{action.review.preview.blockedCount}</strong> excluded. The reviewed predictor list is fixed for this batch.</p><div className="run-table-scroll"><table className="run-table"><thead><tr><th>Predictor</th><th>Method</th><th>Compatibility</th><th>Details</th></tr></thead><tbody>{action.review.preview.items.map((item) => <tr key={item.predictorId}><td>{item.predictorName}</td><td>{predictorMethodLabel(item.method)}</td><td><Badge tone={item.eligible ? 'success' : 'warning'}>{item.eligible ? 'Will run' : 'Excluded'}</Badge></td><td>{item.findings.map((finding) => finding.message).join(' ') || 'Inputs verified'}</td></tr>)}</tbody></table></div>
-      {action.review.preview.canRun ? <><label className="development-check"><input type="checkbox" checked={action.acknowledged} disabled={action.busy || action.submitted} onChange={(event) => action.setAcknowledged(event.target.checked)} />I reviewed the test cohort, predictor list and exclusions.</label><button className="btn btn-primary" disabled={action.busy || (!action.acknowledged && !action.submitted)} onClick={() => void action.apply()}>{action.busy ? 'Submitting evaluation jobs…' : action.submitted ? 'Retry unfinished submissions' : action.review.selection.scope === 'all' ? 'Run all compatible predictors' : 'Run selected compatible predictors'}</button></> : null}
+    <EvaluationExperimentPicker options={options} selected={sourceIds} onChange={changeExperiments} disabled={fixed} loading={experimentsLoading} />
+    <section className="evaluation-step" aria-labelledby="evaluation-method-title"><h3 id="evaluation-method-title">2. Choose methods and test cohort</h3>
+      <fieldset className="chain-fields" disabled={fixed} onChange={() => action.reset()}>
+        <legend className="sr-only">Predictor methods and evaluation inputs</legend>
+        <div className="run-methods chain-wide" role="group" aria-label="Predictor methods to evaluate">{(['both', 'ensemble', 'refit'] as const).map((value) => <label key={value} className={method === value ? 'selected' : ''}><input type="radio" name="evaluation-method" value={value} checked={method === value} onChange={() => setMethod(value)} />{value === 'both' ? 'Both available methods' : value === 'ensemble' ? 'Ensemble' : 'Refit'}</label>)}</div>
+        <label className="label">Test cohort for selected experiments<select className="field" value={cohortId} onChange={(event) => setCohortId(event.target.value)}><option value="">Choose a test cohort</option>{cohorts.map((item) => <option key={item.id} value={item.id} disabled={!item.current || item.findings?.some((finding) => finding.severity === 'error')}>{versionLabelText(item, 'Test cohort')} · {item.manifest.summary.includedSlides} slides</option>)}</select></label>
+        <label className="label">Evaluation batch name (optional)<input className="field" value={name} maxLength={60} onChange={(event) => setName(event.target.value)} placeholder="For example: Ensemble and refit comparison" /></label>
+      </fieldset>
+      <p className="muted">{totals.ensemble} ensemble and {totals.refit} refit predictors are ready for this selection. Both includes whichever methods are available; it does not build missing predictors. Compatibility review excludes unsupported inputs. Each batch supports up to 256 predictors.</p>
+      {sourceIds.length && !candidates.length ? <p className="callout">The selected experiments have no ready predictors for this method. Follow their progress in <a href="#experiments">Experiments</a>. Batches using Skip produce no predictors; copy an experiment as a template to choose another policy.</p> : !sourceIds.length ? <p className="callout">Select one or more experiments above to choose predictors for evaluation.</p> : null}
+      <details className="evaluation-advanced"><summary>Advanced: choose individual predictors</summary>
+        <label className="development-check"><input type="checkbox" checked={individual} disabled={fixed} onChange={(event) => { action.reset(); setIndividual(event.target.checked); if (event.target.checked) setSelected([...eligibleIds]); }} />Choose a subset of the selected experiments’ ready predictors</label>
+        {individual ? <><div className="run-toolbar"><label className="label run-search">Find individual predictors<input className="field" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Batch, configuration, name or seed" /></label><button className="text-button" disabled={fixed} onClick={() => { action.reset(); setSelected([...new Set([...selected, ...visible.map((item) => item.id)])]); }}>Select all shown predictors</button><button className="text-button" disabled={fixed} onClick={() => { action.reset(); setSelected([]); }}>Clear predictors</button></div>
+          {draftIds.some((id) => !visible.some((item) => item.id === id)) ? <p className="muted">Some selected predictors are hidden by search and remain included.</p> : null}</> : null}
+        {visible.length ? <div className="run-table-scroll evaluation-predictor-table"><table className="run-table"><thead><tr>{individual ? <th className="run-check"><span className="sr-only">Select</span></th> : null}<th>Batch / configuration</th><th>Method</th><th className="run-number">Training seed</th><th className="run-number">Split seed</th><th>Weights</th></tr></thead><tbody>{groups.map((group) => <Fragment key={group.id}><tr className="run-group"><th colSpan={individual ? 6 : 5}><a href={experimentPredictorLink(group.id)}>{group.name}</a> · {group.items.length} predictors</th></tr>{group.items.map((item) => <tr key={item.id}>{individual ? <td><input type="checkbox" aria-label={`Evaluate predictor ${item.manifest.name} (${item.id})`} disabled={fixed} checked={selectedSet.has(item.id)} onChange={(event) => { action.reset(); setSelected(event.target.checked ? [...selected, item.id] : selected.filter((id) => id !== item.id)); }} /></td> : null}<td><strong title={item.manifest.candidateId}>{predictorConfigurationLabel(item.manifest)}</strong><small>{batchName(item.manifest)} · {item.manifest.name}</small></td><td>{predictorMethodLabel(item.manifest.method)}</td><td>{item.manifest.trainingSeed}</td><td>{item.manifest.splitSeed}</td><td>{item.manifest.checkpoints.length} {item.manifest.method === 'refit' ? 'refit model' : 'fold models'}</td></tr>)}</Fragment>)}</tbody></table></div> : null}
+      </details>
+    </section>
+    <div className="run-selection-bar"><strong>{selectedIds.length} {selectedIds.length === 1 ? 'predictor' : 'predictors'} {action.review ? 'fixed for review' : 'to evaluate'} from {sourceIds.length} selected {sourceIds.length === 1 ? 'experiment' : 'experiments'}</strong></div>
+    {tooMany ? <p className="callout" role="status">This selection contains {selectedIds.length} predictors. Choose fewer experiments or methods, or use individual selection to stay within 256 predictors per batch.</p> : null}
+    {!action.review ? <button className="btn btn-primary" disabled={action.locked || !ready || !selectedIds.length || tooMany} onClick={() => void action.preview({ cohortId, scope: 'selected', predictorIds: selectedIds, ...(name.trim() ? { namePrefix: name.trim() } : {}) })}>{action.busy ? 'Checking compatibility…' : 'Review experiment evaluation'}</button> : null}
+    {action.review ? <div className="run-bulk-review"><h3>3. Review experiment evaluation</h3><p><strong>{action.review.preview.eligibleCount}</strong> compatible predictors will run · <strong>{action.review.preview.blockedCount}</strong> excluded. The reviewed predictor list is fixed for this batch.</p>
+      {arrivals ? <p className="callout" role="status">{arrivals} additional ready {arrivals === 1 ? 'predictor is' : 'predictors are'} excluded from this review. Change the selection and review again to include new arrivals.</p> : null}
+      {!action.submitted ? <button className="btn btn-secondary" disabled={action.busy} onClick={action.reset}>Change selection and review again</button> : null}
+      <div className="run-table-scroll"><table className="run-table"><thead><tr><th>Experiment / predictor</th><th>Method</th><th>Compatibility</th><th>Details</th></tr></thead><tbody>{action.review.preview.items.map((item) => { const source = predictors.find((candidate) => candidate.id === item.predictorId)?.manifest; return <tr key={item.predictorId}><td>{source?.experiment?.name ?? shortRecordId(source?.experimentId ?? '')}<small>{item.predictorName}</small></td><td>{predictorMethodLabel(item.method)}</td><td><Badge tone={item.eligible ? 'success' : 'warning'}>{item.eligible ? 'Will run' : 'Excluded'}</Badge></td><td>{item.findings.map((finding) => finding.message).join(' ') || 'Inputs verified'}</td></tr>; })}</tbody></table></div>
+      {action.review.preview.canRun ? <><label className="development-check"><input type="checkbox" checked={action.acknowledged} disabled={action.busy || action.submitted} onChange={(event) => action.setAcknowledged(event.target.checked)} />I reviewed the test cohort, predictor list and exclusions.</label><button className="btn btn-primary" disabled={action.busy || (!action.acknowledged && !action.submitted)} onClick={() => void action.apply()}>{action.busy ? 'Submitting evaluation jobs…' : action.submitted ? 'Retry unfinished submissions' : 'Run reviewed predictors'}</button></> : null}
     </div> : null}
     {action.result ? <div className="callout" role="status"><p>Evaluation batch saved. Each predictor has its own job and results below.</p>{action.submitted ? <button className="text-button" disabled={action.busy} onClick={action.reset}>Start a new review; keep this evaluation batch</button> : null}</div> : null}
     {(batches.data?.items.length ?? 0) > 0 ? <div className="run-bulk-review"><h3>Evaluation batches</h3><label className="label">Evaluation batch<select className="field" value={batchId} onChange={(event) => setBatchId(event.target.value)}><option value="">Choose a submitted batch</option>{batches.data?.items.map((item) => <option key={item.id} value={item.id}>{item.name ?? item.id} · {item.status} · {item.items.length} predictors</option>)}</select></label>{batchId ? <EvaluationBatchStatus key={batchId} project={project} id={batchId} onOpen={onOpenEvaluation} /> : null}</div> : null}

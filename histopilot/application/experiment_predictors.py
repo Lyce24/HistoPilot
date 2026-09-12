@@ -15,6 +15,12 @@ import sys
 from copy import deepcopy
 
 from histopilot.adapters.native.runtime import training_runtime
+from histopilot.application.experiment_policy import (
+    has_predictor_intent,
+    predictor_work_expected,
+    submission_policies,
+    verify_batch_policy,
+)
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictor_builds import PredictorBuildService
 from histopilot.application.predictors import PredictorService
@@ -35,13 +41,16 @@ ACTIVE = {"queued", "waiting", "running", "cancelling"}
 TERMINAL = {"completed", "cancelled"}
 
 
-def source_items(experiment_id, batches, policy):
+def source_items(experiment_id, batches, policy=None, *, policies=None):
     """Expand methods once per seed group, independently of the fold count."""
-    if policy["method"] == "skip":
-        return []
-    methods = ("ensemble", "refit") if policy["method"] == "both" else (policy["method"],)
     items = []
     for batch in batches:
+        selected = policies[batch["id"]] if policies is not None else policy
+        if policies is not None:
+            verify_batch_policy(selected, batch["manifest"].get("spec", {}))
+        if selected["method"] == "skip":
+            continue
+        methods = ("ensemble", "refit") if selected["method"] == "both" else (selected["method"],)
         groups = PredictorService._groups(batch["manifest"])
         numbers = {row["id"]: row["number"] for row in batch["manifest"]["configurations"]}
         for (candidate, training_seed, split_seed), runs in sorted(groups.items()):
@@ -58,6 +67,15 @@ def source_items(experiment_id, batches, policy):
                         "key": _hash([source, method]),
                         "source": source,
                         "method": method,
+                        **(
+                            {
+                                "refitPercentile": selected["refitPercentile"]
+                                if method == "refit"
+                                else None
+                            }
+                            if policies is not None
+                            else {}
+                        ),
                         "configurationNumber": numbers[candidate],
                         "foldCount": len(runs),
                         "runIds": sorted(row["id"] for row in runs),
@@ -131,14 +149,14 @@ class ExperimentPredictorService:
         if (
             record["payload"].get("type") != "model-experiment"
             or not submission
-            or not submission.get("predictorPolicy")
+            or not has_predictor_intent(submission)
         ):
             raise StorageError(
                 "This historical experiment has no automatic predictor plan. Build its predictors explicitly, or copy it into a new experiment.",
                 "EXPERIMENT_PREDICTORS_LEGACY",
                 409,
             )
-        if submission["predictorPolicy"]["method"] == "skip":
+        if not predictor_work_expected(submission):
             raise StorageError(
                 "This experiment was submitted without predictors. Copy it to change that choice.",
                 "EXPERIMENT_PREDICTOR_POLICY_LOCKED",
@@ -156,7 +174,11 @@ class ExperimentPredictorService:
             or plan.get("projectId") != self.store.project_id
             or plan.get("projectFolder") != str(self.store.folder)
             or plan.get("submissionOperationId") != submission["operationId"]
-            or plan.get("policy") != submission["predictorPolicy"]
+            or (
+                plan.get("policies") != submission_policies(submission)
+                if "predictorPolicies" in submission
+                else plan.get("policy") != submission["predictorPolicy"]
+            )
             or plan.get("batchIds") != submission["batchIds"]
             or plan.get("executionContract") != submission["executionContract"]
             or state.get("status") not in ACTIVE | TERMINAL | {"attention", "interrupted"}
@@ -268,7 +290,14 @@ class ExperimentPredictorService:
                         "execution": None,
                         "error": None,
                     }
-                    for item in source_items(identity, batches, submission["predictorPolicy"])
+                    for item in source_items(
+                        identity,
+                        batches,
+                        submission.get("predictorPolicy"),
+                        policies=submission_policies(submission)
+                        if "predictorPolicies" in submission
+                        else None,
+                    )
                 ],
             },
             summary=summary,
@@ -276,21 +305,27 @@ class ExperimentPredictorService:
 
     def _new_plan(self, identity, submission):
         batches = [self.store.get_configuration(item) for item in submission["batchIds"]]
-        policy = ExperimentPredictorPolicy.model_validate(
-            submission["predictorPolicy"]
-        ).model_dump()
+        mapped = "predictorPolicies" in submission
+        policies = submission_policies(submission) if mapped else None
+        policy = (
+            None
+            if mapped
+            else ExperimentPredictorPolicy.model_validate(
+                submission["predictorPolicy"]
+            ).model_dump()
+        )
         return {
-            "version": 1,
+            "version": 2 if mapped else 1,
             "experimentId": identity,
             "projectId": self.store.project_id,
             "projectFolder": str(self.store.folder),
             "submissionOperationId": submission["operationId"],
             "batchIds": submission["batchIds"],
-            "policy": policy,
+            **({"policies": policies} if mapped else {"policy": policy}),
             "executionContract": submission["executionContract"],
             "name": submission["experiment"]["name"],
             "dataRoots": [str(path) for path in self.filesystem.roots],
-            "items": source_items(identity, batches, policy),
+            "items": source_items(identity, batches, policy, policies=policies),
         }
 
     def launch(self, identity, operation_id, *, resume=False):
@@ -547,7 +582,10 @@ class ExperimentPredictorService:
         request = PredictorBuildSelection(
             selections=[item["source"]],
             method=item["method"],
-            refitPercentile=plan["policy"]["refitPercentile"] or 50.0,
+            refitPercentile=item.get(
+                "refitPercentile", (plan.get("policy") or {}).get("refitPercentile")
+            )
+            or 50.0,
             namePrefix=plan["name"][:100],
         )
         operation = "experiment-predictor-" + _hash([plan["submissionOperationId"], item["key"]])

@@ -80,6 +80,7 @@ class PredictorBuildService:
                 ],
             }
         try:
+            self.predictors.require_work_open(selection.experimentId)
             selected = selection
             if existing:
                 selected = PredictorSelection.model_validate(existing["manifest"]["selection"])

@@ -89,9 +89,9 @@ describe('experiment registry and exact comparison', () => {
       expect(registry).toContain('Archived'); expect(registry).toContain('Trash'); expect(registry).toContain('All records');
       expect(registry).toContain('All stages'); expect(registry).toContain('Planning');
       expect(registry).not.toContain('Predictors'); expect(registry).not.toContain('#post-development'); expect(registry).not.toContain('#evaluation');
-      const detail = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned]} ownedDrafts={[]} tab="runs" onOpenSetup={() => {}} onRestoreInputs={() => {}} /></QueryClientProvider>);
+      const detail = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned]} ownedDrafts={[]} tab="runs" onOpenSetup={() => {}} /></QueryClientProvider>);
       expect(detail).toContain('owned-only'); expect(detail).not.toContain('UNRELATED-BATCH');
-      const multiple = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned, batch('second-owned', 'one')]} ownedDrafts={[]} tab="runs" onOpenSetup={() => {}} onRestoreInputs={() => {}} /></QueryClientProvider>);
+      const multiple = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned, batch('second-owned', 'one')]} ownedDrafts={[]} tab="runs" onOpenSetup={() => {}} /></QueryClientProvider>);
       expect(multiple).toContain('Choose a batch in this experiment'); expect(multiple).not.toContain('Launch batch');
     } finally { client.clear(); }
   });
@@ -102,7 +102,7 @@ describe('experiment registry and exact comparison', () => {
     client.setQueryData(['training-runtime', 'p'], { available: true, python: '/training/python', versions: {}, cudaAvailable: false, gpuCount: 0, findings: [] });
     client.setQueryData(['training-execution', 'p', owned.id], null);
     try {
-      const html = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned]} ownedDrafts={[]} executionImplemented tab="runs" onOpenSetup={() => {}} onRestoreInputs={() => {}} /></QueryClientProvider>);
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned]} ownedDrafts={[]} executionImplemented tab="runs" onOpenSetup={() => {}} /></QueryClientProvider>);
       expect(html).toContain('Launch batch');
       expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Launch batch/);
       expect(html).not.toContain('Training execution is unavailable');

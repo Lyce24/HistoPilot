@@ -122,7 +122,7 @@ class TrainingService:
 
     def _prepare(self, batch):
         manifest = batch["manifest"]
-        spec = DevelopmentBatchSpec.model_validate(manifest["spec"])
+        spec = DevelopmentBatchSpec.model_validate(manifest["spec"], context={"legacy": True})
         runtime = self.runtime()
         if not runtime["available"]:
             raise StorageError(runtime["findings"][0]["message"], "TRAINING_RUNTIME_UNAVAILABLE")

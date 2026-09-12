@@ -169,8 +169,9 @@ class CleanupService:
             if record["payload"].get("type") == "model-experiment":
                 items[key]["configurationLocked"] = bool(record["payload"].get("submission"))
                 submission = record["payload"].get("submission") or {}
-                policy = submission.get("predictorPolicy")
-                if policy and policy["method"] != "skip":
+                from histopilot.application.experiment_policy import predictor_work_expected
+
+                if predictor_work_expected(submission):
                     from histopilot.application.experiment_predictors import (
                         ExperimentPredictorService,
                     )

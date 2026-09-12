@@ -65,81 +65,138 @@ def main():
             + "); el.dispatchEvent(new Event('change', {bubbles:true})); return true; })()"
         )
 
+    def toggle_experiment(identifier):
+        evaluate(
+            "(() => { const el = document.querySelector('input[aria-label$=\"(' + "
+            + json.dumps(identifier)
+            + " + ')\"]'); if (!el || el.disabled) throw Error('Experiment unavailable'); el.click(); return true; })()"
+        )
+        browser("snapshot", "-i")
+
+    def method(value):
+        evaluate(
+            "document.querySelector('input[name=evaluation-method][value=' + "
+            + json.dumps(value)
+            + " + ']').click(); true"
+        )
+        browser("snapshot", "-i")
+
     preview = "window.__evaluationReview.traffic.filter(item => item.path.endsWith('/preview')).at(-1)?.body"
     try:
         browser("open", (output / "index.html").as_uri())
         browser("set", "viewport", "1440", "1100")
         check(
-            "Experiment link shows 90 predictors, not 450 fold models",
-            "document.body.innerText.includes('All shown predictors (90)') && document.querySelectorAll('.evaluation-predictor-table tbody tr:not(.run-group)').length === 90",
+            "Linked experiment starts selected with 90 ready predictors",
+            "document.body.innerText.includes('90 predictors to evaluate from 1 selected experiment')",
         )
         check(
-            "The linked experiment retains every configuration, seed and method",
-            "document.querySelector('.evaluation-predictor-table').innerText.includes('Configuration 15') && document.querySelector('.evaluation-predictor-table').innerText.includes('Fold ensemble') && document.querySelector('.evaluation-predictor-table').innerText.includes('Refit')",
-        )
-        check(
-            "Downstream evidence navigation has no separate predictor step",
-            "!document.querySelector('.chain-banner a[href^=\"#post-development\"]') && document.querySelectorAll('.chain-banner .evidence-chain-step').length === 4",
+            "Planning and Skip sources stay visible with truthful readiness",
+            "document.querySelector('.evaluation-experiment-list').innerText.includes('Running · No ready predictors') && document.querySelector('.evaluation-experiment-list').innerText.includes('Skip predictor study')",
         )
         check(
             "Desktop has no horizontal page overflow",
             "document.documentElement.scrollWidth <= innerWidth",
         )
         browser("screenshot", str(output / "evaluation-experiment-predictors.png"))
-        select("Test cohort for all predictors", "cohort")
-        select("Predictor method filter", "refit")
+        click("Choose experiments")
         check(
-            "Method filtering selects exactly 45 refit predictors",
-            "document.body.innerText.includes('All shown predictors (45)') && document.querySelectorAll('.evaluation-predictor-table tbody tr:not(.run-group)').length === 45",
+            "An unscoped evaluation selects no experiments and cannot run",
+            "document.body.innerText.includes('0 predictors to evaluate from 0 selected experiments') && [...document.querySelectorAll('button')].find(el => el.textContent === 'Review experiment evaluation').disabled",
         )
-        click("Review all shown predictors")
+        toggle_experiment("study")
+        toggle_experiment("other")
         check(
-            "Filtered review pins only the shown experiment and method IDs",
-            f"{preview}?.scope === 'selected' && {preview}.predictorIds.length === 45 && {preview}.predictorIds.every(id => id.startsWith('study-') && id.endsWith('-refit'))",
+            "Multiple experiment selection includes exactly their 92 ready predictors",
+            "document.body.innerText.includes('92 predictors to evaluate from 2 selected experiments')",
+        )
+        method("refit")
+        check(
+            "Refit choice uses the 46 ready refits from selected experiments",
+            "document.body.innerText.includes('46 predictors to evaluate from 2 selected experiments')",
+        )
+        click("Advanced: single predictor plan")
+        click("Evaluate experiments")
+        check(
+            "Switching setup views preserves experiment and method selection",
+            "document.body.innerText.includes('46 predictors to evaluate from 2 selected experiments') && document.querySelector('input[name=evaluation-method][value=refit]').checked",
+        )
+        select("Test cohort for selected experiments", "cohort")
+        click("Review experiment evaluation")
+        check(
+            "Review pins exact predictor IDs from all selected experiments",
+            f"{preview}?.scope === 'selected' && {preview}.predictorIds.length === 46 && {preview}.predictorIds.every(id => id.endsWith('-refit')) && {preview}.predictorIds.some(id => id.startsWith('study-')) && {preview}.predictorIds.some(id => id.startsWith('other-'))",
         )
         check(
-            "Review preserves the exact predictor count",
-            "document.querySelector('.run-bulk-review').innerText.includes('45 compatible predictors will run')",
+            "Review locks source, methods and setup switching",
+            "[...document.querySelectorAll('.evaluation-experiment-list input')].every(el => el.disabled) && document.querySelector('input[name=evaluation-method]').matches(':disabled') && [...document.querySelectorAll('button')].find(el => el.textContent === 'Advanced: single predictor plan').disabled",
         )
+        evaluate("window.__evaluationReview.addPredictor()")
+        check(
+            "Predictors arriving after review stay excluded",
+            "document.body.innerText.includes('46 predictors fixed for review') && document.body.innerText.includes('1 additional ready predictor is excluded from this review')",
+        )
+        evaluate("document.querySelector('.run-bulk-review').scrollIntoView({block:'start'}); true")
         browser("screenshot", str(output / "evaluation-reviewed-selection.png"))
         evaluate(
-            "[...document.querySelectorAll('input[type=checkbox]')].find(el => el.parentElement.textContent.includes('I reviewed')).click(); true"
+            "window.__evaluationReview.loseNextAck(); [...document.querySelectorAll('input[type=checkbox]')].find(el => el.parentElement.textContent.includes('I reviewed')).click(); true"
         )
-        click("Run selected compatible predictors")
+        click("Run reviewed predictors")
         check(
-            "Mocked submission contains exactly the reviewed 45 predictors",
-            "window.__evaluationReview.records.length === 1 && window.__evaluationReview.records[0].items.length === 45 && window.__evaluationReview.records[0].items.every(item => item.predictorId.startsWith('study-') && item.method === 'refit')",
+            "Lost acknowledgement retains the original review and retry controls",
+            "document.body.innerText.includes('Offline fixture lost acknowledgement') && [...document.querySelectorAll('button')].some(el => el.textContent === 'Retry unfinished submissions') && window.__evaluationReview.records.length === 1",
         )
+        click("Retry unfinished submissions")
+        check(
+            "Retry uses one operation and the same 46 IDs, excluding the late arrival",
+            "(() => { const posts = window.__evaluationReview.traffic.filter(item => item.method === 'POST' && item.path.endsWith('/bulk')); return posts.length === 2 && posts[0].body.operationId === posts[1].body.operationId && JSON.stringify(posts[0].body.predictorIds) === JSON.stringify(posts[1].body.predictorIds) && posts[1].body.predictorIds.length === 46 && !posts[1].body.predictorIds.includes('study-16-11-refit') && window.__evaluationReview.records.length === 1; })()",
+        )
+        check(
+            "Paired means exclude unmatched high-scoring sources",
+            "(() => { const group = document.querySelector('.evaluation-comparison-context[data-cohort=cohort][data-unit=patient]'); return group.innerText.includes('2 matched source pairs') && group.innerText.includes('1 ensemble-only') && group.innerText.includes('0.650') && group.innerText.includes('0.725') && !group.querySelector('.evaluation-comparison-means').innerText.includes('0.990'); })()",
+        )
+        check(
+            "Results separate test cohorts and patient versus slide scoring",
+            "document.querySelectorAll('.evaluation-comparison-context').length === 3 && !!document.querySelector('.evaluation-comparison-context[data-cohort=second-cohort][data-unit=patient]') && !!document.querySelector('.evaluation-comparison-context[data-cohort=cohort][data-unit=slide]')",
+        )
+        select("Evaluation method", "ensemble")
+        check(
+            "Filtering detail rows does not alter paired method means",
+            "document.querySelector('.evaluation-comparison-context[data-cohort=cohort][data-unit=patient]').innerText.includes('2 matched source pairs')",
+        )
+        evaluate(
+            "document.querySelector('.evaluation-comparison').scrollIntoView({block:'start'}); true"
+        )
+        browser("screenshot", str(output / "evaluation-method-comparison.png"))
         click("Skipped experiment")
         check(
-            "A skipped experiment never falls back to other experiments' predictors",
-            "document.body.innerText.includes('All shown predictors (0)') && document.body.innerText.includes('Experiments submitted with Skip produce no predictors') && !document.querySelector('.evaluation-predictor-table')",
+            "Skip selection never falls back to other ready predictors",
+            "document.body.innerText.includes('0 predictors to evaluate from 1 selected experiment') && document.body.innerText.includes('Batches using Skip produce no predictors') && [...document.querySelectorAll('button')].find(el => el.textContent === 'Review experiment evaluation').disabled",
+        )
+        click("Choose experiments")
+        toggle_experiment("other")
+        evaluate(
+            "document.querySelector('.evaluation-advanced').open = true; document.querySelector('.evaluation-advanced input[type=checkbox]').click(); true"
         )
         check(
-            "No predictor selection blocks evaluation review",
-            "[...document.querySelectorAll('button')].find(el => el.textContent === 'Review all shown predictors').disabled",
+            "Individual selection starts from only the selected experiment",
+            "document.querySelectorAll('.evaluation-predictor-table tbody input[type=checkbox]').length === 2",
         )
-        click("All experiments")
+        evaluate(
+            "document.querySelector('.evaluation-predictor-table tbody input[type=checkbox]').click(); true"
+        )
         check(
-            "Global selection groups source experiments without merging weights",
-            "document.body.innerText.includes('All shown predictors (92)') && document.querySelectorAll('.evaluation-predictor-table .run-group').length === 2",
+            "Advanced individual selection narrows the experiment output list",
+            "document.body.innerText.includes('1 predictor to evaluate from 1 selected experiment')",
         )
-        select("Source experiment", "other")
+        select("Test cohort for selected experiments", "cohort")
+        click("Review experiment evaluation")
         check(
-            "Changing the source updates the whole evaluation selection",
-            "document.body.innerText.includes('All shown predictors (2)') && document.querySelectorAll('.evaluation-predictor-table tbody tr:not(.run-group)').length === 2",
+            "Individual review also uses one explicit predictor ID",
+            f"{preview}.predictorIds.length === 1 && {preview}.predictorIds[0].startsWith('other-')",
         )
-        click("Single predictor")
-        check(
-            "Single predictor selection retains the selected source experiment",
-            "document.querySelector('select option[value=other]').selected && document.querySelectorAll('optgroup').length === 1 && document.querySelector('optgroup').label === 'Independent study'",
-        )
-        select("Predictor", "other-1-11-refit")
-        check(
-            "Single source link opens that predictor within its experiment",
-            "!!document.querySelector('a[href=\"#experiments?experiment=other&tab=predictors&predictor=other-1-11-refit\"]')",
-        )
+        click("Change selection and review again")
         browser("set", "viewport", "390", "844")
+        evaluate("scrollTo(0,0); true")
         check(
             "Mobile evaluation has no horizontal page overflow",
             "document.documentElement.scrollWidth <= innerWidth",

@@ -2,13 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { defaultRecipe, defaultResources, type DevelopmentBatchSpec } from '../api/development';
 import type { ModelExperiment } from '../api/experiments';
 import type { ProtocolSpec } from '../api/scientific';
-import { experimentPredictorCount, plannedConfigurationCount } from './experimentPredictors';
+import { batchPredictorPolicy, experimentPredictorCount, plannedBatchPredictorCount, plannedConfigurationCount } from './experimentPredictors';
 
 const spec: DevelopmentBatchSpec = { version: 1, experimentName: 'Count', batchName: 'Grid', inputs: { protocolId: 'p', featureBundleId: 'f', loadingPolicy: 'native', packArtifactId: null }, recipe: defaultRecipe(), mode: 'grid', grid: { learningRates: [0.0001, 0.0002, 0.0003, 0.0004, 0.0005], weightDecays: [0, 0.0001, 0.001], maxEpochs: [100] }, configurations: [], trainingSeeds: [1, 2, 3], resources: defaultResources(), notes: '' };
 const record = { batchPlans: [{ id: 'grid', spec }], batches: [], configurationLocked: false } as unknown as ModelExperiment;
 const protocol = { split: { mode: 'kfold', seeds: [42], folds: 5 } } as ProtocolSpec;
 
 describe('experiment predictor planning counts', () => {
+  it('sums independent per-batch methods while preserving legacy fallback', () => {
+    const mixed = { ...record, predictorPolicy: { method: 'ensemble', refitPercentile: null }, batchPlans: [
+      { id: 'skip', spec: { ...spec, predictorPolicy: { method: 'skip', refitPercentile: null } } },
+      { id: 'both', spec: { ...spec, predictorPolicy: { method: 'both', refitPercentile: 75 } } },
+      { id: 'refit', spec: { ...spec, predictorPolicy: { method: 'refit', refitPercentile: 50 } } },
+      { id: 'legacy', spec },
+    ] } as ModelExperiment;
+    expect(experimentPredictorCount(mixed, undefined, protocol)).toEqual({ groups: 180, foldRuns: 900, ensembles: 90, refits: 90, total: 180 });
+    expect(plannedBatchPredictorCount(mixed.batchPlans![0].spec, protocol)?.total).toBe(0);
+    expect(batchPredictorPolicy(spec, { method: 'refit', refitPercentile: 50 })).toEqual({ method: 'refit', refitPercentile: 50 });
+  });
+  it('uses frozen batch policies ahead of a legacy experiment fallback', () => {
+    const frozen = { ...record, configurationLocked: true, predictorPolicy: { method: 'both', refitPercentile: 75 }, predictorPolicies: { frozen: { method: 'skip', refitPercentile: null } }, batches: [{ id: 'frozen', state: 'active', manifest: { summary: { configurationCount: 15, trainingSeedCount: 3, runCount: 225 }, splitPlans: [{ seed: 42 }] } }] } as unknown as ModelExperiment;
+    expect(experimentPredictorCount(frozen, undefined, protocol)).toEqual({ groups: 45, foldRuns: 225, ensembles: 0, refits: 0, total: 0 });
+  });
   it('turns 225 fold runs into 90 predictors across both methods', () => {
     expect(experimentPredictorCount(record, { method: 'both', refitPercentile: 75 }, protocol)).toEqual({ groups: 45, foldRuns: 225, ensembles: 45, refits: 45, total: 90 });
   });

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { evaluation } from '../api/evaluation';
+import { experiments } from '../api/experiments';
 import { modelEvaluations, predictors, predictorMethodLabel, computeActive, type ModelEvaluation, type EvaluationSelection } from '../api/predictors';
 import type { Workspace } from '../api/types';
 import { ErrorNotice, PageHeader, Panel } from '../components/ui';
@@ -31,13 +32,18 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
   const project = workspace.project.id;
   const client = useQueryClient();
   const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchInterval: 5000 });
+  const experimentRegistry = useQuery({ queryKey: ['model-experiment-summaries', project], queryFn: () => experiments.summaries(project), refetchInterval: 10000 });
   const cohorts = useQuery({ queryKey: ['evaluation-cohorts', project], queryFn: () => evaluation.list(project) });
   const records = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), refetchInterval: 15000 });
-  const [experimentId, setExperimentId] = useState(linkedExperiment);
+  const [experimentIds, setExperimentIds] = useState<string[]>(() => linkedExperiment ? [linkedExperiment] : []);
+  const experimentId = experimentIds.length === 1 ? experimentIds[0] : '';
+  const setExperimentId = (id: string) => setExperimentIds(id ? [id] : []);
   const [predictorId, setPredictorId] = useState<string | null>(null);
   const chosenPredictor = predictorId ?? linkedPredictor;
   const [cohortId, setCohortId] = useState(linkedCohort);
   const [name, setName] = useState('');
+  const [bulkLocked, setBulkLocked] = useState(false);
+  const [bulkOpened, setBulkOpened] = useState(!linkedPredictor);
   const [mode, setMode] = useState<'batch' | 'single'>(linkedPredictor ? 'single' : 'batch');
   const [selectedRecord, setSelectedRecord] = useState(linkedEvaluation);
   const publication = useReviewedPublication(
@@ -53,18 +59,18 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
   const canReview = predictor?.lifecycleState === 'active' && cohortReady && name.trim() && !registry.isError && !cohorts.isError;
   const sources = groupPredictors((registry.data?.items ?? []).filter((item) => item.lifecycleState === 'active' || (item.id === chosenPredictor && item.lifecycleState === 'archived')));
   const choices = sources.filter((item) => !experimentId || item.id === experimentId);
-  const visible = (records.data?.items ?? []).filter((item) => (!experimentId || item.manifest.experimentId === experimentId) && (mode !== 'single' || !chosenPredictor || item.manifest.predictorId === chosenPredictor));
+  const visible = (records.data?.items ?? []).filter((item) => (!experimentIds.length || experimentIds.includes(item.manifest.experimentId)) && (mode !== 'single' || !chosenPredictor || item.manifest.predictorId === chosenPredictor));
   const detail = (records.data?.items ?? []).find((item) => item.id === selectedRecord);
   const predictorName = (id: string) => registry.data?.items.find((item) => item.id === id)?.manifest.name ?? id;
   const cohortName = (id: string) => { const item = cohorts.data?.items.find((item) => item.id === id); return item ? versionLabelText(item, 'Test cohort') : id; };
   return <div className="clinical-workspace model-chains">
-    <PageHeader eyebrow="03 EVALUATE" title="Evaluate models" description="Evaluate ready predictors produced by your experiments. Compare configurations, training seeds and predictor methods on the same test cohort." actions={<div className="inline-actions"><button className="btn btn-primary" onClick={() => { setMode('batch'); setPredictorId(''); setExperimentId(''); publication.reset(); }}>Choose predictors</button><a className="btn btn-secondary" href="#test-data">Test cohorts</a></div>} />
+    <PageHeader eyebrow="03 EVALUATE" title="Evaluate models" description="Select experiments, evaluate their ready ensemble and refit predictors, and compare methods on a common test cohort." actions={<div className="inline-actions"><button className="btn btn-primary" disabled={bulkLocked || publication.locked} onClick={() => { setBulkOpened(true); setMode('batch'); setPredictorId(''); publication.reset(); }}>Choose experiments</button><a className="btn btn-secondary" href="#test-data">Test cohorts</a></div>} />
     <EvidenceChain current="evaluation" experimentId={predictor?.manifest.experimentId ?? experimentId} predictorId={chosenPredictor} evaluationId={selectedRecord} />
-    <ErrorNotice error={publication.error ?? records.error ?? registry.error ?? cohorts.error} />
-    <p className="callout">Evaluate an ensemble or refit predictor on a compatible test cohort. Each run saves predictions and metrics independently. Unlabeled slides receive predictions; metrics use labeled records only.</p>
+    <ErrorNotice error={publication.error ?? records.error ?? registry.error ?? cohorts.error ?? experimentRegistry.error} />
+    <p className="callout">Choose one or more experiments to evaluate. Each ready ensemble or refit predictor keeps its own results. Unlabeled slides receive predictions; metrics use labeled records only.</p>
     {publication.saved ? <p className="callout science-success" role="status">Evaluation plan <strong>{publication.saved.manifest.name}</strong> saved with its predictor and test-cohort lineage.</p> : null}
-    <nav className="run-tabs" aria-label="Evaluation setup"><button className={mode === 'batch' ? 'selected' : ''} onClick={() => setMode('batch')}>All / selected predictors</button><button className={mode === 'single' ? 'selected' : ''} onClick={() => setMode('single')}>Single predictor</button></nav>
-    {mode === 'batch' ? <Panel title="Run predictors on a test cohort" subtitle="Choose an experiment or compare several. Each configuration and seed keeps its own ensemble or refit result."><BulkEvaluationRunner key={linkedExperiment} project={project} predictors={registry.data?.items ?? []} cohorts={cohorts.data?.items ?? []} linkedCohort={linkedCohort} linkedExperiment={experimentId} onExperimentChange={setExperimentId} onOpenEvaluation={(id) => { setSelectedRecord(id); void records.refetch(); }} /></Panel> : null}
+    <nav className="run-tabs" aria-label="Evaluation setup"><button className={mode === 'batch' ? 'selected' : ''} disabled={bulkLocked || publication.locked} onClick={() => { setBulkOpened(true); setMode('batch'); }}>Evaluate experiments</button><button className={mode === 'single' ? 'selected' : ''} disabled={bulkLocked || publication.locked} onClick={() => setMode('single')}>Advanced: single predictor plan</button></nav>
+    {bulkOpened ? <div hidden={mode !== 'batch'}><Panel title="Evaluate selected experiments" subtitle="Choose experiments and methods to compare on one test cohort."><BulkEvaluationRunner key={linkedExperiment} project={project} predictors={registry.data?.items ?? []} experiments={experimentRegistry.data?.items ?? []} experimentsLoading={experimentRegistry.isPending} cohorts={cohorts.data?.items ?? []} linkedCohort={linkedCohort} experimentIds={experimentIds} onExperimentsChange={setExperimentIds} onLockChange={setBulkLocked} onOpenEvaluation={(id) => { setSelectedRecord(id); void records.refetch(); }} /></Panel></div> : null}
     {mode === 'single' ? <Panel title="Select evaluation inputs" subtitle="Each plan uses one frozen predictor and one test cohort. The same predictor can have several evaluations.">
       <fieldset className="chain-fields" disabled={publication.locked} onChange={() => publication.reset()}>
         <legend className="sr-only">Evaluation inputs</legend>
@@ -73,7 +79,7 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
         <label className="label">Test cohort<select className="field" value={cohortId} disabled={!predictor} onChange={(event) => setCohortId(event.target.value)}><option value="">Choose a compatible test cohort</option>{cohortId && !matchingCohorts.some((item) => item.id === cohortId) ? <option value={cohortId} disabled>Selected test cohort unavailable or incompatible — choose another</option> : null}{matchingCohorts.map((item) => <option key={item.id} value={item.id} disabled={!item.current || item.findings?.some((finding) => finding.severity === 'error')}>{versionLabelText(item, 'Test cohort')} · {item.manifest.summary.includedSlides} slides{!item.current ? ' · needs verification' : ''}</option>)}</select></label>
         <label className="label">Evaluation name<input className="field" value={name} maxLength={120} onChange={(event) => setName(event.target.value)} placeholder="For example: External validation" /></label>
       </fieldset>
-      {predictor ? <p className="muted">Source: <a href={experimentPredictorLink(predictor.manifest.experimentId, predictor.id)}>{predictor.manifest.experiment?.name ?? shortRecordId(predictor.manifest.experimentId)}</a> · {predictorMethodLabel(predictor.manifest.method)} · {predictor.manifest.checkpoints.length} checkpoints · class target {predictor.manifest.target.field}</p> : <p>Choose a ready predictor from <a href="#experiments">Experiments</a>. Predictors appear automatically when the selected ensemble or refit work finishes. Experiments using Skip have no predictors; use one as a template to choose a different policy.</p>}
+      {predictor ? <p className="muted">Source: <a href={experimentPredictorLink(predictor.manifest.experimentId, predictor.id)}>{predictor.manifest.experiment?.name ?? shortRecordId(predictor.manifest.experimentId)}</a> · {predictorMethodLabel(predictor.manifest.method)} · {predictor.manifest.checkpoints.length} checkpoints · class target {predictor.manifest.target.field}</p> : <p>Choose a ready predictor from <a href="#experiments">Experiments</a>. Predictors appear automatically when the selected ensemble or refit work finishes. Batches using Skip have no predictors; use one as a template to choose a different policy.</p>}
       {predictor?.lifecycleState === 'archived' ? <p className="callout">This predictor is archived. <a href={cleanupLink(predictor.id)}>Restore it to Active</a> before creating another evaluation; existing results remain available below.</p> : null}
       {predictor && !matchingCohorts.length ? <p className="callout">No test cohort uses this predictor’s development protocol and feature version. Prepare one in <a href="#test-data">Test cohorts</a>.</p> : null}
       <button type="button" className="btn btn-secondary" disabled={publication.locked || !canReview} onClick={() => { if (canReview) void publication.preview({ predictorId: chosenPredictor, cohortId, name: name.trim() }); }}>Review evaluation</button>
@@ -84,9 +90,9 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
       <p>The review checks frozen weights, target encoding, development provenance, feature compatibility and test-slide coverage.</p>
       {publication.review.preview.canSave ? <PublicationConfirmation busy={publication.busy} uncertain={publication.review.uncertain} acknowledged={publication.acknowledged} onAcknowledge={publication.setAcknowledged} onConfirm={() => void publication.publish()} onReset={publication.reset} label="Save evaluation plan" /> : null}
     </Panel> : null}
-    <Panel title="Evaluations and results" subtitle="Compare results within the same test cohort. Each row retains its source experiment, configuration, seeds and predictor method.">
+    <Panel title="Evaluations and method comparison" subtitle={experimentIds.length ? `Results from ${experimentIds.length} selected ${experimentIds.length === 1 ? 'experiment' : 'experiments'}. Comparisons keep test cohorts and scoring units separate.` : 'Saved evaluation history. Select experiments above to focus the comparison.'}>
       {mode === 'single' && chosenPredictor ? <button className="text-button" onClick={() => { setPredictorId(''); publication.reset(); }}>Show all predictors</button> : null}
-      <EvaluationResultsTable records={visible} predictors={registry.data?.items ?? []} cohorts={cohorts.data?.items ?? []} loading={records.isPending} onOpen={setSelectedRecord} />
+      <EvaluationResultsTable records={visible} predictors={registry.data?.items ?? []} experiments={experimentRegistry.data?.items ?? []} cohorts={cohorts.data?.items ?? []} loading={records.isPending} onOpen={setSelectedRecord} />
     </Panel>
     {detail ? <EvaluationDetail key={detail.id} project={project} record={detail} /> : null}
   </div>;

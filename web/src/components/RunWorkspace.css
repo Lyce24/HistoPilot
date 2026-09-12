@@ -34,3 +34,24 @@ table.run-table { width: 100%; min-width: 880px; table-layout: fixed; white-spac
 
 .evaluation-predictor-table { max-height: 480px; overflow: auto; }
 .evaluation-predictor-table thead { position: sticky; top: 0; z-index: 1; background: var(--canvas, #f5f7f6); }
+
+.evaluation-step { margin: 18px 0 24px; }
+.evaluation-step h3 { font-size: 17px; margin-bottom: 6px; }
+.evaluation-experiment-list { display: grid; gap: 8px; max-height: 360px; overflow: auto; position: relative; }
+.evaluation-experiment-option { display: flex; align-items: center; gap: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.evaluation-experiment-option.selected { background: #eef5f1; border-color: var(--accent); }
+.evaluation-experiment-option label { display: flex; align-items: start; gap: 12px; flex: 1; min-width: 0; cursor: pointer; }
+.evaluation-experiment-option input { flex: 0 0 auto; margin-top: 4px; }
+.evaluation-experiment-option strong, .evaluation-experiment-option small { display: block; overflow-wrap: anywhere; }
+.evaluation-experiment-option small { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.evaluation-experiment-option > a { font-size: 12px; flex-shrink: 0; }
+.evaluation-advanced { margin-top: 16px; border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
+.evaluation-advanced summary { cursor: pointer; font-weight: 600; }
+.evaluation-comparison { margin: 24px 0; }
+.evaluation-comparison h3 { font-size: 17px; }
+.evaluation-comparison h4 { margin-bottom: 5px; }
+.evaluation-comparison .chain-metrics { margin: 14px 0; }
+.evaluation-comparison-context { padding: 14px 0; border-top: 1px solid var(--line); }
+.evaluation-comparison-context:first-of-type { border-top: 0; }
+@media (max-width: 620px) { .evaluation-experiment-option { align-items: start; flex-direction: column; gap: 8px; } .evaluation-experiment-option > a { margin-left: 25px; } }
+table.evaluation-comparison-means { min-width: 0; }

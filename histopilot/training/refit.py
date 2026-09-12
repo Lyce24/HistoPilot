@@ -98,7 +98,7 @@ class _RefitHistory(_HistoryWriter):
 
 def train_refit(plan, output_dir, *, checkpoint_path=None):
     """Fixed-epoch fitting from fresh weights; resume replays incomplete epochs."""
-    recipe = TrainingRecipe.model_validate(plan["recipe"]).model_dump()
+    recipe = TrainingRecipe.model_validate(plan["recipe"], context={"legacy": True}).model_dump()
     epochs = plan["epochBudget"]["epochs"]
     if recipe["maxEpochs"] != epochs or recipe["minEpochs"] != epochs or recipe["earlyStopping"]:
         raise ValueError("Refit must use its reviewed fixed epoch budget with no early stopping.")

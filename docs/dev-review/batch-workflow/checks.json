@@ -1,0 +1,154 @@
+[
+  {
+    "name": "Registry renders three stages without a downstream pipeline",
+    "passed": true
+  },
+  {
+    "name": "Registry counts frozen batches once",
+    "passed": true
+  },
+  {
+    "name": "Desktop layout has no horizontal page overflow",
+    "passed": true
+  },
+  {
+    "name": "Choosing an experiment template fills its metadata",
+    "passed": true
+  },
+  {
+    "name": "Creation copies both recipes and opens editable Inputs",
+    "passed": true
+  },
+  {
+    "name": "Planning locks Runs and Results",
+    "passed": true
+  },
+  {
+    "name": "Details retain management without the removed copy action",
+    "passed": true
+  },
+  {
+    "name": "Unsaved input changes block batches and verification without a pair",
+    "passed": true
+  },
+  {
+    "name": "Verified inputs open batch planning with copied batch policies",
+    "passed": true
+  },
+  {
+    "name": "A remote plan update locks the clean editor and submission",
+    "passed": true
+  },
+  {
+    "name": "Reloading the saved plan restores the new value for editing",
+    "passed": true
+  },
+  {
+    "name": "Unsaved recipe changes prevent submission",
+    "passed": true
+  },
+  {
+    "name": "Pending batch edits lock shared inputs until saved or discarded",
+    "passed": true
+  },
+  {
+    "name": "Saved recipe changes retain both batches and allow submission",
+    "passed": true
+  },
+  {
+    "name": "New standard batches default to 40 epochs and patience 8",
+    "passed": true
+  },
+  {
+    "name": "Quick preset opens a third editable batch",
+    "passed": true
+  },
+  {
+    "name": "Multiple batches save into the same experiment",
+    "passed": true
+  },
+  {
+    "name": "Submission explains the permanent configuration lock",
+    "passed": true
+  },
+  {
+    "name": "An uncertain response preserves a single submission identity",
+    "passed": true
+  },
+  {
+    "name": "Retry uses the original operation and locks the submitted plan",
+    "passed": true
+  },
+  {
+    "name": "Running keeps results locked",
+    "passed": true
+  },
+  {
+    "name": "Runs expose current training progress and GPU measurements",
+    "passed": true
+  },
+  {
+    "name": "Selected run displays recorded loss history",
+    "passed": true
+  },
+  {
+    "name": "Submitted inputs remain readable but disabled",
+    "passed": true
+  },
+  {
+    "name": "Submitted batches have no edit or remove actions",
+    "passed": true
+  },
+  {
+    "name": "Submitted predictor choices are immutable",
+    "passed": true
+  },
+  {
+    "name": "Completed folds keep Results locked until refits finish",
+    "passed": true
+  },
+  {
+    "name": "Completed ensembles become available for scoped evaluation",
+    "passed": true
+  },
+  {
+    "name": "Interrupted predictor creation offers recovery",
+    "passed": true
+  },
+  {
+    "name": "Lost predictor resume response retains recovery action",
+    "passed": true
+  },
+  {
+    "name": "Predictor resume retries use the same operation",
+    "passed": true
+  },
+  {
+    "name": "Finishing unlocks results while preserving configuration lock",
+    "passed": true
+  },
+  {
+    "name": "Finished predictors expose epoch provenance and evaluation links",
+    "passed": true
+  },
+  {
+    "name": "Predictor library filters refits independently of job history",
+    "passed": true
+  },
+  {
+    "name": "Finished results are concise and show completed metrics",
+    "passed": true
+  },
+  {
+    "name": "Mobile detail has no horizontal page overflow",
+    "passed": true
+  },
+  {
+    "name": "Every request was handled by the offline fixture",
+    "passed": true
+  },
+  {
+    "name": "No browser page errors",
+    "passed": true
+  }
+]

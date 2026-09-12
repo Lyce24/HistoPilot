@@ -157,10 +157,11 @@ describe('model development predictor and evaluation chains', () => {
     expect(html.match(/>Ready to run<\/span>/g)).toHaveLength(2);
     expect(html).toContain('Accuracy');
     expect(html).toContain('AUROC');
-    expect(html).toContain('Choose predictors');
+    expect(html).toContain('Choose experiments');
+    expect(html).toContain('0 predictors to evaluate from 0 selected experiments');
     expect(html).not.toContain('>Launch evaluation');
     expect(html).not.toContain('>Run inference');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review all shown predictors/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review experiment evaluation/);
   });
 
   it('deep-links to the requested predictor and restricts cohorts by protocol and development features', () => {
@@ -187,7 +188,8 @@ describe('model development predictor and evaluation chains', () => {
   it('hides archived predictors from new choices while preserving an explicit retained-chain link', () => {
     const active = predictor('active'), archived = predictor('archived', undefined, 'archived');
     const defaultView = render('evaluate', { predictors: [active, archived] });
-    expect(defaultView).toContain('<option value="active"');
+    expect(defaultView).toContain('1 ensemble / 0 refit ready');
+    expect(defaultView).toContain('0 predictors to evaluate from 0 selected experiments');
     expect(defaultView).not.toMatch(/<option[^>]*value="archived"[^>]*>Predictor archived/);
     const linked = render('evaluate', { hash: '#evaluation?predictor=archived', predictors: [active, archived] });
     expect(linked).toMatch(/<option[^>]*value="archived"[^>]*>Configuration candidate-archived · Train 11 \/ split 42 · Fold ensemble · archived/);

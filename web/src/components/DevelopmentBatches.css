@@ -111,3 +111,11 @@
 .batch-saved-recipe > summary { cursor: pointer; line-height: 1.5; }
 .batch-saved-recipe > summary > .batch-recipe-summary { display: flex; margin-top: .35rem; }
 .batch-saved-recipe > .batch-settings-summary { margin-top: 1rem; }
+.batch-all-settings { border-top: 1px solid var(--line); padding-top: 1rem; }
+.batch-predictor-settings { border-top: 1px solid var(--line); padding-top: 1rem; }
+.batch-predictor-settings .experiment-predictor-count { margin: 0; }
+.batch-predictor-settings > p { margin: 0; font-size: .85rem; line-height: 1.6; }
+.batch-plan-heading { min-width: 0; }
+.batch-predictor-summary { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .7rem; margin-top: .6rem; font-size: .8rem; }
+.batch-predictor-summary > span { overflow-wrap: anywhere; }
+.batch-predictor-summary > span:not(.badge) { color: var(--muted); }

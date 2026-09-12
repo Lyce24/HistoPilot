@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import DevelopmentBatches, { BatchPlanSettings, ExperimentBatchOverview, batchConfigurationCount, batchTemplate, updateBatchPlans } from './DevelopmentBatches';
+import DevelopmentBatches, { BatchPlanSettings, BatchPredictorSummary, ExperimentBatchOverview, batchConfigurationCount, batchTemplate, updateBatchPlans } from './DevelopmentBatches';
 import { defaultRecipe } from '../api/development';
 import type { ExperimentBatch, ModelExperiment } from '../api/experiments';
 
@@ -11,7 +11,7 @@ const experiment: ModelExperiment = { id: 'study', key: 'draft:study', name: 'St
 function render(record = experiment, tab: 'batches' | 'runs' | 'results' = 'batches') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   try {
-    return renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" record={record} experimentStage={record.stage} inputs={inputs} experimentName={record.name} experimentId={record.id} experimentRevision={record.revision} ownedBatches={record.batches} ownedDrafts={[]} tab={tab} onOpenSetup={() => {}} onRestoreInputs={() => {}} /></QueryClientProvider>);
+    return renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" record={record} experimentStage={record.stage} inputs={inputs} experimentName={record.name} experimentId={record.id} experimentRevision={record.revision} ownedBatches={record.batches} ownedDrafts={[]} tab={tab} onOpenSetup={() => {}} /></QueryClientProvider>);
   } finally { client.clear(); }
 }
 
@@ -21,6 +21,9 @@ describe('editable experiment batch plans', () => {
     expect(html).toContain('Add batch to plan');
     expect(html).toContain('Start from a template');
     expect(html).toContain('Quick check');
+    expect(html).toContain('Start blank');
+    expect(html).toContain('Configure predictors');
+    expect(html).not.toContain('Save predictor choices');
     expect(html).toContain('Batch plans (2)');
     expect(html).toContain('Edit batch');
     expect(html).not.toContain('Launch batch');
@@ -48,7 +51,7 @@ describe('editable experiment batch plans', () => {
     expect(html).toContain('42, 43, 44');
     expect(html).toContain('ABMIL · Shared training settings');
     expect(html).toContain('Lowest validation loss');
-    expect(html).toContain('Patience 15');
+    expect(html).toContain('Patience 8');
     expect(html).not.toContain('225 predictors');
   });
 
@@ -56,6 +59,38 @@ describe('editable experiment batch plans', () => {
     const recipe = defaultRecipe();
     const { embedDim: _embedding, attentionDim: _attention, ...legacy } = recipe;
     expect(batchConfigurationCount({ ...plans[0].spec, mode: 'explicit', configurations: [recipe, legacy, { ...recipe, learningRate: 0.001 }] })).toBe(2);
+  });
+
+  it('orders each batch from settings through compute and predictors before its single save action', () => {
+    const html = render();
+    const editor = html.slice(html.indexOf('Add a training batch'));
+    const sections = ['Start from a template', '>Batch name<', 'Parameter search &amp; repeats', 'aria-label="Settings"', 'Compute &amp; parallelism', 'Configure predictors', '>Add batch to plan<'];
+    const positions = sections.map((label) => editor.indexOf(label));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
+    expect(editor).not.toContain('Save predictor choices');
+  });
+
+  it('keeps different saved batch predictor choices separate and visible when locked', () => {
+    const record: ModelExperiment = { ...experiment, stage: 'running', configurationLocked: true, batchPlans: [
+      { ...plans[0], spec: { ...plans[0].spec, predictorPolicy: { method: 'skip', refitPercentile: null } } },
+      { ...plans[1], spec: { ...plans[1].spec, predictorPolicy: { method: 'both', refitPercentile: 75 } } },
+    ] };
+    const html = render(record);
+    expect(html).toContain('<dt>Predictors</dt><dd>Skip</dd>');
+    expect(html).toContain('<dt>Predictors</dt><dd>Both · P75 refit epochs</dd>');
+    expect(html).toContain('Predictors: Skip');
+    expect(html).toContain('Predictors: Both · P75 refit epochs');
+    expect(html).not.toContain('Configure predictors');
+    expect(html).not.toContain('Save predictor choices');
+  });
+
+  it('shows a compact batch predictor policy and count without expanding its settings', () => {
+    const spec = { ...plans[0].spec, predictorPolicy: { method: 'both' as const, refitPercentile: 75 } };
+    const html = renderToStaticMarkup(<BatchPredictorSummary spec={spec} count={90} />);
+    expect(html).toContain('Predictors: Both · P75 refit epochs');
+    expect(html).toContain('90 predictors planned');
+    expect(html).not.toContain('<details');
   });
 
   it('protects configuration actions in running and finished experiments even without a readOnly prop', () => {
@@ -85,6 +120,9 @@ describe('editable experiment batch plans', () => {
     expect(comparison.grid.learningRates).toHaveLength(3);
     expect(comparison.inputs).toEqual(inputs);
     expect(comparison.trainingSeeds).toEqual([42]);
+    expect(comparison.recipe.maxEpochs).toBe(40);
+    expect(comparison.recipe.patience).toBe(8);
+    expect(comparison.predictorPolicy).toEqual({ method: 'ensemble', refitPercentile: null });
     const quick = batchTemplate('quick', inputs, 'Study');
     expect(quick.recipe.maxEpochs).toBe(5);
     expect(quick.recipe.bagSize).toBe(1024);

@@ -1,6 +1,7 @@
 import { request } from './client';
 import type { MILExperimentSpec, MILExperimentPreview } from './mil';
 import type { Finding, VersionLabel } from './scientific';
+import type { ExperimentPredictorPolicy } from './experiments';
 
 export interface TrainingRecipe {
   model: string; learningRate: number; weightDecay: number; maxEpochs: number;
@@ -23,6 +24,8 @@ export interface DevelopmentBatchSpec {
   recipe: TrainingRecipe; mode: 'single' | 'grid' | 'explicit';
   grid: { learningRates: number[]; weightDecays: number[]; maxEpochs: number[] };
   configurations: TrainingRecipe[]; trainingSeeds: number[]; resources: ResourcePolicy; notes: string;
+  /** Omitted only on saved batches created before predictor choices belonged to each batch. */
+  predictorPolicy?: ExperimentPredictorPolicy;
 }
 export interface PlannedRun {
   id: string; candidateId: string; trainingSeed: number; splitPlanId: string; status: 'planned';
@@ -109,8 +112,9 @@ export const development = {
     request<FrozenBatch>(`${prefix(project)}/freeze`, body({ spec, previewHash, operationId, versionLabel })),
 };
 
-export const defaultRecipe = (): TrainingRecipe => ({ model: 'abmil', learningRate: 0.0003, weightDecay: 0.0001, maxEpochs: 100, optimizer: 'adamw', batchSize: 1, bagSize: 4096, earlyStopping: true, patience: 15, checkpointMetric: 'validation_loss', embedDim: 512, attentionDim: 384, numFcLayers: 1, gatedAttention: true, dropout: 0.25, inputDropout: 0, gradientCheckpointing: false, precision: '32-true', gradientClipNorm: 0, accumulateGradBatches: 1, lrScheduler: 'none', warmupEpochs: 0, finalLrFraction: 0.01, earlyStoppingMinDelta: 0, minEpochs: 1 });
-export const withRecipeDefaults = (recipe: TrainingRecipe): TrainingRecipe => ({ ...defaultRecipe(), ...recipe });
+export const defaultRecipe = (): TrainingRecipe => ({ model: 'abmil', learningRate: 0.0003, weightDecay: 0.0001, maxEpochs: 40, optimizer: 'adamw', batchSize: 1, bagSize: 4096, earlyStopping: true, patience: 8, checkpointMetric: 'validation_loss', embedDim: 512, attentionDim: 384, numFcLayers: 1, gatedAttention: true, dropout: 0.25, inputDropout: 0, gradientCheckpointing: false, precision: '32-true', gradientClipNorm: 0, accumulateGradBatches: 1, lrScheduler: 'none', warmupEpochs: 0, finalLrFraction: 0.01, earlyStoppingMinDelta: 0, minEpochs: 1 });
+// Older saved recipes can omit values that were defaults when they were created.
+export const withRecipeDefaults = (recipe: TrainingRecipe): TrainingRecipe => ({ ...defaultRecipe(), ...recipe, maxEpochs: recipe.maxEpochs === undefined ? 100 : recipe.maxEpochs, patience: recipe.patience === undefined ? 15 : recipe.patience });
 export const defaultResources = (): ResourcePolicy => ({ maxConcurrentRuns: 1, gpuIds: [0], runsPerGpu: 1, cpuThreadsPerRun: 2, dataLoaderWorkers: 2, ramGbPerRun: 8 });
 export const trainingActive = (execution?: TrainingExecution | null) => execution?.status === 'queued' || execution?.status === 'running';
 export const developmentPollInterval = (data?: DevelopmentBatchList) => data?.executionImplemented ? data.executions?.some(trainingActive) ? 3000 : 15000 : false;

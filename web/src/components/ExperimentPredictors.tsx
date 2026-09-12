@@ -4,6 +4,7 @@ import { ApiError } from '../api/client';
 import { experimentStage, experiments, type ExperimentPredictorExecution, type ModelExperiment } from '../api/experiments';
 import { predictors, predictorMethodLabel, type FrozenPredictor } from '../api/predictors';
 import { predictorConfigurationLabel, predictorMatches } from '../lib/predictorGroups';
+import { batchPredictorPolicy } from '../lib/experimentPredictors';
 import { Badge, ErrorNotice, Panel } from './ui';
 import './ExperimentPredictors.css';
 
@@ -28,6 +29,9 @@ export default function ExperimentPredictors({ project, record }: { project: str
   const linkedPage = Math.floor(Math.max(0, filtered.findIndex((item) => item.id === selectedPredictor)) / pageSize);
   const currentPage = Math.min(page ?? linkedPage, Math.max(0, Math.ceil(filtered.length / pageSize) - 1));
   const execution = record.predictorExecution;
+  const hasPredictorPlan = Boolean(record.predictorPolicies || record.predictorPolicy);
+  const policies = record.predictorPolicies ? Object.values(record.predictorPolicies) : record.batches.map((batch) => batchPredictorPolicy(batch.manifest.spec, record.predictorPolicy));
+  const skipped = policies.length > 0 ? policies.every((policy) => policy.method === 'skip') : record.predictorPolicy?.method === 'skip';
   const workItems = (execution?.items ?? []).filter((item) => workFilter === 'all' || item.status === workFilter);
   const currentWorkPage = Math.min(workPage, Math.max(0, Math.ceil(workItems.length / pageSize) - 1));
   const batchNames = new Map(record.batches.map((batch) => [batch.id, batch.manifest.spec.batchName]));
@@ -47,7 +51,7 @@ export default function ExperimentPredictors({ project, record }: { project: str
         <div className="experiment-predictor-table"><table><thead><tr><th>Batch / configuration</th><th>Seeds</th><th>Method</th><th>Status</th><th>Progress</th></tr></thead><tbody>{workItems.slice(currentWorkPage * pageSize, (currentWorkPage + 1) * pageSize).map((item) => <tr key={item.key}>
           <td>{batchNames.get(item.source.batchId) ?? item.source.batchId}<small>Configuration {item.configurationNumber} · {item.foldCount} folds</small></td>
           <td>Training {item.source.trainingSeed}<small>Split {item.source.splitSeed}</small></td>
-          <td>{predictorMethodLabel(item.method)}{item.epochBudget ? <small>P{item.epochBudget.percentile} → {item.epochBudget.epochs} epochs</small> : null}</td>
+          <td>{predictorMethodLabel(item.method)}{item.epochBudget ? <small>P{item.epochBudget.percentile} → {item.epochBudget.epochs} epochs</small> : item.refitPercentile != null ? <small>Refit budget P{item.refitPercentile}</small> : null}</td>
           <td>{item.status === 'completed' ? 'Ready' : item.status.replace(/^./, (letter) => letter.toUpperCase())}</td>
           <td>{item.execution?.progress?.epoch !== undefined ? <>Epoch {item.execution.progress.epoch} / {item.execution.progress.maxEpochs ?? item.epochBudget?.epochs ?? '—'}{typeof item.execution.progress.trainingLoss === 'number' ? <small>Loss {item.execution.progress.trainingLoss.toFixed(4)}</small> : null}</> : item.method === 'ensemble' && item.status === 'completed' ? `${item.foldCount} checkpoints` : '—'}{item.error ? <small role="status">{item.error.message}</small> : null}{item.execution?.error ? <small>{item.execution.error}</small> : null}{item.execution?.progressWarning ? <small>{item.execution.progressWarning}</small> : null}</td>
         </tr>)}</tbody></table></div>
@@ -55,7 +59,7 @@ export default function ExperimentPredictors({ project, record }: { project: str
         <Pagination count={workItems.length} page={currentWorkPage} setPage={setWorkPage} label="Predictor jobs" />
       </details> : null}
       {execution.logPath ? <details><summary>Predictor worker details</summary><code className="record-path">{execution.logPath}</code>{execution.sessionName ? <code className="record-path">tmux attach -t {execution.sessionName}</code> : null}{execution.updatedAt ? <p className="muted">Updated {execution.updatedAt}</p> : null}</details> : null}
-    </div> : record.predictorPolicy?.method === 'skip' ? <p className="muted">Predictor creation was skipped. This experiment contains cross-validation results only.</p> : record.submission?.status !== 'submitted' && stage === 'running' ? <p className="callout">Predictor creation waits until experiment submission is complete. Resolve the submission notice above to continue.</p> : !record.predictorPolicy ? <p className="muted">Predictors from this historical experiment are retained here. <a href={`#post-development?${new URLSearchParams({ tab: 'refits', experiment: record.id })}`}>Open historical refit jobs</a></p> : null}
+    </div> : skipped ? <p className="muted">Predictor creation was skipped in every batch. This experiment contains cross-validation results only.</p> : record.submission?.status !== 'submitted' && stage === 'running' ? <p className="callout">Predictor creation waits until experiment submission is complete. Resolve the submission notice above to continue.</p> : !hasPredictorPlan ? <p className="muted">Predictors from this historical experiment are retained here. <a href={`#post-development?${new URLSearchParams({ tab: 'refits', experiment: record.id })}`}>Open historical refit jobs</a></p> : null}
     <ErrorNotice error={query.error} />
     <div className="experiment-predictor-tools"><strong>{ready.length.toLocaleString()} ready to evaluate</strong>{ready.length ? <a className="btn btn-primary btn-small" href={evaluationLink}>Evaluate predictors →</a> : null}</div>
     {items.length ? <>
@@ -69,7 +73,7 @@ export default function ExperimentPredictors({ project, record }: { project: str
       </tr>)}</tbody></table></div>
       {!filtered.length ? <p className="muted">No predictors match these filters.</p> : null}
       <Pagination count={filtered.length} page={currentPage} setPage={setPage} label="Predictor library" />
-    </> : query.isPending ? <p role="status">Loading predictors…</p> : !query.isError ? <p className="muted">{record.predictorPolicy?.method === 'skip' ? 'To create predictors, use this experiment as a template and change its predictor choices before submission.' : 'Ready predictors appear here after their fold evidence and checkpoints are verified.'}</p> : null}
+    </> : query.isPending ? <p role="status">Loading predictors…</p> : !query.isError ? <p className="muted">{skipped ? 'To create predictors, use this experiment as a template and change the predictor choices in its batches before submission.' : 'Ready predictors appear here after their fold evidence and checkpoints are verified.'}</p> : null}
   </Panel>;
 }
 

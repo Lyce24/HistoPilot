@@ -436,7 +436,7 @@ def test_copy_merges_equivalent_saved_frozen_and_legacy_draft_recipes(experiment
     assert training.launches == []
 
 
-def test_predictor_policy_freezes_with_submission_and_copy_reopens_it(experiment):
+def test_batch_predictor_policy_freezes_with_submission_and_copy_reopens_it(experiment):
     from histopilot.application.experiment_predictors import ExperimentPredictorService
 
     service, _, record, training = experiment
@@ -445,7 +445,16 @@ def test_predictor_policy_freezes_with_submission_and_copy_reopens_it(experiment
         UpdateModelExperiment(
             name=record["name"],
             expectedRevision=record["revision"],
-            predictorPolicy={"method": "both", "refitPercentile": 75},
+            batchPlans=[
+                {
+                    **row,
+                    "spec": {
+                        **row["spec"],
+                        "predictorPolicy": {"method": "both", "refitPercentile": 75},
+                    },
+                }
+                for row in record["batchPlans"]
+            ],
         ),
     )
 
@@ -463,10 +472,8 @@ def test_predictor_policy_freezes_with_submission_and_copy_reopens_it(experiment
     service.predictor_execution = coordinator
     submitted = submit(service, record)
     policy = {"method": "both", "refitPercentile": 75.0}
-    assert submitted["predictorPolicy"] == policy
-    assert (
-        service.store.get_draft(record["id"])["payload"]["submission"]["predictorPolicy"] == policy
-    )
+    assert submitted["predictorPolicy"] is None
+    assert list(submitted["predictorPolicies"].values()) == [policy, policy]
     assert len(coordinator.launches) == 1
     for changed in ({"method": "skip"}, {"method": "both", "refitPercentile": 50}):
         with pytest.raises(StorageError) as error:
@@ -475,7 +482,10 @@ def test_predictor_policy_freezes_with_submission_and_copy_reopens_it(experiment
                 UpdateModelExperiment(
                     name=record["name"],
                     expectedRevision=submitted["revision"],
-                    predictorPolicy=changed,
+                    batchPlans=[
+                        {**row, "spec": {**row["spec"], "predictorPolicy": changed}}
+                        for row in submitted["batchPlans"]
+                    ],
                 ),
             )
         assert error.value.code == "EXPERIMENT_CONFIGURATION_LOCKED"
@@ -486,14 +496,18 @@ def test_predictor_policy_freezes_with_submission_and_copy_reopens_it(experiment
             sourceExperimentId=record["id"],
         )
     )
-    assert copied["predictorPolicy"] == policy and copied["stage"] == "planning"
+    assert copied["stage"] == "planning"
+    assert [row["spec"]["predictorPolicy"] for row in copied["batchPlans"]] == [policy, policy]
     updated = service.update(
         copied["id"],
         UpdateModelExperiment(
             name=copied["name"],
             expectedRevision=copied["revision"],
-            predictorPolicy={"method": "skip"},
+            batchPlans=[
+                {**row, "spec": {**row["spec"], "predictorPolicy": {"method": "skip"}}}
+                for row in copied["batchPlans"]
+            ],
         ),
     )
-    assert updated["predictorPolicy"]["method"] == "skip"
+    assert all(row["spec"]["predictorPolicy"]["method"] == "skip" for row in updated["batchPlans"])
     assert updated["predictorExecution"] is None and len(training.launches) == 2

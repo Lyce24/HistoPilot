@@ -2,20 +2,21 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { development, defaultRecipe, defaultResources, parseNumberList, withRecipeDefaults } from '../api/development';
 import type { BatchPreview, DevelopmentBatchSpec, TrainingRecipe } from '../api/development';
-import { experiments, type ExperimentBatch, type ExperimentBatchPlan, type ExperimentStage, type ModelExperiment } from '../api/experiments';
+import { experiments, type ExperimentBatch, type ExperimentBatchPlan, type ExperimentStage, type ExperimentPredictorPolicy, type ModelExperiment } from '../api/experiments';
 import ExperimentLifecycle from './ExperimentLifecycle';
-import type { ScientificDraft } from '../api/scientific';
+import type { ProtocolSpec, ScientificDraft } from '../api/scientific';
 import type { MILExperimentSpec } from '../api/mil';
 import { Badge, ErrorNotice, Panel } from './ui';
 import { Findings, SavedNotice } from './ScientificUI';
 import { downloadJSON } from '../lib/download';
 import { sameJSON } from '../lib/json';
-import { plannedConfigurationCount } from '../lib/experimentPredictors';
+import { batchPredictorPolicy, defaultPredictorPolicy, plannedBatchPredictorCount, plannedConfigurationCount } from '../lib/experimentPredictors';
 import './DevelopmentBatches.css';
 import DevelopmentExecution from './DevelopmentExecution';
 import NumericField, { reportEditorValidity } from './NumericField';
 import TrainingCapacity from './TrainingCapacity';
 import BatchNumberList, { validateBatchNumberList } from './BatchNumberList';
+import BatchPredictorFields, { batchPredictorLabel } from './BatchPredictorFields';
 
 export type DevelopmentTab = 'setup' | 'batches' | 'runs' | 'results';
 export const developmentTabs: { id: DevelopmentTab; label: string }[] = [
@@ -34,6 +35,7 @@ export function updateBatchPlans(plans: ExperimentBatchPlan[], plan: ExperimentB
 }
 
 export const batchTemplates = [
+  { id: 'blank', name: 'Start blank', description: 'Start with default settings and give this batch a name.' },
   { id: 'baseline', name: 'ABMIL baseline', description: 'One configuration with standard training settings.' },
   { id: 'quick', name: 'Quick check', description: 'Five epochs and smaller sampled bags to check the training setup.' },
   { id: 'learning-rate', name: 'Learning-rate comparison', description: 'Compare three learning rates with the same folds and training seed.' },
@@ -41,9 +43,9 @@ export const batchTemplates = [
 
 export function batchTemplate(id: string, inputs: MILExperimentSpec, experimentName: string): DevelopmentBatchSpec {
   const recipe = { ...defaultRecipe(), ...(id === 'quick' ? { maxEpochs: 5, bagSize: 1024, patience: 3 } : {}) };
-  return { version: 1, experimentName, batchName: batchTemplates.find((item) => item.id === id)?.name ?? 'Baseline', inputs,
+  return { version: 1, experimentName, batchName: id === 'blank' ? '' : batchTemplates.find((item) => item.id === id)?.name ?? 'Baseline', inputs,
     recipe, mode: id === 'learning-rate' ? 'grid' : 'single', grid: { learningRates: id === 'learning-rate' ? [0.0001, 0.0003, 0.001] : [recipe.learningRate], weightDecays: [recipe.weightDecay], maxEpochs: [recipe.maxEpochs] },
-    configurations: [], trainingSeeds: [42], resources: defaultResources(), notes: '' };
+    configurations: [], trainingSeeds: [42], resources: defaultResources(), notes: '', predictorPolicy: defaultPredictorPolicy() };
 }
 
 export function RecipeFields({ value, onChange, gridMode = false }: { value: TrainingRecipe; onChange: (value: TrainingRecipe) => void; gridMode?: boolean }) {
@@ -121,12 +123,25 @@ export function RecipeSummary({ recipe }: { recipe: TrainingRecipe }) {
   return <span className="batch-recipe-summary"><strong>{recipe.model.toUpperCase()}</strong><span>LR {recipe.learningRate}</span><span>WD {recipe.weightDecay}</span><span>{recipe.maxEpochs} epochs max</span><span>{recipe.bagSize === null ? 'Whole bags' : `${recipe.bagSize.toLocaleString()} patches / bag`}</span></span>;
 }
 
-export function BatchPlanSettings({ spec }: { spec: DevelopmentBatchSpec }) {
+export function BatchPredictorSummary({ spec, protocol, fallbackPredictorPolicy, count: frozenCount }: {
+  spec: DevelopmentBatchSpec; protocol?: ProtocolSpec; fallbackPredictorPolicy?: ExperimentPredictorPolicy; count?: number;
+}) {
+  const policy = spec.predictorPolicy ?? fallbackPredictorPolicy;
+  const count = frozenCount ?? (policy ? plannedBatchPredictorCount(spec, protocol, policy)?.total : undefined);
+  return <div className="batch-predictor-summary">
+    <Badge>{policy ? `Predictors: ${batchPredictorLabel(policy)}` : 'Predictors not configured'}</Badge>
+    {count !== undefined ? <span>{count.toLocaleString()} predictor{count === 1 ? '' : 's'} planned</span> : null}
+  </div>;
+}
+
+export function BatchPlanSettings({ spec, fallbackPredictorPolicy }: { spec: DevelopmentBatchSpec; fallbackPredictorPolicy?: ExperimentPredictorPolicy }) {
+  const policy = spec.predictorPolicy ?? fallbackPredictorPolicy;
   const count = batchConfigurationCount(spec);
   const recipes = spec.mode === 'explicit' ? spec.configurations : [spec.recipe];
   return <div className="batch-plan-settings">
     <dl className="batch-settings-summary">
       <div><dt>Parameter search</dt><dd>{configurationModes.find((mode) => mode.id === spec.mode)?.name} · {count} configuration{count === 1 ? '' : 's'}</dd></div>
+      <div><dt>Predictors</dt><dd>{policy ? batchPredictorLabel(policy) : 'Not configured (historical batch)'}</dd></div>
       <div><dt>Training seeds</dt><dd>{spec.trainingSeeds.join(', ')}</dd></div>
       {spec.mode === 'grid' ? <><div><dt>Learning rates</dt><dd>{spec.grid.learningRates.join(', ')}</dd></div><div><dt>Weight decays</dt><dd>{spec.grid.weightDecays.join(', ')}</dd></div><div><dt>Maximum epochs</dt><dd>{spec.grid.maxEpochs.join(', ')}</dd></div></> : null}
       <div><dt>Compute</dt><dd>{spec.resources.gpuIds.length ? `GPU ${spec.resources.gpuIds.join(', ')}` : 'CPU'} · {spec.resources.maxConcurrentRuns} concurrent run{spec.resources.maxConcurrentRuns === 1 ? '' : 's'}</dd></div>
@@ -152,15 +167,16 @@ export function BatchPlanSettings({ spec }: { spec: DevelopmentBatchSpec }) {
   </div>;
 }
 
-export default function DevelopmentBatches({ project, inputs, experimentName, experimentId, experimentRevision, ownedBatches, ownedDrafts, executionImplemented = false, readOnly = false, record, experimentStage, onPlanDirtyChange, tab, onOpenSetup, onRestoreInputs }: {
+export default function DevelopmentBatches({ project, inputs, experimentName, experimentId, experimentRevision, ownedBatches, ownedDrafts, executionImplemented = false, readOnly = false, record, experimentStage, protocol, onPlanDirtyChange, tab, onOpenSetup }: {
   project: string; inputs: MILExperimentSpec; experimentName: string; experimentId: string; experimentRevision: number;
-  record?: ModelExperiment; experimentStage?: ExperimentStage; onPlanDirtyChange?: (dirty: boolean) => void;
+  record?: ModelExperiment; experimentStage?: ExperimentStage; protocol?: ProtocolSpec; onPlanDirtyChange?: (dirty: boolean) => void;
   ownedBatches: ExperimentBatch[]; ownedDrafts: ScientificDraft[]; executionImplemented?: boolean; readOnly?: boolean; tab: Exclude<DevelopmentTab, 'setup'>; onOpenSetup: () => void;
-  onRestoreInputs: (inputs: MILExperimentSpec, name: string) => void;
 }) {
   const client = useQueryClient();
   const runtime = useQuery({ queryKey: ['training-runtime', project], queryFn: () => development.runtime(project), enabled: tab === 'batches', staleTime: 30000 });
-  const [name, setName] = useState('Baseline');
+  const [name, setName] = useState('');
+  const [templateId, setTemplateId] = useState('blank');
+  const [predictorPolicy, setPredictorPolicy] = useState(defaultPredictorPolicy);
   const [recipe, setRecipe] = useState(defaultRecipe);
   const [resources, setResources] = useState(defaultResources);
   const [mode, setMode] = useState<DevelopmentBatchSpec['mode']>('single');
@@ -171,7 +187,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   const [seeds, setSeeds] = useState('42');
   const [lrs, setLrs] = useState('0.0001, 0.0003, 0.001');
   const [wds, setWds] = useState('0, 0.0001');
-  const [epochs, setEpochs] = useState('50, 100');
+  const [epochs, setEpochs] = useState('40');
   const [gpus, setGpus] = useState('0');
   const [notes, setNotes] = useState('');
   const [preview, setPreview] = useState<BatchPreview | null>(null);
@@ -229,7 +245,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
     return { version: 1, experimentId, experimentRevision, experimentName, batchName: name.trim(), inputs, recipe, mode,
       grid: mode === 'grid' ? { learningRates: parseNumberList(lrs, 'Learning rates', false, Number.MIN_VALUE), weightDecays: parseNumberList(wds, 'Weight decay'), maxEpochs: parseNumberList(epochs, 'Maximum epochs', true, 1) } : { learningRates: [recipe.learningRate], weightDecays: [recipe.weightDecay], maxEpochs: [recipe.maxEpochs] },
       configurations: mode === 'explicit' ? rows.map((row) => row.recipe) : [], trainingSeeds: parseNumberList(seeds, 'Training seeds', true),
-      resources: { ...resources, gpuIds: gpus.trim() ? parseNumberList(gpus, 'GPU IDs', true) : [] }, notes };
+      resources: { ...resources, gpuIds: gpus.trim() ? parseNumberList(gpus, 'GPU IDs', true) : [] }, notes, predictorPolicy };
   }
   async function savePlans(next: ExperimentBatchPlan[]) {
     if (!record) throw new Error('Reload this experiment before saving its batch plans.');
@@ -258,16 +274,18 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
     } catch (reason) { setError(reason instanceof Error ? reason : new Error('Batch could not be saved.')); }
     finally { busyRef.current = false; setBusy(false); }
   }
-  function load(spec: DevelopmentBatchSpec, planId?: string, copy = false) {
+  function load(spec: DevelopmentBatchSpec, planId?: string, copy = false, template = 'saved') {
     if (dirty && !window.confirm('Discard the unsaved batch edits and open this configuration?')) return false;
     setEditorVersion((version) => version + 1);
+    setTemplateId(template);
+    setPredictorPolicy(batchPredictorPolicy(spec, record?.predictorPolicy));
     explicitInitialized.current = spec.mode === 'explicit';
-    if (!sameJSON(inputs, spec.inputs)) onRestoreInputs(spec.inputs, spec.experimentName);
+    const inputsChanged = !sameJSON(inputs, spec.inputs);
     setWorkingPlan(planId ?? null); setEditorRevision(experimentRevision);
     setName(copy ? `${spec.batchName.slice(0, 70)} copy` : spec.batchName); setRecipe(withRecipeDefaults(spec.recipe)); setResources(spec.resources); setMode(spec.mode);
     setRows((spec.configurations.length ? spec.configurations : [spec.recipe]).map((value) => ({ id: nextRowId.current++, recipe: withRecipeDefaults(value) }))); setSeeds(spec.trainingSeeds.join(', '));
     setLrs(spec.grid.learningRates.join(', ')); setWds(spec.grid.weightDecays.join(', ')); setEpochs(spec.grid.maxEpochs.join(', '));
-    setGpus(spec.resources.gpuIds.join(', ')); setNotes(spec.notes); setDirty(!planId); setPreview(null); setMessage(''); setError(null);
+    setGpus(spec.resources.gpuIds.join(', ')); setNotes(spec.notes); setDirty(!planId); setPreview(null); setMessage(inputsChanged ? 'Batch settings copied. This batch will use this experiment’s verified inputs.' : ''); setError(null);
     return true;
   }
   async function removePlan(id: string) {
@@ -283,19 +301,19 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
     {tab !== 'batches' && items.length > 1 ? <ExperimentBatchOverview batches={items} view={tab} onSelect={setSelected} /> : null}
     {tab === 'batches' && plans.length ? <Panel title={`Batch plans (${plans.length})`} subtitle={locked ? 'These settings were locked when the experiment was submitted.' : 'Edit or remove a batch before submission. All batches use the experiment’s saved inputs.'}>
       <div className="batch-plan-list">{plans.map((plan) => <article key={plan.id} className={`batch-plan-card${workingPlan === plan.id ? ' is-editing' : ''}`}>
-        <div><h3>{plan.spec.batchName}</h3><p className="muted">{batchConfigurationCount(plan.spec)} configuration{batchConfigurationCount(plan.spec) === 1 ? '' : 's'} × {plan.spec.trainingSeeds.length} training seed{plan.spec.trainingSeeds.length === 1 ? '' : 's'}</p></div>
+        <div className="batch-plan-heading"><h3>{plan.spec.batchName}</h3><p className="muted">{batchConfigurationCount(plan.spec)} configuration{batchConfigurationCount(plan.spec) === 1 ? '' : 's'} × {plan.spec.trainingSeeds.length} training seed{plan.spec.trainingSeeds.length === 1 ? '' : 's'}</p><BatchPredictorSummary spec={plan.spec} protocol={protocol} fallbackPredictorPolicy={record?.predictorPolicy ?? (!locked ? defaultPredictorPolicy() : undefined)} /></div>
         {!locked ? <div className="inline-actions"><button className="btn btn-secondary btn-small" disabled={busy} onClick={() => load(plan.spec, plan.id)}>Edit batch</button><button className="text-button" disabled={busy} onClick={() => load(plan.spec, undefined, true)}>Duplicate</button><button className="text-button" disabled={busy || dirty || stale} onClick={() => void removePlan(plan.id)}>Remove</button></div> : <Badge>Locked</Badge>}
-        <details className="batch-plan-spec"><summary>View settings</summary><BatchPlanSettings spec={plan.spec} /></details>
+        <details className="batch-plan-spec"><summary>View settings</summary><BatchPlanSettings spec={plan.spec} fallbackPredictorPolicy={record?.predictorPolicy ?? (!locked ? defaultPredictorPolicy() : undefined)} /></details>
       </article>)}</div>
     </Panel> : null}
     {tab === 'batches' && !locked ? <>
       <Panel title={workingPlan ? `Edit batch: ${name || 'Untitled'}` : 'Add a training batch'} subtitle="Choose one setup or compare parameter combinations. Save your batches, then submit the experiment when the plan is ready.">
-        <div className="batch-template-picker"><label className="label">Start from a template<select className="field" value="" disabled={busy} onChange={(event) => { if (event.target.value) load(batchTemplate(event.target.value, inputs, experimentName)); }}><option value="">Choose a template…</option>{batchTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label><p className="muted">Templates fill this editor; you can adjust every setting before saving.</p></div>
+        <div className="batch-template-picker"><label className="label">Start from a template<select className="field" value={templateId} disabled={busy} onChange={(event) => load(batchTemplate(event.target.value, inputs, experimentName), undefined, false, event.target.value)}>{templateId === 'saved' ? <option value="saved" disabled>Saved batch settings</option> : null}{batchTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label><p className="muted">{batchTemplates.find((template) => template.id === templateId)?.description ?? 'Adjust the saved settings, or choose a template to start another batch.'}</p></div>
         {!inputs.protocolId || !inputs.featureBundleId ? <p className="callout">Choose prepared targets and features in <button type="button" className="text-button" onClick={onOpenSetup}>Inputs</button> first.</p> : <p className="development-input-summary">Inputs selected for <strong>{experimentName}</strong>. <button type="button" className="text-button" onClick={onOpenSetup}>Review inputs</button></p>}
-        {stale ? <p role="alert" className="callout">The saved experiment changed while you were editing. <button className="text-button" onClick={() => load(plans.find((plan) => plan.id === workingPlan)?.spec ?? batchTemplate('baseline', inputs, experimentName), plans.find((plan) => plan.id === workingPlan)?.id)}>Reload the saved plan</button> before saving.</p> : null}
+        {stale ? <p role="alert" className="callout">The saved experiment changed while you were editing. <button className="text-button" onClick={() => load(plans.find((plan) => plan.id === workingPlan)?.spec ?? batchTemplate('blank', inputs, experimentName), plans.find((plan) => plan.id === workingPlan)?.id)}>Reload the saved plan</button> before saving.</p> : null}
         <fieldset key={editorVersion} ref={editor} disabled={busy || stale} className="development-editor" onChange={edit}>
           <legend className="sr-only">Batch configuration</legend>
-          <label className="label batch-name-field">Batch name<input required className="field" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} /></label>
+          <label className="label batch-name-field">Batch name<input required className="field" value={name} placeholder="Name this batch" maxLength={80} onChange={(e) => setName(e.target.value)} /></label>
           <section className="batch-editor-section" aria-label="Parameter search and repeats">
             <div className="batch-section-heading"><h3>Parameter search &amp; repeats</h3><p>Each distinct configuration runs across the experiment’s frozen folds for every training seed.</p></div>
             <fieldset className="batch-configuration-modes"><legend>Configuration mode</legend><div className="batch-mode-options">{configurationModes.map((option) => <label key={option.id} className={`batch-mode-option${mode === option.id ? ' is-selected' : ''}`}>
@@ -305,10 +323,12 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
             <div className="batch-seeds-field"><BatchNumberList label="Training seeds" value={seeds} onChange={setSeeds} min={0} max={2 ** 32 - 1} hint="Comma-separated, for example 42, 43, 44. These repeat training; they do not change the frozen folds." /></div>
             <div className="batch-size-summary" role="status" aria-live="polite">{plannedConfigurations !== null && plannedSeeds !== null ? <><strong>{plannedConfigurations} configuration{plannedConfigurations === 1 ? '' : 's'} × {plannedSeeds} training seed{plannedSeeds === 1 ? '' : 's'} = {plannedConfigurations * plannedSeeds} training group{plannedConfigurations * plannedSeeds === 1 ? '' : 's'}</strong><span>Each group runs all frozen folds. Check batch to confirm the total fold runs.</span></> : <span>Enter valid parameter values and training seeds to see the planned size.</span>}</div>
           </section>
+          <section className="batch-editor-section batch-all-settings" aria-label="Settings"><div className="batch-section-heading"><h3>Settings</h3></div>
           {mode !== 'explicit' ? <RecipeFields value={recipe} onChange={setRecipe} gridMode={mode === 'grid'} /> : <section className="batch-custom-configurations" aria-label="Custom configurations"><div className="batch-section-heading"><h3>Configurations</h3><p>Open a configuration to adjust its settings. Added configurations copy the last one; identical rows train only once.</p></div>{rows.map((row, index) => <details className="batch-configuration-card" key={row.id} open={index === 0 ? true : undefined}>
             <summary><strong>Configuration {index + 1}</strong><RecipeSummary recipe={row.recipe} /></summary>
             <div className="batch-configuration-body"><RecipeFields value={row.recipe} onChange={(value) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, recipe: value } : item))} /><button type="button" className="text-button" disabled={rows.length === 1} onClick={() => { setRows((current) => current.filter((item) => item.id !== row.id)); edit(); }}>Remove configuration {index + 1}</button></div>
           </details>)}<button type="button" className="btn btn-secondary" disabled={rows.length >= 512} onClick={() => { const id = nextRowId.current++; setRows((current) => [...current, { id, recipe: { ...current[current.length - 1].recipe } }]); edit(); }}>Add configuration</button></section>}
+          <details className="setup-details batch-settings-details"><summary>Batch notes (optional)</summary><label className="label">Notes<textarea className="field" value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} /></label></details></section>
           <section className="development-resource-settings batch-editor-section" aria-label="Parallel training"><div className="batch-section-heading"><h3>Compute &amp; parallelism</h3><p>Choose the device and how many fold runs may train at once.</p></div><div className="development-fields">
             <label className="label">Run on<select className="field" value={gpus.trim() ? 'gpu' : 'cpu'} onChange={(e) => setGpus(e.target.value === 'cpu' ? '' : '0')}><option value="gpu">GPU</option><option value="cpu">CPU</option></select></label>
             <NumericField label="Concurrent runs" value={resources.maxConcurrentRuns} min={1} max={128} onChange={(maxConcurrentRuns) => setResources((current) => ({ ...current, maxConcurrentRuns }))} />
@@ -318,9 +338,9 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
             <BatchNumberList label="Allowed GPU IDs" value={gpus} onChange={setGpus} min={0} max={127} maxItems={128} allowEmpty hint="Comma-separated; leave empty for CPU." />
             {([['cpuThreadsPerRun', 'CPU threads per run', 1, 256], ['dataLoaderWorkers', 'Data workers per loader', 0, 64], ['ramGbPerRun', 'RAM reservation per run (GiB)', Number.MIN_VALUE, undefined]] as const).map(([key, label, min, max]) => <NumericField key={key} label={label} value={resources[key]} min={min} max={max} integer={key !== 'ramGbPerRun'} onChange={(number) => setResources((current) => ({ ...current, [key]: number }))} />)}
           </div></details></section>
-          <details className="setup-details batch-settings-details"><summary>Batch notes (optional)</summary><label className="label">Notes<textarea className="field" value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} /></label></details>
+          <BatchPredictorFields value={predictorPolicy} onChange={setPredictorPolicy} configurationCount={plannedConfigurations} trainingSeedCount={plannedSeeds} splitSeedCount={protocol?.split.mode === 'kfold' ? new Set(protocol.split.seeds).size : undefined} foldCount={protocol?.split.mode === 'kfold' ? protocol.split.folds : undefined} />
         </fieldset>
-        <div className="inline-actions batch-editor-actions"><button type="button" className="btn btn-primary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim() || (!!workingPlan && !dirty)} onClick={() => void action('save')}>{busy ? 'Working…' : workingPlan ? 'Save batch changes' : 'Add batch to plan'}</button><button type="button" className="btn btn-secondary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim()} onClick={() => void action('preview')}>Check batch</button>{workingPlan || dirty ? <button className="text-button" disabled={busy} onClick={() => { if (load(batchTemplate('baseline', inputs, experimentName))) setDirty(false); }}>{dirty ? 'Discard batch edits' : 'New batch'}</button> : null}{dirty ? <span className="muted" role="status">Unsaved batch edits</span> : null}</div>
+        <div className="inline-actions batch-editor-actions"><button type="button" className="btn btn-primary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim() || (!!workingPlan && !dirty)} onClick={() => void action('save')}>{busy ? 'Working…' : workingPlan ? 'Save batch changes' : 'Add batch to plan'}</button><button type="button" className="btn btn-secondary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim()} onClick={() => void action('preview')}>Check batch</button>{workingPlan || dirty ? <button className="text-button" disabled={busy} onClick={() => { if (load(batchTemplate('blank', inputs, experimentName), undefined, false, 'blank')) setDirty(false); }}>{dirty ? 'Discard batch edits' : 'New batch'}</button> : null}{dirty ? <span className="muted" role="status">Unsaved batch edits</span> : null}</div>
       </Panel>
       {preview ? <Panel title="Resolved batch"><Findings findings={preview.findings} /><p className="development-count" aria-live="polite"><strong>{preview.summary.configurationCount}</strong> configurations × <strong>{preview.summary.trainingSeedCount}</strong> training seeds × <strong>{preview.summary.splitPlanCount}</strong> frozen split plans = <strong>{preview.summary.runCount}</strong> planned runs</p><ConfigurationTable batch={preview} /></Panel> : null}
       {savedDrafts.length ? <details className="setup-details"><summary>Earlier batch drafts</summary><p className="muted">Load an earlier draft and add it to this experiment’s plan. Drafts are not submitted automatically.</p>{savedDrafts.map((draft) => <div className="development-saved-row" key={draft.id}><span>{draft.name}</span><button type="button" className="btn btn-secondary btn-small" onClick={() => load(draft.payload.spec as unknown as DevelopmentBatchSpec)}>Use draft settings</button></div>)}</details> : null}
@@ -329,7 +349,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
       {!items.length ? <p>No submitted batches are available yet.</p> : <>
         <label className="label">Batch<select className="field" value={selectedBatch?.id ?? ''} onChange={(e) => setSelected(e.target.value)}><option value="">Choose a batch in this experiment</option>{items.map((item) => <option key={item.id} value={item.id}>{item.manifest.spec.batchName} · {item.status} · {item.state}</option>)}</select></label>
         {selectedBatch ? <><div className="inline-actions"><Badge>{selectedBatch.manifest.summary.runCount} runs in plan</Badge><button type="button" className="btn btn-secondary btn-small" onClick={() => downloadJSON(`${selectedBatch.manifest.spec.batchName}.json`, selectedBatch)}>Export batch</button>{tab === 'batches' && !locked ? <button type="button" className="btn btn-secondary btn-small" onClick={() => load(selectedBatch.manifest.spec, undefined, true)}>Use as editable batch</button> : null}</div>
-          {tab === 'batches' ? <ConfigurationTable batch={selectedBatch.manifest} /> : null}
+          {tab === 'batches' ? <><BatchPredictorSummary spec={selectedBatch.manifest.spec} protocol={protocol} fallbackPredictorPolicy={record?.predictorPolicies?.[selectedBatch.id] ?? record?.predictorPolicy ?? undefined} /><ConfigurationTable batch={selectedBatch.manifest} /></> : null}
           {tab === 'batches' && !locked ? <ExperimentLifecycle key={`lifecycle:${selectedBatch.id}`} project={project} recordKey={selectedBatch.key} state={selectedBatch.state} name={selectedBatch.manifest.spec.batchName} /> : null}
           {tab !== 'batches' || experimentStage === undefined ? <DevelopmentExecution key={selectedBatch.id} project={project} batch={selectedBatch} implemented={selectedBatch.state !== 'trashed' && executionImplemented} stage={experimentStage} readOnly={experimentStage === 'finished' || !!record?.legacy || (!!record && record.state !== 'active')} allowChanges={(experimentStage === 'running' || !readOnly) && selectedBatch.state === 'active'} knownExecution={selectedBatch.execution ?? undefined} view={tab} /> : null}
         </> : null}

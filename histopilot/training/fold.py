@@ -242,7 +242,7 @@ def train_fold(plan: dict, output_dir: Path, *, checkpoint_path=None) -> dict:
     Legacy runs without a receipt retain their original checkpoint resume behavior.
     """
     _validate_plan(plan)
-    recipe = TrainingRecipe.model_validate(plan["recipe"]).model_dump()
+    recipe = TrainingRecipe.model_validate(plan["recipe"], context={"legacy": True}).model_dump()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     resources = plan["resources"]

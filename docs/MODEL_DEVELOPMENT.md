@@ -43,7 +43,7 @@ Predictor identity is unique per `(experimentId, batchId, candidateId, trainingS
 | 01 Prepare | Slide features | Register or extract features, check coverage, and create verified bundles. |
 | 02 Develop | Experiments | Plan inputs, batches and Skip/Refit/Ensemble/Both outputs; submit once, track folds/refits, then review results and ready predictors. |
 | 03 Evaluate | Test cohorts | Select test records and inference settings, without training splits. |
-| 03 Evaluate | Evaluate models | Evaluate selected or all compatible predictors on a reviewed test cohort, then inspect/export each result. |
+| 03 Evaluate | Evaluate models | Select experiments and compare their ready ensemble/refit predictors on a reviewed test cohort, then inspect/export each result. |
 
 Predictor creation is part of Experiments. The roadmap connects Experiments directly to Evaluate models. Legacy predictor hash routes remain recognized: scoped links open the source experiment, and historical refit jobs retain a hidden recovery view. Raw record IDs remain in saved inputs, URLs, tooltips and exports; lists show compact IDs and wrap long text inside table cells.
 
@@ -66,7 +66,7 @@ Both methods start with **k-fold ABMIL** results: one complete set of folds for 
 - **Fold ensemble:** publish the existing best fold checkpoints. Inference averages their per-class probabilities. Checkpoints are loaded one at a time to limit peak VRAM.
 - **Refit on all development data:** save a reviewed plan, train one fresh model, then publish its completed checkpoint. The selected recipe and seed carry over. Every development slide is included exactly once in the training dataset; validation, assessment and external test loaders are absent during refit.
 
-Choose Skip, Refit, Ensemble or Both in the experiment before submission. Both creates one ensemble and one refit for every configuration/training-seed/split-seed group across all batches. Refits train and publish automatically after the complete source batch finishes; a durable coordinator persists the reviewed request and stable operation receipts before dispatch. Refits run sequentially within each experiment using the batch resource policy and shared admission leases. A failed coordinator can resume without rebuilding completed predictors. Historical experiments lacking a submitted policy retain explicit refit recovery controls and never start automatic jobs.
+Choose Skip, Refit, Ensemble or Both in each batch editor before adding the batch to the experiment. Both creates one ensemble and one refit for every configuration/training-seed/split-seed group in that batch. Other batches can choose different methods and refit percentiles. Refits train and publish automatically after the complete source batch finishes; a durable coordinator persists the reviewed request and stable operation receipts before dispatch. Refits run sequentially within each experiment using the batch resource policy and shared admission leases. A failed coordinator can resume without rebuilding completed predictors. Historical experiments lacking a submitted policy retain explicit refit recovery controls and never start automatic jobs.
 
 ### Refit epoch budget
 
@@ -80,9 +80,11 @@ Publication uses the lifecycle lock, fresh evidence and preview hash. Identical 
 
 ## Evaluation management
 
-Choose an ensemble or refit predictor and a compatible test cohort, review the inputs, save the plan, then select **Run evaluation**. Test cohorts are prepared in 03 Evaluate with no new splits. Each predictor can have multiple evaluation records, including evaluations on the same test cohort for comparing the refit and ensemble.
+Choose one or more experiments, select their ensemble/refit methods and a compatible test cohort, then review and run the resulting predictor evaluations. A separate single-predictor view remains available for individual work. Test cohorts are prepared in 03 Evaluate with no new splits. Each predictor can have multiple evaluation records, including evaluations on the same test cohort for comparing the refit and ensemble.
 
-For a cohort-wide comparison, select a test cohort and **all shown predictors** or an explicit subset. Source experiment, method and search filters organize the available ready predictors. Review lists each compatible predictor and each blocked reason before **Run all compatible predictors**. The submitted request fixes the reviewed predictor IDs; predictors created afterward are excluded. Changes to reviewed inputs require another review. Each request creates distinct evaluation records, while an identical retry continues partial submission without duplicating jobs. Batch history keeps each predictor's experiment, configuration and seeds alongside its own job and result.
+For a cohort-wide comparison, explicitly select the source experiments and a test cohort. Empty experiment selection creates no jobs. Each experiment shows its currently ready ensemble/refit counts; experiments still training or using Skip can have no ready outputs. Method filters choose Both, Ensemble or Refit, with individual predictor selection available as an advanced option. Review lists each compatible predictor and each blocked reason before submission. The submitted request fixes the reviewed predictor IDs; predictors created afterward are excluded. Changes to reviewed inputs require another review. Each request creates distinct evaluation records, while an identical retry continues partial submission without duplicating jobs. Batch history keeps each predictor's experiment, configuration and seeds alongside its own job and result.
+
+Results include a paired ensemble/refit summary only within the same test cohort and scoring unit, matching experiment, batch, configuration and training/split seeds. Coverage and missing pairs stay visible. These comparisons support strategy selection; selecting on a test cohort does not provide an independent final estimate for the chosen strategy.
 
 Cancel an evaluation batch to prevent remaining submissions and request cancellation of its active jobs. Completed results stay intact, and cancellation remains pending while workers stop. Retry failed or interrupted evaluations through their individual controls; replaying a batch submission does not automatically restart a failed compute attempt.
 

@@ -119,8 +119,8 @@ describe('experiment predictor navigation and direct URL gates', () => {
       expect(html).toContain('Test cohorts');
       expect(html).toContain('href="#experiments"');
       expect(html).toContain('metrics use labeled records only');
-      expect(html).toContain('Each run saves predictions and metrics independently');
-      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review all shown predictors/);
+      expect(html).toContain('Each ready ensemble or refit predictor keeps its own results');
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review experiment evaluation/);
     } finally { client.clear(); }
   });
 });

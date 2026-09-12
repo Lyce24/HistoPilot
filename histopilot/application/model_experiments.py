@@ -11,6 +11,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from histopilot.application.experiment_policy import (
+    predictor_work_expected,
+    resolve_batch_policy,
+    submission_policies,
+)
 from histopilot.application.feature_bundles import _hash
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
@@ -34,6 +39,16 @@ def experiment_id_for_batch(record):
     return record["manifest"].get("spec", {}).get("experimentId") or legacy_experiment_id(
         record["id"]
     )
+
+
+def presented_batch_plans(payload):
+    """Use the submitted recipe when its publication resolved an old default."""
+    submission = payload.get("submission") or {}
+    frozen = {row["planId"]: row["spec"] for row in submission.get("publications", [])}
+    return [
+        {"id": row["id"], "spec": deepcopy(frozen.get(row["id"], row["spec"]))}
+        for row in payload.get("batchPlans", [])
+    ]
 
 
 def input_snapshot(store, inputs, *, include_inactive=False):
@@ -155,10 +170,7 @@ class ModelExperimentService:
         return self.predictor_execution
 
     def _start_predictors(self, identity, submission):
-        if (
-            not submission.get("predictorPolicy")
-            or submission["predictorPolicy"]["method"] == "skip"
-        ):
+        if not predictor_work_expected(submission):
             return
         try:
             self._predictors().launch(
@@ -227,7 +239,9 @@ class ModelExperimentService:
         return False
 
     @staticmethod
-    def _normalize_plans(plans, *, identity, revision, name, inputs, deduplicate=False):
+    def _normalize_plans(
+        plans, *, identity, revision, name, inputs, deduplicate=False, predictor_policy=None
+    ):
         if plans and not inputs:
             raise StorageError(
                 "Choose inputs before saving batch plans.", "EXPERIMENT_INPUTS_REQUIRED", 422
@@ -242,7 +256,9 @@ class ModelExperimentService:
                         "experimentRevision": revision,
                         "experimentName": name,
                         "inputs": inputs,
-                    }
+                        "predictorPolicy": resolve_batch_policy(plan["spec"], predictor_policy),
+                    },
+                    context={"legacy": True},
                 ).model_dump(),
             }
             for plan in plans
@@ -305,7 +321,15 @@ class ModelExperimentService:
                         plans.append(
                             {
                                 "id": "copy-" + uuid4().hex,
-                                "spec": deepcopy(batch["manifest"]["spec"]),
+                                "spec": {
+                                    **deepcopy(batch["manifest"]["spec"]),
+                                    "predictorPolicy": resolve_batch_policy(
+                                        batch["manifest"]["spec"],
+                                        (source.get("predictorPolicies") or {}).get(
+                                            batch["id"], source.get("predictorPolicy")
+                                        ),
+                                    ),
+                                },
                             }
                         )
                 for draft in source["drafts"]:
@@ -315,7 +339,7 @@ class ModelExperimentService:
                     ):
                         try:
                             spec = DevelopmentBatchSpec.model_validate(
-                                draft["payload"]["spec"]
+                                draft["payload"]["spec"], context={"legacy": True}
                             ).model_dump()
                         except (ValidationError, KeyError) as error:
                             raise StorageError(
@@ -335,6 +359,7 @@ class ModelExperimentService:
                     name=request.name,
                     inputs=values.get("inputs"),
                     deduplicate=True,
+                    predictor_policy=values.get("predictorPolicy"),
                 )
             if values.get("inputs"):
                 input_snapshot(self.store, values["inputs"], include_inactive=source is not None)
@@ -390,6 +415,9 @@ class ModelExperimentService:
                     revision=record["revision"] + 1,
                     name=request.name,
                     inputs=values.get("inputs", record["payload"].get("inputs")),
+                    predictor_policy=values.get(
+                        "predictorPolicy", record["payload"].get("predictorPolicy")
+                    ),
                 )
             self.store.update_draft(
                 identity,
@@ -463,6 +491,7 @@ class ModelExperimentService:
                     revision=record["revision"],
                     name=record["name"],
                     inputs=record["payload"]["inputs"],
+                    predictor_policy=record["payload"].get("predictorPolicy"),
                 )
                 states = self.store.lifecycle.read()["records"]
                 batches = [
@@ -489,7 +518,9 @@ class ModelExperimentService:
                 development = DevelopmentService(self.store, self.filesystem)
                 publications, freshness_checks, contracts = [], [], []
                 for plan in plans:
-                    spec = DevelopmentBatchSpec.model_validate(plan["spec"])
+                    spec = DevelopmentBatchSpec.model_validate(
+                        plan["spec"], context={"legacy": True}
+                    )
                     preview = development.preview(spec)
                     if not preview["canFreeze"]:
                         raise StorageError(
@@ -549,9 +580,13 @@ class ModelExperimentService:
                     "publications": publications,
                     "launchedBatchIds": [],
                     "executionContract": contracts[0],
-                    "predictorPolicy": ExperimentPredictorPolicy.model_validate(
-                        record["payload"].get("predictorPolicy", {})
-                    ).model_dump(),
+                    "predictorPolicyVersion": 2,
+                    "predictorPolicies": {
+                        batch["id"]: resolve_batch_policy(
+                            batch["manifest"]["spec"], record["payload"].get("predictorPolicy")
+                        )
+                        for batch in batches
+                    },
                     "error": None,
                     "experiment": {
                         "id": identity,
@@ -572,7 +607,9 @@ class ModelExperimentService:
                     if publication["batchId"]:
                         continue
                     frozen = development._freeze(
-                        DevelopmentBatchSpec.model_validate(publication["spec"]),
+                        DevelopmentBatchSpec.model_validate(
+                            publication["spec"], context={"legacy": True}
+                        ),
                         publication["previewHash"],
                         publication["operationId"],
                         {
@@ -584,6 +621,10 @@ class ModelExperimentService:
                     publication["batchId"] = frozen["id"]
                     if frozen["id"] not in submission["batchIds"]:
                         submission["batchIds"].append(frozen["id"])
+                    if "predictorPolicies" in submission:
+                        submission["predictorPolicies"][frozen["id"]] = resolve_batch_policy(
+                            publication["spec"]
+                        )
                     self._save_submission(identity, submission)
                 for batch_id in submission["batchIds"]:
                     if batch_id in submission["launchedBatchIds"]:
@@ -713,6 +754,7 @@ class ModelExperimentService:
                         "experimentName",
                         "batchName",
                         "inputs",
+                        "predictorPolicy",
                     )
                     if name in manifest.get("spec", {})
                 },
@@ -746,7 +788,21 @@ class ModelExperimentService:
             else payload.get("predictorPolicy", ExperimentPredictorPolicy().model_dump())
         )
         predictor_execution = None
-        if submission and predictor_policy and predictor_policy["method"] != "skip":
+        public_policies = None
+        if submission and "predictorPolicies" in submission:
+            try:
+                public_policies = submission_policies(submission)
+            except (StorageError, ValueError, KeyError, TypeError):
+                # Retain invalid evidence in storage, but keep the read API's
+                # map shape safe for list/count rendering alongside its error.
+                pass
+        try:
+            expected_predictors = submission and predictor_work_expected(submission)
+        except (StorageError, ValueError, KeyError, TypeError):
+            # Invalid frozen intent must stay visible and locked. The status
+            # boundary below presents the actionable error for this record.
+            expected_predictors = True
+        if expected_predictors:
             try:
                 predictor_execution = self._predictors().status(identity, summary=summary)
                 if predictor_execution is None:
@@ -816,8 +872,9 @@ class ModelExperimentService:
             "stage": stage,
             "configurationLocked": locked,
             "predictorPolicy": predictor_policy,
+            "predictorPolicies": public_policies,
             "predictorExecution": predictor_execution,
-            "batchPlans": payload.get("batchPlans", []),
+            "batchPlans": presented_batch_plans(payload),
             "submission": public_submission,
             "legacy": legacy,
             "createdAt": record["createdAt"],

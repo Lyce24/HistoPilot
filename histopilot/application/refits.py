@@ -7,6 +7,7 @@ import math
 import struct
 from copy import deepcopy
 
+from histopilot.application.experiment_policy import has_predictor_intent
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import (
     PredictorService,
@@ -263,7 +264,7 @@ class RefitService:
             owner = record["manifest"].get("experimentId", "")
             if owner and not owner.startswith("legacy-"):
                 submission = self.store.get_draft(owner)["payload"].get("submission") or {}
-                if submission.get("predictorPolicy"):
+                if has_predictor_intent(submission):
                     if resources != record["manifest"]["resources"]:
                         raise StorageError(
                             "This refit inherits its submitted experiment resources. Copy the experiment to change them.",

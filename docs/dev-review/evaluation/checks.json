@@ -1,14 +1,10 @@
 [
   {
-    "name": "Experiment link shows 90 predictors, not 450 fold models",
+    "name": "Linked experiment starts selected with 90 ready predictors",
     "passed": true
   },
   {
-    "name": "The linked experiment retains every configuration, seed and method",
-    "passed": true
-  },
-  {
-    "name": "Downstream evidence navigation has no separate predictor step",
+    "name": "Planning and Skip sources stay visible with truthful readiness",
     "passed": true
   },
   {
@@ -16,43 +12,67 @@
     "passed": true
   },
   {
-    "name": "Method filtering selects exactly 45 refit predictors",
+    "name": "An unscoped evaluation selects no experiments and cannot run",
     "passed": true
   },
   {
-    "name": "Filtered review pins only the shown experiment and method IDs",
+    "name": "Multiple experiment selection includes exactly their 92 ready predictors",
     "passed": true
   },
   {
-    "name": "Review preserves the exact predictor count",
+    "name": "Refit choice uses the 46 ready refits from selected experiments",
     "passed": true
   },
   {
-    "name": "Mocked submission contains exactly the reviewed 45 predictors",
+    "name": "Switching setup views preserves experiment and method selection",
     "passed": true
   },
   {
-    "name": "A skipped experiment never falls back to other experiments' predictors",
+    "name": "Review pins exact predictor IDs from all selected experiments",
     "passed": true
   },
   {
-    "name": "No predictor selection blocks evaluation review",
+    "name": "Review locks source, methods and setup switching",
     "passed": true
   },
   {
-    "name": "Global selection groups source experiments without merging weights",
+    "name": "Predictors arriving after review stay excluded",
     "passed": true
   },
   {
-    "name": "Changing the source updates the whole evaluation selection",
+    "name": "Lost acknowledgement retains the original review and retry controls",
     "passed": true
   },
   {
-    "name": "Single predictor selection retains the selected source experiment",
+    "name": "Retry uses one operation and the same 46 IDs, excluding the late arrival",
     "passed": true
   },
   {
-    "name": "Single source link opens that predictor within its experiment",
+    "name": "Paired means exclude unmatched high-scoring sources",
+    "passed": true
+  },
+  {
+    "name": "Results separate test cohorts and patient versus slide scoring",
+    "passed": true
+  },
+  {
+    "name": "Filtering detail rows does not alter paired method means",
+    "passed": true
+  },
+  {
+    "name": "Skip selection never falls back to other ready predictors",
+    "passed": true
+  },
+  {
+    "name": "Individual selection starts from only the selected experiment",
+    "passed": true
+  },
+  {
+    "name": "Advanced individual selection narrows the experiment output list",
+    "passed": true
+  },
+  {
+    "name": "Individual review also uses one explicit predictor ID",
     "passed": true
   },
   {

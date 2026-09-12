@@ -45,7 +45,10 @@ describe('MIL experiment loading ownership', () => {
       expect(html).toContain('Question one');
       expect(html).toContain('Development protocol');
       expect(html).toContain('Feature bundle');
-      expect(html).toContain('Save the experiment inputs before creating a batch');
+      expect(html).toContain('Verified inputs are shared by every batch');
+      expect(html).toContain('Check &amp; continue to batches');
+      expect(html).toMatch(/id="development-tab-batches"[^>]*disabled=""/);
+      expect(html).not.toContain('Save predictor choices');
       expect(html).toContain('Exact input history');
       expect(html).not.toContain('#post-development');
       expect(html).not.toContain('Create from these inputs');
