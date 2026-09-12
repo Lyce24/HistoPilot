@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import type { DatasetVersion } from '../api/scientific';
 import LocalDataset from './LocalDataset';
-import LocalProtocol from './LocalProtocol';
+import LocalProtocol, { TabularPredictorSelection } from './LocalProtocol';
 
 const workspace = {
   project: { id: 'project', name: 'Study', config: { seed: 42, folds: 5 } },
@@ -32,6 +32,24 @@ function render(page: 'data' | 'targets', datasets: DatasetVersion[] = [dataset]
 }
 
 describe('guided preparation', () => {
+  it('does not offer spreadsheet covariates that ABMIL cannot consume', () => {
+    const html = renderToStaticMarkup(<TabularPredictorSelection dictionary={dataset.manifest.dictionary ?? []} selected={[]} targetField="diagnosis" onChange={() => {}} />);
+    expect(html).toContain('Current ABMIL training uses slide image features only');
+    expect(html).toContain('Spreadsheet model inputs · unsupported');
+    expect(html).toMatch(/<input type="checkbox" disabled=""/);
+    expect(html).not.toContain('Choose extra columns for the model');
+  });
+
+  it('keeps unsupported legacy choices removable even when their columns are unavailable or are the target', () => {
+    const html = renderToStaticMarkup(<TabularPredictorSelection dictionary={dataset.manifest.dictionary ?? []} selected={['diagnosis', 'old-age-column']} targetField="diagnosis" onChange={() => {}} />);
+    expect(html).toContain('2 selected in this draft');
+    expect(html).toContain('Remove these selections before training');
+    expect(html).toContain('old-age-column');
+    expect(html).toContain('Column unavailable');
+    expect(html.match(/<input type="checkbox" checked=""/g)).toHaveLength(2);
+    expect(html).not.toContain('disabled=""');
+  });
+
   it('keeps the saved dataset selected when it is older than the workspace default', () => {
     vi.stubGlobal('window', { location: { hash: '#cohort?dataset=older&saved=dataset' } });
     const older = { ...dataset, id: 'older', versionLabel: { ...dataset.versionLabel!, tag: 'Older study slides' } };

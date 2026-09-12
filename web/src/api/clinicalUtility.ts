@@ -17,7 +17,7 @@ export interface OperatingPoint {
 export interface ClinicalReport {
   unit: 'slide' | 'patient'; frozenUnit: string; positiveClass: string; classOrder: string[]; multiclass: boolean;
   decisionThreshold: number; frozenDecisionThreshold: number; thresholdSource: 'frozen_evaluation' | 'descriptive_override';
-  counts: { total: number; labeled: number; unlabeled: number; positive: number; negative: number; patients: number | null; slides: number; missingPatientIds: number };
+  counts: { total: number; labeled: number; unlabeled: number; positive: number; negative: number; patients: number | null; slides: number; missingPatientIds: number; fallbackPatientIds?: number };
   metrics: { prevalence: number; meanPredictedRisk?: number; observedExpectedRatio?: number | null; calibrationGap?: number; multiclassLogLoss?: number | null; brierScore: number; brierReference: number; brierSkillScore: number | null; logLoss: number; multiclassBrierScore: number | null; rocAuc: number | null; averagePrecision: number | null; ece: number; mce: number };
   uncertainty?: { method: 'wilson_95' | 'unavailable'; reason: string; operatingPoint: Partial<Record<'sensitivity' | 'specificity' | 'ppv' | 'npv', { lower: number; upper: number } | null>> };
   curveSampling?: { distinctScores: number; maximumPoints: number; returnedPoints: number; downsampled: boolean; summaryStatistics: 'exact'; csv: 'same_points_as_report' };

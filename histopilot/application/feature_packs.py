@@ -526,7 +526,25 @@ class FeaturePackService:
                 # Persist the process launch even for fast workers that have already completed.
                 job["state"] = "running"
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                job["state"], job["error"] = "failed", f"Could not start feature worker: {error}"
+                try:
+                    started = (
+                        self.executor.running(job["sessionName"])
+                        or live_process(folder)
+                        or (folder / "result.json").exists()
+                    )
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    job["state"] = "starting"
+                    job["error"] = (
+                        "Launch acknowledgement was lost. Check worker status before retrying."
+                    )
+                else:
+                    if started:
+                        job["state"] = "running"
+                    else:
+                        job["state"], job["error"] = (
+                            "failed",
+                            f"Could not start feature worker: {error}",
+                        )
             job["updatedAt"] = _now()
             write_json(folder / "job.json", job)
         return self.get(identity)
@@ -624,9 +642,11 @@ class FeaturePackService:
                         )
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 job["error"] = f"Cannot inspect worker status: {error}"
-        job["progress"] = (
-            _read(folder / "progress.json") if (folder / "progress.json").exists() else None
-        )
+        from histopilot.workers.training_process import read_progress
+
+        job["progress"], warning = read_progress(folder / "progress.json")
+        if warning:
+            job["progressWarning"] = warning
         if logs:
             from histopilot.application.extractions import _log_tail
 

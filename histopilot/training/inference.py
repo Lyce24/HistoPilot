@@ -290,6 +290,7 @@ def evaluate(plan, output_dir):
         {
             "slideId": row["slideId"],
             "patientId": row.get("patientId"),
+            **({"patientIdSource": row["patientIdSource"]} if "patientIdSource" in row else {}),
             "label": row.get("label"),
             "labelIndex": classes.index(row["label"]) if row.get("label") is not None else None,
             "probabilities": probability.tolist(),

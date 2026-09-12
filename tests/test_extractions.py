@@ -85,6 +85,23 @@ def submit(service, spec, operation="run"):
     return service.submit(spec, preview["previewHash"], operation)
 
 
+def test_lost_launch_acknowledgement_keeps_extraction_job_active(extraction, monkeypatch):
+    service, spec, executor, _slides = extraction
+    original = executor.launch
+
+    def launch_then_timeout(*args, **kwargs):
+        original(*args, **kwargs)
+        raise TimeoutError("Lost acknowledgement")
+
+    monkeypatch.setattr(executor, "launch", launch_then_timeout)
+    preview = service.preview(spec)
+    job = service.submit(spec, preview["previewHash"], "launch")
+    assert job["state"] == "running"
+    assert service.submit(spec, preview["previewHash"], "launch")["id"] == job["id"]
+    assert service.cancel(job["id"])["state"] == "cancelling"
+    assert len(executor.launches) == 1
+
+
 def test_exact_multiple_roots_manifest_idempotency_logs_and_reopen(extraction):
     service, spec, executor, slides = extraction
     preview = service.preview(spec)

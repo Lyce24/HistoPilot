@@ -2,7 +2,7 @@
 
 **Interactive PFM–MIL Workflows for Computational Pathology**
 
-> See [V2_INTEGRATION_REVIEW.md](docs/V2_INTEGRATION_REVIEW.md) for the comparison with `hp_v2`, changes integrated into main, verification, and remaining issues. [HP_V2_DESIGN.md](docs/HP_V2_DESIGN.md) preserves the original branch proposal; its proposed redesign is not the implemented interface.
+> The [`HistoPilot-dev` verdict](docs/DEV_REVIEW.md) covers backend reliability, scientific correctness, UI/workflow changes and remaining limitations. The [current architecture](docs/ARCHITECTURE.md) describes the implemented application. See [V2_INTEGRATION_REVIEW.md](docs/V2_INTEGRATION_REVIEW.md) for the earlier comparison with `hp_v2`; [HP_V2_DESIGN.md](docs/HP_V2_DESIGN.md) preserves that branch's original proposal.
 
 HistoPilot is a **local-first, self-hosted web application** for constructing, auditing, comparing, and interpreting pathology foundation model (PFM) and multiple instance learning (MIL) experiments. The browser is the interface; a local Python service owns projects and scientific configuration; isolated workers execute feature preparation and ABMIL training jobs; large artifacts stay on the local filesystem.
 

@@ -1,188 +1,90 @@
-# Architecture
+# HistoPilot architecture
 
-> **Scope of this document:** the sections below describe the initial prototype architecture and include historical implementation status. The current local application also implements scientific datasets/protocols/features, isolated native ABMIL training, checkpointed recovery, predictor ensembles/refits, test inference, and lifecycle cleanup. The empty generic/demo jobs API is not the native execution path. See [README.md](../README.md), [MODEL_DEVELOPMENT.md](MODEL_DEVELOPMENT.md), [WORKSPACE_CLEANUP.md](WORKSPACE_CLEANUP.md), and the [v2 integration review](V2_INTEGRATION_REVIEW.md) for the implemented workflows and current limitations.
+Current implementation, reviewed 2026-09-12 on `HistoPilot-dev`. See the [development verdict](DEV_REVIEW.md) for changes, verification and remaining limitations. The [original prototype architecture](archive/ARCHITECTURE-prototype.md) is historical; its implementation status no longer describes the application.
 
-HistoPilot is a local-first, self-hosted web application. A browser UI controls a local Python service; the service owns scientific state and schedules future isolated Python workers; original WSIs stay external and generated artifacts stay on local storage.
+## Runtime and ownership
 
-The current implementation connects the UI to persisted **synthetic** cohorts and experiment drafts. It establishes real API, database, configuration, and packaging boundaries while leaving image ingestion, GPU execution, full audits, scientific artifact storage, and real evaluation unimplemented.
-
-## Five architectural rules
-
-1. **FastAPI never owns CUDA models.** GPU work happens in isolated workers.
-2. **Original WSIs are referenced, never silently copied or mutated.**
-3. **Every scientific object is versioned and every result has complete lineage.**
-4. **GUI and CLI use the same manifest/API contract.**
-5. **TRIDENT, CLAM, TorchMIL, SLURM, and other backends are adapters; none defines HistoPilot's core domain.**
-
-These rules constrain future work. The skeleton enforces the local API and persistence boundaries, but it does not claim that placeholder artifact references satisfy production lineage requirements.
-
-## Four runtime layers
+HistoPilot is a single-user, local-first research application. React owns navigation and unsaved editor state. FastAPI owns project commands, validation and scientific records. Isolated workers implement extraction, tensor validation/packing, native ABMIL development, refitting, evaluation and attention. Original pathology files remain external filesystem references.
 
 ```mermaid
 flowchart TD
-    subgraph UI[1 · Browser UI]
-        React[React / TypeScript / Vite<br/>Tailwind / Radix primitives]
-        State[TanStack Query · server cache<br/>Zustand · UI state]
-        FutureViewer[Planned: OpenSeadragon / Plotly / TanStack Table]
-    end
-    subgraph Service[2 · HistoPilot control service · no CUDA models]
-        API[FastAPI / Pydantic]
-        Application[Application services]
-        Domain[HistoPilot domain]
-        Plans[ExperimentSpec → ExecutionPlan]
-        API --> Application
-        Application --> Domain
-        Application --> Plans
-    end
-    subgraph Compute[3 · Isolated workers · planned execution]
-        Executor[Local subprocess executor]
-        PFM[TRIDENT / PFM adapter]
-        MIL[Mean / ABMIL / CLAM / TorchMIL]
-        WSI[OpenSlide / cuCIM adapter]
-        Executor --> PFM
-        Executor --> MIL
-        Executor --> WSI
-    end
-    subgraph Storage[4 · Local storage]
-        SQL[SQLite + WAL · application metadata]
-        Artifacts[Planned: Parquet / HDF5 / JSON manifests<br/>checkpoints / masks / logs / cache]
-        Analytics[Planned: DuckDB over scientific tables]
-    end
-    React -->|REST today; SSE planned| API
-    Application --> SQL
-    Plans -. submit .-> Executor
-    Compute -. generated outputs .-> Artifacts
-    Analytics -. read .-> Artifacts
-    Originals[Original WSIs outside workspace · read only] -. read by reference .-> WSI
+    UI[React interface and query cache]
+    API[FastAPI control service and typed commands]
+    Project[Project folder: manifests, indexes and artifacts]
+    Workers[Persistent isolated workers]
+    Extract[TRIDENT extraction]
+    Pack[Feature validation and packing]
+    MIL[ABMIL development and refit]
+    Infer[Evaluation and attention]
+    Sources[External tables, slides and features]
+    UI -->|authenticated REST and polling| API
+    API -->|validate and freeze| Project
+    API -->|explicit launch, cancel, resume| Workers
+    Workers --> Extract
+    Workers --> Pack
+    Workers --> MIL
+    Workers --> Infer
+    Workers -->|logs, checkpoints and validated outputs| Project
+    Sources --> API
+    Sources --> Workers
 ```
 
-The service process must not import PyTorch/TRIDENT to initialize models or discover GPUs. Current diagnostics inspect installed-package metadata without loading CUDA. Isolated NVML and backend probes are future capabilities. The worker boundary keeps device state, native-library failures, and model dependencies outside the web service.
+The service does not initialize Torch/CUDA models. Runtime checks needing ML imports execute in a separate interpreter. Source archives pin code for training and generic compute jobs, while runtime checks enforce the saved dependency contract. TRIDENT has its own runtime and native output layout.
 
-## State ownership
+The supported deployment is loopback access, optionally through port forwarding. Host, Origin and Fetch Metadata checks plus a process-local session token protect browser access. Configured filesystem roots bound source access. These controls do not implement shared-lab authentication or authorization.
 
-| Browser owns | Python service owns |
-| --- | --- |
-| Current tab, selected slide/result | Dataset identity and version |
-| Table sorting and text search | Cohort predicates and canonical membership |
-| Viewer zoom, overlay opacity, selected region | Frozen splits and feature identity |
-| Dialog visibility and unsaved form input | Model registry, validated experiment specifications, saved drafts |
-| Cached responses through TanStack Query | Job state, artifact registry, provenance |
+## Scientific workflow
 
-A cohort save sends its filter definition to the API. The server validates categorical fields against the synthetic dataset, derives membership, assigns a content-based ID, and persists the snapshot. Experiment drafts pin a saved cohort snapshot and validated server registry selections. Reloading the browser reloads these scientific records from SQLite. Browser-local sorting or zoom does not change them.
-
-The API does not accept a replacement browser workspace as scientific truth. Its export route returns stored workspace data; the client renders responses and submits bounded commands. A packaged synthetic seed in `histopilot/resources/demo_workspace.json` supplies the demo, including model descriptions. The frontend has no separate authoritative model registry.
-
-## Domain and schema boundaries
-
-```mermaid
-erDiagram
-    Project ||--o{ DatasetVersion : versions
-    DatasetVersion ||--o{ Patient : contains
-    Patient ||--o{ Specimen : has
-    Specimen ||--o{ Slide : has
-    DatasetVersion ||--o{ Cohort : defines
-    Cohort ||--o{ Split : partitions
-    DatasetVersion ||--o{ FeatureSet : describes
-    Cohort ||--o{ Experiment : selects
-    Split ||--o{ Experiment : fixes
-    FeatureSet ||--o{ Experiment : supplies
-    Experiment ||--o{ Run : executes
-    Run ||--o{ Result : produces
-```
-
-The domain records in [`histopilot/domain/`](../histopilot/domain/) contain stable IDs and artifact references, not ORM sessions, browser state, image arrays, or GPU tensors. `DatasetVersion` records sources, a content hash, and optional parent version. `FeatureSet` records encoder/checkpoint identity, covered slides, feature/coordinate locations, extraction configuration, and geometry. `Experiment` fixes cohort/split/features/MIL intent; `Run` identifies one seed/fold execution; `Result` links a run to predictions, ground truth, metrics, and optional attention.
-
-`Block`, `TissueMask`, and `PatchSet` are planned extensions between specimen, slide, and feature artifacts. They must preserve the patient identity path. The initial hierarchy does not implement those entities yet.
-
-Frozen Python dataclasses express the domain shape but do not validate foreign keys or artifact contents. Pydantic validates public command/specification schemas. SQLite currently stores metadata records for the synthetic workspace, cohorts, drafts, registry, and source references; it is not yet a complete normalized ORM implementation of every domain entity.
-
-## One GUI/CLI experiment contract
-
-Both the experiment API and CLI use `histopilot.contracts.experiment.ExperimentSpec`. The [JSON Schema](../examples/experiment.schema.json) and [example experiment specification](../examples/crc_kras/experiment-spec.json) describe the same versioned contract.
-
-```text
-GUI command / CLI JSON or YAML
-              ↓
-       ExperimentSpec
-              ↓
-      validate and resolve
-              ↓
-       ExecutionPlan
-              ↓
-       JobExecutor
-         ├─ local subprocess, first
-         ├─ SLURM, future
-         └─ container / cloud, future
-```
-
-`histopilot run ... --validate-only` validates a specification. Calling `run` without that flag reports that execution is unavailable. Likewise, the reserved job-submission API returns HTTP 501. Schema validity is not a claim that real features, labels, weights, or compatible compute are available.
-
-Keep an experiment specification distinct from the synthetic provenance example in `examples/crc_kras/manifest.json`. That older illustrative record intentionally uses `demo://` artifact references and invented metrics; it is not a training input or a verifiable run.
-
-## Ports and workers
-
-The existing PFM, MIL, WSI, and job ports remain independent of external backends. They exchange domain records and artifact references. The `ExecutionPlan` dataclass records executable/arguments, manifest URI, working directory, log destination, and GPU IDs. Future adapters will validate, plan, execute, and inspect outputs behind that boundary; add captured environment and expected-artifact metadata as real execution is implemented.
-
-The intended worker lifecycle is:
-
-1. The service validates an `ExperimentSpec`, resolves immutable input records, and writes a run manifest.
-2. A supervisor persists the job and launches a fresh Python subprocess with an explicit argument list and device assignment.
-3. Only the worker imports PyTorch, TRIDENT, model code, and compute-specific native libraries.
-4. The worker writes logs/progress and artifacts into run-specific paths; the supervisor records actual process state.
-5. Outputs are inspected, checksummed, and atomically published before the run can be declared successful.
-
-Job states reserve queued/validating/starting/running/succeeded and failure, cancellation, interrupted, and orphaned outcomes. The current empty jobs API and execution entrypoint do not implement this lifecycle. GPU scheduling, process reconciliation, cancellation, resume, heartbeats, and SSE events remain planned. A browser disconnect must not become a cancellation command when execution is implemented.
-
-Use REST for commands and reads; add SSE for status, logs, and telemetry when there is an actual worker event stream. WebSockets are reserved for a future need for bidirectional streaming.
-
-## Storage responsibilities
-
-| Storage | Role | Current status |
+| Stage | Input and persisted output | Boundary |
 | --- | --- | --- |
-| SQLite + WAL | Small transactional application records | Implemented for the local synthetic workspace and saved commands |
-| DuckDB | Analytical queries over versioned scientific tables | Planned |
-| Parquet | Patient/specimen/slide metadata, predictions, histories | Planned |
-| HDF5 | First feature/coordinate storage adapter | Planned |
-| JSON / YAML | Versioned specs, manifests, and provenance | Specification/export foundation; real artifact manifests planned |
-| Filesystem | Checkpoints, masks, thumbnails, logs, cache | Workspace organization established; scientific artifacts planned |
-| External WSI directories | Original pathology images | Restricted path references only; ingestion/reading unimplemented |
+| Datasets | Inspected CSV/XLSX, patient mapping, dictionary and slide inventory → immutable dataset | Registering a folder alone does not import data. Fallback groups remain distinguishable from verified IDs. |
+| Targets & splits | Dataset, target, eligibility and patient grouping → protocol with frozen memberships | Split seeds define memberships. Training seeds do not redraw them. ABMIL execution currently requires supported development k-fold. |
+| Slide features | Dataset and attached/extracted patch embeddings → validated inventory and frozen bundle | Bundles reference sources and optional verified packs; validation level and freshness matter. |
+| Experiments | Protocol, bundle, loading policy, recipe, resources and seeds → experiment and frozen batches | Explicit launch starts workers. Current native ABMIL is image-only; spreadsheet covariates are blocked during input review. |
+| Build predictors | Completed development evidence → fold ensemble and/or full-development refit | Refit uses an explicit epoch policy. Test evaluation does not select development checkpoints. |
+| Test cohorts | Independently selected rows and features → frozen inference cohort | Target, classes, mean patient aggregation, representation, coverage and known development overlap are checked. |
+| Evaluate models | Predictor and test cohort → predictions, metrics and execution evidence | Unlabeled inference is possible; outcome metrics use labeled records. |
+| Clinical utility | Verified evaluation predictions → descriptive report and exports | Identity provenance constrains patient grouping and independence intervals. Threshold overrides remain descriptive. |
+| Model interpretation | Predictor, compatible features, coordinates and slide source → attention artifacts and bounded views | Attention visualizes model weights; it does not establish clinical causation. |
 
-A future content-addressed feature ID should hash canonical dataset, preprocessing, encoder, and checkpoint identity. Changing an input creates a new artifact identity rather than silently reusing incompatible files. Store arrays separately from application metadata, retain patch-coordinate alignment, and avoid introducing a new feature binary format for the first adapter.
+The synthetic demo is separate and explicitly labeled. Its illustrative metrics are never fallback results for a failed local request.
 
-SQLite is a local application database, not the bulk scientific query engine. The current schema version identifies the initial metadata layout; it is not a full migration framework. See [workspace layout](workspace.md) for current and planned on-disk paths and the [API reference](api.md) for the implemented command surface.
+## Persistence and concurrency
 
-## WSI and coordinate contract
+The project folder owns `histopilot-project.json` and scientific storage. The application-wide SQLite database provides project discovery and the synthetic workspace. Scientific storage uses content identities, staged publication, journals, guarded transactions and directory synchronization. Managed paths reject symlinks and unsafe aliases. POSIX locks coordinate writers across processes; revision checks reject stale mutations.
 
-Original WSIs stay outside the workspace and are effectively read-only. Folder selection references a server directory; there is no WSI browser upload, automatic copy, or image mutation API.
+Names, tags, notes and lifecycle visibility are separate from immutable scientific contents. Archive and Trash preserve files and references. Dependency reviews and active-job checks guard cleanup; record removal does not reclaim bulk disk space. See [workspace cleanup](WORKSPACE_CLEANUP.md).
 
-**Level-0 WSI pixel coordinates are canonical.** Future patches, attention records, ROIs, and annotations should preserve `slide_id`, `x_level0`, `y_level0`, `width_level0`, `height_level0`, source level/MPP, requested MPP, and patch size. Viewer-normalized coordinates are derived display state.
+HDF5 holds native patch features/coordinates. Optional verified packs use memory-mapped arrays, a Parquet index, and JSON provenance/checksums. Dataset/result tables are saved artifacts outside the small transactional indexes. Whole-pack RAM/GPU preloading and DuckDB analytics are not implemented.
 
-The WSI port's region origin uses level-0 pixels while width/height use the requested pyramid level. An OpenSeadragon tile source will translate tile requests through a reader service; cuCIM may later provide a separate optional implementation. Real tile routes/readers are not available in this foundation.
+## Worker state and recovery
 
-Represent attention as geometry plus values linked to a run and feature set. A future Canvas/WebGL overlay can change opacity and thresholds without regenerating a giant image. The current explorer is a labeled synthetic illustration.
+1. Review resolves inputs and evidence. Freeze rechecks the reviewed revision and evidence before publication.
+2. Launch checks lifecycle eligibility, runtime/resources and request identity, and writes job-specific plans before worker submission.
+3. Workers own process records, logs, progress and checkpoints. Scheduling coordinates CPU, memory and GPU reservations. Cancellation is pending until execution stops.
+4. Lost acknowledgements require reconciliation with session/process/worker evidence. A control-service timeout must not overwrite an accepted worker's outcome.
+5. Optional progress corruption returns a warning while retaining status and cancellation. Required plan/state/result evidence stays strict. Exit zero alone does not authenticate artifacts.
+6. Result publication checks outputs. Resume reuses compatible code, inputs and checkpoints; it does not change the scientific experiment.
 
-## Local service boundary
+Execution families still use different state vocabularies. Normalizing read models and strengthening descendant-process ownership are follow-up work. tmux survives browser, SSH and service disconnection, not host shutdown; checkpoint and log durability remain essential.
 
-The supported deployment is one user, one service process, and a local workspace. The CLI holds an advisory workspace service lock; SQLite enables WAL and initializes schema version 1. Full migrations, project discovery, and interrupted-job reconciliation remain future work.
+## Browser recovery and capabilities
 
-The API checks loopback Host/port and Origin, rejects cross-site fetches, and requires a random local-session token for protected routes. No wildcard CORS is enabled. Only explicitly configured filesystem roots can be listed or registered; resolved paths and symlinks must remain within those roots, and listings are bounded. These are local browser/API protections, not a multiuser authentication system.
+TanStack Query owns cached server state. Queries are scoped by project/scientific identity. Reviewed mutation retries reuse operation IDs where supported. The transport shares session renewal, preserves structured errors and cancellation, and does not automatically replay mutations after network failure. Render boundaries retain a recovery path when a module fails.
 
-Non-loopback binding is rejected. Use SSH forwarding for a remote workstation. A future exposed lab deployment requires authentication, authorization, HTTPS, and a documented service/storage/executor setup; OIDC, PostgreSQL, and SLURM are possible adapters, not current capabilities.
+Job summaries distinguish incomplete loading, stale status, activity and completion. Numeric controls preserve editing text and reject invalid values before save/review/freeze. System information separates implemented workflows from installed runtime readiness. Legacy health `executionEnabled: false` and generic `/jobs` refer to the reserved generic/demo executor; authenticated project routes implement real execution.
 
-## Scientific invariants still to implement
+Unsaved editor input can still be lost on navigation or reload. Many workflow views are imported eagerly, leaving a large entry bundle. These limits are detailed in the [development verdict](DEV_REVIEW.md).
 
-Before any expensive job is supported, preflight must verify patient separation across partitions, unambiguous source labels, frozen memberships, complete slide and feature coverage, compatible extraction dimensions/configuration, accessible checkpoint artifacts, and available resources. Label aggregation and held-out evaluation policies must be explicit.
+## Code map
 
-Every result must resolve this graph:
-
-```text
-Result ── Run ── Experiment ── Cohort ── DatasetVersion
-           │          │           │           │
-           │          ├── Split   labels       source tables
-           │          └── FeatureSet ── PFM checkpoint + extraction settings
-           │                  └── features + level-0 coordinates ── Slide
-           │                                                        └── Specimen ── Patient
-           └── MIL checkpoint + seed/fold + code + environment + logs
-```
-
-The [OceanPath plan](oceanpath.md) identifies concrete reuse candidates. The [roadmap](roadmap.md) orders implementation around one complete and verifiable real experiment.
+| Location | Responsibility |
+| --- | --- |
+| `histopilot/api/`, `schemas/` | Local HTTP boundary and typed commands |
+| `histopilot/application/` | Scientific review/publication, experiments, execution and lifecycle |
+| `histopilot/storage/` | Durable records, integrity, locks, native/packed data and root confinement |
+| `histopilot/workers/`, `training/` | Persistent execution, archives, scheduling, fitting, inference and attention |
+| `histopilot/adapters/`, `models/`, `datasets/`, `viewer/` | Runtime integrations, ABMIL, bag loading and slide/coordinate views |
+| `web/src/api/`, `lib/`, `store/` | HTTP contracts, workflow helpers and browser selection |
+| `web/src/pages/`, `components/` | Editors, registries, viewers, controls and recovery |
+| `tests/`, `web/src/**/*.test.*`, `web/verification/` | Backend regressions, UI tests and offline interaction fixtures |

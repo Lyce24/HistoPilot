@@ -1,15 +1,22 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
 import { computeActive, computeStatusLabel, modelEvaluations, predictors, type ComputeExecution } from '../api/predictors';
 import { interpretations } from '../api/interpretation';
 import { Badge, ErrorNotice } from './ui';
 
-/** Durable jobs have one explicit action and stable operation ID across lost responses. */
-export default function ComputeJobControls({ project, id, kind, initial, readOnly = false, readOnlyReason, onComplete }: {
+type Props = {
   project: string; id: string; kind: 'refit' | 'evaluation' | 'interpretation'; initial?: ComputeExecution;
   readOnly?: boolean; readOnlyReason?: string; onComplete?: () => void;
-}) {
+};
+
+/** Requests and their retry IDs belong to exactly one compute record. */
+export default function ComputeJobControls(props: Props) {
+  return <ComputeJobState key={JSON.stringify([props.project, props.kind, props.id])} {...props} />;
+}
+
+/** Durable jobs have one explicit action and stable operation ID across lost responses. */
+function ComputeJobState({ project, id, kind, initial, readOnly = false, readOnlyReason, onComplete }: Props) {
   const client = useQueryClient();
   const queryKey = ['compute-job', project, kind, id];
   // Cleanup listings include historical status for trashed records. Their
@@ -19,11 +26,13 @@ export default function ComputeJobControls({ project, id, kind, initial, readOnl
     enabled: shouldPoll, refetchInterval: (query) => shouldPoll ? computeActive(query.state.data) ? 2000 : 10000 : false });
   const [pending, setPending] = useState<{ action: 'launch' | 'resume' | 'cancel'; operation: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const [error, setError] = useState<Error | null>(null);
   const state = shouldPoll ? job.data : initial ?? job.data;
   const active = computeActive(state);
   async function run(action: 'launch' | 'resume' | 'cancel') {
-    if (busy) return;
+    if (submitting.current || (!pending && readOnly && action !== 'cancel')) return;
+    submitting.current = true;
     const request = pending ?? { action, operation: crypto.randomUUID() };
     setPending(request); setBusy(true); setError(null);
     try {
@@ -32,16 +41,19 @@ export default function ComputeJobControls({ project, id, kind, initial, readOnl
     } catch (reason) {
       setError(reason instanceof Error ? reason : new Error('Job action failed.'));
       if (reason instanceof ApiError) setPending(null);
-    } finally { setBusy(false); }
+    } finally { submitting.current = false; setBusy(false); }
     // A failed refresh must not replay a successfully accepted action.
     void client.invalidateQueries({ queryKey: [kind === 'refit' ? 'refit-builds' : kind === 'interpretation' ? 'interpretations' : 'model-evaluations', project] });
     void client.invalidateQueries({ queryKey: ['cleanup', project] });
   }
   return <div className="compute-job-controls">
-    <p role="status"><Badge tone={state?.status === 'completed' ? 'success' : active ? 'warning' : 'neutral'}>{computeStatusLabel(state)}</Badge></p>
+    <p role="status"><Badge tone={state?.status === 'completed' ? 'success' : active ? 'warning' : 'neutral'}>{state ? computeStatusLabel(state) : job.isError ? 'Job status unavailable' : 'Checking job status…'}</Badge></p>
     {state?.progress?.epoch !== undefined ? <p>Epoch {state.progress.epoch} / {state.progress.maxEpochs}{typeof state.progress.trainingLoss === 'number' ? ` · training loss ${state.progress.trainingLoss.toFixed(4)}` : ''}</p> : null}
     {kind === 'interpretation' && state?.progress?.completedPairs !== undefined ? <p>{state.progress.completedPairs} / {state.progress.totalPairs} slide–checkpoint pairs computed{state.progress.currentSlide ? ` · current slide: ${state.progress.currentSlide}` : ''}</p> : state?.progress?.completedModels !== undefined ? <p>{state.progress.completedModels} / {state.progress.totalModels} model checkpoints evaluated{state.progress.slideCount !== undefined ? ` · ${state.progress.slideCount} slides` : ''}</p> : null}
     <ErrorNotice error={error ?? (shouldPoll ? job.error : null) ?? (state?.error ? new Error(state.error) : null)} />
+    {state?.progressWarning ? <p className="callout callout-warning" role="status">{state.progressWarning}</p> : null}
+    {shouldPoll && job.isError ? <><p className="muted">{state ? 'Showing the last loaded job status. Refresh to check the current state.' : 'Job status could not be loaded. Refresh before starting work.'}</p><button type="button" className="btn btn-secondary" disabled={job.isFetching} onClick={() => void job.refetch()}>{job.isFetching ? 'Refreshing…' : 'Retry job status'}</button></> : null}
+    {pending && !busy ? <p className="callout callout-warning" role="status">The {pending.action} response was lost. The request may already have been accepted. Retry uses the same request and operation ID.</p> : null}
     <div className="inline-actions">
       {pending && !busy ? <button className="btn btn-secondary" onClick={() => void run(pending.action)}>Retry {pending.action} request</button> : null}
       {!pending && !readOnly && state?.status === 'not_started' ? <button className="btn btn-primary" disabled={busy || job.isError} onClick={() => void run('launch')}>{kind === 'refit' ? 'Train refit model' : kind === 'interpretation' ? 'Compute slide attention' : 'Run evaluation'}</button> : null}

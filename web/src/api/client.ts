@@ -31,6 +31,14 @@ export class ApiError extends Error {
     this.name = 'ApiError';
   }
 }
+/** Transport failures do not prove server rejection. Keep them distinct from
+ * ApiError so reviewed mutation UIs retain their original retry operation ID. */
+class ServiceResponseError extends Error {
+  constructor(message: string, public readonly status: number, public readonly code: string) {
+    super(message);
+    this.name = 'ServiceResponseError';
+  }
+}
 async function responseError(response: Response): Promise<ApiError> {
   let message = `The control service returned HTTP ${response.status}.`;
   let code: string | undefined;
@@ -40,28 +48,88 @@ async function responseError(response: Response): Promise<ApiError> {
     if (typeof body.detail === 'string') message = body.detail;
     else if (Array.isArray(body.detail))
       message = body.detail
-        .map((item: { msg?: string }) => item.msg ?? 'Invalid request')
+        .map((item: { msg?: string; loc?: (string | number)[] } | null) => {
+          const field = item?.loc?.filter((part) => part !== 'body').join('.');
+          return `${field ? `${field}: ` : ''}${item?.msg ?? 'Invalid request'}`;
+        })
         .join('; ');
   } catch {
     /* A proxy may return a non-JSON error page. */
   }
   return new ApiError(message, response.status, code);
 }
+async function serviceFetch(path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${BASE}${path}`, {
+      ...init, credentials: 'same-origin', cache: 'no-store',
+    });
+  } catch (error) {
+    if (init.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw error;
+    const mutation = !['GET', 'HEAD'].includes((init.method ?? 'GET').toUpperCase());
+    throw new ServiceResponseError(
+      'Could not reach HistoPilot. Check that the server is running and your connection is available.'
+        + (mutation ? ' The request may have reached the server; check the saved record or job status before retrying.' : ''),
+      0, 'SERVICE_UNREACHABLE',
+    );
+  }
+}
+async function responseJSON<T>(response: Response, init: RequestInit = {}): Promise<T> {
+  try {
+    return await response.json() as T;
+  } catch (error) {
+    if (init.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw error;
+    const mutation = !['GET', 'HEAD'].includes((init.method ?? 'GET').toUpperCase());
+    throw new ServiceResponseError(
+      'HistoPilot returned an unreadable response. Check the server log and connection.'
+        + (mutation ? ' The request may have reached the server; check the saved record or job status before retrying.' : ''),
+      response.status, 'INVALID_SERVICE_RESPONSE',
+    );
+  }
+}
 function sessionDetails(): Promise<Session> {
   if (!session) {
-    session = fetch(`${BASE}/session`, { credentials: 'same-origin', cache: 'no-store' })
+    const pending = serviceFetch('/session', {})
       .then(async (response) => {
         if (!response.ok) throw await responseError(response);
-        const body: Session = await response.json();
-        if (!body.token) throw new ApiError('The service did not return a session token.', 401);
+        const body = await responseJSON<Session | null>(response);
+        if (typeof body?.token !== 'string' || !body.token.trim()) {
+          throw new ApiError('The service did not return a valid session token.', 401);
+        }
         return body;
       })
       .catch((error) => {
-        session = null;
+        if (session === pending) session = null;
         throw error;
       });
+    session = pending;
   }
   return session;
+}
+async function authenticatedResponse(
+  path: string,
+  init: RequestInit = {},
+  retrySession = true,
+  scientificCapability?: ScientificCapability,
+): Promise<Response> {
+  init.signal?.throwIfAborted();
+  const pending = sessionDetails();
+  const activeSession = await pending;
+  init.signal?.throwIfAborted();
+  if (scientificCapability && !activeSession.scientificCapabilities?.[scientificCapability]) {
+    if (session === pending) session = null;
+    throw new ApiError(SCIENTIFIC_SAVE_RESTART, 405);
+  }
+  const headers = new Headers(init.headers);
+  headers.set('X-HistoPilot-Token', activeSession.token);
+  if (init.body) headers.set('Content-Type', 'application/json');
+  const response = await serviceFetch(path, { ...init, headers });
+  if (response.status === 401 && retrySession) {
+    // A late 401 from another request must not discard an already renewed session.
+    if (session === pending) session = null;
+    return authenticatedResponse(path, init, false, scientificCapability);
+  }
+  if (!response.ok) throw await responseError(response);
+  return response;
 }
 /** Always use the service session; no scientific fallback data lives in the browser. */
 export async function request<T>(
@@ -70,45 +138,21 @@ export async function request<T>(
   retrySession = true,
   scientificCapability?: ScientificCapability,
 ): Promise<T> {
-  const activeSession = await sessionDetails();
-  if (scientificCapability && !activeSession.scientificCapabilities?.[scientificCapability]) {
-    session = null;
-    throw new ApiError(SCIENTIFIC_SAVE_RESTART, 405);
-  }
-  const headers = new Headers(init.headers);
-  headers.set('X-HistoPilot-Token', activeSession.token);
-  if (init.body) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers,
-    credentials: 'same-origin',
-    cache: 'no-store',
-  });
-  if (response.status === 401 && retrySession) {
-    session = null;
-    return request<T>(path, init, false, scientificCapability);
-  }
-  if (!response.ok) throw await responseError(response);
+  const response = await authenticatedResponse(path, init, retrySession, scientificCapability);
   if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  return responseJSON<T>(response, init);
 }
 const SCIENTIFIC_SAVE_RESTART = 'The running HistoPilot server does not support this save. Restart HistoPilot, then try saving again here. Your entered tag and note have been kept; you do not need to reload this page.';
 
 /** Load viewer images with the same session authentication as JSON and downloads. */
 export async function fetchArtifactBlob(path: string, signal?: AbortSignal, retrySession = true): Promise<Blob> {
-  const activeSession = await sessionDetails();
-  const response = await fetch(`${BASE}${path}`, { headers: { 'X-HistoPilot-Token': activeSession.token }, credentials: 'same-origin', cache: 'no-store', signal });
-  if (response.status === 401 && retrySession) { session = null; return fetchArtifactBlob(path, signal, false); }
-  if (!response.ok) throw await responseError(response);
+  const response = await authenticatedResponse(path, { signal }, retrySession);
   return response.blob();
 }
 
 /** Download a verified artifact using the same session authentication as JSON APIs. */
 export async function downloadArtifact(path: string, filename: string, retrySession = true): Promise<void> {
-  const activeSession = await sessionDetails();
-  const response = await fetch(`${BASE}${path}`, { headers: { 'X-HistoPilot-Token': activeSession.token }, credentials: 'same-origin', cache: 'no-store' });
-  if (response.status === 401 && retrySession) { session = null; return downloadArtifact(path, filename, false); }
-  if (!response.ok) throw await responseError(response);
+  const response = await authenticatedResponse(path, {}, retrySession);
   const url = URL.createObjectURL(await response.blob());
   const link = document.createElement('a');
   link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove();

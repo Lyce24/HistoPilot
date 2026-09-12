@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import type { EvaluationPreview } from '../api/evaluation';
-import LocalEvaluationSetup, { EvaluationEvidence, EvaluationTargetMapping, evaluationConditionValue, evaluationLabelProblem, newEvaluationSpec } from './LocalEvaluationSetup';
+import LocalEvaluationSetup, { EvaluationEvidence, EvaluationInferenceFields, EvaluationTargetMapping, evaluationConditionValue, evaluationLabelProblem, newEvaluationSpec } from './LocalEvaluationSetup';
 
 const preview: EvaluationPreview = {
   spec: newEvaluationSpec(),
@@ -17,6 +17,23 @@ const preview: EvaluationPreview = {
 };
 
 describe('later test cohort setup', () => {
+  it('requires explicit numeric inference values, including zero workers and threshold boundaries', () => {
+    const html = renderToStaticMarkup(<EvaluationInferenceFields value={{ ...newEvaluationSpec().inference, numWorkers: 0, decisionThreshold: 0 }} target={preview.target!} onChange={() => {}} />);
+    expect(html.match(/<input[^>]*required=""/g)).toHaveLength(3);
+    expect(html.match(/<input[^>]*inputMode="numeric"/g)).toHaveLength(2);
+    expect(html).toMatch(/<input[^>]*inputMode="decimal"[^>]*value="0"/);
+    expect(html).not.toContain('type="number"');
+  });
+
+  it('offers supported patient aggregation and identifies incompatible saved settings without changing them', () => {
+    const current = renderToStaticMarkup(<EvaluationInferenceFields value={newEvaluationSpec().inference} target={preview.target!} onChange={() => {}} />);
+    expect(current).toContain('Mean probabilities');
+    expect(current).not.toContain('value="max"');
+    const legacy = renderToStaticMarkup(<EvaluationInferenceFields value={{ ...newEvaluationSpec().inference, patientAggregation: 'max' }} target={preview.target!} onChange={() => {}} />);
+    expect(legacy).toMatch(/<option value="max" disabled="" selected="">Maximum probabilities · unsupported; choose mean/);
+    expect(legacy).toContain('match the patient aggregation used by frozen predictors');
+  });
+
   it('allows cohort preparation with no trained models and does not introduce split or run controls', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: [] });

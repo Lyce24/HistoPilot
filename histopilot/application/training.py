@@ -26,6 +26,7 @@ from histopilot.workers.training_process import (
     now,
     process_alive,
     read_json,
+    read_progress,
     resource_plan,
     save_state,
 )
@@ -91,9 +92,11 @@ class TrainingService:
         state["cancelRequested"] = (folder / "cancel.json").exists()
         if include_progress:
             for run in state["runs"]:
-                progress = folder / "runs" / run["id"] / "progress.json"
-                if progress.exists():
-                    run["progress"] = read_json(progress)
+                progress, warning = read_progress(folder / "runs" / run["id"] / "progress.json")
+                if progress is not None or warning:
+                    run["progress"] = progress
+                if warning:
+                    run["progressWarning"] = warning
         return state
 
     def list(self, *, include_inactive=False):
@@ -435,6 +438,28 @@ class TrainingService:
                     package_root=package_root,
                 )
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                # tmux can create its session before a timeout loses the reply.
+                # The worker owns active state; never overwrite evidence it wrote.
+                try:
+                    session_running = self.executor.running(session)
+                    # Session inspection may block while the worker finishes.
+                    # Read its evidence afterwards, not before the tmux probe.
+                    current = read_json(folder / "state.json")
+                    started = (
+                        session_running
+                        or current.get("process") is not None
+                        or any(process_alive(run.get("process")) for run in current["runs"])
+                        or current["status"] not in ACTIVE
+                    )
+                except (OSError, RuntimeError, subprocess.SubprocessError) as inspection_error:
+                    raise StorageError(
+                        "Launch acknowledgement was lost. Check execution status before retrying.",
+                        "TRAINING_LAUNCH_UNCERTAIN",
+                    ) from inspection_error
+                if started:
+                    operations[operation_id] = action
+                    write_json(path, operations)
+                    return self.execution(identity)
                 state.update(
                     status="failed",
                     findings=[

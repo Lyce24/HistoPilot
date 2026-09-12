@@ -605,7 +605,22 @@ class ExtractionService:
                 )
                 job["state"] = "running"
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                job["state"], job["error"] = "failed", f"Could not start TRIDENT: {error}"
+                try:
+                    started = (
+                        self.executor.running(job["sessionName"])
+                        or self._live_process(folder)
+                        or (folder / "result.json").exists()
+                    )
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    job["state"] = "starting"
+                    job["error"] = (
+                        "Launch acknowledgement was lost. Check worker status before retrying."
+                    )
+                else:
+                    if started:
+                        job["state"] = "running"
+                    else:
+                        job["state"], job["error"] = "failed", f"Could not start TRIDENT: {error}"
             _write(folder / "job.json", job)
         return self.get(identity)
 

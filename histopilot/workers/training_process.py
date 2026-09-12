@@ -272,10 +272,119 @@ def now() -> str:
 
 
 def read_json(path: Path) -> dict:
-    value = json.loads(ScientificStore._read_file(path, 64 * 1024 * 1024))
-    if not isinstance(value, dict):
-        raise StorageError("Invalid training metadata.", "TRAINING_STATE_INVALID")
-    return value
+    content = ScientificStore._read_file(path, 64 * 1024 * 1024)
+
+    def finite_number(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("Metadata numbers must be finite.")
+        return number
+
+    try:
+        value = json.loads(content, parse_float=finite_number, parse_constant=finite_number)
+        if not isinstance(value, dict):
+            raise ValueError("Expected a JSON object.")
+        # The decoder may accept nesting that later exhausts FastAPI's recursive
+        # response encoder. Inspect iteratively, keeping only one iterator per
+        # level so wide metadata arrays do not create another large work list.
+        pending = [(iter(value.values()), 1)]
+        while pending:
+            children, depth = pending[-1]
+            try:
+                child = next(children)
+            except StopIteration:
+                pending.pop()
+                continue
+            if isinstance(child, (dict, list)):
+                if depth >= 64:
+                    raise ValueError("Metadata exceeds its nesting limit.")
+                pending.append(
+                    (iter(child.values() if isinstance(child, dict) else child), depth + 1)
+                )
+        return value
+    except (ValueError, UnicodeError, RecursionError) as error:
+        raise StorageError("Invalid training metadata.", "TRAINING_STATE_INVALID") from error
+
+
+def read_progress(path: Path) -> tuple[dict | None, str | None]:
+    """Optional telemetry must not hide a job's durable state or prevent cancellation."""
+    try:
+        _reject_symlink_components(path)
+        if not path.exists():
+            return None, None
+        value = read_json(path)
+        if not value:
+            return None, None  # An empty snapshot has no reported progress yet.
+        _validate_progress(value)
+        return value, None
+    except (OSError, ValueError, OverflowError):
+        return None, (
+            "Progress details are unavailable because the progress file is invalid or cannot be read safely. "
+            "Job status and cancellation remain available."
+        )
+
+
+def _validate_progress(value: dict) -> None:
+    """Validate displayed fields while permitting future, unrecognized telemetry."""
+    counters = {
+        "epoch",
+        "maxEpochs",
+        "globalStep",
+        "step",
+        "completedModels",
+        "totalModels",
+        "completedPairs",
+        "totalPairs",
+        "completedSlides",
+        "totalSlides",
+        "slideCount",
+        "cudaPeakAllocatedBytes",
+        "cudaPeakReservedBytes",
+    }
+    for key in counters & value.keys():
+        if type(value[key]) is not int or value[key] < 0:
+            raise ValueError(f"Invalid progress counter: {key}")
+    for key in {"completed", "total"} & value.keys():
+        if value[key] is not None and (type(value[key]) is not int or value[key] < 0):
+            raise ValueError(f"Invalid progress counter: {key}")
+    for key in {"trainingLoss", "learningRate", "percent"} & value.keys():
+        number = value[key]
+        if number is None and key != "learningRate":
+            continue
+        if type(number) not in {int, float} or not math.isfinite(number):
+            raise ValueError(f"Invalid progress number: {key}")
+    for key in {"stage", "unit", "updatedAt", "currentSlide"} & value.keys():
+        if value[key] is None and key == "currentSlide":
+            continue
+        if not isinstance(value[key], str):
+            raise ValueError(f"Invalid progress text: {key}")
+    validation = value.get("validation")
+    if validation is None:
+        return  # Refits have no validation partition.
+    if not isinstance(validation, dict):
+        raise ValueError("Invalid progress validation metrics.")
+    for key in {
+        "loss",
+        "accuracy",
+        "auroc",
+        "auprc",
+        "balancedAccuracy",
+        "macroF1",
+    } & validation.keys():
+        number = validation[key]
+        if number is not None and (type(number) not in {int, float} or not math.isfinite(number)):
+            raise ValueError(f"Invalid validation metric: {key}")
+    if "count" in validation and (type(validation["count"]) is not int or validation["count"] < 0):
+        raise ValueError("Invalid validation count.")
+    if "available" in validation and type(validation["available"]) is not bool:
+        raise ValueError("Invalid validation availability.")
+    if "reason" in validation and not isinstance(validation["reason"], str):
+        raise ValueError("Invalid validation reason.")
+    if "missingClasses" in validation and (
+        not isinstance(validation["missingClasses"], list)
+        or any(not isinstance(item, str) for item in validation["missingClasses"])
+    ):
+        raise ValueError("Invalid validation class labels.")
 
 
 def process_identity(pid: int | None = None) -> dict:

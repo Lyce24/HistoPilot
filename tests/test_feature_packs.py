@@ -85,6 +85,34 @@ def complete(service, executor, job):
     return result
 
 
+@pytest.mark.parametrize("content", ["{", "[]"])
+def test_optional_progress_cannot_block_packing_cancellation(packing, content):
+    service, spec, _executor, _source = packing
+    job = submit(service, spec)
+    (service.folder / job["id"] / "progress.json").write_text(content)
+    shown = service.get(job["id"])
+    assert shown["state"] == "running"
+    assert shown["progress"] is None and shown["progressWarning"]
+    assert service.cancel(job["id"])["state"] == "cancelling"
+
+
+def test_lost_launch_acknowledgement_keeps_packing_job_active(packing, monkeypatch):
+    service, spec, executor, _source = packing
+    original = executor.launch
+
+    def launch_then_timeout(*args, **kwargs):
+        original(*args, **kwargs)
+        raise TimeoutError("Lost acknowledgement")
+
+    monkeypatch.setattr(executor, "launch", launch_then_timeout)
+    preview = service.preview(spec)
+    job = service.submit(spec, preview["previewHash"], "operation")
+    assert job["state"] == "running"
+    assert service.cancel(job["id"])["state"] == "cancelling"
+    assert service.submit(spec, preview["previewHash"], "operation")["id"] == job["id"]
+    assert len(executor.launches) == 1
+
+
 def test_preview_is_stable_and_submission_is_idempotent(packing):
     service, spec, executor, source = packing
     preview = service.preview(spec)

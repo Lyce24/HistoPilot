@@ -157,3 +157,91 @@ def test_lost_launch_acknowledgement_preserves_running_session(job, monkeypatch)
     assert service.launch(identity, plan, "launch")["status"] == "queued"
     assert service.launch(identity, plan, "launch")["status"] == "queued"
     assert len(executor.calls) == 1
+
+
+@pytest.mark.parametrize("corruption", ["json", "shape", "symlink", "nonfinite", "overflow"])
+def test_optional_progress_cannot_block_status_or_cancellation(job, corruption):
+    service, identity, plan, executor = job
+    service.launch(identity, plan, "launch")
+    folder = service.folder(identity)
+    progress = folder / "progress.json"
+    if corruption == "symlink":
+        progress.symlink_to(folder / "state.json")
+    else:
+        progress.write_text(
+            {
+                "json": "{",
+                "shape": "[]",
+                "nonfinite": '{"loss": NaN}',
+                "overflow": '{"loss": 1e999}',
+            }[corruption]
+        )
+    state = service.status(identity)
+    assert state["status"] == "queued"
+    assert state["progress"] is None and state["progressWarning"]
+    assert service.cancel(identity, "cancel")["cancellationRequested"]
+    executor.sessions.clear()
+    assert service.status(identity)["status"] == "cancelled"
+
+
+def test_corrupt_authoritative_state_remains_a_structured_error(job):
+    service, identity, plan, _executor = job
+    service.launch(identity, plan, "launch")
+    (service.folder(identity) / "state.json").write_text("{")
+    with pytest.raises(StorageError) as error:
+        service.status(identity)
+    assert error.value.code == "TRAINING_STATE_INVALID"
+
+
+def test_lost_acknowledgement_preserves_fast_worker_completion(job, monkeypatch):
+    service, identity, plan, executor = job
+
+    def finish_then_timeout(*_args, **_kwargs):
+        folder = service.folder(identity)
+        state = read_json(folder / "state.json")
+        result = {"state": "succeeded", "runId": identity}
+        state.update(
+            status="completed",
+            result=result,
+            process={"pid": 2147483000, "startTicks": 1, "bootId": "old-boot"},
+        )
+        write_json(folder / "result.json", result)
+        write_json(folder / "state.json", state)
+        raise TimeoutError("Lost acknowledgement")
+
+    monkeypatch.setattr(executor, "launch", finish_then_timeout)
+    assert service.launch(identity, plan, "launch")["status"] == "completed"
+    assert service.status(identity)["status"] == "completed"
+
+
+def test_worker_completion_during_session_probe_is_not_overwritten(job, monkeypatch):
+    service, identity, plan, executor = job
+    pending_probe = False
+
+    def launch_then_timeout(*_args, **_kwargs):
+        nonlocal pending_probe
+        pending_probe = True
+        raise TimeoutError("Lost acknowledgement")
+
+    def inspect(_session):
+        nonlocal pending_probe
+        if pending_probe:
+            pending_probe = False
+            folder = service.folder(identity)
+            state = read_json(folder / "state.json")
+            result = {"state": "succeeded", "runId": identity}
+            state.update(
+                status="completed",
+                result=result,
+                process={"pid": 2147483000, "startTicks": 1, "bootId": "old-boot"},
+            )
+            write_json(folder / "result.json", result)
+            write_json(folder / "state.json", state)
+        return False
+
+    monkeypatch.setattr(executor, "launch", launch_then_timeout)
+    monkeypatch.setattr(executor, "running", inspect)
+    shown = service.launch(identity, plan, "launch")
+    assert shown["status"] == "completed"
+    assert service.launch(identity, plan, "launch")["status"] == "completed"
+    assert read_json(service.folder(identity) / "state.json") == shown

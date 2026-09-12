@@ -46,7 +46,7 @@ TARGET = {
 }
 
 
-def dataset(store, operation="dataset", rows=None):
+def dataset(store, operation="dataset", rows=None, inventory=None):
     if rows is None:
         rows = [
             {
@@ -71,17 +71,30 @@ def dataset(store, operation="dataset", rows=None):
                 for key in ("label", "cohort")
             ],
         },
-        artifacts={"records.json": json.dumps(rows).encode()},
+        artifacts={
+            "records.json": json.dumps(rows).encode(),
+            **({"inventory.json": json.dumps(inventory).encode()} if inventory is not None else {}),
+        },
     )
     return document, rows
 
 
-def bundle(store, root, data, ids, name="features", dimension=4, encoder="uni_v1", pack=False):
+def bundle(
+    store,
+    root,
+    data,
+    ids,
+    name="features",
+    dimension=4,
+    encoder="uni_v1",
+    pack=False,
+    dtype="float32",
+):
     source = root / name
     source.mkdir()
     for identity in ids:
         with h5py.File(source / f"{identity}.h5", "w") as handle:
-            handle.create_dataset("features", data=np.ones((3, dimension), dtype="float32"))
+            handle.create_dataset("features", data=np.ones((3, dimension), dtype=dtype))
             handle.create_dataset("coords", data=np.ones((3, 2), dtype="int64"))
     filesystem = LocalFilesystem((root,))
     features = FeatureService(store, filesystem)
@@ -280,6 +293,71 @@ def test_slide_overlap_cannot_be_bypassed_with_patient_namespace(evaluation):
     assert {"DEVELOPMENT_SLIDE_OVERLAP", "SHARED_PATIENT_NAMESPACE"} <= codes(result)
 
 
+@pytest.mark.parametrize("alias", ["canonical_path", "hardlink", "independent", "unused"])
+def test_cross_import_slide_source_aliases_cannot_bypass_development_overlap(evaluation, alias):
+    service, spec, _source = evaluation
+    development_rows = [
+        {
+            "slideId": "s0",
+            "patientId": "p0",
+            "slidePath": "/slides/development.svs",
+            "attributes": {"label": "0"},
+        },
+        {
+            "slideId": "s1",
+            "patientId": "p1",
+            "slidePath": "/slides/unused.svs",
+            "attributes": {"label": "1"},
+        },
+    ]
+    stamp = {"device": 1, "inode": 100, "sizeBytes": 4096, "mtimeNs": 1234}
+    development_data, _ = dataset(
+        service.store,
+        "source-development",
+        development_rows,
+        [{"path": development_rows[0]["slidePath"], **stamp}],
+    )
+    protocol = service.store.publish_configuration(
+        manifest={
+            "kind": "protocol",
+            "datasetId": development_data["id"],
+            "spec": {"target": TARGET, "split": {"version": 4}},
+            "memberships": [{"slideId": "s0", "patientId": "p0", "partition": "train"}],
+        },
+        operation_id="source-protocol",
+    )
+    evaluation_path = {
+        "canonical_path": "/slides/development.svs",
+        "unused": "/slides/unused.svs",
+    }.get(alias, "/external/renamed.svs")
+    test_rows = [
+        {
+            "slideId": "s2",
+            "patientId": "p2",
+            "slidePath": evaluation_path,
+            "attributes": {"label": "0", "cohort": "test"},
+        }
+    ]
+    test_stamp = stamp if alias == "hardlink" else {**stamp, "inode": 101}
+    test_data, _ = dataset(
+        service.store,
+        "source-evaluation",
+        test_rows,
+        [{"path": evaluation_path, **test_stamp}],
+    )
+    spec.update(
+        protocolId=protocol["id"], datasetId=test_data["id"], patientIdentifiers="independent"
+    )
+    result = preview(service, spec)
+    if alias in {"canonical_path", "hardlink"}:
+        assert not result["canFreeze"]
+        assert "DEVELOPMENT_SLIDE_SOURCE_OVERLAP" in codes(result)
+        assert result["overlap"]["sourceSlideIds"] == ["s2"]
+    else:
+        assert result["canFreeze"], result["findings"]
+        assert "sourceSlideIds" not in result["overlap"]
+
+
 @pytest.mark.parametrize(
     "change", [{"classes": ["high", "low"]}, {"positiveClass": "low"}, {"unit": "slide"}]
 )
@@ -394,6 +472,26 @@ def test_distinct_feature_sources_must_match_representation(
     )
     spec["featureBundleId"] = features["id"]
     assert expected in codes(preview(service, spec))
+
+
+def test_cohort_blocks_dtype_mismatch_before_freezing(evaluation, tmp_path):
+    service, spec, _source = evaluation
+    data = service.store.get_dataset(spec["datasetId"])
+    features, _pack_id, _source = bundle(
+        service.store, tmp_path, data, ["s2", "s3"], name="half-features", dtype="float16"
+    )
+    spec["featureBundleId"] = features["id"]
+    result = preview(service, spec)
+    assert not result["canFreeze"]
+    assert "FEATURE_DTYPE_MISMATCH" in codes(result)
+
+
+def test_cohort_blocks_unsupported_patient_aggregation_before_freezing(evaluation):
+    service, spec, _source = evaluation
+    spec["inference"] = {"patientAggregation": "max"}
+    result = preview(service, spec)
+    assert not result["canFreeze"]
+    assert "PATIENT_AGGREGATION_UNSUPPORTED" in codes(result)
 
 
 def test_stale_bundle_and_freeze_race_are_blocked(evaluation, monkeypatch):

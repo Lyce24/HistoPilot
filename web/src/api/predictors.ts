@@ -44,6 +44,7 @@ export interface EvaluationMetrics extends TrainingMetricDetails {
   selected: TrainingMetrics & { predictionCount?: number; unlabeledCount?: number };
 }
 export interface ComputeExecution {
+  progressWarning?: string | null;
   status: 'not_started' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   cancellationRequested?: boolean; error?: string | null; sessionName?: string; logPath?: string; updatedAt?: string;
   result?: { metrics?: EvaluationMetrics; [key: string]: unknown } | null;

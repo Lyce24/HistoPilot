@@ -48,7 +48,7 @@ export interface EvaluationPreview {
     missingPackSlideIds: string[];
     packChecked: boolean;
   };
-  overlap: { slideIds: string[]; patientIds: string[]; patientsComparable: boolean };
+  overlap: { slideIds: string[]; patientIds: string[]; patientsComparable: boolean; sourceSlideIds?: string[] };
   compatibility: {
     development: { dimensions: number | null; encoderId: string | null };
     evaluation: { dimensions: number | null; encoderId: string | null };

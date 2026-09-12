@@ -100,6 +100,7 @@ export interface FeaturePackSelection {
 export type FeaturePackState = 'starting' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
 
 export interface FeaturePackJob {
+  progressWarning?: string | null;
   id: string;
   state: FeaturePackState;
   spec: FeaturePackSpec;

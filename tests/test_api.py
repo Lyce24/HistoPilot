@@ -88,6 +88,22 @@ def test_health_is_minimal_and_sensitive_routes_require_token(settings):
         assert client.post(f"{API}/jobs").status_code == 401
 
 
+def test_system_distinguishes_implemented_workers_from_trident_readiness(client, monkeypatch):
+    monkeypatch.setattr("histopilot.api.app.discover_runtime", lambda: {"available": False})
+    monkeypatch.setattr("histopilot.api.app.TmuxExtractionExecutor.available", lambda _self: True)
+    authenticate(client)
+    response = client.get(f"{API}/system")
+    assert response.status_code == 200
+    report = response.json()
+    assert report["workers"]["executionEnabled"] is False
+    assert report["workers"]["nativeExecutionImplemented"] is True
+    assert report["workers"]["tmuxAvailable"] is True
+    assert "check runtime readiness" in report["workers"]["status"]
+    assert "not connected" not in report["workers"]["status"]
+    assert report["diagnostics"]["compute"]["scope"] == "control-service"
+    assert report["control"]["cudaModelsLoaded"] is False
+
+
 @pytest.mark.parametrize(
     "headers,status",
     [

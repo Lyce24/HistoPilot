@@ -8,6 +8,94 @@ const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
 describe('control service client', () => {
+  it('shares renewal when an old JSON or image request returns 401 after a newer session exists', async () => {
+    let rejectImage!: (response: Response) => void;
+    const delayedImage = new Promise<Response>((resolve) => { rejectImage = resolve; });
+    const fetcher = vi.fn().mockImplementation(async (url: string, init: RequestInit) => {
+      if (url.endsWith('/session')) return json({ token: fetcher.mock.calls.filter(([path]) => path.endsWith('/session')).length === 1 ? 'old' : 'new' });
+      const token = new Headers(init.headers).get('X-HistoPilot-Token');
+      if (token === 'new') return url.endsWith('/image') ? new Response('image') : json({ ok: true });
+      return url.endsWith('/image') ? delayedImage : json({ detail: 'Expired' }, 401);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const { request, fetchArtifactBlob } = await import('./client');
+    const image = fetchArtifactBlob('/image');
+    await expect(request('/workspace')).resolves.toEqual({ ok: true });
+    rejectImage(json({ detail: 'Expired' }, 401));
+    expect(await (await image).text()).toBe('image');
+    expect(fetcher.mock.calls.filter(([path]) => path.endsWith('/session'))).toHaveLength(2);
+  });
+
+  it('does not replay a mutation after a lost connection and explains the uncertain outcome', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' }))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetcher);
+    const { request } = await import('./client');
+    await expect(request('/launch', { method: 'POST', body: '{}' })).rejects.toMatchObject({
+      status: 0, code: 'SERVICE_UNREACHABLE', message: expect.stringContaining('check the saved record or job status before retrying'),
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['connection', 'json'])('keeps an uncertain %s failure distinct from server rejection so the UI retains its operation ID', async (failure) => {
+    const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' }));
+    if (failure === 'connection') fetcher.mockRejectedValueOnce(new TypeError('Response lost'));
+    else fetcher.mockResolvedValueOnce(new Response('<html>Response lost</html>'));
+    vi.stubGlobal('fetch', fetcher);
+    const { ApiError, request } = await import('./client');
+    const error = await request('/launch', { method: 'POST', body: '{"operationId":"keep-me"}' }).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ApiError);
+    expect(error).toHaveProperty('message', expect.stringContaining('check the saved record or job status before retrying'));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('can retry session bootstrap after a connection failure', async () => {
+    const fetcher = vi.fn().mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(json({ token: 'session' })).mockResolvedValueOnce(json({ ok: true }));
+    vi.stubGlobal('fetch', fetcher);
+    const { request } = await import('./client');
+    await expect(request('/workspace')).rejects.toMatchObject({ code: 'SERVICE_UNREACHABLE' });
+    await expect(request('/workspace')).resolves.toEqual({ ok: true });
+  });
+
+  it.each([null, {}, { token: 123 }, { token: ' ' }])('rejects an invalid session payload: %j', async (payload) => {
+    const fetcher = vi.fn().mockResolvedValueOnce(json(payload));
+    vi.stubGlobal('fetch', fetcher);
+    const { request } = await import('./client');
+    await expect(request('/workspace')).rejects.toMatchObject({ status: 401, message: 'The service did not return a valid session token.' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('explains a successful HTTP response containing an HTML proxy page', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json({ token: 'session' }))
+      .mockResolvedValueOnce(new Response('<html>Proxy</html>')));
+    const { request } = await import('./client');
+    await expect(request('/workspace')).rejects.toMatchObject({ code: 'INVALID_SERVICE_RESPONSE', message: expect.stringContaining('unreadable response') });
+  });
+
+  it('preserves cancellation and does not fetch for a request cancelled during session bootstrap', async () => {
+    const controller = new AbortController();
+    let finishSession!: (response: Response) => void;
+    const fetcher = vi.fn().mockReturnValueOnce(new Promise<Response>((resolve) => { finishSession = resolve; }));
+    vi.stubGlobal('fetch', fetcher);
+    const { request } = await import('./client');
+    const pending = request('/workspace', { signal: controller.signal });
+    controller.abort();
+    finishSession(json({ token: 'session' }));
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await expect(request('/workspace', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the invalid form field when FastAPI supplies a validation location', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json({ token: 'session' }))
+      .mockResolvedValueOnce(json({ detail: [{ loc: ['body', 'resources', 'workers'], msg: 'Must be an integer' }] }, 422)));
+    const { request } = await import('./client');
+    await expect(request('/preview')).rejects.toMatchObject({ message: 'resources.workers: Must be an integer' });
+  });
+
   it('shares session bootstrap and authenticates both reads and mutations', async () => {
     const fetcher = vi
       .fn()

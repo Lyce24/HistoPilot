@@ -45,7 +45,7 @@ describe('experiment predictor and evaluation API contracts', () => {
       .mockResolvedValueOnce(response(saved));
     vi.stubGlobal('fetch', fetcher);
     const { predictors } = await import('./predictors');
-    await expect(predictors.freeze('project', selected, 'review-hash', 'stable-operation')).rejects.toThrow('Response lost');
+    await expect(predictors.freeze('project', selected, 'review-hash', 'stable-operation')).rejects.toMatchObject({ status: 0, code: 'SERVICE_UNREACHABLE' });
     expect(fetcher.mock.calls).toHaveLength(2);
     expect(await predictors.freeze('project', selected, 'review-hash', 'stable-operation')).toEqual(saved);
     expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[2][1].body);

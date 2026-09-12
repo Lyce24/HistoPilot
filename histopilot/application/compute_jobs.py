@@ -31,6 +31,7 @@ from histopilot.workers.training_process import (
     now,
     process_identity,
     read_json,
+    read_progress,
 )
 
 
@@ -137,14 +138,17 @@ class ComputeJobService:
         plan = read_json(folder / "plan.json")
         if _hash(plan) != state.get("planHash"):
             raise StorageError("The saved execution plan changed.", "COMPUTE_PLAN_CHANGED")
+        cancellation_requested = (folder / "cancel.requested").exists()
         live_processes = job_processes(state)
         live = bool(live_processes)
         if state["status"] in {"queued", "running"} and not live:
             if not self.executor.running(state["sessionName"]):
                 state = {
                     **state,
-                    "status": "interrupted",
-                    "error": "The compute worker stopped. Resume to continue from saved work.",
+                    "status": "cancelled" if cancellation_requested else "interrupted",
+                    "error": "The compute worker stopped after cancellation was requested."
+                    if cancellation_requested
+                    else "The compute worker stopped. Resume to continue from saved work.",
                 }
         elif live and state["status"] not in {"queued", "running"}:
             # A receipt does not prove its writer has exited.
@@ -157,13 +161,13 @@ class ComputeJobService:
                 or result.get("state") != "succeeded"
             ):
                 raise StorageError("Compute result evidence changed.", "COMPUTE_RESULT_CHANGED")
+        progress, warning = read_progress(folder / "progress.json")
         return {
             **state,
             "liveProcesses": live_processes,
-            "progress": read_json(folder / "progress.json")
-            if (folder / "progress.json").exists()
-            else None,
-            "cancellationRequested": (folder / "cancel.requested").exists(),
+            "progress": progress,
+            **({"progressWarning": warning} if warning else {}),
+            "cancellationRequested": cancellation_requested,
         }
 
     def launch(self, identity, plan, operation_id, *, resume=False):
@@ -276,9 +280,17 @@ class ComputeJobService:
                 except Exception as error:
                     # A tmux timeout can lose the acknowledgement after creating
                     # the session. Do not overwrite a worker that already began.
-                    current = read_json(folder / "state.json")
                     try:
-                        if self.executor.running(session) or job_processes(current):
+                        session_running = self.executor.running(session)
+                        # A fast worker may publish and exit during this probe.
+                        # Its recorded identity/outcome proves launch occurred
+                        # even when no process is alive by the time we read it.
+                        current = read_json(folder / "state.json")
+                        if (
+                            session_running
+                            or current.get("process") is not None
+                            or current["status"] not in {"queued", "running"}
+                        ):
                             return current
                     except Exception as inspection_error:
                         raise StorageError(

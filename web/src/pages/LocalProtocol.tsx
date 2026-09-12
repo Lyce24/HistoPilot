@@ -17,6 +17,7 @@ import { SplitStrategy, newSplit, strategyNames } from '../components/SplitStrat
 import { SplitPools } from '../components/SplitPools';
 import { inferTargetSettings, preservePositiveClass } from '../lib/protocol';
 import type {
+  AttributeMapping,
   Condition,
   ConditionValue,
   ExecutionPreflight,
@@ -58,6 +59,26 @@ import './protocol-workflow.css';
 import { scientificReviewInvalidated } from '../lib/scientificReview';
 import { preparationLink, usePreparationContext, type PreparationContext } from '../lib/preparationRoute';
 import PreparationNotice from '../components/PreparationNotice';
+
+/** Current ABMIL does not consume spreadsheet covariates; retain legacy choices for explicit removal. */
+export function TabularPredictorSelection({ dictionary, selected, targetField, onChange }: {
+  dictionary: AttributeMapping[]; selected: string[]; targetField: string; onChange: (fields: string[]) => void;
+}) {
+  const fields = [...new Set([...dictionary.map((item) => item.key), ...selected])];
+  return <details className="protocol-extra-inputs" open={selected.length > 0 ? true : undefined}>
+    <summary>Spreadsheet model inputs · unsupported{selected.length ? ` · ${selected.length} selected in this draft` : ''}</summary>
+    <p className="muted">Current ABMIL training uses slide image features only. Spreadsheet columns remain available for prediction targets, cohort filters and clinical analyses; they are not used as model inputs.</p>
+    {selected.length ? <p className="callout callout-warning" role="alert">This draft contains unsupported spreadsheet model inputs. Remove these selections before training. For a frozen protocol, copy it into a new draft first.</p> : null}
+    <div className="science-checkbox-grid">{fields.map((field) => {
+      const item = dictionary.find((column) => column.key === field);
+      const checked = selected.includes(field);
+      return <label className="science-check" key={field}>
+        <input type="checkbox" checked={checked} disabled={!checked} onChange={(event) => { if (!event.target.checked) onChange(selected.filter((value) => value !== field)); }} />
+        <span>{field}<small>{item ? `${item.owner === 'patient' ? 'Patient' : 'Slide / case'} · ${item.type.replaceAll('_', ' ')}` : 'Column unavailable'}{field === targetField ? ' · prediction target' : ''}{checked ? ' · uncheck to remove' : ' · model input unsupported'}</small></span>
+      </label>;
+    })}</div>
+  </details>;
+}
 
 const initialSpec = (workspace: Workspace): ProtocolSpec => ({
   datasetId: workspace.dataset.id,
@@ -942,54 +963,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
               ) : null}
                 </div>
               </details>
-              <details
-                className="protocol-extra-inputs"
-                open={spec.predictors.length > 0 ? true : undefined}
-              >
-                <summary>
-                  Extra spreadsheet inputs (optional)
-                  {spec.predictors.length
-                    ? ` · ${spec.predictors.length} selected`
-                    : ' · none selected'}
-                </summary>
-                <p className="muted">
-                  Choose extra columns for the model, such as age. Leave empty to use slide
-                  image features only.
-                </p>
-                <p className="muted">
-                  These choices do not filter slides. Avoid IDs, split columns, and columns that
-                  reveal the target.
-                </p>
-                <div className="science-checkbox-grid">
-                  {dictionary.map((item) => (
-                    <label className="science-check" key={item.key}>
-                      <input
-                        type="checkbox"
-                        checked={spec.predictors.includes(item.key)}
-                        disabled={item.key === spec.target.field}
-                        onChange={(event) =>
-                          edit({
-                            predictors: event.target.checked
-                              ? [...spec.predictors, item.key]
-                              : spec.predictors.filter((value) => value !== item.key),
-                          })
-                        }
-                      />
-                      <span>
-                        {item.key}
-                        <small>
-                          {item.owner === 'patient' ? 'Patient' : 'Slide / case'} ·{' '}
-                          {item.type.replaceAll('_', ' ')}
-                          {item.key === spec.target.field ? ' · prediction target' : ''}
-                        </small>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-                {spec.predictors.map((field) => (
-                  <FieldProfile key={field} {...fieldContext} field={field} />
-                ))}
-              </details>
+              <TabularPredictorSelection dictionary={dictionary} selected={spec.predictors} targetField={spec.target.field} onChange={(predictors) => edit({ predictors })} />
               <details className="setup-details" open={spec.featureSetId || spec.featurePackId ? true : undefined}>
                 <summary>Optional feature reference{spec.featureSetId ? ' · configured' : ''}</summary>
               <label className="label">

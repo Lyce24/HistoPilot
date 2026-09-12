@@ -35,4 +35,35 @@ describe('predictor and evaluation job controls', () => {
     const active = clients.at(-1)?.getQueryCache().find({ queryKey: ['compute-job', 'p', 'refit', 'job'] })?.options as QueryObserverOptions | undefined;
     expect(active?.enabled).toBe(true);
   });
+
+  it('does not claim an unqueried job is ready to run', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    clients.push(client);
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><ComputeJobControls project="p" id="new" kind="evaluation" /></QueryClientProvider>);
+    expect(html).toContain('Checking job status…');
+    expect(html).not.toContain('Ready to run');
+    expect(html).not.toContain('Run evaluation');
+  });
+
+  it('shows progress-read warnings while keeping active job cancellation available', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    clients.push(client);
+    const initial: ComputeExecution = { status: 'running', progress: null, progressWarning: 'Progress file could not be read. The worker state is still available.' };
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><ComputeJobControls project="p" id="new" kind="evaluation" initial={initial} /></QueryClientProvider>);
+    expect(html).toContain('Progress file could not be read');
+    expect(html).toContain('Cancel job');
+    expect(html).not.toContain('Epoch');
+  });
+
+  it('offers status recovery and distinguishes cached state after a failed refresh', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    clients.push(client);
+    const key = ['compute-job', 'p', 'evaluation', 'new'];
+    client.setQueryData(key, { status: 'not_started' });
+    client.getQueryCache().find({ queryKey: key })!.setState({ status: 'error', error: new Error('Disconnected') });
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><ComputeJobControls project="p" id="new" kind="evaluation" /></QueryClientProvider>);
+    expect(html).toContain('Retry job status');
+    expect(html).toContain('Showing the last loaded job status');
+    expect(html).toMatch(/disabled="">Run evaluation/);
+  });
 });

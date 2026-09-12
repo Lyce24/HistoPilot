@@ -62,6 +62,7 @@ def plan(tmp_path):
 
 
 def test_refit_and_ensemble_predict_exact_whole_bags_and_preserve_unlabeled_rows(plan, tmp_path):
+    plan["data"]["memberships"][0]["patientIdSource"] = "crosswalk"
     first = evaluate(plan, tmp_path / "refit")
     ensemble = {**plan, "method": "ensemble", "checkpoints": plan["checkpoints"] * 2}
     second = evaluate(ensemble, tmp_path / "ensemble")
@@ -74,6 +75,7 @@ def test_refit_and_ensemble_predict_exact_whole_bags_and_preserve_unlabeled_rows
     assert [row["slideId"] for row in one["records"]] == [
         row["slideId"] for row in plan["data"]["memberships"]
     ]
+    assert one["records"][0]["patientIdSource"] == "crosswalk"
     assert first["metrics"]["slide"]["count"] == 3
     assert first["metrics"]["slide"]["unlabeledCount"] == 1
     assert (tmp_path / "refit/slide-predictions.csv").read_text().count("\n") == 5

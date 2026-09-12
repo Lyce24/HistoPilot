@@ -89,3 +89,48 @@ def test_unsupported_directory_sync_fails_explicitly(tmp_path, monkeypatch):
     with pytest.raises(StorageError) as error:
         fsync_directory(tmp_path)
     assert error.value.code == "STORAGE_SYNC_FAILED"
+
+
+def test_concurrent_managed_directory_creation_accepts_only_the_shared_directory(
+    tmp_path, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+    from threading import Barrier
+
+    target = tmp_path / "shared-registry"
+    original = Path.mkdir
+    simultaneous = Barrier(2)
+
+    def mkdir(path, *args, **kwargs):
+        if path == target:
+            simultaneous.wait(timeout=5)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(ensure_managed_directory, target) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=10)
+    assert target.is_dir() and not target.is_symlink()
+
+
+@pytest.mark.parametrize("replacement", ["file", "symlink"])
+def test_concurrent_managed_creation_rejects_unsafe_replacement(tmp_path, monkeypatch, replacement):
+    from pathlib import Path
+
+    target = tmp_path / "shared-registry"
+    original = Path.mkdir
+
+    def mkdir(path, *args, **kwargs):
+        if path == target:
+            if replacement == "file":
+                path.write_text("not a directory")
+            else:
+                path.symlink_to(tmp_path, target_is_directory=True)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    with pytest.raises(StorageError) as error:
+        ensure_managed_directory(target)
+    assert error.value.code == "STORAGE_UNSAFE_PATH"

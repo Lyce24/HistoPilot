@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Workspace } from '../api/types';
 import { buildRoadmap } from '../lib/roadmap';
-import { ModuleStatus, RoadmapGraph, completedModuleLabel, roadmapConnectionPath } from './ProjectRoadmap';
+import ProjectRoadmap, { ModuleStatus, RoadmapGraph, completedModuleLabel, roadmapConnectionPath, type Roadmap } from './ProjectRoadmap';
 
 const workspace = {
   mode: 'local', project: { id: 'project' }, dataset: { slideCount: 0 }, drafts: [], featureSets: [], cohortSnapshots: [],
@@ -42,5 +42,27 @@ describe('nine-module roadmap presentation', () => {
     expect(html).toContain('Completed runs available');
     expect(html).not.toContain('frozen');
     expect(completedModuleLabel('post-development')).toBe('Complete & frozen');
+  });
+
+  it('uses result-specific actions for completed compute and analysis modules', () => {
+    const modules = buildRoadmap(workspace).map((module) => ({ ...module, status: 'complete' as const, unlocked: true }));
+    const html = renderToStaticMarkup(<RoadmapGraph modules={modules} />);
+    expect(html).toContain('Review completed runs');
+    expect(html).toContain('Review attention maps');
+    expect(html).toContain('Review saved analysis');
+    expect(html).toContain('Review evaluation results');
+    expect(completedModuleLabel('evaluation')).toBe('Evaluation results available');
+  });
+
+  it('keeps blocked incomplete workflows distinct from a completed roadmap', () => {
+    const modules = buildRoadmap(workspace).map((module) => ({ ...module, status: module.id === 'dataset' ? 'complete' as const : 'not-started' as const, unlocked: module.id === 'dataset' }));
+    const roadmap = { modules, byId: Object.fromEntries(modules.map((module) => [module.id, module])), hasData: true, isLoading: false, error: null } as Roadmap;
+    const html = renderToStaticMarkup(<ProjectRoadmap workspace={workspace} roadmap={roadmap} />);
+    expect(html).toContain('Review workflow prerequisites');
+    expect(html).toContain('8 modules still need completed evidence');
+    expect(html).not.toContain('Your roadmap is complete');
+    expect(html).toContain('href="#dataset"');
+    const completed = { ...roadmap, modules: modules.map((module) => ({ ...module, status: 'complete' as const, unlocked: true })) };
+    expect(renderToStaticMarkup(<ProjectRoadmap workspace={workspace} roadmap={completed} />)).toContain('Your roadmap is complete');
   });
 });

@@ -445,21 +445,35 @@ def run_batch(plan_path: Path):
                                 PYTHONUNBUFFERED="1",
                             )
                             started_at = now()
-                            process = subprocess.Popen(
-                                [
-                                    batch["runtime"]["python"],
-                                    "-u",
-                                    str(Path(__file__).resolve()),
-                                    "--fold",
-                                    str(run_folder / "plan.json"),
-                                ],
-                                stdout=stream,
-                                stderr=subprocess.STDOUT,
-                                env=environment,
-                                start_new_session=True,
-                            )
-                            identity = process_identity(process.pid)
+                            try:
+                                process = subprocess.Popen(
+                                    [
+                                        batch["runtime"]["python"],
+                                        "-u",
+                                        str(Path(__file__).resolve()),
+                                        "--fold",
+                                        str(run_folder / "plan.json"),
+                                    ],
+                                    stdout=stream,
+                                    stderr=subprocess.STDOUT,
+                                    env=environment,
+                                    start_new_session=True,
+                                )
+                            except BaseException:
+                                stream.close()
+                                raise
                             lease_path = registry / f"lease-{process.pid}.json"
+                            # Track ownership immediately: PID inspection and durable lease
+                            # publication can fail after the child already started.
+                            running[run["id"]] = (process, stream, lease_path)
+                            identity = process_identity(process.pid)
+                            run.update(
+                                status="running",
+                                process=identity,
+                                gpu=gpu,
+                                startedAt=started_at,
+                                logPath=str(run_folder / "run.log"),
+                            )
                             write_json(
                                 lease_path,
                                 {
@@ -471,14 +485,6 @@ def run_batch(plan_path: Path):
                                     "batchId": batch["batchId"],
                                     "runId": run["id"],
                                 },
-                            )
-                            running[run["id"]] = (process, stream, lease_path)
-                            run.update(
-                                status="running",
-                                process=identity,
-                                gpu=gpu,
-                                startedAt=started_at,
-                                logPath=str(run_folder / "run.log"),
                             )
                             print(
                                 f"{now()} {run['id']} started, training seed {run['trainingSeed']}, device {'cpu' if gpu is None else f'cuda:{gpu}'}, log {run_folder / 'run.log'}",
@@ -506,18 +512,38 @@ def run_batch(plan_path: Path):
                     {"severity": "error", "code": "TRAINING_WORKER_FAILED", "message": str(error)}
                 ],
             )
-            # Drain all owned process groups before releasing their resource reservations.
+            # Request shutdown for every owned process group and wait for its leader.
+            # Descendant-aware reservation release requires separate reconciliation.
             for process, stream, lease_path in running.values():
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    try:
-                        process.wait(timeout=30)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait(timeout=10)
-                stream.close()
-                with _leases():
-                    lease_path.unlink(missing_ok=True)
+                try:
+                    if process.poll() is None:
+                        try:
+                            os.killpg(process.pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass  # The child can exit between poll and signal.
+                        try:
+                            process.wait(timeout=30)
+                        except subprocess.TimeoutExpired:
+                            try:
+                                os.killpg(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            process.wait(timeout=10)
+                    with _leases():
+                        lease_path.unlink(missing_ok=True)
+                except Exception as cleanup_error:
+                    # Keep a reservation if shutdown cannot be confirmed, and
+                    # still attempt to stop every other child owned by this batch.
+                    traceback.print_exc()
+                    state["findings"].append(
+                        {
+                            "severity": "error",
+                            "code": "TRAINING_CLEANUP_FAILED",
+                            "message": f"Could not finish cleaning up worker {process.pid}: {cleanup_error}",
+                        }
+                    )
+                finally:
+                    stream.close()
             for run in state["runs"]:
                 if run["status"] in {"queued", "running"}:
                     run.update(status="failed", error=str(error))

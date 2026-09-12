@@ -103,6 +103,7 @@ export function FeaturePackProgress({ job }: { job: FeaturePackJob }) {
       </> : null}
       {progress?.currentSlide && !succeeded ? <p className="feature-pack-current">{working ? 'Current slide' : 'Last reported slide'} <strong className="mono">{progress.currentSlide}</strong></p> : null}
       {job.error ? <ErrorNotice error={new Error(job.error)} /> : null}
+      {job.progressWarning ? <p className="callout callout-warning" role="status">{job.progressWarning}</p> : null}
     </section>
   );
 }

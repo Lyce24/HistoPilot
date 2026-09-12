@@ -26,6 +26,7 @@ import LocalInterpretation from './pages/LocalInterpretation';
 import ProjectRoadmap, { ModuleStatus, moduleIcons, completedModuleLabel, type Roadmap } from './pages/ProjectRoadmap';
 import RoadmapModule from './pages/RoadmapModule';
 import { useRoadmap } from './components/useRoadmap';
+import WorkspaceErrorBoundary from './components/WorkspaceErrorBoundary';
 
 const pages: Record<Page, string> = {
   overview: 'Project roadmap', dataset: 'Datasets',
@@ -122,8 +123,10 @@ export default function App() {
     setProjectId(id);
     window.scrollTo({ top: 0 });
   }
-  return projectId ? <ExperimentWorkspace key={projectId} projectId={projectId} onExit={() => navigate(null)} />
-    : <Start onOpen={(id, page) => navigate(id, page)} />;
+  return <WorkspaceErrorBoundary key={projectId ?? 'start'} onExit={() => navigate(null)}>
+    {projectId ? <ExperimentWorkspace projectId={projectId} onExit={() => navigate(null)} />
+      : <Start onOpen={(id, page) => navigate(id, page)} />}
+  </WorkspaceErrorBoundary>;
 }
 function ExperimentWorkspace({ projectId, onExit }: { projectId: string; onExit: () => void }) {
   const workspace = useWorkspace(projectId);
@@ -197,7 +200,9 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
         <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}`} id="main-content" tabIndex={-1} ref={main}>
           {page !== 'overview' ? <div className="module-context"><a href="#overview"><span className="back-arrow"><Icon name="arrow" size={16} /></span>Back to roadmap</a>{module && showState ? <div><ModuleStatus status={module.status} completedLabel={completedModuleLabel(module.id)} />{!module.unlocked ? <Badge>Locked</Badge> : null}</div> : null}</div> : null}
           {page !== 'overview' && roadmap.error ? <div className="callout callout-warning roadmap-refresh-warning" role="status"><span>Some project progress could not refresh. Your open module remains available.</span><button className="text-button" onClick={() => void roadmap.refetch()}>Retry</button></div> : null}
-          <Content key={page} page={page} workspace={w} roadmap={roadmap} />
+          <WorkspaceErrorBoundary key={page} onExit={onExit}>
+            <Content page={page} workspace={w} roadmap={roadmap} />
+          </WorkspaceErrorBoundary>
           {page === 'dataset' || page === 'cohort' ? <JobTray inline projectId={w.mode === 'local' ? w.project.id : undefined} /> : null}
           <footer className="content-footer"><span>HistoPilot <span className="footer-dot">·</span> Interactive PFM–MIL workflows</span><span>{w.mode === 'synthetic-demo' ? 'Synthetic data · Demonstration workspace' : 'Saved in your project folder'}</span></footer>
         </main>

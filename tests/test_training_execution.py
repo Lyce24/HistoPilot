@@ -372,6 +372,165 @@ def test_failed_launch_is_recorded_without_claiming_live_workers(execution):
     assert not executor.launches
 
 
+@pytest.mark.parametrize("finished", [False, True])
+def test_lost_launch_acknowledgement_preserves_training_worker_state(
+    execution, monkeypatch, finished
+):
+    service, frozen, executor, _source = execution
+    original = executor.launch
+
+    def launch_then_timeout(*args, **kwargs):
+        original(*args, **kwargs)
+        state_path = args[2].parent / "state.json"
+        state = read_json(state_path)
+        state.update(
+            status="failed" if finished else "running",
+            process={"pid": 2147483000, "startTicks": 1, "bootId": "old-boot"},
+            findings=[{"severity": "error", "code": "WORKER_EVIDENCE", "message": "Retain me"}],
+        )
+        write_json(state_path, state)
+        if finished:
+            executor.sessions.clear()
+        raise TimeoutError("Lost acknowledgement")
+
+    monkeypatch.setattr(executor, "launch", launch_then_timeout)
+    shown = service.launch(frozen["id"], "launch")
+    assert shown["status"] == ("failed" if finished else "running")
+    assert shown["findings"][0]["code"] == "WORKER_EVIDENCE"
+    assert service.launch(frozen["id"], "launch")["status"] == shown["status"]
+    assert len(executor.launches) == 1
+
+
+@pytest.mark.parametrize("record_identity", [False, True])
+def test_worker_outcome_during_session_probe_is_not_overwritten(
+    execution, monkeypatch, record_identity
+):
+    service, frozen, executor, _source = execution
+    pending_probe = False
+
+    def launch_then_timeout(*_args, **_kwargs):
+        nonlocal pending_probe
+        pending_probe = True
+        raise TimeoutError("Lost acknowledgement")
+
+    def inspect(_session):
+        nonlocal pending_probe
+        if pending_probe:
+            pending_probe = False
+            path = service._folder(frozen["id"]) / "state.json"
+            state = read_json(path)
+            state.update(
+                status="failed",
+                process={"pid": 2147483000, "startTicks": 1, "bootId": "old-boot"}
+                if record_identity
+                else None,
+                findings=[{"severity": "error", "code": "WORKER_EVIDENCE", "message": "Retain me"}],
+            )
+            write_json(path, state)
+        return False
+
+    monkeypatch.setattr(executor, "launch", launch_then_timeout)
+    monkeypatch.setattr(executor, "running", inspect)
+    shown = service.launch(frozen["id"], "launch")
+    assert shown["status"] == "failed"
+    assert shown["findings"][0]["code"] == "WORKER_EVIDENCE"
+    assert service.launch(frozen["id"], "launch")["findings"] == shown["findings"]
+    assert read_json(service._folder(frozen["id"]) / "state.json") == shown
+
+
+@pytest.mark.parametrize("content", ["{", "[]"])
+def test_optional_progress_cannot_block_training_cancellation(execution, content):
+    service, frozen, _executor, _source = execution
+    state = service.launch(frozen["id"], "launch")
+    run_folder = Path(state["runs"][0]["outputPath"])
+    run_folder.mkdir(parents=True, exist_ok=True)
+    (run_folder / "progress.json").write_text(content)
+    shown = service.execution(frozen["id"])
+    assert shown["status"] == "queued"
+    assert shown["runs"][0]["progress"] is None
+    assert shown["runs"][0]["progressWarning"]
+    assert service.cancel(frozen["id"], "cancel")["cancelRequested"]
+
+
+@pytest.mark.parametrize("failure", ["spawn", "identity", "lease"])
+def test_scheduler_cleans_up_every_child_if_startup_registration_fails(
+    execution, monkeypatch, failure
+):
+    from contextlib import contextmanager
+
+    from histopilot.workers import train_batch as worker
+
+    service, frozen, _executor, _source = execution
+    frozen = rewrite_batch(
+        service,
+        frozen,
+        lambda manifest: manifest["spec"]["resources"].update(maxConcurrentRuns=2),
+    )
+    state = service.launch(frozen["id"], "launch")
+    folder = Path(state["outputPath"])
+    registry = folder / "test-leases"
+    registry.mkdir()
+    children, streams, signals = [], [], []
+
+    @contextmanager
+    def leases():
+        yield registry, []
+
+    class Child:
+        def __init__(self, pid):
+            self.pid, self.code = pid, None
+
+        def poll(self):
+            return self.code
+
+        def wait(self, timeout):
+            self.code = -15
+            return self.code
+
+    def spawn(*_args, **kwargs):
+        streams.append(kwargs["stdout"])
+        if failure == "spawn":
+            raise OSError("Injected spawn failure")
+        child = Child(2147483000 + len(children))
+        children.append(child)
+        return child
+
+    def identity(pid=None):
+        if failure == "identity" and pid is not None and len(children) == 2:
+            raise ProcessLookupError("Injected PID inspection failure")
+        return {"pid": pid or 2147482999, "startTicks": 1, "bootId": "test"}
+
+    def write(path, document):
+        if failure == "lease" and path.parent == registry and len(children) == 2:
+            raise OSError("Injected lease publication failure")
+        write_json(path, document)
+
+    def stop(pid, signum):
+        signals.append((pid, signum))
+        if pid == 2147483000:
+            # The first child exits between poll and signal. Its disappearing
+            # process group must not prevent cleanup of the second child.
+            raise ProcessLookupError("Exited during cleanup")
+
+    monkeypatch.setattr(worker, "_leases", leases)
+    monkeypatch.setattr(worker, "_capacity", lambda: (256, 1000))
+    monkeypatch.setattr(worker.subprocess, "Popen", spawn)
+    monkeypatch.setattr(worker, "process_identity", identity)
+    monkeypatch.setattr(worker, "write_json", write)
+    monkeypatch.setattr(worker.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(worker.os, "killpg", stop)
+    monkeypatch.setattr(worker.ResourceTelemetry, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker.time, "sleep", lambda *_args: None)
+    run_batch(folder / "plan.json")
+    saved = read_json(folder / "state.json")
+    assert saved["status"] == "failed"
+    assert saved["runCounts"]["failed"] == saved["runCounts"]["total"]
+    assert all(stream.closed for stream in streams)
+    assert all(child.poll() is not None for child in children)
+    assert {pid for pid, _signum in signals} == {child.pid for child in children}
+    assert not list(registry.glob("lease-*.json"))
+
+
 @pytest.mark.parametrize(
     "resources,active,capacity,expected",
     [

@@ -53,6 +53,11 @@ class MILInputService:
                 "The protocol and feature bundle belong to different dataset versions.",
             )
         protocol_spec = protocol["spec"]
+        if protocol_spec.get("predictors"):
+            error(
+                "TABULAR_PREDICTORS_UNSUPPORTED",
+                "The current ABMIL runtime uses slide image features only and cannot train with extra spreadsheet inputs. Create a protocol revision with no extra spreadsheet inputs before planning this model.",
+            )
         if protocol_spec.get("featureSetId") not in (None, "", feature_id):
             error(
                 "BUNDLE_FEATURE_MISMATCH",

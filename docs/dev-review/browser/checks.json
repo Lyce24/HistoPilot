@@ -1,0 +1,86 @@
+[
+  {
+    "name": "Project roadmap renders nine modules",
+    "passed": true
+  },
+  {
+    "name": "Fresh project begins with datasets",
+    "passed": true
+  },
+  {
+    "name": "Fixture mocks all API traffic",
+    "passed": true
+  },
+  {
+    "name": "Desktop has no horizontal overflow",
+    "passed": true
+  },
+  {
+    "name": "Mobile has no horizontal overflow",
+    "passed": true
+  },
+  {
+    "name": "Mobile navigation opens",
+    "passed": true
+  },
+  {
+    "name": "Escape closes navigation and restores focus",
+    "passed": true
+  },
+  {
+    "name": "Blank workers stay blank and block save",
+    "passed": true
+  },
+  {
+    "name": "Explicit zero workers can be saved",
+    "passed": true
+  },
+  {
+    "name": "Partial exponent blocks save",
+    "passed": true
+  },
+  {
+    "name": "Valid decimal threshold saves",
+    "passed": true
+  },
+  {
+    "name": "Invalid hidden control opens its details and blocks save",
+    "passed": true
+  },
+  {
+    "name": "Corrected batch size saves",
+    "passed": true
+  },
+  {
+    "name": "Unsupported legacy aggregation is visible",
+    "passed": true
+  },
+  {
+    "name": "Real compute controls load a ready job",
+    "passed": true
+  },
+  {
+    "name": "Lost response retains explicit retry without duplicate submission",
+    "passed": true
+  },
+  {
+    "name": "Explicit retry reuses the original operation",
+    "passed": true
+  },
+  {
+    "name": "Render failure displays recovery",
+    "passed": true
+  },
+  {
+    "name": "Navigation remains available after rendering failure",
+    "passed": true
+  },
+  {
+    "name": "Retry remounts the recovered view",
+    "passed": true
+  },
+  {
+    "name": "Project navigation recovers after another view failed",
+    "passed": true
+  }
+]

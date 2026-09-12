@@ -50,7 +50,8 @@ export interface TrainingMetricDetails {
 export interface TrainingRun {
   id: string; candidateId: string; trainingSeed: number; splitPlanId: string; status: TrainingStatus;
   metrics?: { validation: TrainingMetricDetails; assessment: TrainingMetricDetails }; error?: string; checkpointPath?: string; outputPath?: string;
-  progress?: { epoch: number; maxEpochs: number; globalStep: number; trainingLoss: number | null; validation: TrainingMetrics; learningRate?: number; cudaPeakAllocatedBytes?: number; cudaPeakReservedBytes?: number };
+  progress?: { epoch: number; maxEpochs: number; globalStep: number; trainingLoss: number | null; validation: TrainingMetrics; learningRate?: number; cudaPeakAllocatedBytes?: number; cudaPeakReservedBytes?: number } | null;
+  progressWarning?: string | null;
 }
 export interface TrainingExecution {
   batchId: string; status: TrainingStatus; sessionName: string; logPath: string; outputPath: string;

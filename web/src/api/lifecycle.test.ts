@@ -53,7 +53,7 @@ describe('workspace cleanup contracts', () => {
     vi.stubGlobal('fetch', fetcher);
     const { lifecycle } = await import('./lifecycle');
     const intent = cleanupApplyRequest(preview, 'stable-operation');
-    await expect(lifecycle.apply('project', intent)).rejects.toThrow('Network response lost');
+    await expect(lifecycle.apply('project', intent)).rejects.toMatchObject({ status: 0, code: 'SERVICE_UNREACHABLE' });
     await lifecycle.apply('project', intent);
     expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[2][1].body);
     expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ action: 'trash', keys: preview.keys, previewHash: 'review-hash', operationId: 'stable-operation' });

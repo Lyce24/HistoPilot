@@ -45,7 +45,7 @@ describe('reviewed bulk predictor and evaluation API contracts', () => {
     const { bulkEvaluations } = await import('./bulkEvaluations');
     const selection: BulkEvaluationSelection = { cohortId: 'cohort/one', scope: 'selected', predictorIds: ['predictor/two', 'predictor/one'] };
     const review = { previewHash: 'review-hash', reviewedPredictorIds: ['predictor/one', 'predictor/two'] };
-    await expect(bulkEvaluations.run('p', selection, review, 'stable-operation')).rejects.toThrow('Response lost');
+    await expect(bulkEvaluations.run('p', selection, review, 'stable-operation')).rejects.toMatchObject({ status: 0, code: 'SERVICE_UNREACHABLE' });
     expect(fetcher.mock.calls).toHaveLength(2);
     await bulkEvaluations.run('p', selection, review, 'stable-operation');
     expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[2][1].body);
@@ -78,7 +78,7 @@ describe('reviewed bulk predictor and evaluation API contracts', () => {
     vi.stubGlobal('fetch', fetcher);
     const { predictorBuilds } = await import('./predictorBuilds');
     const selection: PredictorBuildSelection = { selections: [source], method: 'both', refitPercentile: 50 };
-    await expect(predictorBuilds.create('p', selection, 'review', 'build-once')).rejects.toThrow('Response lost');
+    await expect(predictorBuilds.create('p', selection, 'review', 'build-once')).rejects.toMatchObject({ status: 0, code: 'SERVICE_UNREACHABLE' });
     expect(fetcher.mock.calls).toHaveLength(2);
     await predictorBuilds.create('p', selection, 'review', 'build-once');
     expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[2][1].body);

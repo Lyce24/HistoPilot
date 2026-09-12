@@ -60,6 +60,13 @@ describe('feature preparation presentation', () => {
     expect(html).not.toContain('Training pack created');
   });
 
+  it('explains unavailable progress without hiding the live worker state', () => {
+    const html = renderToStaticMarkup(<FeaturePackProgress job={job({ progress: null, progressWarning: 'Progress file could not be read. Worker state is still available.' })} />);
+    expect(html).toContain('Progress file could not be read');
+    expect(html).toContain('Running');
+    expect(html).not.toContain('Training pack created');
+  });
+
   it.each(['cancelling', 'cancelled', 'failed', 'interrupted'] as const)('shows the last reported progress without activity after %s', (state) => {
     const html = renderToStaticMarkup(<FeaturePackProgress job={job({ state, progress: null })} />);
     expect(html).not.toContain('is-indeterminate');

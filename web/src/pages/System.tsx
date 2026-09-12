@@ -9,7 +9,7 @@ export default function System() {
       <PageHeader
         eyebrow="LOCAL WORKSPACE"
         title="System & storage"
-        description="The browser is your interface. The Python control service owns workspace metadata, and future isolated workers will perform computation."
+        description="The browser is your interface. The Python control service manages workspace metadata, and separate workers run feature preparation, training, evaluation and attention jobs."
         actions={
           <button
             className="btn btn-secondary"
@@ -50,7 +50,7 @@ export default function System() {
                 </li>
                 <li>
                   <span>Browser connection</span>
-                  <strong className="mono">{window.location.origin}</strong>
+                  <strong className="mono">{typeof window === 'undefined' ? 'Browser connection' : window.location.origin}</strong>
                 </li>
               </ul>
               <p className="muted">
@@ -91,18 +91,24 @@ export default function System() {
           <div className="grid-2">
             <Panel
               title="Compute workers"
-              subtitle="Execution boundary"
+              subtitle="Runtime readiness is checked for each workflow"
               actions={
-                <Badge tone="amber">
-                  {data.workers.executionEnabled ? 'TRIDENT connected' : 'Setup required'}
+                <Badge tone={data.workers.nativeExecutionImplemented ? 'green' : 'neutral'}>
+                  {data.workers.nativeExecutionImplemented ? 'Native execution implemented' : 'Check module runtimes'}
                 </Badge>
               }
             >
+              <ul className="detail-list">
+                <li><span>ABMIL training, evaluation &amp; attention</span><strong>{data.workers.nativeExecutionImplemented ? 'Implemented · check runtime in each module' : 'Check availability in each module'}</strong></li>
+                <li><span>TRIDENT feature extraction</span><strong>{data.workers.executionEnabled ? 'Runtime ready' : 'Extraction runtime setup required'}</strong></li>
+                <li><span>Persistent tmux jobs</span><strong>{data.workers.tmuxAvailable === undefined ? 'Availability not reported' : data.workers.tmuxAvailable ? 'tmux available' : 'tmux unavailable'}</strong></li>
+              </ul>
               <p className="muted">
-                Worker status: <strong>{data.workers.status}</strong>. Start segmentation, patching,
-                and feature extraction in PFM &amp; features. Each TRIDENT job has persistent logs
-                and a tmux session. Checkpoint access is checked when its worker starts.
+                {data.workers.status} Start segmentation, patching and feature extraction in Features.
+                Training and model inference have their own runtime checks. Worker logs and session
+                details are shown beside each job; checkpoint access is checked when its worker starts.
               </p>
+              <div className="inline-actions"><a className="text-link" href="#features">Prepare features →</a><a className="text-link" href="#experiments">Open experiments →</a></div>
               <div className="callout">
                 Saving an experiment creates a persisted draft. It does not launch a compute
                 process.
@@ -118,12 +124,16 @@ export default function System() {
                   <strong>Application metadata</strong>
                 </li>
                 <li>
-                  <span>DuckDB + Parquet</span>
-                  <strong>Planned analytical tables</strong>
+                  <span>Parquet</span>
+                  <strong>Dataset and analytical tables</strong>
                 </li>
                 <li>
                   <span>HDF5</span>
-                  <strong>Planned features & coordinates</strong>
+                  <strong>Feature tensors &amp; coordinates</strong>
+                </li>
+                <li>
+                  <span>Memory-mapped packs</span>
+                  <strong>Verified feature loading for workers</strong>
                 </li>
                 <li>
                   <span>JSON / YAML</span>

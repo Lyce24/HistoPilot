@@ -65,7 +65,18 @@ def ensure_managed_directory(path: Path) -> None:
             return
         if not path.parent.is_dir():
             ensure_managed_directory(path.parent)
-        path.mkdir(mode=0o700)
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            # Independent workers may initialize a shared registry concurrently.
+            # Accept only a real directory, applying the same path checks again.
+            _reject_symlink_components(path)
+            if not path.is_dir():
+                raise StorageError(
+                    "A managed storage directory is occupied by another file type.",
+                    "STORAGE_UNSAFE_PATH",
+                    403,
+                ) from None
         fsync_directory(path.parent)
     except OSError as error:
         raise StorageError(

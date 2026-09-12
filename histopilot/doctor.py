@@ -25,6 +25,16 @@ def system_report() -> dict:
         "platform": platform.system(),
         "sqlite": sqlite3.sqlite_version,
         "packages": packages,
-        "compute": {"enabled": False, "cuda": "not probed", "gpus": "not probed"},
-        "note": "Package presence is not backend readiness. GPU, weight, and model-access checks are future worker capabilities.",
+        "compute": {
+            "enabled": False,
+            "scope": "control-service",
+            "cuda": "not probed",
+            "gpus": "not probed",
+        },
+        "note": (
+            "This report inspects control-service package metadata only. Isolated workers "
+            "implement extraction, packing, ABMIL training, evaluation and attention. "
+            "Check runtime readiness in each module; package presence here does not establish "
+            "worker dependencies, GPU availability or checkpoint access."
+        ),
     }

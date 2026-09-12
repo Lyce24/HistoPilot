@@ -11,7 +11,7 @@ describe('model experiment identity contracts', () => {
     vi.stubGlobal('fetch', fetcher);
     const { experiments } = await import('./experiments');
     const input = { name: 'Baseline', notes: 'Compare seeds', tags: ['baseline'], operationId: 'same-intent' };
-    await expect(experiments.create('project/one', input)).rejects.toThrow('Response lost');
+    await expect(experiments.create('project/one', input)).rejects.toMatchObject({ status: 0, code: 'SERVICE_UNREACHABLE' });
     await experiments.create('project/one', input);
     expect(fetcher.mock.calls[1][0]).toBe('/api/v1/projects/project%2Fone/model-experiments');
     expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[2][1].body);

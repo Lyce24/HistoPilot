@@ -12,7 +12,8 @@ export const moduleIcons: Record<string, string> = {
   'test-data': 'folder', evaluation: 'evaluation', reports: 'provenance',
   'clinical-utility': 'evaluation', interpretation: 'explorer',
 };
-export const completedModuleLabel = (id: string) => id === 'experiments' ? 'Completed runs available' : id === 'interpretation' ? 'Attention maps available' : id === 'clinical-utility' ? 'Analysis saved' : 'Complete & frozen';
+export const completedModuleLabel = (id: string) => id === 'experiments' ? 'Completed runs available' : id === 'interpretation' ? 'Attention maps available' : id === 'clinical-utility' ? 'Analysis saved' : id === 'evaluation' ? 'Evaluation results available' : 'Complete & frozen';
+export const completedModuleAction = (id: string) => id === 'experiments' ? 'Review completed runs' : id === 'interpretation' ? 'Review attention maps' : id === 'clinical-utility' ? 'Review saved analysis' : id === 'evaluation' ? 'Review evaluation results' : 'Review frozen versions';
 export function ModuleStatus({ status, completedLabel = 'Complete & frozen' }: { status: Module['status']; completedLabel?: string }) {
   return <span className={`module-status status-${status}`}>
     <span aria-hidden="true" />
@@ -88,7 +89,7 @@ export function RoadmapGraph({ modules }: { modules: Module[] }) {
         {module.id === 'test-data' ? <p className="roadmap-prerequisite-note">Requires a frozen development protocol. Preparation can begin while models train.</p> : null}
         {module.id === 'interpretation' ? <p className="roadmap-prerequisite-note">Use any compatible slides with a saved predictor, or continue from a clinical analysis.</p> : null}
         <div className="roadmap-node-bottom">
-          <span>{!module.unlocked ? <><Icon name="lock" size={12} /> {blockers ? `Requires ${blockers}` : 'Review compatible inputs'}</> : module.id === 'experiments' ? 'Open experiments' : module.status === 'complete' ? 'Review frozen versions' : module.status === 'draft' ? 'Continue module' : 'Open module'}</span>
+          <span>{!module.unlocked ? <><Icon name="lock" size={12} /> {blockers ? `Requires ${blockers}` : 'Review compatible inputs'}</> : module.status === 'complete' ? completedModuleAction(module.id) : module.id === 'experiments' ? 'Open experiments' : module.status === 'draft' ? 'Continue module' : 'Open module'}</span>
           {module.unlocked ? <Icon name="arrow" size={15} /> : null}
         </div>
       </>;
@@ -107,6 +108,9 @@ export default function ProjectRoadmap({ workspace, roadmap }: { workspace: Work
   const drafts = roadmap.modules.filter((module) => module.status === 'draft').length;
   const available = roadmap.modules.filter((module) => module.unlocked && module.status !== 'complete');
   const next = available.find((module) => module.status === 'draft') ?? available[0];
+  const allComplete = complete === roadmap.modules.length;
+  const blocked = roadmap.modules.find((module) => module.status !== 'complete');
+  const prerequisite = blocked?.prerequisites.map((id) => roadmap.byId[id]).find((module) => module?.unlocked);
   return <div className="project-roadmap">
     <header className="roadmap-heading">
       <div><div className="eyebrow">PROJECT WORKFLOW</div><h1>Your research roadmap</h1><p>Prepare data, develop predictors, evaluate performance, and investigate clinical utility and model attention.</p></div>
@@ -117,7 +121,7 @@ export default function ProjectRoadmap({ workspace, roadmap }: { workspace: Work
     {roadmap.isLoading && !roadmap.hasData ? <div className="roadmap-loading" role="status"><Icon name="clock" size={28} /><h2>Reading your project progress</h2><p>Checking saved drafts and frozen versions…</p></div>
       : roadmap.error && !roadmap.hasData ? <div className="roadmap-loading" role="alert"><h2>Project progress could not be loaded</h2><p>{roadmap.error.message}</p><button className="btn btn-primary" onClick={() => void roadmap.refetch()}>Try again</button><a className="btn btn-secondary" href="#dataset">Open data module</a></div>
       : <>
-        <div className="roadmap-next"><div className="roadmap-next-symbol"><Icon name={next ? moduleIcons[next.id] : 'check'} size={23} /></div><div><span>{drafts ? 'PICK UP WHERE YOU LEFT OFF' : 'YOUR NEXT STEP'}</span><h2>{next?.title ?? 'Your roadmap is complete'}</h2><p>{next ? `${available.length} modules available. ${complete ? 'Continue this branch or choose another available module below.' : 'Start with your source data. You can also review later test-data requirements.'}` : 'Open any module to review its frozen outputs.'}</p></div>{next ? <a className="btn btn-primary" href={`#${next.id}`}>{next.status === 'draft' ? 'Continue module' : 'Start module'}<Icon name="arrow" size={16} /></a> : null}</div>
+        <div className="roadmap-next"><div className="roadmap-next-symbol"><Icon name={next ? moduleIcons[next.id] : allComplete ? 'check' : 'lock'} size={23} /></div><div><span>{drafts ? 'PICK UP WHERE YOU LEFT OFF' : 'YOUR NEXT STEP'}</span><h2>{next?.title ?? (allComplete ? 'Your roadmap is complete' : 'Review workflow prerequisites')}</h2><p>{next ? `${available.length} module${available.length === 1 ? '' : 's'} available. ${complete ? 'Continue this branch or choose another available module below.' : 'Start with your source data. You can also review later test-data requirements.'}` : allComplete ? 'Open any module to review its saved evidence.' : `${roadmap.modules.length - complete} module${roadmap.modules.length - complete === 1 ? '' : 's'} still need completed evidence. ${blocked?.compatibilityIssue ?? 'Review the required inputs shown below to continue.'}`}</p></div>{next ? <a className="btn btn-primary" href={`#${next.id}`}>{next.status === 'draft' ? 'Continue module' : 'Start module'}<Icon name="arrow" size={16} /></a> : !allComplete && prerequisite ? <a className="btn btn-primary" href={`#${prerequisite.id}`}>Review {prerequisite.shortTitle}<Icon name="arrow" size={16} /></a> : null}</div>
         <section className="roadmap-map" aria-label="Project module dependencies">
           <div className="roadmap-map-heading"><div><Icon name="branch" size={18} /><h2>From data to evidence</h2></div><div className="roadmap-legend" aria-label="Module status legend"><ModuleStatus status="complete" completedLabel="Complete" /><ModuleStatus status="draft" /><ModuleStatus status="not-started" /><span><Icon name="lock" size={12} /> Prerequisites required</span></div></div>
           <RoadmapGraph modules={roadmap.modules} />

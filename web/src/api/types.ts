@@ -211,6 +211,6 @@ export interface SystemStatus {
   workspace: string;
   storage: { engine: string; journalMode: string; schemaVersion: number };
   control: { cudaModelsLoaded: boolean; process: string };
-  workers: { executionEnabled: boolean; status: string };
+  workers: { executionEnabled: boolean; status: string; tmuxAvailable?: boolean; nativeExecutionImplemented?: boolean };
   sourcesReadOnly: boolean;
 }

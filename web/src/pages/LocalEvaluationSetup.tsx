@@ -9,6 +9,7 @@ import { sameJSON } from '../lib/json';
 import { Badge, ErrorNotice, Icon, PageHeader, Panel } from '../components/ui';
 import { DatasetSelect, Findings, SavedNotice, useConfigurations, useDatasets, useRefreshScientific } from '../components/ScientificUI';
 import ModuleSteps from '../components/ModuleSteps';
+import NumericField, { reportEditorValidity } from '../components/NumericField';
 import './LocalEvaluationSetup.css';
 
 export const newEvaluationSpec = (): EvaluationSpec => ({
@@ -81,6 +82,22 @@ export function EvaluationTargetMapping({ rows, classes, onChange }: {
   </div>;
 }
 
+export function EvaluationInferenceFields({ value, target, onChange }: {
+  value: EvaluationInference; target?: ProtocolSpec['target']; onChange: (update: Partial<EvaluationInference>) => void;
+}) {
+  return <details><summary>Inference settings</summary><div className="grid-2 evaluation-inference">
+    <NumericField label="Batch size" min={1} max={1024} value={value.batchSize} onChange={(batchSize) => onChange({ batchSize })} />
+    <NumericField label="Data-loading workers" min={0} max={64} value={value.numWorkers} onChange={(numWorkers) => onChange({ numWorkers })} />
+    <label className="label">Device<select className="field" value={value.device} onChange={(event) => onChange({ device: event.target.value as EvaluationInference['device'] })}><option value="auto">Auto</option><option value="cpu">CPU</option><option value="cuda">CUDA GPU</option></select></label>
+    <label className="label">Inference precision<select className="field" value={value.precision} onChange={(event) => onChange({ precision: event.target.value as EvaluationInference['precision'] })}><option value="float32">Float32</option><option value="float16">Float16</option><option value="bfloat16">BFloat16</option></select></label>
+    {target?.unit === 'patient' || value.patientAggregation !== 'mean' ? <label className="label">Combine slides for each patient<select className="field" value={value.patientAggregation} onChange={(event) => onChange({ patientAggregation: event.target.value as EvaluationInference['patientAggregation'] })}>
+      {value.patientAggregation !== 'mean' ? <option value={value.patientAggregation} disabled>Maximum probabilities · unsupported; choose mean</option> : null}
+      <option value="mean">Mean probabilities</option>
+    </select><small>Mean probabilities match the patient aggregation used by frozen predictors.</small></label> : null}
+    {target?.task === 'binary_classification' ? <div><NumericField label="Decision threshold" integer={false} min={0} max={1} value={value.decisionThreshold} onChange={(decisionThreshold) => onChange({ decisionThreshold })} /><small>Set from development evidence before reviewing test outcomes.</small></div> : null}
+  </div></details>;
+}
+
 export function EvaluationEvidence({ preview }: { preview: EvaluationPreview }) {
   const { summary, coverage } = preview;
   return <div className="evaluation-evidence">
@@ -100,6 +117,7 @@ export function EvaluationEvidence({ preview }: { preview: EvaluationPreview }) 
     <SlideIds label="Missing feature slide IDs" ids={coverage.missingFeatureSlideIds} />
     <SlideIds label="Missing pack slide IDs" ids={coverage.missingPackSlideIds} />
     <SlideIds label="Overlapping development slide IDs" ids={preview.overlap.slideIds} />
+    <SlideIds label="Source files already used in development under different slide IDs" ids={preview.overlap.sourceSlideIds ?? []} />
     {preview.overlap.patientsComparable ? <SlideIds label="Overlapping development patient IDs" ids={preview.overlap.patientIds} /> : null}
     <SlideIds label="Selected slide IDs" ids={coverage.selectedSlideIds} />
     <p className="muted">Development representation: {preview.compatibility.development.encoderId ?? 'unspecified encoder'} · {preview.compatibility.development.dimensions ?? '?'} dimensions. Test representation: {preview.compatibility.evaluation.encoderId ?? 'unspecified encoder'} · {preview.compatibility.evaluation.dimensions ?? '?'} dimensions.</p>
@@ -127,6 +145,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
   const [message, setMessage] = useState('');
   const operation = useRef<string | null>(null);
   const pending = useRef(false);
+  const editor = useRef<HTMLFieldSetElement>(null);
   const protocol = protocols.data?.configurations.find((item) => item.id === spec.protocolId);
   const protocolSpec = protocol?.manifest.spec as ProtocolSpec | undefined;
   const dataset = datasets.data?.datasets.find((item) => item.id === spec.datasetId);
@@ -154,8 +173,8 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
     setSpec(newEvaluationSpec()); setName(`${workspace.project.name} test cohort`); setDraft(null);
     setPreview(null); setLabel({ tag: '', note: '' }); setError(null); setMessage(''); operation.current = null;
   }
-  async function run(action: () => Promise<void>) {
-    if (pending.current) return;
+  async function run(action: () => Promise<void>, validate = false) {
+    if (pending.current || (validate && !reportEditorValidity(editor.current))) return;
     pending.current = true; setBusy(true); setError(null); setMessage('');
     try { await action(); } catch (reason) { setError(reason instanceof Error ? reason : new Error('The test cohort could not be saved.')); }
     finally { pending.current = false; setBusy(false); }
@@ -185,7 +204,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
     </div>
     <ErrorNotice error={error ?? protocols.error ?? datasets.error ?? featureBundles.error ?? drafts.error ?? frozen.error} />
     <SavedNotice>{message}</SavedNotice>
-    <fieldset className="evaluation-fields" disabled={busy}>
+    <fieldset ref={editor} className="evaluation-fields" disabled={busy}>
       <legend className="sr-only">Test cohort preparation</legend>
       <Panel title="1. Inherit the development target" subtitle="The protocol supplies the prediction task, classes and unit.">
         <div className="stack">
@@ -233,19 +252,12 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
             <label className="label">Feature loading<select className="field" value={spec.inference.loadingPolicy} onChange={(event) => inference({ loadingPolicy: event.target.value as EvaluationInference['loadingPolicy'], packArtifactId: null })}><option value="per_slide">Original feature files</option><option value="packed" disabled={packIds.length === 0}>Packed mmap</option></select></label>
             {spec.inference.loadingPolicy === 'packed' ? <label className="label">Pack in test bundle<select className="field" value={spec.inference.packArtifactId ?? ''} onChange={(event) => inference({ packArtifactId: event.target.value || null })}><option value="">Choose a verified pack</option>{spec.inference.packArtifactId && !packIds.includes(spec.inference.packArtifactId) ? <option value={spec.inference.packArtifactId} disabled>Saved pack unavailable</option> : null}{packIds.map((id) => { const pack = selectedBundle?.manifest.packs.find((item) => item.id === id); return <option key={id} value={id}>{pack ? `${pack.outputDtype} · ${pack.outputPath}` : id}</option>; })}</select></label> : null}
           </div>
-          <details><summary>Inference settings</summary><div className="grid-2 evaluation-inference">
-            <label className="label">Batch size<input className="field" type="number" min={1} max={1024} step={1} value={spec.inference.batchSize} onChange={(event) => inference({ batchSize: Number(event.target.value) })} /></label>
-            <label className="label">Data-loading workers<input className="field" type="number" min={0} max={64} step={1} value={spec.inference.numWorkers} onChange={(event) => inference({ numWorkers: Number(event.target.value) })} /></label>
-            <label className="label">Device<select className="field" value={spec.inference.device} onChange={(event) => inference({ device: event.target.value as EvaluationInference['device'] })}><option value="auto">Auto</option><option value="cpu">CPU</option><option value="cuda">CUDA GPU</option></select></label>
-            <label className="label">Inference precision<select className="field" value={spec.inference.precision} onChange={(event) => inference({ precision: event.target.value as EvaluationInference['precision'] })}><option value="float32">Float32</option><option value="float16">Float16</option><option value="bfloat16">BFloat16</option></select></label>
-            {protocolSpec?.target.unit === 'patient' ? <label className="label">Combine slides for each patient<select className="field" value={spec.inference.patientAggregation} onChange={(event) => inference({ patientAggregation: event.target.value as EvaluationInference['patientAggregation'] })}><option value="mean">Mean probabilities</option><option value="max">Maximum probabilities</option></select></label> : null}
-            {protocolSpec?.target.task === 'binary_classification' ? <label className="label">Decision threshold<input className="field" type="number" min={0} max={1} step="any" value={spec.inference.decisionThreshold} onChange={(event) => inference({ decisionThreshold: Number(event.target.value) })} /><small>Set from development evidence before reviewing test outcomes.</small></label> : null}
-          </div></details>
+          <EvaluationInferenceFields value={spec.inference} target={protocolSpec?.target} onChange={inference} />
         </div>
       </Panel>
       <Panel title="4. Review & freeze the test cohort" subtitle="Persist the exact cohort, label mapping, feature references and inference settings.">
         {preview ? <EvaluationEvidence preview={preview} /> : <p className="muted">Review saves the draft, checks selected slides and reports any development overlap or incompatible features.</p>}
-        <div className="inline-actions evaluation-actions"><button type="button" className="btn btn-secondary" disabled={!name.trim() || Boolean(mappingError) || (!dirty && editable)} onClick={() => void run(() => save(false))}>Save draft</button><button type="button" className="btn btn-primary" disabled={!ready} onClick={() => void run(() => save(true))}><Icon name="check" />{busy ? 'Checking…' : 'Review cohort'}</button></div>
+        <div className="inline-actions evaluation-actions"><button type="button" className="btn btn-secondary" disabled={!name.trim() || Boolean(mappingError) || (!dirty && editable)} onClick={() => void run(() => save(false), true)}>Save draft</button><button type="button" className="btn btn-primary" disabled={!ready} onClick={() => void run(() => save(true), true)}><Icon name="check" />{busy ? 'Checking…' : 'Review cohort'}</button></div>
         {preview?.canFreeze && !dirty && editable ? <div className="evaluation-freeze">
           <label className="label">Version tag<input className="field" value={label.tag} maxLength={80} placeholder="e.g. held-out-cohort-v1" onChange={(event) => { setLabel({ ...label, tag: event.target.value }); operation.current = null; }} /></label>
           <label className="label">Version note (optional)<textarea className="field" value={label.note} maxLength={2000} rows={2} onChange={(event) => { setLabel({ ...label, note: event.target.value }); operation.current = null; }} /></label>
@@ -256,7 +268,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
             setDraft({ ...draft, status: 'frozen', revision: draft.revision + 1 });
             setMessage(`Test cohort frozen as ${versionLabelText(saved, 'Test cohort')}. It is ready to evaluate all compatible predictors.`);
             await refresh();
-          })}><Icon name="lock" />Save test cohort</button>
+          }, true)}><Icon name="lock" />Save test cohort</button>
         </div> : null}
         <p className="callout evaluation-availability">After saving this test cohort, choose an ensemble or refit predictor in Evaluate models to run inference and review results.</p>
       </Panel>

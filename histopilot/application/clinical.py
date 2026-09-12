@@ -300,6 +300,13 @@ def clinical_report(predictions, target, inference, selection):
         ):
             raise _invalid("Patient grouping identities must be nonempty strings or null.")
     unit = target["unit"] if selection.unit == "selected" else selection.unit
+    fallback_ids = sum(row.get("patientIdSource") == "slide_fallback" for row in slides)
+    if unit == "patient" and fallback_ids:
+        raise StorageError(
+            "Patient-level clinical analysis requires verified patient identities. Some slides use Slide_ID fallback groups; map their patients or select slide-level analysis.",
+            "CLINICAL_PATIENT_IDENTITIES_UNVERIFIED",
+            409,
+        )
     multiclass = target["task"] == "multiclass_classification"
     positive_class = selection.positiveClass if multiclass else target["positiveClass"]
     if positive_class not in classes or (
@@ -374,20 +381,26 @@ def clinical_report(predictions, target, inference, selection):
         selection.thresholdMin + index * delta for index in range(selection.thresholdSteps)
     ]
     thresholds[-1] = selection.thresholdMax
-    patient_ids = {row["patientId"] for row in slides if row.get("patientId")}
+    patient_ids = {
+        row["patientId"]
+        for row in slides
+        if row.get("patientId") and row.get("patientIdSource") != "slide_fallback"
+    }
     missing_ids = sum(not row.get("patientId") for row in slides)
     positive_scores = sorted(score for label, score in zip(labels, scores, strict=True) if label)
     negative_scores = sorted(
         score for label, score in zip(labels, scores, strict=True) if not label
     )
     operating = _operating_point(positive_scores, negative_scores, threshold)
-    independent = unit == "patient" or (not missing_ids and len(patient_ids) == len(slides))
+    independent = not fallback_ids and (
+        unit == "patient" or (not missing_ids and len(patient_ids) == len(slides))
+    )
     uncertainty = {
         "method": "wilson_95" if independent else "unavailable",
         "reason": (
             "95% Wilson intervals assume independent analysis units and condition on each metric's observed denominator. They do not account for model fitting or threshold selection. Brier and AUC uncertainty are not estimated."
             if independent
-            else "Intervals are unavailable for slide analyses with repeated or missing patient identities. Use patient-level analysis; independent-slide intervals would misrepresent uncertainty."
+            else "Intervals are unavailable for slide analyses with repeated, missing, or Slide_ID fallback patient identities. Verify patient identities and use patient-level analysis; independent-slide intervals would misrepresent uncertainty."
         ),
         "operatingPoint": {
             "sensitivity": _wilson(operating["tp"], positive) if independent else None,
@@ -412,6 +425,10 @@ def clinical_report(predictions, target, inference, selection):
     if missing_ids:
         warnings.append(
             f"{missing_ids} slides have no patient identity; they are excluded from saved patient predictions."
+        )
+    if fallback_ids:
+        warnings.append(
+            f"{fallback_ids} slides use Slide_ID fallback groups. These are not verified patients, and patient independence cannot be established."
         )
     if len(rows) != count:
         warnings.append(
@@ -453,6 +470,7 @@ def clinical_report(predictions, target, inference, selection):
             "patients": len(patient_ids) if patient_ids else None,
             "slides": len(slides),
             "missingPatientIds": missing_ids,
+            "fallbackPatientIds": fallback_ids,
         },
         "metrics": {
             "prevalence": prevalence,
@@ -582,9 +600,9 @@ class ClinicalService:
                 }.items()
             ):
                 raise _invalid("Saved metrics differ from the frozen evaluation settings.")
-            report = clinical_report(
-                predictions, manifest["target"], manifest["inference"], selection
-            )
+            if not isinstance(predictions, dict):
+                raise ValueError
+            records = _validate_records(predictions.get("records"), manifest["target"]["classes"])
             expected = {
                 row["slideId"]: (row.get("patientId"), row.get("label"))
                 for row in cohort["manifest"]["memberships"]
@@ -597,6 +615,27 @@ class ClinicalService:
                 raise _invalid(
                     "Saved predictions differ from the frozen evaluation cohort membership or labels."
                 )
+            memberships = {row["slideId"]: row for row in cohort["manifest"]["memberships"]}
+            for row in records:
+                source = memberships[row["slideId"]].get("patientIdSource")
+                if "patientIdSource" in row and row["patientIdSource"] != source:
+                    raise _invalid(
+                        "Saved patient identity provenance differs from the frozen evaluation cohort."
+                    )
+                # Older predictions omitted this field. The frozen membership
+                # remains authoritative, including acknowledged slide fallbacks.
+                row["patientIdSource"] = source
+            report = clinical_report(
+                predictions, manifest["target"], manifest["inference"], selection
+            )
+            if overlap.get("patientsComparable") is False:
+                report["warnings"].append(
+                    "Development and evaluation patient identifier namespaces were declared independent. Cross-dataset patient overlap could not be verified; confirm the cohorts contain different patients before interpreting external performance."
+                )
+        except StorageError:
+            # StorageError is a ValueError subclass. Preserve actionable clinical
+            # findings instead of mislabeling valid-but-ineligible evidence as corrupt.
+            raise
         except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as error:
             raise _invalid("The saved evaluation predictions or metrics are malformed.") from error
         return {

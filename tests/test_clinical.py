@@ -174,6 +174,22 @@ def test_patient_analysis_preserves_saved_group_mean_and_suppresses_correlated_s
         report(source)
 
 
+def test_slide_id_fallbacks_cannot_establish_patient_clinical_independence():
+    source = predictions()
+    source["records"][0]["patientIdSource"] = "slide_fallback"
+    source["records"][0]["patientId"] = source["records"][0]["slideId"]
+    source["patientRecords"][0]["patientId"] = source["records"][0]["slideId"]
+    with pytest.raises(StorageError) as error:
+        report(source)
+    assert error.value.code == "CLINICAL_PATIENT_IDENTITIES_UNVERIFIED"
+    value = report(source, unit="slide")
+    assert value["counts"]["fallbackPatientIds"] == 1
+    assert value["counts"]["patients"] == 3
+    assert value["uncertainty"]["method"] == "unavailable"
+    assert all(value is None for value in value["uncertainty"]["operatingPoint"].values())
+    assert any("not verified patients" in warning for warning in value["warnings"])
+
+
 def test_patient_conflicting_labels_unavailable_and_missing_group_membership_are_rejected():
     source = predictions()
     source["records"][1]["patientId"] = "p2"
@@ -336,7 +352,7 @@ def test_request_contract_rejects_invalid_parameters_and_authoritative_browser_r
 
 
 @pytest.fixture
-def service(tmp_path, monkeypatch):
+def service(tmp_path, monkeypatch, request):
     folder = tmp_path / "project"
     folder.mkdir()
     store = ScientificStore(folder, "clinical-project")
@@ -357,14 +373,29 @@ def service(tmp_path, monkeypatch):
 
     predictor = publish("frozen-predictor", target=TARGET, experimentId=experiment["id"])
     source = predictions()
+    fallback = getattr(request, "param", None) == "fallback"
+    if fallback:
+        source["records"][0]["patientId"] = source["records"][0]["slideId"]
+        source["patientRecords"][0]["patientId"] = source["records"][0]["slideId"]
     cohort = publish(
         "evaluation-cohort",
         target=TARGET,
         memberships=[
-            {key: row[key] for key in ("slideId", "patientId", "label")}
-            for row in source["records"]
+            {
+                **{key: row[key] for key in ("slideId", "patientId", "label")},
+                **({"patientIdSource": "slide_fallback"} if fallback and index == 0 else {}),
+            }
+            for index, row in enumerate(source["records"])
         ],
-        overlap={"slideIds": [], "patientIds": []},
+        overlap={
+            "slideIds": [],
+            "patientIds": [],
+            **(
+                {"patientsComparable": False}
+                if getattr(request, "param", None) == "independent"
+                else {}
+            ),
+        },
     )
     evaluation = publish(
         "model-evaluation",
@@ -452,6 +483,46 @@ def test_service_rejects_tampered_or_unfinished_evaluation_evidence(service):
     path = folder / "predictions.json"
     path.write_bytes(path.read_bytes() + b" ")
     assert current.preview(selection)["findings"][0]["code"] == "EVALUATION_RESULT_CHANGED"
+
+
+@pytest.mark.parametrize("service", ["fallback"], indirect=True)
+def test_clinical_uses_cohort_fallback_provenance_for_legacy_predictions(service):
+    current, selection, folder, execution = service
+    original = (folder / "predictions.json").read_bytes()
+    assert "patientIdSource" not in json.loads(original)["records"][0]
+    preview = current.preview(selection)
+    assert not preview["canSave"]
+    assert preview["findings"][0]["code"] == "CLINICAL_PATIENT_IDENTITIES_UNVERIFIED"
+    selection = selection.model_copy(update={"unit": "slide"})
+    preview = current.preview(selection)
+    assert preview["canSave"]
+    assert preview["manifest"]["report"]["uncertainty"]["method"] == "unavailable"
+    assert preview["manifest"]["report"]["counts"]["fallbackPatientIds"] == 1
+    assert (folder / "predictions.json").read_bytes() == original
+
+    # Even a matching artifact receipt cannot promote a fallback to a verified
+    # identity when it contradicts the authoritative frozen cohort.
+    value = json.loads(original)
+    value["records"][0]["patientIdSource"] = "source"
+    content = json.dumps(value).encode()
+    (folder / "predictions.json").write_bytes(content)
+    execution["result"]["artifacts"]["predictions.json"].update(
+        bytes=len(content), sha256=hashlib.sha256(content).hexdigest()
+    )
+    preview = current.preview(selection)
+    assert not preview["canSave"]
+    assert "identity provenance" in preview["findings"][0]["message"]
+
+
+@pytest.mark.parametrize("service", ["independent"], indirect=True)
+def test_clinical_report_preserves_unverifiable_cross_dataset_patient_overlap(service):
+    current, selection, *_ = service
+    preview = current.preview(selection)
+    assert preview["canSave"]
+    assert any(
+        "Cross-dataset patient overlap could not be verified" in warning
+        for warning in preview["manifest"]["report"]["warnings"]
+    )
 
 
 def test_changed_review_inputs_require_new_preview_and_operation_replay_matches_intent(service):

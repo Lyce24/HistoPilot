@@ -190,6 +190,16 @@ def test_protocol_pinned_feature_source_must_match_bundle(inputs):
     assert "BUNDLE_FEATURE_MISMATCH" in codes(result)
 
 
+def test_extra_spreadsheet_predictors_cannot_be_silently_ignored_by_image_only_training(inputs):
+    inputs.protocol["manifest"]["spec"]["predictors"] = ["age"]
+    before = copy.deepcopy(inputs.protocol)
+    result = inputs.service.preview(specification())
+    assert not result["canPlan"]
+    assert "TABULAR_PREDICTORS_UNSUPPORTED" in codes(result)
+    assert result["resolvedLoadingPolicy"] is None
+    assert inputs.protocol == before
+
+
 def test_every_unique_eligible_slide_requires_features_across_repeated_folds(inputs):
     inputs.protocol["manifest"]["memberships"] += [
         {"slideId": "missing", "fold": 0},

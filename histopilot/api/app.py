@@ -79,6 +79,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/health")
     def health():
+        # Legacy generic/demo job submission remains disabled. Project execution
+        # capabilities and runtime readiness are reported by authenticated routes.
         return {"status": "ok", "version": __version__, "executionEnabled": False}
 
     @app.get("/api/v1/session")
@@ -267,17 +269,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/system")
     def system():
         trident = discover_runtime()
-        extraction_ready = trident["available"] and TmuxExtractionExecutor().available()
+        tmux_available = TmuxExtractionExecutor().available()
+        extraction_ready = trident["available"] and tmux_available
         return {
             "mode": "local-first",
             "workspace": str(settings.workspace),
             "storage": {"engine": "sqlite", "journalMode": "wal", "schemaVersion": SCHEMA_VERSION},
             "control": {"cudaModelsLoaded": False, "process": "control-service"},
             "workers": {
+                # Retained for old clients: this flag describes TRIDENT only.
                 "executionEnabled": extraction_ready,
-                "status": "TRIDENT extraction available; MIL training not connected"
-                if extraction_ready
-                else "TRIDENT runtime setup required; MIL training not connected",
+                "tmuxAvailable": tmux_available,
+                "nativeExecutionImplemented": True,
+                "status": (
+                    "TRIDENT extraction available. "
+                    if extraction_ready
+                    else "TRIDENT extraction requires runtime setup or tmux. "
+                )
+                + "ABMIL training, refitting, evaluation and attention are implemented; "
+                "check runtime readiness in their modules.",
                 "trident": trident,
             },
             "sourcesReadOnly": True,
@@ -294,7 +304,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/v1/jobs")
     def submit_job():
-        raise HTTPException(501, "Compute execution is not implemented. No job was submitted.")
+        raise HTTPException(
+            501,
+            "Generic job submission is not implemented. Use the project feature, training, "
+            "evaluation or interpretation workflows. No job was submitted.",
+        )
 
     app.include_router(scientific_router(projects, filesystem))
     app.include_router(lifecycle_router(projects, filesystem))

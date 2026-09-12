@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -37,6 +38,45 @@ def _representation(feature):
         "encoderId": manifest.get("layout", {}).get("encoderId")
         or manifest.get("spec", {}).get("encoderId"),
     }
+
+
+def _slide_sources(store, dataset, rows, selected):
+    """Use immutable import evidence to recognize renamed/symlinked/hardlinked WSIs.
+
+    No live WSI reads are needed. Feature-only datasets can lack this evidence;
+    their exact slide and patient identifiers are still checked separately.
+    """
+    paths = defaultdict(set)
+    for row in rows:
+        if (
+            row["slideId"] in selected
+            and isinstance(row.get("slidePath"), str)
+            and row["slidePath"]
+        ):
+            paths[row["slidePath"]].add(row["slideId"])
+    sources = defaultdict(set)
+    for path, slides in paths.items():
+        for slide in slides:
+            sources[slide].add(("path", path))
+    if paths and "inventory.json" in dataset.get("artifacts", {}):
+        try:
+            inventory = json.loads(store.read_artifact(dataset["id"], "inventory.json"))
+            if not isinstance(inventory, list) or any(
+                not isinstance(row, dict) for row in inventory
+            ):
+                raise ValueError
+            for row in inventory:
+                if row.get("path") not in paths:
+                    continue
+                stamp = tuple(row.get(key) for key in ("device", "inode", "sizeBytes", "mtimeNs"))
+                if all(type(value) is int for value in stamp) and stamp[1] > 0 and stamp[2] > 0:
+                    for slide in paths[row["path"]]:
+                        sources[slide].add(("file", *stamp))
+        except (ValueError, TypeError) as error:
+            raise StorageError(
+                "The frozen slide-source inventory is malformed.", "STORAGE_CORRUPT", 409
+            ) from error
+    return sources
 
 
 # Finding messages, the freeze verdict and capability flags are presentation, not
@@ -137,6 +177,11 @@ class EvaluationService:
                 "PATIENT_OVERLAP_UNVERIFIABLE",
                 "Separate patient identifier namespaces were declared. Patient overlap cannot be verified across these datasets; exact slide IDs are still checked.",
                 "warning",
+            )
+        if spec.inference.patientAggregation != "mean":
+            finding(
+                "PATIENT_AGGREGATION_UNSUPPORTED",
+                "Frozen predictors use mean class probabilities across each patient's slides. Select mean probabilities before freezing this cohort.",
             )
         for condition in spec.eligibility:
             if condition.field not in fields and condition.field not in CANONICAL:
@@ -262,7 +307,29 @@ class EvaluationService:
                 "DEVELOPMENT_PATIENT_OVERLAP",
                 f"{len(patient_overlap)} selected patient IDs occur in model development.",
             )
-        guards, bindings, representations = [], {}, {}
+        development_dataset, development_rows = dataset, rows
+        if not same_dataset:
+            development_dataset, _fields, development_rows = self.protocols._load_dataset(
+                protocol_manifest["datasetId"]
+            )
+        development_sources = _slide_sources(
+            self.store, development_dataset, development_rows, development_slides
+        )
+        source_identities = (
+            set().union(*development_sources.values()) if development_sources else set()
+        )
+        selected_sources = _slide_sources(self.store, dataset, included, selected_ids)
+        source_overlap = sorted(
+            slide
+            for slide, sources in selected_sources.items()
+            if sources & source_identities and slide not in development_slides
+        )
+        if source_overlap:
+            finding(
+                "DEVELOPMENT_SLIDE_SOURCE_OVERLAP",
+                f"{len(source_overlap)} selected slides refer to source files used in model development under different slide IDs. Reconcile their identities and select independent slides.",
+            )
+        guards, bindings, representations, feature_dtypes = [], {}, {}, {}
         feature_ids = set()
         selected_bundle = None
         for name, identity in (
@@ -290,6 +357,7 @@ class EvaluationService:
                 )
             bindings[name] = {"bundle": _reference(bundle), "feature": _reference(feature)}
             representations[name] = _representation(feature)
+            feature_dtypes[name] = {item["dtype"] for item in feature["manifest"]["files"]}
             if name == "development":
                 missing_development = development_slides - set(available)
                 if missing_development:
@@ -319,6 +387,14 @@ class EvaluationService:
             finding(
                 "FEATURE_DIMENSION_MISMATCH",
                 "Test feature dimensions must match the development features.",
+            )
+        if (
+            len(feature_dtypes["development"]) != 1
+            or feature_dtypes["development"] != feature_dtypes["evaluation"]
+        ):
+            finding(
+                "FEATURE_DTYPE_MISMATCH",
+                "Test feature dtype must match the single dtype used by the development features. Select or rebuild a compatible feature bundle before freezing.",
             )
         same_feature = bindings["development"]["feature"] == bindings["evaluation"]["feature"]
         if not same_feature and (not left["encoderId"] or not right["encoderId"]):
@@ -395,6 +471,7 @@ class EvaluationService:
                 "slideIds": slide_overlap,
                 "patientIds": patient_overlap,
                 "patientsComparable": same_dataset or spec.patientIdentifiers == "shared",
+                **({"sourceSlideIds": source_overlap} if source_overlap else {}),
             },
             "bindings": {
                 "protocol": _reference(protocol),

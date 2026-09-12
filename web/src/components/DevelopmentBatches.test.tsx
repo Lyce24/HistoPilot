@@ -90,6 +90,23 @@ describe('development execution controls', () => {
     expect(html).toMatch(/Current validation loss: 0.8000<\/p><\/div><\/td><td>—<\/td><td>—<\/td>/);
   });
 
+  it('keeps training state and artifacts inspectable when a run progress file is unreadable', () => {
+    const live = execution('running');
+    live.runs[0] = { ...live.runs[0], progress: null, progressWarning: 'Progress file could not be read.', outputPath: '/tmp/run-output' };
+    const html = renderToStaticMarkup(<RunTable batch={batch} execution={live} />);
+    expect(html).toContain('running');
+    expect(html).toContain('Progress file could not be read.');
+    expect(html).toContain('/tmp/run-output');
+  });
+
+  it('renders partial progress while validation metrics have not been written yet', () => {
+    const live = execution('running');
+    live.runs[0].progress = { epoch: 1, maxEpochs: 10, globalStep: 1 } as NonNullable<TrainingExecution['runs'][number]['progress']>;
+    const html = renderToStaticMarkup(<RunTable batch={batch} execution={live} />);
+    expect(html).toContain('Epoch 1 / 10');
+    expect(html).not.toContain('Current validation loss');
+  });
+
   it('offers the ABMIL architecture defaults including zero dropout without requiring CUDA', () => {
     const html = renderToStaticMarkup(<RecipeFields value={{ ...defaultRecipe(), dropout: 0 }} onChange={() => {}} />);
     expect(html).toContain('Embedding dimensions');
