@@ -1,0 +1,31 @@
+/* Shared interface palette, inspired by Brown University's digital colors:
+   https://communications.sph.brown.edu/resources/identity
+   Scientific series, dataset partitions, and attention maps keep their own scales. */
+:root {
+  color-scheme: light;
+  accent-color: var(--brand-red);
+  --brand-brown: #4e3629;
+  --brand-red: #c00404;
+  --brand-red-hover: #9e0303;
+  --brand-gold: #ffc72c;
+  --brand-gray: #98a4ae;
+  --theme-ink: #342720;
+  --theme-muted: #5c6973;
+  --theme-line: #e1e5e8;
+  --theme-line-strong: #bac3ca;
+  --theme-canvas: #f6f7f8;
+  --theme-surface: #ffffff;
+  --theme-soft: #f1f3f5;
+  --theme-soft-hover: #e9edf0;
+  --theme-warm-soft: #f7f3ef;
+  --theme-gold-soft: #fff7db;
+  --theme-gold-line: #e8d08a;
+  --theme-accent-soft: #fbefee;
+  --theme-accent-line: #edc7c2;
+  --theme-on-dark: #f5e9de;
+  --theme-nav-soft: #604638;
+  --theme-nav-line: #876e5e;
+  --theme-nav-hover: #705443;
+  --theme-shadow-rgb: 78 54 41;
+  --theme-shadow-card: 0 2px 4px rgb(52 39 32 / 2%), 0 12px 32px rgb(52 39 32 / 4%);
+}

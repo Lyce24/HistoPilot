@@ -39,6 +39,21 @@ def host_snapshot() -> dict:
     }
 
 
+def cpu_times() -> tuple[int, int] | None:
+    """Read aggregate Linux CPU ticks; guest time is already included in user/nice."""
+    try:
+        with Path("/proc/stat").open() as stream:
+            fields = stream.readline().split()
+        if not fields or fields[0] != "cpu":
+            return None
+        values = [int(value) for value in fields[1:9]]
+        if len(values) < 4 or any(value < 0 for value in values):
+            return None
+        return sum(values), values[3] + (values[4] if len(values) > 4 else 0)
+    except (OSError, ValueError, UnicodeError):
+        return None
+
+
 def gpu_snapshot() -> dict:
     """Best-effort driver telemetry. N/A fields stay unknown, never become zero."""
     executable = shutil.which("nvidia-smi")
@@ -177,6 +192,17 @@ class ResourceTelemetry:
     def __init__(self, folder: Path):
         self.folder = folder
         self.last_observed = -float("inf")
+        self.previous_cpu = None
+
+    def cpu_utilization(self) -> float | None:
+        current, previous = cpu_times(), self.previous_cpu
+        self.previous_cpu = current
+        if current is None or previous is None:
+            return None
+        total, idle = current[0] - previous[0], current[1] - previous[1]
+        if total <= 0 or idle < 0 or idle > total:
+            return None  # Counters can reset; a new baseline is needed.
+        return round(100 * (total - idle) / total, 1)
 
     def record(self, state: dict, *, force=False) -> dict | None:
         current = time.monotonic()
@@ -184,6 +210,7 @@ class ResourceTelemetry:
             return None
         self.last_observed = current
         observation = {"at": now(), "host": host_snapshot(), **gpu_snapshot(), "runs": []}
+        observation["host"]["cpuUtilizationPercent"] = self.cpu_utilization()
         for run in state["runs"]:
             identity = run.get("process")
             if run["status"] == "running" and process_alive(identity):

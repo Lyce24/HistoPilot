@@ -3,7 +3,7 @@
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fbfaff;
+  background: var(--theme-canvas);
 }
 .protocol-distribution figcaption {
   font-weight: 600;
@@ -20,7 +20,7 @@
   gap: 6px;
   padding: 12px 14px;
   border-radius: 8px;
-  background: #f6f5fb;
+  background: var(--theme-soft);
   color: var(--muted);
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -52,13 +52,13 @@
 .protocol-partition-live progress {
   width: 100%;
   height: 10px;
-  accent-color: #7864d7;
+  accent-color: var(--brand-red);
 }
 .protocol-partition-live {
   display: grid;
   gap: 10px;
   padding: 16px;
-  background: #fbfaff;
+  background: var(--theme-canvas);
   border: 1px solid var(--line);
   border-radius: 10px;
 }
@@ -84,7 +84,7 @@
 .protocol-live-status {
   padding: 16px;
   border-radius: 10px;
-  background: #f7f6fb;
+  background: var(--theme-soft);
   color: var(--muted);
 }
 .protocol-extra-inputs {
@@ -107,14 +107,14 @@
   margin: 8px 0;
 }
 .protocol-workspace .protocol-distribution {
-  background: #fcfbfd;
-  border-color: #e5e1e9;
+  background: var(--theme-canvas);
+  border-color: var(--theme-line);
   border-radius: 12px;
   padding: 18px 20px;
 }
 .protocol-workspace .protocol-distribution figcaption {
   font-size: 13px;
-  color: #47505c;
+  color: var(--theme-ink);
   margin-bottom: 16px;
 }
 .protocol-workspace .protocol-distribution .science-bar {
@@ -123,38 +123,38 @@
 }
 .protocol-workspace .protocol-distribution .science-bar-track {
   height: 14px;
-  background: #efebf2;
+  background: var(--theme-soft-hover);
   border-radius: 4px;
 }
 .protocol-workspace .protocol-distribution .science-bar-track > span {
-  background: #9379a0;
+  background: var(--brand-red);
   border-radius: 4px;
 }
 .protocol-workspace .protocol-field-profile {
   padding: 14px 16px;
   gap: 8px;
-  border: 1px solid #e7e3e9;
+  border: 1px solid var(--theme-line);
   border-radius: 10px;
-  background: #faf9fb;
-  color: #626e79;
+  background: var(--theme-canvas);
+  color: var(--theme-muted);
   font-size: 12px;
   line-height: 1.6;
 }
 .protocol-workspace .protocol-field-profile strong {
-  color: #47505c;
+  color: var(--theme-ink);
   font-weight: 600;
 }
 .protocol-workspace .protocol-field-profile code {
   padding: 2px 8px;
-  color: #684e75;
-  border-color: #e5dfe9;
+  color: var(--brand-brown);
+  border-color: var(--theme-line);
   border-radius: 5px;
   font-size: 12px;
 }
 .protocol-workspace .protocol-population {
   padding: 20px;
-  background: #f8faf9;
-  border: 1px solid #dce8e3;
+  background: var(--theme-canvas);
+  border: 1px solid var(--theme-line);
   border-radius: 12px;
   gap: 18px;
 }
@@ -165,13 +165,13 @@
   gap: 8px;
 }
 .protocol-workspace .protocol-population-heading > span {
-  color: #34766a;
+  color: var(--brand-brown);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 1px;
 }
 .protocol-workspace .protocol-population-heading > small {
-  color: #626e79;
+  color: var(--theme-muted);
   font-size: 12px;
 }
 .protocol-workspace .protocol-metrics {
@@ -189,16 +189,16 @@
 .protocol-workspace .protocol-metrics .metric-value {
   font-size: 31px;
   letter-spacing: -1px;
-  color: #2f655d;
+  color: var(--brand-brown);
   margin: 7px 0;
 }
 .protocol-workspace .protocol-metrics .metric-label {
-  color: #55655f;
+  color: var(--theme-muted);
   font-size: 12px;
 }
 .protocol-workspace .protocol-metrics .metric-note {
   font-size: 11px;
-  color: #65776f;
+  color: var(--theme-muted);
 }
 .protocol-workspace .protocol-coverage,
 .protocol-workspace .protocol-partition-live {
@@ -207,7 +207,7 @@
 .protocol-workspace .protocol-population progress,
 .protocol-workspace .protocol-partition-live progress {
   height: 8px;
-  accent-color: #529387;
+  accent-color: var(--brand-brown);
 }
 .protocol-workspace .protocol-sample {
   min-width: 0;
@@ -215,37 +215,37 @@
   padding: 12px 0 0;
 }
 .protocol-workspace .protocol-sample summary {
-  color: #5f536d;
+  color: var(--theme-muted);
   font-size: 12px;
   line-height: 1.5;
 }
 .protocol-workspace .protocol-sample .table-wrap {
-  border: 1px solid #e7e3e9;
+  border: 1px solid var(--theme-line);
   border-radius: 8px;
 }
 .protocol-workspace .protocol-sample table caption {
   padding: 10px 12px;
-  color: #626e79;
+  color: var(--theme-muted);
   font-size: 11px;
   text-align: left;
 }
 .protocol-workspace .protocol-condition {
   padding: 16px;
-  border: 1px solid #e3dee9;
+  border: 1px solid var(--theme-line);
   border-radius: 10px;
-  background: #fcfbfd;
+  background: var(--theme-canvas);
 }
 .protocol-workspace .protocol-condition + .protocol-condition {
-  border-top: 1px solid #e3dee9;
+  border-top: 1px solid var(--theme-line);
 }
 .protocol-workspace .protocol-extra-inputs {
   padding: 18px 20px;
-  background: #faf9fb;
-  border-color: #e5e0e9;
+  background: var(--theme-canvas);
+  border-color: var(--theme-line);
   border-radius: 12px;
 }
 .protocol-workspace .protocol-extra-inputs summary {
-  color: #5d496b;
+  color: var(--brand-brown);
   font-size: 13px;
 }
 .protocol-workspace .protocol-extra-inputs .protocol-field-profile {
@@ -253,9 +253,9 @@
   background: #fff;
 }
 .protocol-workspace .protocol-live-status {
-  background: #f6f5f8;
-  border: 1px dashed #dcd6e3;
-  color: #626e79;
+  background: var(--theme-soft);
+  border: 1px dashed var(--theme-line);
+  color: var(--theme-muted);
   font-size: 13px;
 }
 @media (max-width: 560px) {

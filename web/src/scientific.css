@@ -15,7 +15,7 @@
 }
 .dataset-steps button[aria-current='step'] {
   border-color: var(--accent);
-  background: #f8f6ff;
+  background: var(--theme-accent-soft);
 }
 .patient-fallback-dialog {
   position: fixed;
@@ -28,8 +28,8 @@
   overflow: auto;
   padding: 28px;
   border-radius: 16px;
-  background: white;
-  box-shadow: 0 25px 90px #11182740;
+  background: var(--theme-surface);
+  box-shadow: 0 25px 90px rgb(var(--theme-shadow-rgb) / 0.25);
 }
 .patient-fallback-dialog p {
   margin-top: 16px;
@@ -57,7 +57,7 @@
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: white;
+  background: var(--theme-surface);
   text-align: left;
   font-size: 13px;
 }
@@ -128,10 +128,10 @@
   left: 0;
   width: min(520px, 100%);
   padding: 18px;
-  background: white;
-  border: 1px solid #d5cfee;
+  background: var(--theme-surface);
+  border: 1px solid var(--theme-line-strong);
   border-radius: 12px;
-  box-shadow: 0 10px 36px #26204426;
+  box-shadow: 0 10px 36px rgb(var(--theme-shadow-rgb) / 0.15);
   font-size: 13px;
   line-height: 1.65;
   color: var(--ink);
@@ -142,7 +142,7 @@
 .patient-table-help pre {
   margin-top: 10px;
   padding: 10px;
-  background: #f7f6fb;
+  background: var(--theme-canvas);
   border-radius: 6px;
   font-size: 12px;
   white-space: pre-wrap;
@@ -170,7 +170,7 @@
 .science-toolbar {
   margin-bottom: 24px;
   padding: 20px 24px;
-  background: #fff;
+  background: var(--theme-surface);
   border: 1px solid var(--line);
   border-radius: 12px;
 }
@@ -266,13 +266,13 @@
   justify-content: space-between;
   gap: 22px;
   padding: 20px 24px;
-  background: #f4f2fc;
-  border: 1px solid #e6e1fa;
+  background: var(--theme-soft);
+  border: 1px solid var(--theme-line);
   border-radius: 10px;
   margin: 4px 0 24px;
 }
 .science-savebar p {
-  color: #66627a;
+  color: var(--theme-muted);
   font-size: 12px;
   margin-top: 4px;
 }
@@ -289,7 +289,7 @@
   justify-content: space-between;
 }
 .science-success {
-  color: #237761;
+  color: var(--brand-brown);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -304,19 +304,19 @@
   align-items: flex-start;
   gap: 10px;
   padding: 14px;
-  background: #f5f6fa;
+  background: var(--theme-canvas);
   border: 1px solid var(--line);
   border-radius: 8px;
 }
 .finding-error {
-  background: #fff2f0;
-  border-color: #f1d5d2;
-  color: #8d352d;
+  background: var(--theme-accent-soft);
+  border-color: var(--theme-accent-line);
+  color: var(--brand-red);
 }
 .finding-warning {
-  background: #fff9e9;
-  border-color: #f0e5c7;
-  color: #856228;
+  background: var(--theme-soft);
+  border-color: var(--theme-line-strong);
+  color: var(--brand-brown);
 }
 .finding > div {
   flex: 1;
@@ -367,7 +367,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #f7f8fb;
+  background: var(--theme-canvas);
 }
 .science-chart {
   display: grid;
@@ -394,15 +394,15 @@
   white-space: nowrap;
 }
 .science-bar:hover {
-  background: #f2f0fa;
+  background: var(--theme-soft-hover);
 }
 .science-bar.selected {
-  background: #f2effd;
-  border-color: #ada2e5;
+  background: var(--theme-accent-soft);
+  border-color: var(--theme-accent-line);
 }
 .science-bar-track {
   height: 18px;
-  background: #f1eff8;
+  background: var(--theme-soft);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -410,7 +410,7 @@
   display: block;
   height: 100%;
   min-width: 2px;
-  background: linear-gradient(90deg, #9384e3, #7463c7);
+  background: var(--brand-brown);
   border-radius: 3px;
 }
 .histogram-bin:disabled {
@@ -429,9 +429,9 @@ table caption {
   color: var(--ink);
 }
 .cross-tab td {
-  color: #6856b3;
+  color: var(--brand-brown);
   font-weight: 650;
-  background: #f8f6fe;
+  background: var(--theme-soft);
   text-align: center;
 }
 .science-label-map,

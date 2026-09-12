@@ -30,12 +30,15 @@ flowchart LR
     V --> B
     T --> M[Development batch]
     B --> M
-    T --> E[Test cohort setup]
-    B --> E
+    D --> E[Test cohort]
+    E --> R[Evaluation plan]
+    B --> R
+    M --> P[Predictor]
+    P --> R
 ```
 
 - A dataset cannot enter Trash while a retained protocol, feature inventory, revision or draft needs it.
-- A protocol or feature bundle cannot enter Trash while a retained batch or test cohort needs it.
+- A protocol or feature bundle cannot enter Trash while a retained batch, evaluation or legacy bound test cohort needs it. New independent test cohorts protect their selected datasets and do not depend on model or feature preparation.
 - Predictor identity includes experiment, batch, configuration, training seed, split seed and method. Archived or trashed records still reserve that identity; **Both** reuses active records or requires explicit restoration rather than replacing them.
 - An evaluation protects its predictor and test cohort. An evaluation batch retains its member evaluation IDs and selected input references; deleting a member may require including the retained batch in the review. Archiving the batch does not change its members' individual visibility.
 - Archived consumers protect their inputs just as active consumers do.

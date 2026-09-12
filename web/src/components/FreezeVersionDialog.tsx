@@ -7,6 +7,7 @@ import { ErrorNotice, Icon } from './ui';
 import './FreezeVersionDialog.css';
 
 const kinds = {
+  cohort: { name: 'test cohort', placeholder: 'e.g. external-validation-v1', saved: 'test records, eligibility conditions and prediction target' },
   dataset: { name: 'dataset', placeholder: 'e.g. reviewed-slides-v1', saved: 'slide records and column mapping' },
   protocol: { name: 'development protocol', placeholder: 'e.g. grade-baseline-v1', saved: 'cohort, prediction target and split assignments' },
   feature: { name: 'feature', placeholder: 'e.g. uni-20x-v1', saved: 'feature configuration and file references' },

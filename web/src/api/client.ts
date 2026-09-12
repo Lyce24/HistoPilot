@@ -11,6 +11,7 @@ import type {
   ProjectSummary,
   Source,
   SystemStatus,
+  SystemCompute,
   Workspace,
 } from './types';
 
@@ -190,6 +191,7 @@ export const api = {
       body: JSON.stringify(input),
     }),
   system: () => request<SystemStatus>('/system'),
+  systemCompute: (signal?: AbortSignal) => request<SystemCompute>('/system/compute', { signal }),
   jobs: () => request<Jobs>('/jobs'),
   roots: (purpose: 'data' | 'storage' = 'data') =>
     request<{ roots: FilesystemRoot[] }>(

@@ -36,7 +36,7 @@ export type ClinicalArtifact = 'report.json' | 'operating-curves.csv' | 'calibra
 const base = (project: string) => `/projects/${encodeURIComponent(project)}/clinical-analyses`;
 const post = (value: unknown) => ({ method: 'POST', body: JSON.stringify(value) });
 export const clinicalAnalyses = {
-  list: (project: string) => request<{ items: ClinicalAnalysis[] }>(base(project)),
+  list: (project: string, includeInactive = false) => request<{ items: ClinicalAnalysis[] }>(`${base(project)}${includeInactive ? '?include_inactive=true' : ''}`),
   get: (project: string, id: string) => request<ClinicalAnalysis>(`${base(project)}/${encodeURIComponent(id)}`),
   preview: (project: string, selection: ClinicalSelection) => request<ClinicalPreview>(`${base(project)}/preview`, post(selection)),
   save: (project: string, selection: ClinicalSelection, previewHash: string, operationId: string) => request<ClinicalAnalysis>(base(project), post({ ...selection, previewHash, operationId })),

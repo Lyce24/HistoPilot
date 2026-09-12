@@ -49,12 +49,12 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
   },
   {
     id: 'test-data', title: 'Test cohorts', shortTitle: 'Test cohorts', phase: 'evaluate',
-    description: 'Choose test records, verify features, and set inference options. Test cohorts have no training splits.',
-    prerequisites: ['cohort'],
+    description: 'Select test datasets, filter slides, define prediction targets, and freeze reusable test cohorts.',
+    prerequisites: ['dataset'],
   },
   {
     id: 'evaluation', title: 'Evaluate models', shortTitle: 'Evaluate models', phase: 'evaluate',
-    description: 'Select a predictor and test cohort for each evaluation, with a separate record for every chain.',
+    description: 'Select development models and test cohorts, check matching targets and extracted or packed features, then evaluate.',
     prerequisites: ['experiments', 'test-data'],
   },
   {
@@ -69,7 +69,7 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
   },
 ];
 
-/** Display the primary workflow; test preparation separately retains its protocol gate. */
+/** Display the primary workflow; test cohorts can be prepared independently of development. */
 export const ROADMAP_CONNECTIONS: readonly { from: RoadmapModuleId; to: RoadmapModuleId }[] = [
   { from: 'dataset', to: 'cohort' }, { from: 'dataset', to: 'features' },
   { from: 'cohort', to: 'experiments' }, { from: 'features', to: 'experiments' },
@@ -153,6 +153,13 @@ export function completedDevelopmentBatches(batches: readonly FrozenBatch[], exe
  * freezing requires a published predictor; planned evaluations are not results.
  */
 export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvidence> = {}): RoadmapModule[] {
+  if (workspace.mode === 'synthetic-demo' && workspace.demoPipeline) {
+    return ROADMAP_MODULES.map((module) => {
+      const count = workspace.demoPipeline!.records.filter((record) => record.module === module.id).length;
+      return { ...module, status: 'draft', unlocked: true, blockers: [], artifactCount: count,
+        evidence: count ? `${count} illustrative ${count === 1 ? 'record' : 'records'} · synthetic walkthrough` : 'Illustrative workflow explanation' };
+    });
+  }
   const saved = { ...EMPTY_EVIDENCE, ...evidence };
   const demo = workspace.mode === 'synthetic-demo';
   const datasetIds = new Set(saved.datasets.map((dataset) => dataset.id));
@@ -187,7 +194,7 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
       };
     }
     const currentCohorts = saved.evaluationCohorts.filter((item) => item.current === true && !item.findings?.some((finding) => finding.severity === 'error'));
-    states['test-data'] = progress(currentCohorts.length, saved.evaluationCohorts.length - currentCohorts.length + saved.drafts.filter((draft) => draft.payload.type === 'evaluation-cohort').length, 'verified test cohort', 'saved test cohort', 'No prepared test cohort');
+    states['test-data'] = progress(currentCohorts.length, saved.evaluationCohorts.length - currentCohorts.length + saved.drafts.filter((draft) => draft.payload.type === 'evaluation-cohort').length, 'frozen test cohort', 'saved test cohort', 'No prepared test cohort');
   }
 
   const retainedPredictors = demo ? [] : saved.predictors.filter((item) => item.lifecycleState !== 'trashed');
@@ -224,7 +231,7 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     // These pages are registries: users can create an experiment before inputs,
     // inspect historical chains and recover records without completing all other
     // experiments. Individual training/freeze/evaluation actions check readiness.
-    const registry = !demo && ['experiments', 'evaluation', 'clinical-utility', 'interpretation'].includes(module.id);
+    const registry = !demo && ['experiments', 'test-data', 'evaluation', 'clinical-utility', 'interpretation'].includes(module.id);
     return { ...module, ...states[module.id], blockers, unlocked: registry || blockers.length === 0, compatibilityIssue, retainedWork };
   });
 }

@@ -20,9 +20,7 @@ import {
   Panel,
 } from '../components/ui';
 import {
-  DatasetSelect,
   DictionaryEditor,
-  DraftSelect,
   Findings,
   RecordExplorer,
   SavedNotice,
@@ -38,6 +36,7 @@ import PatientFallbackDialog from '../components/PatientFallbackDialog';
 import VersionLabelEditor from '../components/VersionLabelEditor';
 import FreezeVersionDialog from '../components/FreezeVersionDialog';
 import SetupContext from '../components/SetupContext';
+import { StageLibrary, StageLibraryToolbar, StageRecordManageButton, StagePage, StageSteps, useStageLibrary } from '../components/StageWorkflow';
 import { datasetVersionLabel } from '../lib/versionLabels';
 import { scientificReviewInvalidated } from '../lib/scientificReview';
 import { canReuseImportMapping, inspectedAttributes } from '../lib/datasetImport';
@@ -58,7 +57,9 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   const versions = useDatasets(project);
   const savedDrafts = useDrafts(project);
   const refresh = useRefreshScientific(project);
-  const [view, setView] = useState<'import' | 'dataset'>(w.dataset.id ? 'dataset' : 'import');
+  const [view, setView] = useState<'library' | 'import' | 'dataset'>('library');
+  const [libraryFilters, setLibraryFilters] = useState({ search: '', status: 'all', sort: 'recent' });
+  const [resumeView, setResumeView] = useState<'import' | 'dataset' | null>(null);
   const [versionId, setVersionId] = useState(w.dataset.id);
   const [freezeReview, setFreezeReview] = useState<{
     draftId: string; revision: number; preview: ImportPreview; name: string; operationId: string;
@@ -76,11 +77,11 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [fallbackCount, setFallbackCount] = useState<number | null>(null);
   const [readingSource, setReadingSource] = useState<'main' | 'patient' | null>(null);
-  const sourcesSection = useRef<HTMLDivElement>(null);
-  const mappingSection = useRef<HTMLDivElement>(null);
-  const reviewSection = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<Error | null>(null);
   const [message, setMessage] = useState('');
+  useStageLibrary(() => {
+    if (!busy && !freezeReview && fallbackCount === null && view !== 'library') { setResumeView(view); setView('library'); }
+  });
   const datasetId = versionId || versions.data?.datasets[0]?.id || '';
   const version = versions.data?.datasets.find((item) => item.id === datasetId);
   const dirty = !draft || draft.name !== name || !sameJSON(draft.payload.spec, spec);
@@ -88,22 +89,32 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   const sourceReady =
     Boolean(inspection?.headers.length) &&
     !inspection?.findings.some((finding) => finding.severity === 'error');
-  function goTo(section: HTMLDivElement | null) {
-    section?.scrollIntoView({ block: 'start' });
-    section?.focus({ preventScroll: true });
-  }
   function showStep(next: 1 | 2 | 3) {
     setStep(next);
-    requestAnimationFrame(() =>
-      goTo(
-        next === 1
-          ? sourcesSection.current
-          : next === 2
-            ? mappingSection.current
-            : reviewSection.current,
-      ),
-    );
   }
+  const importDrafts = (savedDrafts.data?.drafts ?? []).filter((item) => item.payload.type === 'dataset-import');
+  const libraryRows = [
+    ...(versions.data?.datasets ?? []).map((item) => ({
+      kind: 'dataset' as const, item, name: datasetVersionLabel(item), status: 'frozen',
+      updatedAt: item.versionLabel?.updatedAt ?? item.createdAt, createdAt: item.createdAt,
+      search: [datasetVersionLabel(item), item.id, item.manifest.name, item.versionLabel?.note].join(' ').toLowerCase(),
+    })),
+    ...importDrafts.map((item) => ({
+      kind: 'draft' as const, item, name: item.name, status: item.status,
+      updatedAt: item.updatedAt, createdAt: item.createdAt ?? item.updatedAt,
+      search: [item.name, item.id].join(' ').toLowerCase(),
+    })),
+  ];
+  const visibleRows = libraryRows.filter((row) =>
+    (libraryFilters.status === 'all' || row.status === libraryFilters.status) &&
+    row.search.includes(libraryFilters.search.trim().toLowerCase()),
+  ).sort((left, right) => {
+    const order = libraryFilters.sort === 'name' ? left.name.localeCompare(right.name)
+      : libraryFilters.sort === 'oldest' ? left.createdAt.localeCompare(right.createdAt)
+        : right.updatedAt.localeCompare(left.updatedAt);
+    return order || left.item.id.localeCompare(right.item.id);
+  });
+  const resetLibraryFilters = () => setLibraryFilters({ search: '', status: 'all', sort: 'recent' });
   const columns = inspection?.headers ?? [
     ...new Set(
       [
@@ -168,6 +179,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   }
   function reset() {
     setFreezeLabel({ tag: '', note: '' });
+    setFreezeReview(null);
     setDraft(null);
     setSpec(newSpec(w));
     setName(`${w.project.name} dataset`);
@@ -264,63 +276,61 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
       <PageHeader
         eyebrow="PROJECT INPUTS · DATA"
         title="Datasets"
-        description="Build the shared dataset that connects your slides, patients and clinical information."
+        description="Open a dataset or import slide and patient records."
         actions={
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={reset}>
-            <Icon name="plus" /> New import
-          </button>
+          <div className="inline-actions">
+            {view !== 'library' ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => { setResumeView(view); setView('library'); }}>Back to datasets</button> : null}
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={reset}>
+              <Icon name="plus" /> New import
+            </button>
+          </div>
         }
       />
-      <SetupContext input="Slide table and optional slide images" output="A fixed dataset for targets and features">
+      <StagePage pageKey={`${view}-${view === 'import' ? step : versionId}`}>
+      {view !== 'library' ? <SetupContext input="Slide table and optional slide images" output="A fixed dataset for targets and features">
         Recommended: keep development and test rows in one file with a cohort column. Select development rows in Targets and test rows in Evaluate. Separate files are also supported.
-      </SetupContext>
-      <details className="setup-details">
-        <summary>Open a saved dataset or resume an import{versions.data?.datasets.length ? ` · ${versions.data.datasets.length} datasets` : ''}</summary>
-      <div className="science-toolbar">
-        <DatasetSelect
-          versions={versions.data?.datasets ?? []}
-          value={view === 'dataset' ? datasetId : ''}
-          allowEmpty
-          disabled={busy}
-          onChange={(id) => {
-            if (id) {
-              setVersionId(id);
-              setView('dataset');
-            }
-          }}
-        />
-        <div className="stack" style={{ minWidth: 0, gap: 10 }}>
-          <DraftSelect
-            drafts={(savedDrafts.data?.drafts ?? []).filter(
-              (item) => item.payload.type === 'dataset-import',
-            )}
-            value={draft?.id ?? ''}
-            disabled={busy}
-            onChange={(id) => {
-              if (!id) {
-                reset();
-                return;
-              }
-              void run(() => loadDraft(id));
-            }}
-          />
-          {draft ? <div className="inline-actions">
-            <button
-              type="button"
-              className="btn btn-secondary btn-small"
-              disabled={busy}
-              title="Reload the latest saved revision and discard unsaved local edits. Your version tag and note are kept."
-              onClick={() => void run(() => loadDraft(draft.id))}
-            >
-              <Icon name="reset" size={15} /> Reload saved draft
-            </button>
-          </div> : null}
-        </div>
-      </div>
-      </details>
+      </SetupContext> : null}
       <ErrorNotice error={error ?? versions.error ?? savedDrafts.error} />
       <SavedNotice>{message}</SavedNotice>
-      {view === 'dataset' ? (
+      {view === 'library' ? (
+        <StageLibrary project={project} title="Dataset library">
+          <StageLibraryToolbar search={libraryFilters.search} onSearch={(search) => setLibraryFilters((current) => ({ ...current, search }))} searchLabel="Search datasets" placeholder="Name, ID or note" count={versions.isPending || savedDrafts.isPending ? undefined : visibleRows.length} total={libraryRows.length}
+            onReset={libraryFilters.search || libraryFilters.status !== 'all' || libraryFilters.sort !== 'recent' ? resetLibraryFilters : undefined}
+            actions={<>
+              {resumeView ? <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => setView(resumeView)}>Return to current {resumeView === 'import' ? 'import' : 'dataset'}</button> : null}
+              <button type="button" className="btn btn-secondary btn-small" disabled={versions.isFetching || savedDrafts.isFetching} onClick={() => void refresh()}>Refresh</button>
+            </>}>
+            <label className="label">Status<select className="field" value={libraryFilters.status} onChange={(event) => setLibraryFilters((current) => ({ ...current, status: event.target.value }))}>
+              <option value="all">All statuses</option><option value="editable">Draft</option><option value="frozen">Frozen</option>
+            </select></label>
+            <label className="label">Sort<select className="field" value={libraryFilters.sort} onChange={(event) => setLibraryFilters((current) => ({ ...current, sort: event.target.value }))}>
+              <option value="recent">Last updated</option><option value="oldest">Oldest first</option><option value="name">Name A–Z</option>
+            </select></label>
+          </StageLibraryToolbar>
+          {versions.isPending || savedDrafts.isPending ? <p role="status">Loading datasets and import drafts…</p> : null}
+          {visibleRows.length ? (
+            <div className="table-wrap"><table className="stage-library-table" aria-label="Saved datasets and imports">
+              <thead><tr><th>Name</th><th>Status</th><th>Records</th><th>Updated</th><th><span className="sr-only">Actions</span></th></tr></thead>
+              <tbody>{visibleRows.map((row) => row.kind === 'dataset' ? <tr key={`dataset-${row.item.id}`}>
+                <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open dataset ${row.name}`} onClick={() => { setVersionId(row.item.id); setView('dataset'); setError(null); setMessage(''); }}>{row.name}</button>{row.item.versionLabel?.note ? <small>{row.item.versionLabel.note}</small> : null}</td>
+                <td><Badge tone="green">Frozen dataset</Badge></td>
+                <td>{row.item.manifest.summary?.slideCount?.toLocaleString() ?? '—'} slides</td>
+                <td>{new Date(row.updatedAt).toLocaleDateString()}</td>
+                <td><StageRecordManageButton type="dataset" id={row.item.id} name={row.name} /></td>
+              </tr> : <tr key={`draft-${row.item.id}`}>
+                <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open import ${row.name}`} onClick={() => { if (draft?.id === row.item.id) setView('import'); else void run(() => loadDraft(row.item.id)); }}>{row.name}</button><small>Revision {row.item.revision}</small></td>
+                <td><Badge tone={row.item.status === 'frozen' ? 'green' : 'neutral'}>{row.item.status === 'frozen' ? 'Frozen import' : 'Draft'}</Badge></td>
+                <td>Import mapping</td>
+                <td>{new Date(row.updatedAt).toLocaleDateString()}</td>
+                <td><StageRecordManageButton type="draft" id={row.item.id} name={row.name} /></td>
+              </tr>)}</tbody>
+            </table></div>
+          ) : !versions.isPending && !savedDrafts.isPending && !versions.error && !savedDrafts.error ? <EmptyState
+            title={libraryRows.length ? 'No matching datasets or imports' : 'No datasets or import drafts yet'}
+            description={libraryRows.length ? 'Try another search or clear the filters.' : 'Start a new import to connect your metadata, patient IDs and slide files.'}
+          /> : null}
+        </StageLibrary>
+      ) : view === 'dataset' ? (
         version ? (
           <>
             <div className="science-version">
@@ -424,46 +434,15 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
         )
       ) : (
         <>
-          <nav className="dataset-steps" aria-label="Dataset creation steps">
-            <button
-              type="button"
-              disabled={busy}
-              className={sourceReady && step !== 1 ? 'is-complete' : undefined}
-              aria-current={step === 1 ? 'step' : undefined}
-              onClick={() => showStep(1)}
-            >
-              <span aria-hidden="true">
-                {sourceReady && step !== 1 ? <Icon name="check" size={16} /> : '1'}
-              </span>
-              <strong>Choose files</strong>
-              <small>
-                {sourceReady ? 'File read · ready to map' : 'Table and slide folder'}
-              </small>
-            </button>
-            <button
-              type="button"
-              disabled={busy || !columns.length}
-              className={preview && step !== 2 ? 'is-complete' : undefined}
-              aria-current={step === 2 ? 'step' : undefined}
-              onClick={() => showStep(2)}
-            >
-              <span aria-hidden="true">
-                {preview && step !== 2 ? <Icon name="check" size={16} /> : '2'}
-              </span>
-              <strong>Map columns</strong>
-              <small>{preview ? 'Mapping reviewed' : 'IDs and attributes'}</small>
-            </button>
-            <button
-              type="button"
-              disabled={busy || !preview}
-              aria-current={step === 3 ? 'step' : undefined}
-              onClick={() => showStep(3)}
-            >
-              <span aria-hidden="true">3</span>
-              <strong>Review & freeze</strong>
-              <small>{preview ? 'Check your dataset' : 'Save a fixed version'}</small>
-            </button>
-          </nav>
+          <StageSteps label="Dataset creation steps" current={String(step)} onChange={(id) => showStep(Number(id) as 1 | 2 | 3)} disabled={busy} steps={[
+            { id: '1', title: 'Choose files', description: sourceReady ? 'File read · ready to map' : 'Table and slide folder', complete: sourceReady },
+            { id: '2', title: 'Map columns', description: preview ? 'Mapping reviewed' : 'IDs and attributes', disabled: !columns.length, complete: Boolean(preview) },
+            { id: '3', title: 'Review & freeze', description: preview ? 'Check your dataset' : 'Save a fixed version', disabled: !preview },
+          ]} />
+          {draft ? <div className="stage-actions">
+            <span className="muted">{name} · revision {draft.revision}{dirty ? ' · Unsaved changes' : ''}</span>
+            <button type="button" className="btn btn-secondary btn-small" disabled={busy} title="Reload the latest saved revision and discard unsaved local edits. Your version tag and note are kept." onClick={() => void run(() => loadDraft(draft.id))}><Icon name="reset" size={15} /> Reload saved draft</button>
+          </div> : null}
           {frozen ? (
             <div className="callout">
               This import draft is frozen.{' '}
@@ -485,7 +464,6 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
           <fieldset className="science-fieldset" disabled={busy || frozen}>
             <div
               className="dataset-section"
-              ref={sourcesSection}
               hidden={step !== 1}
               tabIndex={-1}
               aria-label="Choose dataset files"
@@ -633,7 +611,6 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
             </div>
             <div
               className="dataset-section dataset-mapping-section"
-              ref={mappingSection}
               hidden={step !== 2}
               tabIndex={-1}
               aria-label="Map dataset columns"
@@ -965,7 +942,6 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
           {preview && step === 3 ? (
             <div
               className="dataset-section"
-              ref={reviewSection}
               tabIndex={-1}
               aria-label="Preview dataset"
             >
@@ -1017,6 +993,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
           ) : null}
         </>
       )}
+      </StagePage>
       {freezeReview ? (
         <FreezeVersionDialog
           kind="dataset"

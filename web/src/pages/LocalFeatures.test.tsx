@@ -33,77 +33,66 @@ function render(versions?: Configuration[], frozenBundles: FeatureBundle[] = [])
   } finally { client.clear(); }
 }
 
-describe('PFM feature sections', () => {
-  it('scopes feature preparation to the saved protocol dataset rather than the newest dataset', () => {
+function frozen(datasetId = 'dataset', tag = 'UNI features only'): FeatureBundle {
+  return {
+    id: `bundle-${datasetId}`, createdAt: '2026-09-10T12:00:00Z', current: true, findings: [],
+    versionLabel: { tag }, manifest: {
+      kind: 'feature-bundle', datasetId, spec: { featureSetId: version.id, packArtifactIds: [] },
+      summary: { slideCount: 2, patchCount: 12, dimensions: 8, dtype: 'float32', packCount: 0 },
+      feature: { id: version.id }, packs: [],
+    },
+  } as unknown as FeatureBundle;
+}
+
+describe('feature bundle stage entry', () => {
+  it('scopes saved bundle records to the linked protocol dataset', () => {
     vi.stubGlobal('window', { location: { hash: '#features?dataset=older&protocol=protocol-old&saved=protocol' } });
-    const older = { ...version, id: 'older-source', versionLabel: { ...version.versionLabel!, tag: 'Older dataset features' }, manifest: { ...version.manifest, datasetId: 'older', spec: { ...version.manifest.spec, datasetId: 'older' } } } as Configuration;
-    const html = render([version, older]);
-    expect(html).toContain('Older dataset features');
-    expect(html).not.toContain('UNI baseline');
+    const html = render([version], [frozen(), frozen('older', 'Older dataset bundle')]);
+    expect(html).toContain('Older dataset bundle');
+    expect(html).not.toContain('UNI features only');
     expect(html).toContain('Development protocol saved. Prepare or reuse a feature bundle for its dataset.');
     expect(html).toContain('Show all project features');
+    expect(html).toContain('Search feature bundles');
+    expect(html).not.toContain('Stage 0 · Saved records');
   });
 
-  it('opens acquisition when the linked dataset has no sources instead of using an unrelated source', () => {
+  it('keeps the linked dataset at an empty library without using unrelated sources', () => {
     vi.stubGlobal('window', { location: { hash: '#features?dataset=older&protocol=protocol-old' } });
-    const html = render([version]);
-    expect(html).toMatch(/<section class="pfm-content" aria-label="Add features">/);
+    const html = render([version], [frozen()]);
+    expect(html).toContain('No feature bundles yet');
+    expect(html).toContain('Create feature bundle');
     expect(html).not.toContain('UNI baseline');
-    expect(html).toContain('<option value="older" disabled="" selected="">Selected dataset unavailable');
+    expect(html).not.toContain('UNI features only');
   });
-  it('starts an empty library at feature acquisition and hides pack management', () => {
-    const html = render([]);
-    expect(html).toMatch(/<section class="pfm-content" aria-label="Add features">/);
-    expect(html).toMatch(/<section hidden="" class="pfm-content" aria-label="Prepare feature bundle">/);
-    expect(html).toMatch(/<section hidden="" class="pfm-content" aria-label="Frozen feature bundles">/);
-    expect(html).toContain('Use existing features');
-    expect(html).toContain('Extract with a PFM');
+
+  it.each([{ sources: [] }, { sources: [version] }])('always opens the library, even with no bundles and available sources $sources.length', ({ sources }) => {
+    const html = render(sources);
+    expect(html).toContain('Search feature bundles');
+    expect(html).toContain('No feature bundles yet');
+    expect(html).toContain('Create feature bundle');
+    expect(html).toContain('>Slide features</h1>');
+    expect(html.match(/> Create feature bundle</g)).toHaveLength(1);
+    expect(html).not.toContain('Stage 0 · Saved records');
+    expect(html).not.toContain('aria-label="Add features"');
+    expect(html).not.toContain('aria-label="Prepare feature bundle"');
     expect(html).not.toContain('Existing pack folder');
-    expect(html).toContain('Prepare slide features');
-    expect(html).toContain('<details class="pfm-source-details"><summary>Advanced file matching and encoder settings');
-    expect(html).not.toContain('aria-label="Module workflow"');
+    expect(html).not.toContain('TRIDENT output directory');
+    expect(html).not.toContain('Inspect &amp; review features');
   });
 
-  it('opens unbundled sources at packing and bundle preparation without loading choices', () => {
-    const html = render([version]);
-    expect(html).toMatch(/<section hidden="" class="pfm-content" aria-label="Add features">/);
-    expect(html).toMatch(/<section class="pfm-content" aria-label="Prepare feature bundle">/);
-    expect(html).toContain('UNI baseline');
-    expect(html).toContain('uni_v1');
-    expect(html).toContain('Decide which packs, if any, will be frozen with these features.');
-    expect(html).toContain('Features only — skip packing');
-    expect(html).toContain('Freeze this bundle');
-    expect(html).toContain('Source details &amp; inspection');
-    expect(html).not.toContain('Choose how to load');
-    expect(html).not.toContain('loading preference');
-    expect(html).toContain('<li aria-current="step" class="is-current"><span>3</span>');
-    expect(html).not.toContain('aria-label="Choose a feature source"');
-    expect(html).toContain('class="label pfm-version-select"');
+  it('lists saved bundles with an explicit Open action without auto-opening a record', () => {
+    const html = render([version], [frozen()]);
+    expect(html).toContain('aria-label="Saved feature bundles"');
+    expect(html).toContain('aria-label="Open UNI features only"');
+    expect(html).toContain('Create feature bundle');
+    expect(html).not.toContain('No pack is included in this bundle.');
+    expect(html).not.toContain('Edit bundle name &amp; note');
   });
 
-  it('opens existing frozen bundles as immutable library entries', () => {
-    const frozen = {
-      id: 'bundle', createdAt: '2026-09-10T12:00:00Z', current: true, findings: [],
-      versionLabel: { tag: 'UNI features only' },
-      manifest: {
-        kind: 'feature-bundle', datasetId: 'dataset',
-        spec: { featureSetId: version.id, packArtifactIds: [] },
-        summary: { slideCount: 2, patchCount: 12, dimensions: 8, dtype: 'float32', packCount: 0 },
-        feature: { id: version.id }, packs: [],
-      },
-    } as unknown as FeatureBundle;
-    const html = render([version], [frozen]);
-    expect(html).toMatch(/<section class="pfm-content" aria-label="Frozen feature bundles">/);
-    expect(html).toMatch(/<section hidden="" class="pfm-content" aria-label="Prepare feature bundle">/);
-    expect(html).toContain('UNI features only');
-    expect(html).toContain('No pack is included in this bundle.');
-    expect(html).toContain('Create another bundle to change the included packs.');
-  });
-
-  it('waits for the library response before choosing an empty or saved-version flow', () => {
+  it('waits for the library response before showing empty or saved records', () => {
     const html = render();
     expect(html).toContain('Loading feature sources and bundles…');
-    expect(html).not.toContain('No frozen bundles yet');
+    expect(html).not.toContain('No feature bundles yet');
     expect(html).not.toContain('Inspect &amp; review features');
   });
 });

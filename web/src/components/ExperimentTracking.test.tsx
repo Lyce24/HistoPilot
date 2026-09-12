@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { defaultRecipe, defaultResources } from '../api/development';
 import type { FrozenBatch, TrainingExecution, TrainingHistory, TrainingRun, TrainingRuntime } from '../api/development';
 import DevelopmentExecution, { ResultsTable, TrainingControls } from './DevelopmentExecution';
-import { EpochProgress, LossHistory, ResourceCards, RunTable, metricValue, runLabel } from './ExperimentTracking';
+import { EpochProgress, LossHistory, ResourceCards, RunDetails, RunTable, metricValue, runLabel } from './ExperimentTracking';
 
 const run: TrainingRun = { id: 'run-one', candidateId: 'configuration-one', splitPlanId: 'split-one', trainingSeed: 42, status: 'running', progress: { epoch: 2, maxEpochs: 10, globalStep: 20, trainingLoss: 0.0, validation: { loss: null } } };
 const batch = { id: 'batch-one', createdAt: '', manifest: {
@@ -28,6 +28,20 @@ const history: TrainingHistory = { runId: run.id, totalRows: 3, truncated: false
 afterEach(() => { vi.useRealTimers(); });
 
 describe('experiment tracking', () => {
+  it('uses supplied synthetic histories without a live project query or query provider', () => {
+    const html = renderToStaticMarkup(<RunTable batch={batch} execution={execution} project="synthetic-demo" histories={{ [run.id]: history }} />);
+    expect(html).toContain('Loss history');
+    expect(html).toContain('Export epoch history');
+    expect(html).not.toContain('Open this run in its project');
+    expect(html).not.toContain('Loading epoch history');
+  });
+  it('labels synthetic checkpoint references and history exports without claiming a saved file', () => {
+    const html = renderToStaticMarkup(<RunDetails batch={batch} run={{ ...run, checkpointPath: 'demo://illustrative.ckpt' }} history={history} illustrative />);
+    expect(html).toContain('Reference only; no checkpoint file');
+    expect(html).toContain('Synthetic example values for each epoch.');
+    expect(html).toContain('Export synthetic epoch history');
+    expect(html).not.toContain('>Saved<');
+  });
   it('identifies both seeds and displays zero-based folds as human-readable fold numbers', () => {
     expect(runLabel(batch, run)).toBe('Config 1 · Fold 1 · Train seed 42 · Split seed 7');
     expect(runLabel({ ...batch, manifest: { ...batch.manifest, splitPlans: [{ ...batch.manifest.splitPlans[0], seed: 8 }] } }, run)).not.toBe(runLabel(batch, run));
@@ -43,6 +57,44 @@ describe('experiment tracking', () => {
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain('Checkpoint validation: —');
     expect(html).toContain('Held-out assessment: —');
+  });
+
+  it('opens an active run by default and keeps the planned list bounded to 50 records', () => {
+    const manyRuns = Array.from({ length: 51 }, (_, index) => ({ ...batch.manifest.runs[0], id: `run-${index}`, trainingSeed: index }));
+    const running = { ...run, id: 'run-3', trainingSeed: 3 };
+    const html = renderToStaticMarkup(<RunTable batch={{ ...batch, manifest: { ...batch.manifest, runs: manyRuns } }} execution={{ ...execution, runs: [running] }} />);
+    expect(html).toContain('Search runs');
+    expect(html).toContain('Page 1 of 2');
+    expect(html.match(/class="experiment-run-select"/g)).toHaveLength(50);
+    expect(html).toMatch(/aria-pressed="true"[^>]*>Config 1 · Fold 1 · Train seed 3 · Split seed 7/);
+    expect(html).toContain('aria-label="Selected run details"');
+    expect(html).not.toContain('Train seed 50 ·');
+  });
+
+  it('keeps checkpoint evidence and artifacts in separate accessible panels while overview is selected', () => {
+    const html = renderToStaticMarkup(<RunDetails batch={batch} run={{ ...run, error: 'A worker warning', checkpointPath: '/runs/one/best.ckpt', outputPath: '/runs/one' }} />);
+    expect(html).toContain('aria-label="Run details"');
+    expect(html).toMatch(/role="tab"[^>]*aria-selected="true"[^>]*tabindex="0"[^>]*>Overview/);
+    for (const label of ['Checkpoints', 'Diagnostics', 'Artifacts']) {
+      expect(html).toMatch(new RegExp(`role="tab"[^>]*aria-selected="false"[^>]*tabindex="-1"[^>]*>${label}`));
+    }
+    expect(html.match(/role="tabpanel"[^>]*hidden=""/g)).toHaveLength(3);
+    const controls = [...html.matchAll(/aria-controls="([^"]+)"/g)].map((match) => match[1]);
+    expect(controls).toHaveLength(4);
+    for (const target of controls) expect(html).toContain(`id="${target}"`);
+    expect(html.indexOf('A worker warning')).toBeLessThan(html.indexOf('role="tablist"'));
+    expect(html).toContain('Validation selects the checkpoint');
+    expect(html).toContain('/runs/one/best.ckpt');
+    expect(html).toContain('Checkpoint validation: —');
+  });
+
+  it('does not show numeric values marked unavailable and preserves measured zero diagnostics', () => {
+    const html = renderToStaticMarkup(<RunTable batch={batch} execution={{ ...execution, runs: [{ ...run, progress: { ...run.progress!, validation: { available: false, loss: 0.4321 }, learningRate: 0, globalStep: 0, cudaPeakAllocatedBytes: 0 } }] }} />);
+    expect(html).not.toContain('0.4321');
+    expect(html).toContain('Training loss</span><strong>0.0000');
+    expect(html).toContain('Learning rate</dt><dd>0.000e+0');
+    expect(html).toContain('CUDA allocated peak</dt><dd>0.00 GiB');
+    expect(html).toContain('CUDA reserved peak</dt><dd>Unavailable');
   });
 
   it('keeps completed early-stopped runs distinct from reaching their maximum epoch budget', () => {

@@ -9,6 +9,7 @@ import { Findings } from './ScientificUI';
 import { Badge, ErrorNotice, Icon, Metric } from './ui';
 import ServerFolderPicker from './ServerFolderPicker';
 import PackFolderExamples from './PackFolderExamples';
+import { StagePage, StageSteps } from './StageWorkflow';
 import './FeaturePacking.css';
 
 const stateLabel: Record<FeaturePackState, string> = {
@@ -187,11 +188,12 @@ function PreviousFeatureJob({ project, summary }: { project: string; summary: Fe
   return <div className="stack"><ErrorNotice error={detail.error} /><FeaturePackProgress job={detail.data ?? summary} /><FeatureJobDetails job={detail.data ?? summary} /></div>;
 }
 
-export default function FeaturePacking({ project, configuration, configurations, onSelectVersion, selectedPackIds, onSelectedPackIdsChange }: {
+export default function FeaturePacking({ project, configuration, configurations, onSelectVersion, selectedPackIds, onSelectedPackIdsChange, onBusyChange }: {
   project: string;
   configuration: Configuration;
   configurations: Configuration[];
   onSelectVersion: (id: string) => void;
+  onBusyChange?: (busy: boolean) => void;
   selectedPackIds: string[];
   onSelectedPackIdsChange: (ids: string[]) => void;
 }) {
@@ -207,8 +209,9 @@ export default function FeaturePacking({ project, configuration, configurations,
   const [historyJob, setHistoryJob] = useState('');
   const [busy, setBusy] = useState<'preview' | 'start' | 'cancel' | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  useEffect(() => { onBusyChange?.(busy !== null); }, [busy, onBusyChange]);
   const operationId = useRef<string | null>(null);
-  const jobsRef = useRef<HTMLDivElement>(null);
+  const [selectedPage, setPage] = useState<'settings' | 'review' | 'activity' | null>(null);
   const key = ['feature-packs', project];
   const jobs = useQuery({
     queryKey: key,
@@ -218,6 +221,7 @@ export default function FeaturePacking({ project, configuration, configurations,
   });
   const versionJobs = jobs.data?.jobs.filter((job) => job.featureSetId === featureSetId) ?? [];
   const activeJobs = versionJobs.filter(featurePackActive);
+  const page = selectedPage ?? (activeJobs.length ? 'activity' : 'settings');
   const completedJobs = versionJobs.filter((job) => !featurePackActive(job));
   const selectedId = activeJobs[0]?.id || selectedJob;
   const selectedSummary = versionJobs.find((job) => job.id === selectedId);
@@ -254,7 +258,7 @@ export default function FeaturePacking({ project, configuration, configurations,
   const previousJob = completedJobs.find((item) => item.id === historyJob);
 
   function edit(change: () => void) {
-    change(); setReview(null); setError(null); operationId.current = null;
+    change(); setReview(null); setPage('settings'); setError(null); operationId.current = null;
   }
   async function run(next: NonNullable<typeof busy>, work: () => Promise<void>) {
     if (busy) return;
@@ -262,7 +266,7 @@ export default function FeaturePacking({ project, configuration, configurations,
     try { await work(); }
     catch (reason) {
       setError(reason instanceof Error ? reason : new Error('The feature job request failed.'));
-      if (reason instanceof ApiError && reason.status === 409 && next === 'start') setReview(null);
+      if (reason instanceof ApiError && reason.status === 409 && next === 'start') { setReview(null); setPage('settings'); }
     } finally { setBusy(null); }
   }
   async function recordJob(result: FeaturePackJob) {
@@ -280,7 +284,7 @@ export default function FeaturePacking({ project, configuration, configurations,
       const inputKey = featurePackSpecKey(spec);
       const result = await packing.preview(project, spec);
       operationId.current = `feature-pack:${crypto.randomUUID()}`;
-      setReview({ preview: result, inputKey });
+      setReview({ preview: result, inputKey }); setPage('review');
     });
   }
   const previewDisabled = busy !== null || !jobs.data || activeJobs.length > 0;
@@ -302,6 +306,13 @@ export default function FeaturePacking({ project, configuration, configurations,
   return <section className="feature-packing stack" aria-label="Feature bundle preparation">
     <div className="feature-pack-section-heading"><div><h3>Prepare the feature bundle</h3><p>Keep the features alone, include verified existing packs, or create a new pack for this bundle.</p></div><Badge>Optional packing</Badge></div>
     <ErrorNotice error={error ?? jobs.error ?? validation.error} />
+    <StageSteps label="Feature validation and packing steps" current={page} disabled={busy !== null} steps={[
+      { id: 'settings', title: 'Contents & validation' },
+      { id: 'review', title: 'Review job', disabled: !preview },
+      { id: 'activity', title: 'Runs & results', description: `${versionJobs.length} jobs` },
+    ]} onChange={(step) => { if (step === 'settings' || step === 'activity' || step === 'review' && preview) setPage(step); }} />
+    <StagePage pageKey={page}>
+    {page === 'settings' ? <>
     <FeaturePackCoverage summary={summary} />
     <section className="feature-pack-bundle-summary" aria-label="Current bundle draft contents">
       <div className="feature-pack-section-heading"><div><h4>Included in this draft</h4><p>{configurationVersionLabel(configuration)} · {summary.matchedSlides.toLocaleString()} slides · {summary.patchCount.toLocaleString()} patches</p></div><Badge>{selectedPackIds.length ? `Features + ${selectedPackIds.length} ${selectedPackIds.length === 1 ? 'pack' : 'packs'}` : 'Features only'}</Badge></div>
@@ -349,11 +360,13 @@ export default function FeaturePacking({ project, configuration, configurations,
           <PackFolderExamples />
           <button type="button" className="btn btn-secondary science-fit" disabled={previewDisabled} onClick={requestPreview}>{busy === 'preview' ? 'Reviewing…' : 'Review pack creation'} <Icon name="arrow" size={16} /></button>
         </>}
-        {activeJobs.length ? <p className="muted" role="status">A job is already processing this version. Follow its progress below before starting another.</p> : null}
+        {activeJobs.length ? <p className="muted" role="status">A job is already processing this version. Open Runs &amp; results to follow its progress before starting another.</p> : null}
       </div>
     </fieldset>
 
-    {preview ? <section className="feature-pack-review stack" aria-label="Feature job review">
+    </> : null}
+    {page === 'review' && preview ? <section className="feature-pack-review stack" aria-label="Feature job review">
+      <button type="button" className="btn btn-secondary science-fit" disabled={busy !== null} onClick={() => setPage('settings')}>← Back to pack settings</button>
       <div className="feature-pack-section-heading"><div><h4>{action === 'pack' ? 'Review destination and build' : action === 'attach' ? 'Check complete · review the comparison' : 'Review content validation'}</h4><p>{configurationVersionLabel(configuration)} · Encoder: {configuration.manifest.layout?.encoderId || (configuration.manifest.spec as FeatureSpec).encoderId || 'Unspecified'}</p></div><Badge tone={preview.canRun ? 'green' : 'orange'}>{preview.canRun ? action === 'attach' ? 'Ready for full verification' : 'Ready to start' : 'Resolve findings'}</Badge></div>
       {action === 'attach' ? <ExistingPackComparison preview={preview} /> : <div className="science-metrics feature-pack-metrics">
         <Metric label="Attached slides" value={preview.slideCount.toLocaleString()} note={`${summary.slideCount.toLocaleString()} in the dataset`} />
@@ -368,11 +381,13 @@ export default function FeaturePacking({ project, configuration, configurations,
         if (!operationId.current) return;
         await recordJob(await packing.start(project, preview.spec, preview.previewHash, operationId.current));
         setReview(null); operationId.current = null;
-        requestAnimationFrame(() => jobsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        setPage('activity');
       })}>{busy === 'start' ? 'Starting…' : action === 'pack' ? 'Build and verify pack' : action === 'attach' ? 'Verify all pack contents' : 'Start validation'} <Icon name="arrow" size={16} /></button></div>
     </section> : null}
 
-    <div ref={jobsRef} className="feature-pack-jobs stack">
+    {page === 'activity' ? <div className="feature-pack-jobs stack">
+      <button type="button" className="btn btn-secondary science-fit" disabled={busy !== null} onClick={() => setPage('settings')}>← Back to bundle contents</button>
+      {!versionJobs.length ? <p className="muted">No validation or packing jobs for this source yet. Choose bundle contents to review a job.</p> : null}
       {job && (featurePackActive(job) || job.spec.action === action) ? <section className="stack" aria-label="Current feature job"><ErrorNotice error={detail.error} /><FeaturePackProgress job={job} />
         {featurePackActive(job) ? <button type="button" className="btn btn-secondary science-fit" disabled={busy !== null || job.state === 'cancelling'} onClick={() => void run('cancel', async () => { await recordJob(await packing.cancel(project, job.id)); })}>{job.state === 'cancelling' || busy === 'cancel' ? 'Stopping…' : 'Cancel job'}</button> : null}
         {completedArtifact ? <SavedPackChoice artifact={completedArtifact} included={selectedPackIds.includes(completedArtifact.id)} busy={busy !== null} onToggle={() => togglePack(completedArtifact)} /> : null}
@@ -383,6 +398,7 @@ export default function FeaturePacking({ project, configuration, configurations,
         {previousJob ? <PreviousFeatureJob key={previousJob.id} project={project} summary={previousJob} /> : <p className="muted">Select a previous job to review its result and logs.</p>}
       </div></details> : null}
       {otherActive.length ? <div className="feature-pack-other-jobs"><span>Active jobs on other versions:</span>{otherActive.map((item) => <button key={item.id} type="button" className="btn btn-secondary btn-small" onClick={() => onSelectVersion(item.featureSetId)}>{configurations.find((version) => version.id === item.featureSetId) ? configurationVersionLabel(configurations.find((version) => version.id === item.featureSetId)!) : item.featureSetId.slice(-8)} · {stateLabel[item.state]}</button>)}</div> : null}
-    </div>
+    </div> : null}
+    </StagePage>
   </section>;
 }

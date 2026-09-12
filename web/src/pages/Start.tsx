@@ -216,7 +216,7 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
           disabled={busy}
           aria-label="HistoPilot start page"
         >
-          <img src="/favicon.svg" width="38" height="38" alt="" />
+          <img src="/favicon.svg?v=brown-palette-v2" width="38" height="38" alt="" />
           <span>
             HistoPilot<small>PATHOLOGY WORKSPACE</small>
           </span>
@@ -291,7 +291,7 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
               </button>
               <button
                 type="button"
-                className="start-action-card"
+                className="start-action-card start-action-load"
                 onClick={() => chooseView('load')}
                 disabled={busy}
               >
@@ -511,10 +511,10 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
             <button
               type="button"
               className="text-link"
-              onClick={() => onOpen('synthetic-v1')}
+              onClick={() => onOpen('blca-demo-v1')}
               disabled={busy}
             >
-              Open CRC KRAS demo <Icon name="arrow" size={15} />
+              Open BLCA demo <Icon name="arrow" size={15} />
             </button>
             <Badge>Synthetic data</Badge>
           </div>

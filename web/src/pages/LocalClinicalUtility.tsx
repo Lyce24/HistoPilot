@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { clinicalAnalyses, type ClinicalArtifact, type ClinicalReport, type ClinicalSelection } from '../api/clinicalUtility';
 import { modelEvaluations, predictors } from '../api/predictors';
 import type { Workspace } from '../api/types';
-import { ErrorNotice, PageHeader, Panel } from '../components/ui';
+import { EmptyState, ErrorNotice, PageHeader, Panel } from '../components/ui';
 import { Findings } from '../components/ScientificUI';
 import PublicationConfirmation from '../components/PublicationConfirmation';
 import { useReviewedPublication } from '../components/useReviewedPublication';
@@ -11,6 +11,8 @@ import EvidenceChain, { evidenceLink } from '../components/EvidenceChain';
 import CurveChart from '../components/CurveChart';
 import { finiteNumber, formatStatistic } from '../lib/evidenceCharts';
 import { useHashParameters } from '../lib/hashRoute';
+import { shortRecordId } from '../lib/recordLabels';
+import { StageLibrary, StageLibraryToolbar, StageRecordManageButton, StagePage, StageSteps, useStageLibrary } from '../components/StageWorkflow';
 import './ModelChains.css';
 import './ClinicalInsights.css';
 
@@ -23,8 +25,14 @@ function ClinicalWorkspace({ workspace, linkedEvaluation, linkedPredictor, linke
   const client = useQueryClient();
   const evaluations = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project) });
   const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project) });
-  const saved = useQuery({ queryKey: ['clinical-analyses', project], queryFn: () => clinicalAnalyses.list(project) });
+  const saved = useQuery({ queryKey: ['clinical-analyses', project, 'all'], queryFn: () => clinicalAnalyses.list(project, true) });
   const linked = useQuery({ queryKey: ['clinical-analysis', project, linkedReport], queryFn: () => clinicalAnalyses.get(project, linkedReport), enabled: Boolean(linkedReport) });
+  const [view, setView] = useState<'library' | 'editor' | 'report'>(linkedReport ? 'report' : linkedEvaluation || linkedPredictor ? 'editor' : 'library');
+  const [librarySearch, setLibrarySearch] = useState('');
+  const [libraryState, setLibraryState] = useState('active');
+  const [libraryUnit, setLibraryUnit] = useState('all');
+  const [librarySort, setLibrarySort] = useState('recent');
+  const [resumeAvailable, setResumeAvailable] = useState(false);
   const [evaluationId, setEvaluationId] = useState(linkedEvaluation);
   const [savedId, setSavedId] = useState(linkedReport);
   const [name, setName] = useState('Clinical utility analysis');
@@ -41,7 +49,7 @@ function ClinicalWorkspace({ workspace, linkedEvaluation, linkedPredictor, linke
     (selection: ClinicalSelection) => clinicalAnalyses.preview(project, selection),
     (selection, hash, operation) => clinicalAnalyses.save(project, selection, hash, operation),
     (preview) => preview.canSave && !preview.findings.some((item) => item.severity === 'error'),
-    async (record) => { setSavedId(record.id); await client.invalidateQueries({ queryKey: ['clinical-analyses', project] }); },
+    async (record) => { setSavedId(record.id); setView('report'); setResumeAvailable(false); await client.invalidateQueries({ queryKey: ['clinical-analyses', project] }); },
   );
   const selected = evaluations.data?.items.find((item) => item.id === evaluationId);
   const sourcePredictor = registry.data?.items.find((item) => item.id === selected?.manifest.predictorId);
@@ -57,11 +65,27 @@ function ClinicalWorkspace({ workspace, linkedEvaluation, linkedPredictor, linke
     setThreshold(savedSelection.threshold == null ? '' : String(savedSelection.threshold)); setBins(String(savedSelection.bins)); setThresholdMin(String(savedSelection.thresholdMin)); setThresholdMax(String(savedSelection.thresholdMax)); setThresholdSteps(String(savedSelection.thresholdSteps));
   }, [savedSelection]);
   const manifest = publication.review?.preview.manifest ?? savedRecord?.manifest;
+  const page = publication.review ? 'review' : view === 'report' ? 'report' : 'inputs';
+  const savedRows = (saved.data?.items ?? []).filter((item) => !linkedPredictor || item.manifest.predictorId === linkedPredictor);
+  const evaluationName = (id: string) => evaluations.data?.items.find((item) => item.id === id)?.manifest.name ?? shortRecordId(id);
+  const visibleRows = savedRows.filter((item) => (libraryState === 'all' || (item.lifecycleState ?? 'active') === libraryState)
+    && (libraryUnit === 'all' || item.manifest.report.unit === libraryUnit)
+    && `${item.manifest.name} ${item.id} ${item.manifest.evaluationId} ${evaluationName(item.manifest.evaluationId)} ${item.manifest.report.positiveClass}`.toLowerCase().includes(librarySearch.trim().toLowerCase()))
+    .sort((a, b) => (librarySort === 'name' ? a.manifest.name.localeCompare(b.manifest.name) : librarySort === 'oldest' ? a.createdAt.localeCompare(b.createdAt) : b.createdAt.localeCompare(a.createdAt)) || a.id.localeCompare(b.id));
+  function resetLibraryFilters() { setLibrarySearch(''); setLibraryState('active'); setLibraryUnit('all'); setLibrarySort('recent'); }
   const report = manifest?.report;
   const context = { experimentId: manifest?.experimentId ?? selected?.manifest.experimentId, predictorId: manifest?.predictorId ?? selected?.manifest.predictorId ?? linkedPredictor, evaluationId: manifest?.evaluationId ?? evaluationId, clinicalAnalysisId: savedRecord?.id };
   const numericValid = [bins, thresholdMin, thresholdMax, thresholdSteps].every((value) => value.trim() && finiteNumber(Number(value))) && Number.isInteger(Number(bins)) && Number(bins) >= 2 && Number(bins) <= 50 && Number(thresholdMin) > 0 && Number(thresholdMax) < 1 && Number(thresholdMin) < Number(thresholdMax) && Number.isInteger(Number(thresholdSteps)) && Number(thresholdSteps) >= 2 && Number(thresholdSteps) <= 501 && (!threshold.trim() || (finiteNumber(Number(threshold)) && Number(threshold) > 0 && Number(threshold) < 1));
   const canAnalyze = available.some((item) => item.id === evaluationId) && name.trim() && chosenClass && numericValid && !evaluations.isError && !registry.isError;
+  function openLibrary() { if (publication.locked) return; if (view === 'editor') setResumeAvailable(true); setView('library'); }
+  useStageLibrary(openLibrary);
   function resetReview() { publication.reset(); setSavedId(''); setDownloadError(null); }
+  function create(copy = false) {
+    if (publication.locked) return;
+    resetReview(); setView('editor'); setResumeAvailable(false);
+    if (copy) { setName(`${name.slice(0, 110)} copy`); return; }
+    setEvaluationId(linkedEvaluation); setName('Clinical utility analysis'); setUnit('selected'); setPositiveClass(''); setThreshold(''); setBins('10'); setThresholdMin('0.01'); setThresholdMax('0.99'); setThresholdSteps('99');
+  }
   async function download(filename: ClinicalArtifact) {
     if (!savedRecord || downloading) return;
     setDownloading(true); setDownloadError(null);
@@ -70,10 +94,16 @@ function ClinicalWorkspace({ workspace, linkedEvaluation, linkedPredictor, linke
     finally { setDownloading(false); }
   }
   return <div className="clinical-workspace model-chains clinical-insights">
-    <PageHeader eyebrow="04 CLINICAL INSIGHTS" title="Clinical utility" description="Assess probability quality, operating tradeoffs and potential clinical benefit using completed model evaluations." />
-    <EvidenceChain current="clinical-utility" {...context} />
+    <PageHeader eyebrow="04 CLINICAL INSIGHTS" title={view === 'library' ? 'Clinical utility' : view === 'report' ? savedRecord?.manifest.name ?? 'Clinical utility report' : 'Create clinical analysis'} description={view === 'library' ? 'Open an analysis or create one from completed evaluation results.' : 'Assess probability quality, operating tradeoffs and potential clinical benefit using completed model evaluations.'} actions={view === 'library' ? <button type="button" className="btn btn-primary" onClick={() => create()}>Create clinical analysis</button> : <button type="button" className="btn btn-secondary" disabled={publication.locked} onClick={openLibrary}>Back to clinical analyses</button>} />
+    {view !== 'library' ? <EvidenceChain current="clinical-utility" {...context} /> : null}
     <ErrorNotice error={publication.error ?? evaluations.error ?? registry.error ?? saved.error ?? linked.error ?? downloadError} />
-    <Panel title="Choose evaluation evidence" subtitle="Analyze saved test predictions. An exploratory operating threshold does not change the frozen evaluation or predictor.">
+    <StagePage pageKey={view === 'library' ? 'library' : page === 'report' ? savedId : page}>
+    {view !== 'library' ? <>
+    {view === 'editor' ? <StageSteps label="Clinical analysis steps" current={page} disabled={publication.locked} steps={[
+      { id: 'inputs', title: 'Evaluation evidence', description: 'Choose predictions and settings' },
+      { id: 'review', title: 'Review and save', description: 'Inspect clinical utility evidence', disabled: !publication.review },
+    ]} onChange={(next) => { if (next === 'inputs') resetReview(); }} /> : null}
+    {view === 'editor' && !publication.review ? <Panel title="Choose evaluation evidence" subtitle="Analyze saved test predictions. An exploratory operating threshold does not change the frozen evaluation or predictor.">
       {evaluations.isPending ? <p role="status">Loading completed evaluations…</p> : !available.length ? <p className="callout">No completed evaluations are available{linkedPredictor ? ' for this predictor' : ''}. <a href={evidenceLink('evaluation', { predictorId: linkedPredictor })}>Evaluate a predictor</a> to generate test predictions first.</p> : null}
       <fieldset className="chain-fields" disabled={publication.locked} onChange={resetReview}><legend className="sr-only">Clinical analysis settings</legend>
         <label className="label chain-wide">Completed evaluation<select className="field" value={evaluationId} onChange={(event) => { setEvaluationId(event.target.value); setPositiveClass(''); setThreshold(''); }}><option value="">Choose a completed evaluation</option>{evaluationId && !available.some((item) => item.id === evaluationId) ? <option value={evaluationId} disabled>Linked evaluation is unavailable or incomplete</option> : null}{available.map((item) => <option key={item.id} value={item.id}>{item.manifest.name}{item.lifecycleState === 'archived' ? ' · archived' : ''}</option>)}</select></label>
@@ -90,14 +120,27 @@ function ClinicalWorkspace({ workspace, linkedEvaluation, linkedPredictor, linke
       </fieldset><p className="muted">Use a clinically plausible threshold range. Decision curves depend on outcome prevalence and the relative harm of false positives; comparing curves alone does not establish clinical benefit.</p></details>
       {!numericValid ? <p className="callout" role="status">Use thresholds strictly between 0 and 1, an increasing range, 2–501 curve points and 2–50 calibration bins.</p> : null}
       <button className="btn btn-primary" disabled={!canAnalyze || publication.locked} onClick={() => { if (canAnalyze) { setSavedId(''); void publication.preview({ evaluationId, name: name.trim(), unit, positiveClass: chosenClass, threshold: threshold.trim() ? Number(threshold) : null, bins: Number(bins), thresholdMin: Number(thresholdMin), thresholdMax: Number(thresholdMax), thresholdSteps: Number(thresholdSteps) }); } }}>{publication.busy ? 'Calculating…' : 'Analyze clinical utility'}</button>
-    </Panel>
+    </Panel> : null}
     {publication.review ? <Findings findings={publication.review.preview.findings} /> : null}
     {report ? <Panel title={manifest?.name ?? 'Clinical utility report'} subtitle={savedRecord ? 'Saved analysis · immutable source predictions and settings' : 'Review the analysis before saving its evidence and settings'}>
       <ClinicalReportView report={report} />
+      {publication.review ? <div className="stage-actions"><button type="button" className="btn btn-secondary" disabled={publication.locked} onClick={resetReview}>Back to analysis settings</button></div> : null}
       {publication.review?.preview.canSave ? <PublicationConfirmation busy={publication.busy} uncertain={publication.review.uncertain} acknowledged={publication.acknowledged} onAcknowledge={publication.setAcknowledged} onConfirm={() => void publication.publish()} onReset={publication.reset} label="Save clinical utility report" /> : null}
-      {savedRecord ? <><p className="science-success" role="status">Saved report: {savedRecord.manifest.name}</p><div className="inline-actions"><button className="btn btn-secondary" disabled={downloading} onClick={() => void download('report.json')}>Download report JSON</button><button className="btn btn-secondary" disabled={downloading} onClick={() => void download('operating-curves.csv')}>Download operating curves</button><button className="btn btn-secondary" disabled={downloading} onClick={() => void download('calibration.csv')}>Download calibration</button><button className="btn btn-secondary" disabled={downloading} onClick={() => void download('roc.csv')}>Download ROC curve</button><button className="btn btn-secondary" disabled={downloading} onClick={() => void download('precision-recall.csv')}>Download precision–recall curve</button><a className="btn btn-primary" href={evidenceLink('interpretation', context)}>Next: interpret this predictor</a></div></> : null}
+      {savedRecord ? <><button type="button" className="btn btn-secondary" onClick={() => create(true)}>Copy into a new analysis</button><p className="science-success" role="status">Saved report: {savedRecord.manifest.name}</p><div className="inline-actions"><button className="btn btn-secondary" disabled={downloading} onClick={() => void download('report.json')}>Download report JSON</button><button className="btn btn-secondary" disabled={downloading} onClick={() => void download('operating-curves.csv')}>Download operating curves</button><button className="btn btn-secondary" disabled={downloading} onClick={() => void download('calibration.csv')}>Download calibration</button><button className="btn btn-secondary" disabled={downloading} onClick={() => void download('roc.csv')}>Download ROC curve</button><button className="btn btn-secondary" disabled={downloading} onClick={() => void download('precision-recall.csv')}>Download precision–recall curve</button><a className="btn btn-primary" href={evidenceLink('interpretation', context)}>Next: interpret this predictor</a></div></> : null}
     </Panel> : null}
-    <Panel title="Saved clinical analyses" subtitle="Open a report to trace its evaluation, predictor and experiment.">{saved.isPending ? <p role="status">Loading saved reports…</p> : !(saved.data?.items ?? []).filter((item) => item.lifecycleState !== 'trashed').length ? <p className="muted">No saved clinical analyses yet.</p> : (saved.data?.items ?? []).filter((item) => item.lifecycleState !== 'trashed' && (!linkedPredictor || item.manifest.predictorId === linkedPredictor)).map((item) => <article className="report-card" key={item.id}><button className="text-button" disabled={publication.locked} aria-pressed={savedId === item.id} onClick={() => { publication.reset(); setSavedId(item.id); setEvaluationId(item.manifest.evaluationId); }}>{item.manifest.name}</button><small>{item.manifest.report.counts.labeled} labeled {item.manifest.report.unit} records · {item.manifest.report.positiveClass} · threshold {formatStatistic(item.manifest.report.decisionThreshold)}{item.lifecycleState === 'archived' ? ' · archived' : ''}</small><a href={evidenceLink('interpretation', { experimentId: item.manifest.experimentId, predictorId: item.manifest.predictorId, evaluationId: item.manifest.evaluationId, clinicalAnalysisId: item.id })}>Interpret predictor</a></article>)}</Panel>
+    {view === 'report' && !savedRecord ? <Panel title="Clinical utility report"><p role="status">{saved.isPending || linked.isPending && linkedReport ? 'Loading saved report…' : 'This report is unavailable. Return to clinical analyses to choose a saved record.'}</p></Panel> : null}
+    </> : null}
+    {view === 'library' ? <StageLibrary project={project} title="Clinical analyses">
+      <StageLibraryToolbar search={librarySearch} onSearch={setLibrarySearch} searchLabel="Search clinical analyses" placeholder="Name, ID, evaluation or outcome" count={saved.isPending ? undefined : visibleRows.length} total={savedRows.length}
+        onReset={librarySearch || libraryState !== 'active' || libraryUnit !== 'all' || librarySort !== 'recent' ? resetLibraryFilters : undefined}
+        actions={<>{resumeAvailable ? <button type="button" className="btn btn-secondary btn-small" onClick={() => { setView('editor'); setResumeAvailable(false); }}>Resume clinical analysis</button> : null}<button type="button" className="btn btn-secondary btn-small" disabled={saved.isFetching || evaluations.isFetching} onClick={() => void Promise.all([saved.refetch(), evaluations.refetch()])}>Refresh</button></>}>
+        <label className="label">State<select className="field" aria-label="Clinical analysis state" value={libraryState} onChange={(event) => setLibraryState(event.target.value)}><option value="active">Active</option><option value="archived">Archived</option><option value="trashed">Trash</option><option value="all">All records</option></select></label>
+        <label className="label">Prediction unit<select className="field" aria-label="Clinical analysis prediction unit" value={libraryUnit} onChange={(event) => setLibraryUnit(event.target.value)}><option value="all">All units</option><option value="patient">Patient</option><option value="slide">Slide</option></select></label>
+        <label className="label">Sort<select className="field" aria-label="Sort clinical analyses" value={librarySort} onChange={(event) => setLibrarySort(event.target.value)}><option value="recent">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name</option></select></label>
+      </StageLibraryToolbar>
+      {saved.isPending ? <p role="status">Loading saved reports…</p> : !visibleRows.length ? <EmptyState title={savedRows.length ? 'No matching clinical analyses' : 'No clinical analyses yet'} description={savedRows.length ? 'Try another search or clear the filters.' : 'Create an analysis from completed evaluation predictions.'} /> : <div className="table-wrap"><table className="chain-table"><thead><tr><th scope="col">Analysis</th><th scope="col">Evaluation</th><th scope="col">Records</th><th scope="col">Positive outcome</th><th scope="col">Threshold</th><th scope="col">Actions</th></tr></thead><tbody>{visibleRows.map((item) => <tr key={item.id}><th scope="row">{item.lifecycleState === 'trashed' ? item.manifest.name : <button type="button" className="text-button stage-record-name" onClick={() => { publication.reset(); setSavedId(item.id); setEvaluationId(item.manifest.evaluationId); setView('report'); setResumeAvailable(false); }}>{item.manifest.name}</button>}{item.lifecycleState === 'archived' || item.lifecycleState === 'trashed' ? <small>{item.lifecycleState === 'trashed' ? 'Trash' : 'Archived'}</small> : null}</th><td>{evaluationName(item.manifest.evaluationId)}</td><td>{item.manifest.report.counts.labeled} labeled {item.manifest.report.unit}</td><td>{item.manifest.report.positiveClass}</td><td>{formatStatistic(item.manifest.report.decisionThreshold)}</td><td><StageRecordManageButton type="configuration" id={item.id} name={item.manifest.name} /></td></tr>)}</tbody></table></div>}
+    </StageLibrary> : null}
+    </StagePage>
   </div>;
 }
 

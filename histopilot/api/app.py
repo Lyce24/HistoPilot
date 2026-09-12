@@ -12,6 +12,7 @@ from histopilot import __version__
 from histopilot.adapters.trident import discover_runtime
 from histopilot.application.local_workspace import LocalWorkspace, WorkspaceError
 from histopilot.application.project_workspace import ProjectWorkspace
+from histopilot.application.system_compute import ComputeSampler
 from histopilot.config import Settings, load_settings
 from histopilot.doctor import system_report
 from histopilot.schemas.scientific import CreateDraftRequest, UpdateDraftRequest
@@ -43,6 +44,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     workspace = LocalWorkspace(database, filesystem)
     storage = LocalFilesystem((settings.workspace, *settings.data_roots))
     projects = ProjectWorkspace(database, workspace, storage)
+    compute_sampler = ComputeSampler(settings.workspace, settings.data_roots)
     token = token_urlsafe(32)
 
     @asynccontextmanager
@@ -294,6 +296,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "diagnostics": system_report(),
         }
 
+    @app.get("/api/v1/system/compute")
+    def system_compute():
+        return compute_sampler.snapshot()
+
     @app.get("/api/v1/jobs")
     def jobs():
         return {"jobs": [], "executionEnabled": False}
@@ -354,7 +360,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ".woff2",
         }
         if candidate.is_file() and candidate.suffix.lower() in suffixes:
-            return FileResponse(candidate)
+            headers = {"Cache-Control": "no-cache"} if candidate.suffix.lower() == ".html" else None
+            return FileResponse(candidate, headers=headers)
         if Path(path).suffix or path.startswith("assets/"):
             raise HTTPException(404, "Static asset not found.")
         index = root / "index.html"
@@ -363,6 +370,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 503,
                 "The frontend bundle is missing. Build web/ or use the Vite development server.",
             )
-        return FileResponse(index)
+        # Revalidate the application shell so a rebuilt bundle replaces its old asset links.
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
     return app

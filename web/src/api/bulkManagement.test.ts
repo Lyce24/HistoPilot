@@ -24,6 +24,22 @@ describe('reviewed bulk predictor and evaluation API contracts', () => {
     expect(JSON.parse(fetcher.mock.calls[3][1].body)).toEqual({ operationId: 'cancel-once' });
   });
 
+  it('requests inactive evaluation batches only for libraries that opt into lifecycle management', async () => {
+    const records = { items: [{ id: 'archived-batch', lifecycleState: 'archived' }, { id: 'trashed-batch', lifecycleState: 'trashed' }] };
+    const fetcher = vi.fn().mockImplementation(async (path: string) => response(path.endsWith('/session') ? { token: 'session' } : path.endsWith('?include_inactive=true') ? records : { items: [] }));
+    vi.stubGlobal('fetch', fetcher);
+    const { bulkEvaluations } = await import('./bulkEvaluations');
+    expect(await bulkEvaluations.list('project/one')).toEqual({ items: [] });
+    expect(await bulkEvaluations.list('project/one', false)).toEqual({ items: [] });
+    expect(await bulkEvaluations.list('project/one', true)).toEqual(records);
+    expect(fetcher.mock.calls.slice(1).map(([path]) => path)).toEqual([
+      '/api/v1/projects/project%2Fone/evaluation-runs/bulk',
+      '/api/v1/projects/project%2Fone/evaluation-runs/bulk',
+      '/api/v1/projects/project%2Fone/evaluation-runs/bulk?include_inactive=true',
+    ]);
+    expect(fetcher.mock.calls[3][1].headers.get('X-HistoPilot-Token')).toBe('session');
+  });
+
   it('reviews all active predictors without supplying IDs and commits only the reviewed snapshot', async () => {
     const preview = { canRun: true, previewHash: 'review-hash', reviewedPredictorIds: ['predictor/one', 'predictor/two'], eligibleCount: 1, blockedCount: 1, items: [] };
     const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' })).mockResolvedValueOnce(response(preview)).mockResolvedValueOnce(response({ id: 'batch', status: 'queued' }));

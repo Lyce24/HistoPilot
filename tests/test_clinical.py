@@ -374,12 +374,16 @@ def service(tmp_path, monkeypatch, request):
     predictor = publish("frozen-predictor", target=TARGET, experimentId=experiment["id"])
     source = predictions()
     fallback = getattr(request, "param", None) == "fallback"
+    standalone = str(getattr(request, "param", "")).startswith("standalone-")
+    independent = getattr(request, "param", None) in {"independent", "standalone-independent"}
     if fallback:
         source["records"][0]["patientId"] = source["records"][0]["slideId"]
         source["patientRecords"][0]["patientId"] = source["records"][0]["slideId"]
     cohort = publish(
         "evaluation-cohort",
-        target=TARGET,
+        target={**TARGET, "field": "external_diagnosis", "labels": {"1": "disease", "0": "clear"}}
+        if standalone
+        else TARGET,
         memberships=[
             {
                 **{key: row[key] for key in ("slideId", "patientId", "label")},
@@ -390,11 +394,8 @@ def service(tmp_path, monkeypatch, request):
         overlap={
             "slideIds": [],
             "patientIds": [],
-            **(
-                {"patientsComparable": False}
-                if getattr(request, "param", None) == "independent"
-                else {}
-            ),
+            **({"patientsComparable": False} if independent or standalone else {}),
+            **({"deferred": True} if standalone else {}),
         },
     )
     evaluation = publish(
@@ -406,6 +407,11 @@ def service(tmp_path, monkeypatch, request):
         experimentId=experiment["id"],
         target=TARGET,
         inference=INFERENCE,
+        **(
+            {"overlap": {"slideIds": [], "patientIds": [], "patientsComparable": not independent}}
+            if standalone
+            else {}
+        ),
     )
     current = ClinicalService(store, LocalFilesystem((tmp_path,)))
     output = current.evaluations.jobs.folder(evaluation["id"])
@@ -523,6 +529,19 @@ def test_clinical_report_preserves_unverifiable_cross_dataset_patient_overlap(se
         "Cross-dataset patient overlap could not be verified" in warning
         for warning in preview["manifest"]["report"]["warnings"]
     )
+
+
+@pytest.mark.parametrize("service", ["standalone-shared", "standalone-independent"], indirect=True)
+def test_clinical_uses_independent_target_contract_and_reviewed_evaluation_overlap(service):
+    current, selection, *_ = service
+    evaluation = current.evaluations.get(selection.evaluationId)["manifest"]
+    preview = current.preview(selection)
+    assert preview["canSave"], preview
+    warned = any(
+        "Cross-dataset patient overlap could not be verified" in warning
+        for warning in preview["manifest"]["report"]["warnings"]
+    )
+    assert warned is (not evaluation["overlap"]["patientsComparable"])
 
 
 def test_changed_review_inputs_require_new_preview_and_operation_replay_matches_intent(service):

@@ -1,6 +1,6 @@
 /* Scope geometry to outrank the older clinical/chart SVG styles. */
 .attention-workspace { --attention-canvas-height: clamp(520px, 70vh, 820px); container: attention-workspace / inline-size; min-width: 0; width: 100%; display: flex; flex-direction: column; gap: .65rem; }
-.attention-workspace.is-expanded { position: fixed; inset: 12px; z-index: 1200; width: auto; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface, #fff); box-shadow: 0 0 0 20px #132a37b3; overflow: auto; --attention-canvas-height: calc(100dvh - 205px); }
+.attention-workspace.is-expanded { position: fixed; inset: 12px; z-index: 1200; width: auto; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface, #fff); box-shadow: 0 0 0 20px #4e3629b3; overflow: auto; --attention-canvas-height: calc(100dvh - 205px); }
 .attention-workspace:focus { outline: none; }
 .attention-controls-primary, .attention-controls-display { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; min-width: 0; }
 .attention-controls-primary { padding-bottom: .3rem; }
@@ -11,28 +11,28 @@
 .attention-workspace .attention-controls-primary .btn { padding: .55rem .7rem; min-height: 40px; font-size: .8rem; white-space: nowrap; }
 .attention-controls-display { font-size: .78rem; color: var(--muted); padding: .25rem 0 .45rem; gap: .7rem 1.1rem; }
 .attention-opacity, .attention-top-select, .attention-box-toggle { display: inline-flex; align-items: center; gap: .45rem; }
-.attention-opacity input { width: 95px; accent-color: #087f8c; }
+.attention-opacity input { width: 95px; accent-color: var(--brand-red); }
 .attention-opacity span { width: 30px; font-variant-numeric: tabular-nums; }
 .attention-top-select .field { padding: .35rem .55rem; min-height: 34px; font-size: .78rem; }
-.attention-box-toggle input { width: 16px; height: 16px; accent-color: #087f8c; }
+.attention-box-toggle input { width: 16px; height: 16px; accent-color: var(--brand-red); }
 .attention-filter-options { position: relative; }
 .attention-filter-options summary { cursor: pointer; padding: .4rem 0; }
-.attention-filter-options > label { position: absolute; right: 0; top: 100%; z-index: 12; display: grid; gap: .6rem; width: 240px; padding: 1rem; background: var(--surface, white); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 5px 20px #132a3722; }
+.attention-filter-options > label { position: absolute; right: 0; top: 100%; z-index: 12; display: grid; gap: .6rem; width: 240px; padding: 1rem; background: var(--surface, white); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 5px 20px #4e362922; }
 .attention-workspace .attention-stage { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: .75rem; align-items: stretch; min-width: 0; scroll-margin-top: 1rem; }
 .attention-workspace .attention-stage.rail-hidden { grid-template-columns: minmax(0, 1fr); }
-.attention-workspace .attention-canvas { height: var(--attention-canvas-height); min-width: 0; position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #e9e5df; }
+.attention-workspace .attention-canvas { height: var(--attention-canvas-height); min-width: 0; position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--theme-soft); }
 .attention-workspace .attention-canvas > svg { display: block; width: 100%; height: 100%; min-height: 0; max-height: none; aspect-ratio: auto; touch-action: none; cursor: grab; }
 .attention-workspace .attention-canvas > svg:active { cursor: grabbing; }
-.attention-workspace .attention-canvas > svg:focus-visible { outline: 3px solid #087f8c; outline-offset: -3px; }
-.attention-canvas-tools { position: absolute; bottom: .75rem; left: .75rem; display: flex; align-items: center; max-width: calc(100% - 1.5rem); background: #fffffff0; border: 1px solid #c3cecb; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px #152e3720; }
-.attention-canvas-tools button { flex: 0 0 auto; height: 44px; min-width: 44px; padding: 0 .7rem; border: 0; border-right: 1px solid #dce3e1; color: #163a40; background: transparent; font-size: .78rem; cursor: pointer; }
+.attention-workspace .attention-canvas > svg:focus-visible { outline: 3px solid var(--brand-red); outline-offset: -3px; }
+.attention-canvas-tools { position: absolute; bottom: .75rem; left: .75rem; display: flex; align-items: center; max-width: calc(100% - 1.5rem); background: #fffffff0; border: 1px solid var(--theme-line-strong); border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px #4e362920; }
+.attention-canvas-tools button { flex: 0 0 auto; height: 44px; min-width: 44px; padding: 0 .7rem; border: 0; border-right: 1px solid var(--theme-line); color: var(--theme-ink); background: transparent; font-size: .78rem; cursor: pointer; }
 .attention-canvas-tools button:first-child, .attention-canvas-tools button:nth-child(2) { font-size: 1.4rem; }
-.attention-canvas-tools button:last-child { border-right: 0; border-left: 1px solid #dce3e1; }
-.attention-canvas-tools button:hover { background: #e6f0ed; }
-.attention-canvas-tools button:focus-visible { outline: 3px solid #087f8c; outline-offset: -3px; }
+.attention-canvas-tools button:last-child { border-right: 0; border-left: 1px solid var(--theme-line); }
+.attention-canvas-tools button:hover { background: var(--theme-soft-hover); }
+.attention-canvas-tools button:focus-visible { outline: 3px solid var(--brand-red); outline-offset: -3px; }
 .attention-canvas-tools button:disabled { opacity: .45; cursor: default; }
 .attention-canvas-tools > span { padding: 0 .6rem; font-size: .75rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.attention-pan-hint, .attention-loading { position: absolute; top: .65rem; padding: .3rem .5rem; border-radius: 5px; background: #ffffffde; font-size: .7rem; color: #3c5353; pointer-events: none; }
+.attention-pan-hint, .attention-loading { position: absolute; top: .65rem; padding: .3rem .5rem; border-radius: 5px; background: #ffffffde; font-size: .7rem; color: var(--theme-muted); pointer-events: none; }
 .attention-pan-hint { left: .65rem; }
 .attention-loading { right: .65rem; }
 .attention-workspace .attention-patch-rail { height: var(--attention-canvas-height); min-width: 0; display: flex; flex-direction: column; gap: .7rem; overflow: hidden; }
@@ -50,7 +50,7 @@
 .ranked-patches { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--line); }
 .ranked-patches-heading h3 { margin: 0 0 .5rem; }
 .ranked-patch-inspector { padding: .9rem; border: 1px solid var(--line); border-radius: 10px; background: var(--surface, white); min-width: 0; }
-.ranked-patch-detail-image { aspect-ratio: 1; background: #f0eae7; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); place-items: center; overflow: hidden; border-radius: 6px; }
+.ranked-patch-detail-image { aspect-ratio: 1; background: var(--theme-soft); display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); place-items: center; overflow: hidden; border-radius: 6px; }
 .ranked-patch-detail-image img { display: block; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }
 .ranked-patch-detail-image > span { padding: 1rem; color: var(--muted); text-align: center; font-size: .8rem; }
 .ranked-patch-inspector h4 { margin: 0 0 .6rem; }
@@ -63,25 +63,25 @@
 .ranked-patch-inspector.is-compact .ranked-patch-detail-image { height: 154px; aspect-ratio: auto; }
 .ranked-patch-inspector.is-compact > .btn { width: 100%; margin-top: .6rem; padding: .45rem; min-height: 36px; font-size: .76rem; }
 .ranked-patch-measure { margin: .5rem 0; color: var(--muted); font-variant-numeric: tabular-nums; }
-.ranked-patch-measure strong { color: var(--ink, #183e43); }
+.ranked-patch-measure strong { color: var(--ink, var(--theme-ink)); }
 .ranked-patch-measure span { display: block; margin-top: .2rem; }
 .ranked-patch-coordinates { font-size: .73rem; color: var(--muted); }
 .ranked-patch-coordinates summary { cursor: pointer; padding: .15rem 0; }
 .ranked-patch-coordinates dl { margin: .5rem 0; }
 .ranked-patch-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .85rem; }
 .ranked-patch-card { min-width: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.ranked-patch-card.is-selected { border-color: #087f8c; box-shadow: 0 0 0 1px #087f8c; }
+.ranked-patch-card.is-selected { border-color: var(--brand-red); box-shadow: 0 0 0 1px var(--brand-red); }
 .ranked-patch-card > button { display: block; width: 100%; padding: 0 0 .6rem; background: var(--surface, white); border: 0; cursor: pointer; color: inherit; text-align: left; }
-.ranked-patch-card > button:focus-visible { outline: 3px solid #b14b00; outline-offset: -3px; }
+.ranked-patch-card > button:focus-visible { outline: 3px solid var(--brand-red); outline-offset: -3px; }
 .ranked-patch-card strong, .ranked-patch-card small { display: block; overflow-wrap: anywhere; }
 .ranked-patch-card-label { padding: .5rem .5rem 0; }
 .ranked-patch-card strong { font-size: .82rem; }
 .ranked-patch-card small { margin-top: .2rem; color: var(--muted); font-size: .7rem; }
-.ranked-patch-image { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; background: #f0eae7; }
+.ranked-patch-image { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; background: var(--theme-soft); }
 .ranked-patch-image img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .ranked-patch-image > span:not(.ranked-patch-badge) { padding: .65rem; color: var(--muted); font-size: .7rem; }
-.ranked-patch-image > .ranked-patch-badge { position: absolute; top: .3rem; left: .3rem; min-width: 24px; height: 24px; display: grid; place-items: center; padding: 0 .25rem; border-radius: 50%; background: #087f8c; color: white; border: 2px solid white; font-size: .7rem; font-weight: 700; }
-.ranked-patch-error { padding: .4rem; font-size: .7rem; color: #8f3026; overflow-wrap: anywhere; }
+.ranked-patch-image > .ranked-patch-badge { position: absolute; top: .3rem; left: .3rem; min-width: 24px; height: 24px; display: grid; place-items: center; padding: 0 .25rem; border-radius: 50%; background: var(--brand-red); color: white; border: 2px solid white; font-size: .7rem; font-weight: 700; }
+.ranked-patch-error { padding: .4rem; font-size: .7rem; color: var(--brand-red); overflow-wrap: anywhere; }
 .attention-workspace .ranked-patches.is-compact { margin: 0; padding: .6rem; border: 1px solid var(--line); border-radius: 10px; min-height: 0; overflow: auto; flex: 1; }
 .attention-workspace .ranked-patches.is-compact h3 { font-size: .82rem; margin-bottom: .35rem; }
 .attention-workspace .ranked-patches.is-compact .ranked-patches-heading p { font-size: .73rem; margin: .3rem 0; line-height: 1.4; }

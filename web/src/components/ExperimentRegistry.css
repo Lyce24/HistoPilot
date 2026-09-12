@@ -1,28 +1,18 @@
-.experiment-registry { display: grid; gap: 24px; min-width: 0; }
-.experiment-list { padding: 0; overflow: hidden; min-width: 0; }
-.experiment-list-heading { display: flex; align-items: center; justify-content: space-between; padding: 22px 24px 12px; }
-.experiment-list-heading h2 { margin: 0; font-size: 20px; }
-.experiment-list-heading p { margin: 6px 0; }
-.experiment-state-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); padding: 0 20px; }
-.experiment-state-tabs button { border: 0; border-bottom: 3px solid transparent; background: transparent; padding: 14px 12px; font: inherit; cursor: pointer; color: var(--muted); }
-.experiment-state-tabs button.selected { border-bottom-color: var(--accent); color: var(--text); font-weight: 600; }
-.experiment-state-tabs span { font-size: 12px; margin-left: 5px; }
-.experiment-filters { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(130px, .4fr) minmax(140px, .4fr); gap: 16px; padding: 20px 24px; }
-.experiment-selection { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 0 24px 16px; color: var(--muted); font-size: 13px; }
+.experiment-registry { min-width: 0; }
+.experiment-selection { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--theme-line); border-radius: 6px; background: var(--theme-soft); font-size: 12px; }
 .experiment-table-scroll { position: relative; overflow-x: auto; max-width: 100%; }
 .experiment-record-table, .experiment-comparison { width: 100%; border-collapse: collapse; font-size: 13px; white-space: normal; }
-.experiment-record-table { table-layout: fixed; min-width: 850px; }
+.experiment-record-table { table-layout: fixed; min-width: 680px; }
 .experiment-record-table th, .experiment-record-table td { overflow-wrap: anywhere; }
 .experiment-record-table th:nth-child(1) { width: 48px; }
-.experiment-record-table th:nth-child(2) { width: 26%; }
+.experiment-record-table th:nth-child(2) { width: 36%; }
 .experiment-record-table th:nth-child(3) { width: 120px; }
-.experiment-record-table th:nth-child(4) { width: 19%; }
-.experiment-record-table th:nth-child(5) { width: 115px; }
-.experiment-record-table th:nth-child(6) { width: 110px; }
-.experiment-record-table th:nth-child(7) { width: 110px; }
+.experiment-record-table th:nth-child(4) { width: 18%; }
+.experiment-record-table th:nth-child(5) { width: 110px; }
+.experiment-record-table th:nth-child(6) { width: 95px; }
 .experiment-record-table time { white-space: nowrap; font-size: 12px; }
 .experiment-record-table td, .experiment-record-table th, .experiment-comparison td, .experiment-comparison th { text-align: left; vertical-align: top; padding: 16px 18px; border-top: 1px solid var(--line); }
-.experiment-record-table thead, .experiment-comparison thead { background: var(--canvas, #f6f8f7); }
+.experiment-record-table thead, .experiment-comparison thead { background: var(--canvas, var(--theme-soft)); }
 .experiment-record-table th[scope="row"] { font-weight: 400; text-transform: none; letter-spacing: normal; font-size: inherit; }
 .experiment-record-table .text-button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .experiment-record-table .badge { max-width: 100%; white-space: normal; }
@@ -41,11 +31,11 @@
 .experiment-comparison tbody th { text-transform: none; letter-spacing: normal; font-size: 13px; }
 .experiment-comparison tbody th code { font-size: 11px; font-weight: 400; }
 .experiment-comparison pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; margin: 0; max-height: 220px; overflow-y: auto; }
-.experiment-comparison .experiment-different td { background: #fbf8ef; }
+.experiment-comparison .experiment-different td { background: var(--theme-soft); }
 .experiment-comparison th .badge { margin: 8px; }
 .experiment-comparison th .label { margin-top: 12px; }
 .experiment-lifecycle { display: grid; gap: 12px; min-width: 0; }
 .experiment-detail-heading { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .experiment-detail-id { color: var(--muted); overflow-wrap: anywhere; }
 .experiment-snapshot { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; font-size: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
-@media (max-width: 760px) { .experiment-filters { grid-template-columns: 1fr; padding: 16px; } .experiment-create-fields { grid-template-columns: 1fr; } .experiment-state-tabs { padding: 0 8px; flex-wrap: wrap; } .experiment-state-tabs button { padding: 12px 8px; } }
+@media (max-width: 760px) { .experiment-create-fields { grid-template-columns: 1fr; } }

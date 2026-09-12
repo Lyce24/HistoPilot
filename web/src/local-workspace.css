@@ -10,8 +10,8 @@
   overflow-wrap: anywhere;
 }
 .project-switch-button:hover {
-  background: #2c3041;
-  border-color: #686079;
+  background: var(--theme-nav-hover);
+  border-color: var(--theme-nav-line);
 }
 .breadcrumb-home {
   padding: 0;

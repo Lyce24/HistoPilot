@@ -98,11 +98,14 @@ class BulkEvaluationService:
                     cohortId=cohort["id"],
                     predictorId=identity,
                     name=f"{selection.namePrefix} · {model['name']}"[:120],
+                    featureBundleId=selection.featureBundleId,
+                    inference=selection.inference,
+                    patientIdentifiers=selection.patientIdentifiers,
                 )
                 manifest = self.evaluations._prepare(choice)
                 row.update(
                     eligible=True,
-                    selection=choice.model_dump(),
+                    selection=choice.model_dump(exclude_none=True),
                     evaluationPreviewHash=_hash(manifest),
                     evaluationManifest=manifest,
                 )
@@ -115,6 +118,13 @@ class BulkEvaluationService:
             "cohort": reference(cohort),
             "scope": selection.scope,
             "namePrefix": selection.namePrefix,
+            **({"featureBundleId": selection.featureBundleId} if selection.featureBundleId else {}),
+            **({"inference": selection.inference.model_dump()} if selection.inference else {}),
+            **(
+                {"patientIdentifiers": selection.patientIdentifiers}
+                if selection.patientIdentifiers
+                else {}
+            ),
             "reviewedPredictorIds": identities,
             "items": items,
             "eligibleCount": count,
@@ -131,7 +141,13 @@ class BulkEvaluationService:
         selection = BulkEvaluationSelection.model_validate(
             request.model_dump(include=set(BulkEvaluationSelection.model_fields))
         )
-        submitted_request = request.model_dump()
+        submitted_request = request.model_dump(
+            exclude={
+                key
+                for key in ("featureBundleId", "inference", "patientIdentifiers")
+                if getattr(request, key) is None
+            }
+        )
         with lifecycle_guard(self.store.folder):
             prior = self.store.configuration_publication(request.operationId)
             if prior:
@@ -185,6 +201,11 @@ class BulkEvaluationService:
                         "kind": "evaluation-batch",
                         "schemaVersion": 1,
                         "datasetId": cohort["manifest"]["datasetId"],
+                        **(
+                            {"datasetIds": cohort["manifest"]["spec"]["datasetIds"]}
+                            if cohort["manifest"]["spec"].get("datasetIds")
+                            else {}
+                        ),
                         "name": selection.namePrefix,
                         "cohortId": selection.cohortId,
                         "cohort": reference(cohort),

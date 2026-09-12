@@ -13,9 +13,11 @@ import {
 import VersionLabelEditor from '../components/VersionLabelEditor';
 import FreezeVersionDialog from '../components/FreezeVersionDialog';
 import SetupContext from '../components/SetupContext';
+import { StageLibrary, StageLibraryToolbar, StageRecordManageButton, StagePage, StageSteps, useStageLibrary } from '../components/StageWorkflow';
 import { SplitStrategy, newSplit, strategyNames } from '../components/SplitStrategy';
 import { SplitPools } from '../components/SplitPools';
-import { inferTargetSettings, preservePositiveClass } from '../lib/protocol';
+import { inferTargetSettings } from '../lib/protocol';
+import PredictionTargetEditor from '../components/PredictionTargetEditor';
 import type {
   AttributeMapping,
   Condition,
@@ -46,7 +48,6 @@ import {
 } from '../components/ProtocolExploration';
 import {
   DatasetSelect,
-  DraftSelect,
   Findings,
   SavedNotice,
   scienceKey,
@@ -112,6 +113,9 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
   const configurations = useConfigurations(project, 'protocol');
   const features = useConfigurations(project, 'feature');
   const refresh = useRefreshScientific(project);
+  const [view, setView] = useState<'library' | 'editor'>('library');
+  const [libraryFilters, setLibraryFilters] = useState({ search: '', status: 'all', sort: 'recent' });
+  const [resumeAvailable, setResumeAvailable] = useState(false);
   const [spec, setSpec] = useState<ProtocolSpec>(() => ({ ...initialSpec(w), datasetId: context.datasetId ?? w.dataset.id }));
   const featurePacks = useQuery({
     queryKey: ['feature-packs', project],
@@ -121,11 +125,6 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   function showStep(next: 1 | 2 | 3 | 4) {
     setStep(next);
-    requestAnimationFrame(() => {
-      const section = document.getElementById(['protocol-cohort', 'protocol-target', 'protocol-split', 'protocol-review'][next - 1]);
-      section?.scrollIntoView({ block: 'start' });
-      section?.focus({ preventScroll: true });
-    });
   }
   const [name, setName] = useState(`${w.project.name} protocol`);
   const [draft, setDraft] = useState<ScientificDraft<ProtocolSpec> | null>(null);
@@ -143,12 +142,16 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
     draftId: string; revision: number; preview: ProtocolPreview; name: string; operationId: string;
   } | null>(null);
   const [freezeLabel, setFreezeLabel] = useState<VersionLabelInput>({ tag: '', note: '' });
+  useStageLibrary(() => {
+    if (!busy && !freezeReview && view !== 'library') { setResumeAvailable(true); setView('library'); }
+  });
   const dataset = datasets.data?.datasets.find((item) => item.id === spec.datasetId);
+  const linkedDataset = datasets.data?.datasets.find((item) => item.id === context.datasetId);
   const dictionary = dataset?.manifest.dictionary ?? [];
   const columns = dictionary.map((item) => item.key);
   const fieldContext = { project, datasetId: spec.datasetId, dictionary };
   const live = useProtocolExploration(project, {
-    datasetId: spec.datasetId,
+    datasetId: view === 'editor' ? spec.datasetId : '',
     targetField: spec.target.field || undefined,
     eligibility: spec.eligibility,
     rules: spec.split.pools?.rules ?? spec.split.rules,
@@ -181,13 +184,44 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
   const labelValues = useQuery({
     queryKey: targetValuesKey(spec.target.field),
     queryFn: () => readTargetValues(spec.target.field),
-    enabled: Boolean(spec.datasetId) && columns.includes(spec.target.field),
+    enabled: view === 'editor' && Boolean(spec.datasetId) && columns.includes(spec.target.field),
   });
   const rawValues = (labelValues.data?.valueCounts ?? [])
     .map((item) => item.value)
     .filter((value): value is string => value !== null && value.trim() !== '');
   const dirty = !draft || draft.name !== name || !sameJSON(draft.payload.spec, spec);
   const frozen = draft?.status === 'frozen';
+  const protocolDrafts = (drafts.data?.drafts ?? []).filter((item) => item.payload.type === 'analysis-protocol');
+  const datasetName = (id: string | undefined) => {
+    const source = datasets.data?.datasets.find((item) => item.id === id);
+    return source ? datasetVersionLabel(source) : id ? versionLabelText({ id }, 'Dataset') : 'Not selected';
+  };
+  const libraryRows = [
+    ...(configurations.data?.configurations ?? []).map((item) => ({
+      kind: 'configuration' as const, item, name: configurationVersionLabel(item), status: 'frozen',
+      datasetName: datasetName(item.manifest.datasetId),
+      updatedAt: item.versionLabel?.updatedAt ?? item.createdAt, createdAt: item.createdAt,
+      search: [configurationVersionLabel(item), item.id, item.versionLabel?.note, item.manifest.datasetId,
+        datasetName(item.manifest.datasetId), (item.manifest.spec as ProtocolSpec).target?.field].join(' ').toLowerCase(),
+    })),
+    ...protocolDrafts.map((item) => ({
+      kind: 'draft' as const, item, name: item.name, status: item.status,
+      datasetName: datasetName((item.payload.spec as ProtocolSpec).datasetId),
+      updatedAt: item.updatedAt, createdAt: item.createdAt ?? item.updatedAt,
+      search: [item.name, item.id, (item.payload.spec as ProtocolSpec).datasetId,
+        datasetName((item.payload.spec as ProtocolSpec).datasetId), (item.payload.spec as ProtocolSpec).target?.field].join(' ').toLowerCase(),
+    })),
+  ];
+  const visibleRows = libraryRows.filter((row) =>
+    (libraryFilters.status === 'all' || row.status === libraryFilters.status) &&
+    row.search.includes(libraryFilters.search.trim().toLowerCase()),
+  ).sort((left, right) => {
+    const order = libraryFilters.sort === 'name' ? left.name.localeCompare(right.name)
+      : libraryFilters.sort === 'oldest' ? left.createdAt.localeCompare(right.createdAt)
+        : right.updatedAt.localeCompare(left.updatedAt);
+    return order || left.item.id.localeCompare(right.item.id);
+  });
+  const resetLibraryFilters = () => setLibraryFilters({ search: '', status: 'all', sort: 'recent' });
   const saved = configurations.data?.configurations.find((item) => item.id === showSaved);
   const savedDataset = datasets.data?.datasets.find(
     (item) => item.id === saved?.manifest.datasetId,
@@ -255,7 +289,10 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
     }
   }
   function reset() {
+    setView('editor');
     setStep(1);
+    setFreezeReview(null);
+    setPreflight(null);
     setFreezeLabel({ tag: '', note: '' });
     targetRequest.current += 1;
     setSpec({ ...initialSpec(w), datasetId: context.datasetId ?? w.dataset.id });
@@ -279,6 +316,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
     setSpec(next.payload.spec);
     setSeedsText(next.payload.spec.split.seeds.join(', '));
     setName(next.name);
+    setView('editor');
     setStep(1);
     setShowSaved(null);
     if (reloading) setMessage(`Reloaded saved draft revision ${next.revision}.`);
@@ -369,93 +407,136 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
       )}
     />
   ) : null;
+  const reviewControls = (
+    <>
+          <div>
+            <dl className="protocol-review-facts" aria-label="Development plan to review">
+              <div><dt>Dataset</dt><dd>{dataset ? datasetVersionLabel(dataset) : 'Choose a frozen dataset'}</dd></div>
+              <div><dt>Target</dt><dd>{spec.target.field ? `${spec.target.field} · ${spec.target.classes.length} classes · ${spec.target.unit}` : 'Choose a prediction target'}</dd></div>
+              <div><dt>Split design</dt><dd>{strategyNames[spec.split.mode] ?? spec.split.mode}{spec.split.mode === 'kfold' ? ` · ${spec.split.folds} folds` : ''}</dd></div>
+              <div><dt>Split seeds</dt><dd>{seedsText || 'Enter valid seeds'}</dd></div>
+            </dl>
+            <strong>
+              {draft
+                ? `Revision ${draft.revision} · ${frozen ? 'Frozen protocol' : dirty ? 'Unsaved changes' : 'Saved draft'}`
+                : 'New protocol draft'}
+            </strong>
+            <p>
+              Save your progress, or check labels, group overlap and set sizes. Changes require
+              a new preview.
+            </p>
+          </div>
+          <div className="inline-actions">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={!name.trim() || !seedsValid}
+              onClick={() =>
+                void run(async () => {
+                  await save();
+                  setMessage('Protocol draft saved. It remains editable.');
+                })
+              }
+            >
+              Save draft
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!spec.datasetId || !spec.target.field || !name.trim() || !seedsValid}
+              onClick={() =>
+                void run(async () => {
+                  setPreview(null);
+                  const current = await save();
+                  setPreview(
+                    await scientific.protocolPreview(project, current.id, current.revision),
+                  );
+                })
+              }
+            >
+              {busy ? 'Validating…' : 'Preview & preflight'} <Icon name="arrow" />
+            </button>
+          </div>
+    </>
+  );
   return (
     <div className="clinical-workspace protocol-workspace">
       <PageHeader
         eyebrow="STUDY DESIGN · TARGETS"
         title="Targets & splits"
-        description="Define the training cohort, prediction target and reproducible development assessments."
+        description="Open a protocol or define a prediction target and development splits."
         actions={
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={reset}>
-            <Icon name="plus" /> New protocol
-          </button>
+          <div className="inline-actions">
+            {view !== 'library' ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => { setResumeAvailable(true); setView('library'); }}>Back to protocols</button> : null}
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={reset}>
+              <Icon name="plus" /> New protocol
+            </button>
+          </div>
         }
       />
-      <SetupContext input={dataset ? datasetVersionLabel(dataset) : 'Choose a frozen dataset'} output="A fixed target and patient-grouped development splits">
-        {spec.split.version === 4 ? 'Development data only. Select training records here; prepare test data later in Evaluate.' : 'This saved design retains its original split behavior. Review its assignments before creating a new version.'}
-      </SetupContext>
+      <StagePage pageKey={view === 'library' ? 'library' : showSaved ?? `protocol-${step}${step === 4 && preview ? `-preview-${preview.previewHash}` : ''}`}>
+      {view !== 'library' ? <SetupContext input={saved ? savedDataset ? datasetVersionLabel(savedDataset) : versionLabelText({ id: saved.manifest.datasetId }, 'Dataset') : dataset ? datasetVersionLabel(dataset) : 'Choose a frozen dataset'} output="A fixed target and patient-grouped development splits">
+        {(saved ? (saved.manifest.spec as ProtocolSpec).split.version : spec.split.version) === 4 ? 'Development data only. Select training records here; prepare test data later in Evaluate.' : 'This saved design retains its original split behavior. Review its assignments before creating a new version.'}
+      </SetupContext> : null}
       <PreparationNotice context={context} />
-      <details className="setup-details">
-        <summary>Resume a draft or open a frozen protocol{configurations.data?.configurations.length ? ` · ${configurations.data.configurations.length} frozen` : ''}</summary>
-      <div className="science-toolbar">
-        <div className="stack" style={{ minWidth: 0, gap: 10 }}>
-          <DraftSelect
-            drafts={(drafts.data?.drafts ?? []).filter(
-              (item) => item.payload.type === 'analysis-protocol',
-            )}
-            value={draft?.id ?? ''}
-            disabled={busy}
-            onChange={(id) => {
-              if (!id) {
-                reset();
-                return;
-              }
-              void run(() => loadDraft(id));
-            }}
-          />
-          {draft ? <div className="inline-actions">
-            <button
-              type="button"
-              className="btn btn-secondary btn-small"
-              disabled={busy}
-              title="Reload the latest saved revision and discard unsaved local edits. Your version tag and note are kept."
-              onClick={() => void run(() => loadDraft(draft.id))}
-            >
-              <Icon name="reset" size={15} /> Reload saved draft
-            </button>
-          </div> : null}
-        </div>
-        <label className="label">
-          Frozen protocols
-          <select
-            className="field"
-            value={showSaved ?? ''}
-            disabled={busy}
-            onChange={(event) => {
-              setShowSaved(event.target.value || null);
-            }}
-          >
-            <option value="">Choose a saved protocol</option>
-            {configurations.data?.configurations.map((item) => (
-              <option key={item.id} value={item.id}>
-                {configurationVersionLabel(item)} · {new Date(item.createdAt).toLocaleString()}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      </details>
       <ErrorNotice
         error={
-          error ?? datasets.error ?? drafts.error ?? configurations.error ?? features.error ?? live.error ?? labelValues.error
+          error ?? datasets.error ?? drafts.error ?? configurations.error ?? (view === 'editor' ? features.error ?? (!saved ? live.error ?? labelValues.error : null) : null)
         }
       />
       <SavedNotice>{message}</SavedNotice>
+      {view === 'library' ? (
+        <StageLibrary project={project} title="Protocol library">
+          <StageLibraryToolbar search={libraryFilters.search} onSearch={(search) => setLibraryFilters((current) => ({ ...current, search }))} searchLabel="Search protocols" placeholder="Name, ID, dataset, target or note" count={configurations.isPending || drafts.isPending ? undefined : visibleRows.length} total={libraryRows.length}
+            onReset={libraryFilters.search || libraryFilters.status !== 'all' || libraryFilters.sort !== 'recent' ? resetLibraryFilters : undefined}
+            actions={<>
+              {resumeAvailable ? <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => setView('editor')}>Return to current protocol</button> : null}
+              <button type="button" className="btn btn-secondary btn-small" disabled={configurations.isFetching || drafts.isFetching || datasets.isFetching} onClick={() => void refresh()}>Refresh</button>
+            </>}>
+            <label className="label">Status<select className="field" value={libraryFilters.status} onChange={(event) => setLibraryFilters((current) => ({ ...current, status: event.target.value }))}>
+              <option value="all">All statuses</option><option value="editable">Draft</option><option value="frozen">Frozen</option>
+            </select></label>
+            <label className="label">Sort<select className="field" value={libraryFilters.sort} onChange={(event) => setLibraryFilters((current) => ({ ...current, sort: event.target.value }))}>
+              <option value="recent">Last updated</option><option value="oldest">Oldest first</option><option value="name">Name A–Z</option>
+            </select></label>
+          </StageLibraryToolbar>
+          {context.datasetId ? <p className={linkedDataset || datasets.isPending ? 'muted' : 'callout callout-warning'}>{linkedDataset ? <>New protocols will start with <strong>{datasetVersionLabel(linkedDataset)}</strong>.</> : datasets.isPending ? 'Loading the linked dataset…' : 'The linked dataset is unavailable. Create a protocol to choose another frozen dataset.'}</p> : null}
+          {configurations.isPending || drafts.isPending ? <p role="status">Loading protocols and drafts…</p> : null}
+          {visibleRows.length ? (
+            <div className="table-wrap"><table className="stage-library-table" aria-label="Saved protocols and drafts">
+              <thead><tr><th>Name</th><th>Status</th><th>Dataset</th><th>Updated</th><th><span className="sr-only">Actions</span></th></tr></thead>
+              <tbody>{visibleRows.map((row) => row.kind === 'configuration' ? <tr key={`protocol-${row.item.id}`}>
+                <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open protocol ${row.name}`} onClick={() => { setShowSaved(row.item.id); setView('editor'); setPreflight(null); setError(null); setMessage(''); }}>{row.name}</button>{row.item.versionLabel?.note ? <small>{row.item.versionLabel.note}</small> : null}</td>
+                <td><Badge tone="green">Frozen protocol</Badge></td>
+                <td>{row.datasetName}</td>
+                <td>{new Date(row.updatedAt).toLocaleDateString()}</td>
+                <td><StageRecordManageButton type="configuration" id={row.item.id} name={row.name} /></td>
+              </tr> : <tr key={`draft-${row.item.id}`}>
+                <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open protocol draft ${row.name}`} onClick={() => { if (draft?.id === row.item.id && resumeAvailable) { setShowSaved(null); setView('editor'); } else void run(() => loadDraft(row.item.id)); }}>{row.name}</button><small>Revision {row.item.revision}</small></td>
+                <td><Badge tone={row.item.status === 'frozen' ? 'green' : 'neutral'}>{row.item.status === 'frozen' ? 'Frozen draft' : 'Draft'}</Badge></td>
+                <td>{row.datasetName}</td>
+                <td>{new Date(row.updatedAt).toLocaleDateString()}</td>
+                <td><StageRecordManageButton type="draft" id={row.item.id} name={row.name} /></td>
+              </tr>)}</tbody>
+            </table></div>
+          ) : !configurations.isPending && !drafts.isPending && !configurations.error && !drafts.error ? <EmptyState
+            title={libraryRows.length ? 'No matching protocols or drafts' : 'No protocols or drafts yet'}
+            description={libraryRows.length ? 'Try another search or clear the filters.' : 'Create a protocol to choose development records, define a prediction target and design patient-grouped splits.'}
+          /> : null}
+        </StageLibrary>
+      ) : <>
       {!saved && live.data?.findings.some((finding) => finding.severity === 'error') ? <Findings findings={live.data.findings.filter((finding) => finding.severity === 'error')} /> : null}
       {!saved && preview && step !== 4 && !preview.canFreeze ? <div className="callout callout-warning"><strong>The current design has blocking findings.</strong> <button type="button" className="text-button" onClick={() => showStep(4)}>Review findings</button><Findings findings={preview.findings.filter((finding) => finding.severity === 'error')} /></div> : null}
-      <nav className="protocol-route" aria-label="Protocol sections" hidden={Boolean(saved)}>
-        {[
-          { number: 1 as const, title: 'Development data', detail: dataset ? datasetVersionLabel(dataset) : 'Choose a dataset and training records' },
-          { number: 2 as const, title: 'Prediction target', detail: spec.target.field || 'Choose the label to predict' },
-          { number: 3 as const, title: 'Split design', detail: strategyNames[spec.split.mode] || 'Review the saved split strategy' },
-          { number: 4 as const, title: 'Review & freeze', detail: preview ? preview.canFreeze ? 'Ready to freeze' : 'Resolve findings' : 'Check assignments before saving' },
-        ].map((section) => (
-          <button type="button" key={section.number} className="protocol-route-card" disabled={busy} aria-current={step === section.number ? 'step' : undefined} onClick={() => showStep(section.number)}>
-            <span className="protocol-route-number">{section.number}</span>
-            <span><strong>{section.title}</strong><small>{section.detail}</small></span>
-          </button>
-        ))}
-      </nav>
+      {!saved ? <StageSteps label="Protocol sections" current={String(step)} onChange={(id) => showStep(Number(id) as 1 | 2 | 3 | 4)} disabled={busy} steps={[
+        { id: '1', title: 'Development data', description: dataset ? datasetVersionLabel(dataset) : 'Choose a dataset and training records', complete: Boolean(dataset) },
+        { id: '2', title: 'Prediction target', description: spec.target.field || 'Choose the label to predict', complete: Boolean(spec.target.field && spec.target.task && spec.target.classes.length >= 2) },
+        { id: '3', title: 'Split design', description: strategyNames[spec.split.mode] || 'Review the saved split strategy', complete: Boolean(preview) },
+        { id: '4', title: 'Review & freeze', description: preview ? preview.canFreeze ? 'Ready to freeze' : 'Resolve findings' : 'Check assignments before saving' },
+      ]} /> : null}
+      {!saved && draft ? <div className="stage-actions">
+        <span className="muted">{name} · revision {draft.revision}{dirty ? ' · Unsaved changes' : ''}</span>
+        <button type="button" className="btn btn-secondary btn-small" disabled={busy} title="Reload the latest saved revision and discard unsaved local edits. Your version tag and note are kept." onClick={() => void run(() => loadDraft(draft.id))}><Icon name="reset" size={15} /> Reload saved draft</button>
+      </div> : null}
       {saved ? (
         <Panel
           title={configurationVersionLabel(saved)}
@@ -579,288 +660,16 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
             subtitle="Choose the target column and review the classes found in your selected development data."
             actions={<Badge>Prediction target</Badge>}
           >
-            <div className="stack">
-              {dataset?.manifest.summary?.unlinkedSlideCount ? (
-                <div className="callout callout-warning">
-                  <strong>
-                    {dataset.manifest.summary.unlinkedSlideCount} slides have unresolved
-                    Patient_ID.
-                  </strong>{' '}
-                  Revise this dataset to supply a patient mapping or explicitly confirm Slide ID
-                  fallback. Fallback creates one group per unresolved slide; it cannot establish
-                  which slides belong to the same patient.
-                </div>
-              ) : null}
-              <div className="science-grid-two">
-                <label className="label">
-                  Target attribute
-                  <small>The column containing the answer you want to predict.</small>
-                  <select
-                    className="field"
-                    value={spec.target.field}
-                    onChange={(event) => void chooseTarget(event.target.value)}
-                  >
-                    <option value="">Choose a target</option>
-                    {columns.map((column) => (
-                      <option key={column}>{column}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="label">
-                  Task
-                  <select
-                    className="field"
-                    value={spec.target.task}
-                    onChange={(event) =>
-                      target({
-                        task: event.target.value as ProtocolSpec['target']['task'],
-                        positiveClass:
-                          event.target.value === 'binary_classification'
-                            ? preservePositiveClass(
-                                spec.target.positiveClass,
-                                spec.target.classes,
-                              )
-                            : undefined,
-                      })
-                    }
-                  >
-                    <option value="">Choose a task</option>
-                    <option value="binary_classification">Binary classification</option>
-                    <option value="multiclass_classification">Multiclass classification</option>
-                  </select>
-                </label>
-                <label className="label">
-                  Label unit
-                  <select
-                    className="field"
-                    value={spec.target.unit}
-                    onChange={(event) =>
-                      target({ unit: event.target.value as 'patient' | 'slide' })
-                    }
-                  >
-                    <option value="patient">
-                      Patient — consistent label across their slides
-                    </option>
-                    <option value="slide">Slide / case — keep known patients together</option>
-                  </select>
-                </label>
-                <label className="label">
-                  Class names, separated by |
-                  <input
-                    className="field"
-                    value={spec.target.classes.join(' | ')}
-                    onChange={(event) =>
-                      target({
-                        classes:
-                          event.target.value === ''
-                            ? []
-                            : event.target.value.split('|').map((value) => value.trim()),
-                        positiveClass: preservePositiveClass(
-                          spec.target.positiveClass,
-                          event.target.value.split('|').map((value) => value.trim()),
-                        ),
-                      })
-                    }
-                    placeholder="Filled from the selected target"
-                  />
-                </label>
-                <label className="label">
-                  Positive class
-                  <select
-                    className="field"
-                    value={
-                      spec.target.task === 'binary_classification'
-                        ? (spec.target.positiveClass ?? '')
-                        : ''
-                    }
-                    disabled={spec.target.task !== 'binary_classification'}
-                    onChange={(event) =>
-                      target({ positiveClass: event.target.value || undefined })
-                    }
-                  >
-                    <option value="">
-                      {spec.target.task === 'multiclass_classification'
-                        ? 'Not used for multiclass'
-                        : 'Choose positive class'}
-                    </option>
-                    {spec.target.task === 'binary_classification'
-                      ? spec.target.classes.map((value, index) => (
-                          <option key={index}>{value}</option>
-                        ))
-                      : null}
-                  </select>
-                  <small>Choose explicitly for binary tasks; source value order does not determine the positive outcome.</small>
-                </label>
-              </div>
-              {spec.target.field ? (
-                <div className="stack">
-                  <FieldProfile {...fieldContext} field={spec.target.field} />
-                  {labelValues.isPending ? (
-                    <p className="protocol-live-status" role="status">
-                      Reading target values…
-                    </p>
-                  ) : labelValues.data ? (
-                    <DistributionBars
-                      values={labelValues.data.valueCounts}
-                      caption={`${spec.target.field} · ${spec.split.version === 4 ? 'selected development records' : 'source values across all dataset slides'}`}
-                      distinctCount={
-                        labelValues.data.valuesTruncated
-                          ? undefined
-                          : labelValues.data.valueCounts.length
-                      }
-                    />
-                  ) : null}
-                </div>
-              ) : null}
-              <div className="science-subheading">
-                <h3>Match source values to classes</h3>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-small"
-                  disabled={!rawValues.length || labelValues.data?.valuesTruncated}
-                  onClick={() =>
-                    target({
-                      ...inferTargetSettings(rawValues),
-                      positiveClass:
-                        rawValues.length === 2
-                          ? preservePositiveClass(spec.target.positiveClass, rawValues)
-                          : undefined,
-                    })
-                  }
-                >
-                  Use observed source values
-                </button>
-              </div>
-              <p className="muted">
-                Classes are filled from the source values. Choose the positive class for a binary
-                task, and edit any mapping below. Original dataset values stay unchanged.
-              </p>
-              <ErrorNotice error={labelValues.error} />
-              {labelValues.data?.valuesTruncated ? (
-                <p className="callout callout-warning">
-                  This field has more than 200 distinct source values. Choose a categorical
-                  target or enter the task, classes and label mapping yourself.
-                </p>
-              ) : null}
-              {spec.target.field &&
-              labelValues.data &&
-              !labelValues.data.valuesTruncated &&
-              rawValues.length < 2 ? (
-                <p className="callout callout-warning">
-                  {rawValues.length
-                    ? 'This target has only one non-missing value.'
-                    : 'This target has no non-missing values.'}{' '}
-                  Choose a target with at least two classes for classification.
-                </p>
-              ) : null}
-              <div className="science-label-map">
-                {Object.entries(spec.target.labels).map(([raw, mapped], index) => (
-                  <div className="science-label-row" key={index}>
-                    <label className="label">
-                      Source value
-                      <input
-                        className="field"
-                        value={raw}
-                        onChange={(event) =>
-                          target({
-                            labels: Object.fromEntries(
-                              Object.entries(spec.target.labels).map(([key, value]) => [
-                                key === raw ? event.target.value : key,
-                                value,
-                              ]),
-                            ),
-                          })
-                        }
-                      />
-                    </label>
-                    <Icon name="arrow" />
-                    <label className="label">
-                      Class
-                      <select
-                        className="field"
-                        value={mapped}
-                        onChange={(event) =>
-                          target({
-                            labels: {
-                              ...spec.target.labels,
-                              [raw]: event.target.value,
-                            },
-                          })
-                        }
-                      >
-                        <option value="">Choose class</option>
-                        {spec.target.classes.map((value, at) => (
-                          <option key={at}>{value}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      aria-label={`Remove mapping ${raw}`}
-                      onClick={() =>
-                        target({
-                          labels: Object.fromEntries(
-                            Object.entries(spec.target.labels).filter(([key]) => key !== raw),
-                          ),
-                        })
-                      }
-                    >
-                      <Icon name="close" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <button
-                type="button"
-                className="btn btn-secondary btn-small science-fit"
-                onClick={() => {
-                  const raw =
-                    rawValues.find((value) => !(value in spec.target.labels)) ??
-                    `value_${Object.keys(spec.target.labels).length + 1}`;
-                  target({
-                    labels: {
-                      ...spec.target.labels,
-                      [raw]: spec.target.classes[0] ?? '',
-                    },
-                  });
-                }}
-              >
-                <Icon name="plus" size={15} /> Add label mapping
-              </button>
-              <div className="science-grid-two">
-                <label className="label">
-                  Missing target values
-                  <select
-                    className="field"
-                    value={spec.target.missing}
-                    onChange={(event) =>
-                      target({
-                        missing: event.target.value as 'block' | 'exclude',
-                      })
-                    }
-                  >
-                    <option value="block">Block until resolved</option>
-                    <option value="exclude">Exclude and record the reason</option>
-                  </select>
-                </label>
-                <label className="label">
-                  Unmapped target values
-                  <select
-                    className="field"
-                    value={spec.target.unmapped}
-                    onChange={(event) =>
-                      target({
-                        unmapped: event.target.value as 'block' | 'exclude',
-                      })
-                    }
-                  >
-                    <option value="block">Block until resolved</option>
-                    <option value="exclude">Exclude and record the reason</option>
-                  </select>
-                </label>
-              </div>
-            </div>
+            <PredictionTargetEditor
+              target={spec.target}
+              fieldContext={fieldContext}
+              unlinkedSlideCount={dataset?.manifest.summary?.unlinkedSlideCount}
+              labelValues={labelValues}
+              rawValues={rawValues}
+              dataLabel={spec.split.version === 4 ? 'selected development records' : 'source values across all dataset slides'}
+              onChooseTarget={chooseTarget}
+              onChange={target}
+            />
           </Panel>
         </div>
         <div id="protocol-cohort" className="protocol-section" hidden={step !== 1} tabIndex={-1}>
@@ -1410,57 +1219,10 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
             </div>
           </Panel>
         </div>
-        <div id="protocol-review" className="science-savebar protocol-section" hidden={step !== 4} tabIndex={-1}>
-          <div>
-            <dl className="protocol-review-facts" aria-label="Development plan to review">
-              <div><dt>Dataset</dt><dd>{dataset ? datasetVersionLabel(dataset) : 'Choose a frozen dataset'}</dd></div>
-              <div><dt>Target</dt><dd>{spec.target.field ? `${spec.target.field} · ${spec.target.classes.length} classes · ${spec.target.unit}` : 'Choose a prediction target'}</dd></div>
-              <div><dt>Split design</dt><dd>{strategyNames[spec.split.mode] ?? spec.split.mode}{spec.split.mode === 'kfold' ? ` · ${spec.split.folds} folds` : ''}</dd></div>
-              <div><dt>Split seeds</dt><dd>{seedsText || 'Enter valid seeds'}</dd></div>
-            </dl>
-            <strong>
-              {draft
-                ? `Revision ${draft.revision} · ${frozen ? 'Frozen protocol' : dirty ? 'Unsaved changes' : 'Saved draft'}`
-                : 'New protocol draft'}
-            </strong>
-            <p>
-              Save your progress, or check labels, group overlap and set sizes. Changes require
-              a new preview.
-            </p>
-          </div>
-          <div className="inline-actions">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={!name.trim() || !seedsValid}
-              onClick={() =>
-                void run(async () => {
-                  await save();
-                  setMessage('Protocol draft saved. It remains editable.');
-                })
-              }
-            >
-              Save draft
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!spec.datasetId || !spec.target.field || !name.trim() || !seedsValid}
-              onClick={() =>
-                void run(async () => {
-                  setPreview(null);
-                  const current = await save();
-                  setPreview(
-                    await scientific.protocolPreview(project, current.id, current.revision),
-                  );
-                })
-              }
-            >
-              {busy ? 'Validating…' : 'Preview & preflight'} <Icon name="arrow" />
-            </button>
-          </div>
+        <div id="protocol-review" className="science-savebar protocol-section" hidden={step !== 4 || Boolean(preview)} tabIndex={-1}>
+          {!preview ? reviewControls : null}
         </div>
-        <div className="setup-step-actions" aria-label="Protocol step actions">
+        <div className="setup-step-actions" aria-label="Protocol step actions" hidden={step === 4 && Boolean(preview)}>
           {step > 1 ? <button type="button" className="btn btn-secondary" onClick={() => showStep((step - 1) as 1 | 2 | 3)}>Back</button> : null}
           <p>{step === 1 ? !dataset ? 'Choose a frozen dataset to continue.' : 'Only the selected development records will enter this protocol.' : step === 2 ? !spec.target.field || !spec.target.task || spec.target.classes.length < 2 ? 'Choose a target with at least two mapped classes to continue.' : 'Review the class mapping and positive class before continuing.' : step === 3 ? !seedsValid ? 'Enter valid split seeds before continuing.' : 'The review checks patient overlap, labels and fold sizes before freezing.' : 'Changes to any step invalidate the reviewed assignments. Run the checks again before freezing.'}</p>
           {step < 4 ? <>
@@ -1513,7 +1275,14 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
               Freezing preserves this development design and its assignments. Configure and
               launch training separately from Experiments.
             </div>
-            <div className="science-savebar">
+            <details className="setup-details">
+              <summary>Review settings and rerun checks</summary>
+              <fieldset className="science-fieldset" disabled={busy || frozen}>
+                <div className="science-savebar">{reviewControls}</div>
+              </fieldset>
+            </details>
+            <div className="stage-actions">
+              <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => showStep(3)}>Back to split design</button>
               <p>Next, name this development protocol version. Your required tag, optional note and reviewed design are saved together.</p>
               <button
                 type="button"
@@ -1528,6 +1297,8 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
         </div>
       ) : null}
       </div>
+      </>}
+      </StagePage>
       {freezeReview ? (
         <FreezeVersionDialog
           kind="protocol"
@@ -1563,7 +1334,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
     </div>
   );
 }
-function ConditionEditor({
+export function ConditionEditor({
   title,
   description,
   emptyMessage,

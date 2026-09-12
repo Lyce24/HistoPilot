@@ -8,6 +8,7 @@ from histopilot.application.mil_inputs import MILInputService
 from histopilot.application.project_workspace import ProjectWorkspace
 from histopilot.application.training import TrainingService
 from histopilot.application.training_history import training_history
+from histopilot.application.training_resources import training_resources
 from histopilot.schemas.development import (
     DevelopmentBatchSpec,
     FreezeDevelopmentBatch,
@@ -49,6 +50,10 @@ def mil_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -> APIRo
     @router.get("/batches/{batch_id}/runs/{run_id}/history")
     def run_history(identity: str, batch_id: str, run_id: str):
         return training_history(projects.scientific_store(identity), batch_id, run_id)
+
+    @router.get("/batches/{batch_id}/resources/history")
+    def resource_history(identity: str, batch_id: str):
+        return training_resources(projects.scientific_store(identity), batch_id)
 
     @router.post("/batches/{batch_id}/launch", status_code=202)
     def launch(identity: str, batch_id: str, payload: TrainingAction):

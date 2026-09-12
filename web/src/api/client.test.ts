@@ -8,6 +8,19 @@ const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
 describe('control service client', () => {
+  it('reads compute telemetry through the authenticated service with query cancellation', async () => {
+    const sample = { sampledAt: '2026-09-12T17:00:00Z' };
+    const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' })).mockResolvedValueOnce(json(sample));
+    vi.stubGlobal('fetch', fetcher);
+    const { api } = await import('./client');
+    const controller = new AbortController();
+    expect(await api.systemCompute(controller.signal)).toEqual(sample);
+    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/system/compute');
+    expect(fetcher.mock.calls[1][1].signal).toBe(controller.signal);
+    expect(fetcher.mock.calls[1][1].headers.get('X-HistoPilot-Token')).toBe('session');
+    expect(fetcher.mock.calls[1][1].cache).toBe('no-store');
+  });
+
   it('shares renewal when an old JSON or image request returns 401 after a newer session exists', async () => {
     let rejectImage!: (response: Response) => void;
     const delayedImage = new Promise<Response>((resolve) => { rejectImage = resolve; });

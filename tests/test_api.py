@@ -76,6 +76,7 @@ def test_health_is_minimal_and_sensitive_routes_require_token(settings):
             "workspace",
             "filesystem/roots",
             "system",
+            "system/compute",
             "jobs",
             "models/encoders",
             "workspace/export",
@@ -102,6 +103,20 @@ def test_system_distinguishes_implemented_workers_from_trident_readiness(client,
     assert "not connected" not in report["workers"]["status"]
     assert report["diagnostics"]["compute"]["scope"] == "control-service"
     assert report["control"]["cudaModelsLoaded"] is False
+
+
+def test_compute_telemetry_is_authenticated_and_separate_from_runtime_probes(client, monkeypatch):
+    def unexpected_runtime_probe():
+        pytest.fail("Live compute polling must not probe or import worker runtimes")
+
+    monkeypatch.setattr("histopilot.api.app.discover_runtime", unexpected_runtime_probe)
+    monkeypatch.setattr("histopilot.api.app.system_report", unexpected_runtime_probe)
+    snapshot = {"sampledAt": "2026-09-12T00:00:00+00:00", "cpu": {"utilizationPercent": None}}
+    monkeypatch.setattr("histopilot.api.app.ComputeSampler.snapshot", lambda _self: snapshot)
+    response = client.get(f"{API}/system/compute")
+    assert response.status_code == 200
+    assert response.json() == snapshot
+    assert response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.parametrize(
@@ -323,6 +338,30 @@ def test_spa_fallback_does_not_swallow_api_or_expose_files(client, settings, tmp
     assert client.get("/escaped.js").status_code == 404
     assert client.get("/histopilot.db").status_code == 404
     assert client.get("/%2e%2e/private.txt").status_code == 404
+
+
+@pytest.mark.parametrize("path", ["/", "/index.html", "/experiments"])
+def test_frontend_html_revalidates_and_serves_rebuilt_bundle(client, settings, path):
+    original = client.get(path)
+    assert original.status_code == 200
+    assert original.headers["cache-control"] == "no-cache"
+
+    rebuilt = '<!doctype html><script src="/assets/index-rebuilt.js"></script>'
+    (settings.static_dir / "index.html").write_text(rebuilt)
+    current = client.get(path, headers={"If-None-Match": original.headers["etag"]})
+    assert current.status_code == 200
+    assert current.headers["cache-control"] == "no-cache"
+    assert current.text == rebuilt
+
+
+def test_frontend_assets_keep_their_existing_cache_policy(client, settings):
+    assets = settings.static_dir / "assets"
+    assets.mkdir()
+    for name in ("index-bundle.js", "index-bundle.css"):
+        (assets / name).write_text("/* bundled asset */")
+        response = client.get(f"/assets/{name}")
+        assert response.status_code == 200
+        assert "cache-control" not in response.headers
 
 
 def test_control_service_import_does_not_load_ml_libraries():

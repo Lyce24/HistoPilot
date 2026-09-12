@@ -1,4 +1,5 @@
-.evaluation-setup { display: grid; gap: 20px; }
+.evaluation-setup { min-width: 0; }
+.evaluation-setup:focus { outline: none; }
 .evaluation-fields { display: grid; gap: 20px; min-width: 0; border: 0; padding: 0; margin: 0; }
 .evaluation-inherited { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--accent-light); }
 .evaluation-inherited > div { display: grid; gap: 6px; }
@@ -24,8 +25,30 @@
 .evaluation-freeze { display: grid; gap: 14px; margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line); }
 .evaluation-freeze .btn { justify-self: start; }
 .evaluation-version-note { display: block; color: var(--muted); margin-top: 5px; }
+.evaluation-setup .test-cohort-route { grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
+.test-cohort-registry { width: 100%; border-collapse: collapse; text-align: left; }
+.test-cohort-registry th, .test-cohort-registry td { padding: 16px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.test-cohort-registry thead th { color: var(--muted); font-size: 12px; font-weight: 600; }
+.test-cohort-registry tbody th { font-size: 14px; font-weight: 600; min-width: 180px; }
+.test-cohort-registry small { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; font-weight: 400; }
+.test-cohort-registry td:nth-child(3) { max-width: 260px; overflow-wrap: anywhere; }
+.test-cohort-draft-status { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.test-cohort-datasets { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; margin: 0; min-width: 0; }
+.test-cohort-datasets legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
+.test-cohort-datasets .science-check { align-items: flex-start; margin: 0; }
+.test-cohort-datasets .science-check span { min-width: 0; overflow-wrap: anywhere; }
+.test-cohort-datasets .science-check small { display: block; margin-top: 4px; color: var(--muted); }
+.test-cohort-distribution-field { max-width: 440px; }
+.test-cohort-population + .test-cohort-population { padding-top: 18px; border-top: 1px solid var(--line); }
+.test-cohort-step-actions { display: flex; gap: 18px; justify-content: space-between; align-items: center; padding-top: 16px; border-top: 1px solid var(--line); }
+.test-cohort-step-actions > p { color: var(--muted); font-size: 13px; margin: 0; }
+.test-cohort-stage { animation: test-cohort-enter 160ms ease-out; }
+@keyframes test-cohort-enter { from { opacity: .5; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .test-cohort-stage { animation: none; } }
 @media (max-width: 850px) {
   .evaluation-condition { grid-template-columns: 1fr; }
   .evaluation-condition .icon-button { justify-self: end; }
   .evaluation-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .test-cohort-step-actions { align-items: flex-start; flex-direction: column; }
 }
+@media (max-width: 560px) { .evaluation-setup .test-cohort-route { grid-template-columns: 1fr; } }

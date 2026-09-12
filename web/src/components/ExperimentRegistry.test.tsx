@@ -88,6 +88,15 @@ describe('experiment registry and exact comparison', () => {
       const registry = renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentRegistry project="p" onOpen={() => {}} /></QueryClientProvider>);
       expect(registry).toContain('Archived'); expect(registry).toContain('Trash'); expect(registry).toContain('All records');
       expect(registry).toContain('All stages'); expect(registry).toContain('Planning');
+      expect(registry).toContain('aria-label="Search experiments"');
+      expect(registry).toContain('aria-label="Experiment state"');
+      expect(registry).toContain('aria-label="Saved experiments"');
+      expect(registry).toContain('1 batch');
+      expect(registry).not.toContain('1 batches');
+      expect(registry).not.toContain('Your experiments');
+      expect(registry).not.toContain('Stage 0 · Saved records');
+      expect(registry).not.toContain('Compare selected experiments');
+      expect(registry).not.toContain('Archive keeps');
       expect(registry).not.toContain('Predictors'); expect(registry).not.toContain('#post-development'); expect(registry).not.toContain('#evaluation');
       const detail = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned]} ownedDrafts={[]} tab="runs" onOpenSetup={() => {}} /></QueryClientProvider>);
       expect(detail).toContain('owned-only'); expect(detail).not.toContain('UNRELATED-BATCH');

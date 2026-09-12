@@ -567,19 +567,34 @@ class ClinicalService:
         self.store.lifecycle.assert_document_usable(manifest)
         predictor = self.store.get_configuration(manifest["predictorId"])
         cohort = self.store.get_configuration(manifest["cohortId"])
+        standalone = cohort["manifest"].get("overlap", {}).get("deferred", False)
+        cohort_target = cohort["manifest"].get("target")
+        target_matches = cohort_target == manifest["target"]
+        if standalone:
+            target_matches = cohort_target is None or all(
+                cohort_target.get(key) == manifest["target"].get(key)
+                for key in ("task", "unit", "classes", "positiveClass")
+            )
         if (
             manifest.get("predictor") != reference(predictor)
             or manifest.get("cohort") != reference(cohort)
             or predictor["manifest"].get("kind") != "frozen-predictor"
             or cohort["manifest"].get("kind") != "evaluation-cohort"
             or predictor["manifest"].get("target") != manifest["target"]
-            or cohort["manifest"].get("target") != manifest["target"]
+            or not target_matches
         ):
             raise _invalid(
                 "Evaluation, predictor, and cohort references must preserve the frozen target."
             )
-        overlap = cohort["manifest"].get("overlap", {})
-        if overlap.get("slideIds") or overlap.get("patientIds"):
+        overlap = manifest.get("overlap", cohort["manifest"].get("overlap", {}))
+        if standalone and (
+            overlap.get("deferred")
+            or not {"slideIds", "patientIds", "patientsComparable"} <= overlap.keys()
+        ):
+            raise _invalid(
+                "Clinical utility requires the model evaluation's reviewed overlap evidence."
+            )
+        if overlap.get("slideIds") or overlap.get("patientIds") or overlap.get("sourceSlideIds"):
             raise _invalid(
                 "Clinical utility requires an evaluation cohort without development overlap."
             )
@@ -643,6 +658,7 @@ class ClinicalService:
             "schemaVersion": 1,
             "name": selection.name,
             "datasetId": manifest["datasetId"],
+            **({"datasetIds": manifest["datasetIds"]} if manifest.get("datasetIds") else {}),
             "experimentId": manifest["experimentId"],
             "predictorId": predictor["id"],
             "predictor": reference(predictor),

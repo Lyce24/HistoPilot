@@ -1,4 +1,5 @@
 import type { VersionLabel } from './scientific';
+import type { DemoPipeline } from './demo';
 
 export type Page =
   | 'overview'
@@ -151,6 +152,7 @@ export interface Workspace {
   project: ProjectSummary;
   mode: 'local' | 'synthetic-demo';
   executionEnabled: boolean;
+  demoPipeline?: DemoPipeline;
   scientificSummary?: { datasetCount: number; protocolCount: number; featureCount: number };
   dataset: {
     id: string;
@@ -213,4 +215,58 @@ export interface SystemStatus {
   control: { cudaModelsLoaded: boolean; process: string };
   workers: { executionEnabled: boolean; status: string; tmuxAvailable?: boolean; nativeExecutionImplemented?: boolean };
   sourcesReadOnly: boolean;
+}
+
+export interface SystemCompute {
+  sampledAt: string;
+  sampleIntervalSeconds: number | null;
+  host: { hostname: string; platform: string; release: string; uptimeSeconds: number | null };
+  cpu: {
+    model: string | null;
+    logicalCores: number | null;
+    physicalCores: number | null;
+    availableCores: number | null;
+    utilizationPercent: number | null;
+    loadAverage: [number, number, number] | null;
+    status: 'available' | 'unavailable';
+    message: string | null;
+  };
+  memory: {
+    totalBytes: number | null;
+    usedBytes: number | null;
+    availableBytes: number | null;
+    utilizationPercent: number | null;
+    swapTotalBytes: number | null;
+    swapUsedBytes: number | null;
+    status: 'available' | 'unavailable';
+    message: string | null;
+  };
+  gpu: {
+    status: 'available' | 'unavailable' | 'error';
+    message: string | null;
+    devices: Array<{
+      index: number;
+      name: string;
+      uuid: string | null;
+      driverVersion: string | null;
+      utilizationPercent: number | null;
+      memoryTotalBytes: number | null;
+      memoryUsedBytes: number | null;
+      memoryFreeBytes: number | null;
+      memoryUtilizationPercent: number | null;
+      temperatureCelsius: number | null;
+      powerWatts: number | null;
+      powerLimitWatts: number | null;
+    }>;
+  };
+  disks: Array<{
+    path: string;
+    role: 'workspace' | 'data';
+    totalBytes: number | null;
+    usedBytes: number | null;
+    freeBytes: number | null;
+    utilizationPercent: number | null;
+    status: 'available' | 'unavailable';
+    message: string | null;
+  }>;
 }

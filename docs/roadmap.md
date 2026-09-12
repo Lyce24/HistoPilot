@@ -36,7 +36,7 @@ Persist exact assignments, protocol/algorithm/library versions, seed and content
 
 ## P0.3 — Full feature validation and mandatory execution preflight
 
-Attach `/mnt/d/YC.Liu/features/blca/20x_256px_0px_overlap/features_uni_v1` first. This review checked all 138 headers, but the application must perform and persist its own validation. Inspect dataset-level attributes, features/coordinates, coverage, content identity and provenance. Read finite-value checks in bounded slices. Keep preprocessing variants separate and report unmatched files. The configured mmap index does not constitute a complete feature cache.
+Attach `/path/to/research-data/features/blca/20x_256px_0px_overlap/features_uni_v1` first. This review checked all 138 headers, but the application must perform and persist its own validation. Inspect dataset-level attributes, features/coordinates, coverage, content identity and provenance. Read finite-value checks in bounded slices. Keep preprocessing variants separate and report unmatched files. The configured mmap index does not constitute a complete feature cache.
 
 Join dataset, target, cohort, split, feature set and experiment specification at one preparation boundary shared by API and CLI. Scope checks to the intended operation, distinguish scientific from execution readiness, and invalidate stale reports. Unknown provenance cannot be presented as complete extraction reproducibility.
 

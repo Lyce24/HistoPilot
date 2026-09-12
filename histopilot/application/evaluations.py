@@ -1,4 +1,4 @@
-"""Immutable, independently selected test cohorts with exact feature coverage checks."""
+"""Immutable test cohorts; legacy bound preflight is reused at model evaluation."""
 
 from __future__ import annotations
 
@@ -144,6 +144,165 @@ class EvaluationService:
             ) from error
 
     def _prepare(self, spec):
+        if not spec.protocolId:
+            return self._prepare_independent(spec)
+        return self._prepare_bound(spec)
+
+    def _load_datasets(self, spec):
+        datasets = [
+            self.protocols._load_dataset(identity)
+            for identity in (spec.datasetIds or [spec.datasetId])
+        ]
+        fields, rows = {}, []
+        for _dataset, dictionary, records in datasets:
+            fields.update(dictionary)
+            rows.extend(records)
+        if len(rows) > 50_000:
+            raise StorageError(
+                "A test cohort supports at most 50,000 slide records.",
+                "EVALUATION_RECORD_LIMIT",
+                413,
+            )
+        return datasets, fields, rows
+
+    def _prepare_independent(self, spec):
+        """Freeze clinical membership without reading models, bundles, or feature files."""
+        findings = []
+
+        def finding(code, message, severity="error"):
+            item = {"code": code, "message": message, "severity": severity}
+            if item not in findings:
+                findings.append(item)
+
+        datasets, fields, rows = self._load_datasets(spec)
+        for condition in spec.eligibility:
+            if condition.field not in fields and condition.field not in CANONICAL:
+                finding(
+                    "UNKNOWN_FIELD", f"Filter field '{condition.field}' is not in this dataset."
+                )
+        target = spec.target
+        if target:
+            if target.field not in fields:
+                finding("UNKNOWN_TARGET_FIELD", "Select an available target label field.")
+            for dataset, dictionary, _records in datasets:
+                source = dictionary.get(target.field, {}).get("sourceColumn", target.field)
+                mapping = dataset["manifest"].get("provenance", {}).get("mapping", {})
+                identities = {
+                    _key(mapping[key])
+                    for key in (
+                        "slideIdColumn",
+                        "patientIdColumn",
+                        "patientSourceSlideIdColumn",
+                        "patientSourcePatientIdColumn",
+                    )
+                    if isinstance(mapping.get(key), str)
+                }
+                if (
+                    target.field in CANONICAL
+                    or _forbidden_name(source, target=True)
+                    or _key(source) in identities
+                ):
+                    finding(
+                        "IDENTIFIER_TARGET",
+                        "Identifiers and partition fields cannot serve as target labels.",
+                    )
+        evaluator = FilterEvaluator()
+        included, excluded = [], 0
+        try:
+            evaluator.prepare(spec.eligibility)
+            for row in rows:
+                if not evaluator.conjunction(row, spec.eligibility):
+                    excluded += 1
+                    continue
+                label = None
+                if target:
+                    raw = evaluator.field(row, target.field)
+                    missing = raw is None
+                    label = target.labels.get(raw) if not missing else None
+                    if label is None:
+                        if (target.missing if missing else target.unmapped) == "exclude":
+                            excluded += 1
+                            continue
+                        finding(
+                            "MISSING_TARGET_LABEL" if missing else "UNMAPPED_TARGET_LABEL",
+                            "Selected slides have missing or unmapped target labels. Map them or explicitly exclude them.",
+                        )
+                included.append({**row, "label": label})
+        except FilterFailure as error:
+            finding(error.code, str(error))
+        if not included:
+            finding("EMPTY_TEST_COHORT", "The test-cohort conditions select no slides.")
+        selected = {row["slideId"] for row in included}
+        if len(included) != len(selected):
+            finding(
+                "DUPLICATE_SLIDE_ID",
+                "Selected test slides have duplicate slide identifiers across the selected datasets.",
+            )
+        groups = defaultdict(list)
+        for row in included:
+            groups[row.get("patientId")].append(row)
+        self.protocols._identity_findings(included, groups, finding)
+        if (
+            target
+            and target.unit == "patient"
+            and any(
+                len({row["label"] for row in group if row["label"] is not None}) > 1
+                for group in groups.values()
+            )
+        ):
+            finding(
+                "CONFLICTING_PATIENT_LABELS", "A test patient has conflicting labels across slides."
+            )
+        counts = Counter(row["label"] for row in included if row["label"] is not None)
+        if target and set(counts) != set(target.classes):
+            finding(
+                "TEST_CLASSES_ABSENT",
+                "Some target classes are absent in this test cohort; some metrics will be unavailable.",
+                "warning",
+            )
+        preview = {
+            "spec": spec.model_dump(mode="json"),
+            "target": target.model_dump(mode="json") if target else None,
+            "summary": {
+                "includedSlides": len(included),
+                "includedPatients": len(set(groups) - {None}),
+                "excludedSlides": excluded,
+                "labeledSlides": sum(counts.values()),
+                "classCounts": {label: counts[label] for label in target.classes} if target else {},
+                "developmentSlideOverlap": 0,
+                "developmentPatientOverlap": 0,
+            },
+            "coverage": {
+                "selectedSlideIds": sorted(selected),
+                "featureSlideCount": 0,
+                "missingFeatureSlideIds": [],
+                "missingPackSlideIds": [],
+                "packChecked": False,
+                "deferred": True,
+            },
+            "overlap": {
+                "slideIds": [],
+                "patientIds": [],
+                "patientsComparable": False,
+                "deferred": True,
+            },
+            "bindings": {
+                "dataset": _reference(datasets[0][0]),
+                "datasets": [_reference(item[0]) for item in datasets],
+            },
+            "compatibility": {},
+            "pack": None,
+            "memberships": [
+                {key: row.get(key) for key in ("slideId", "patientId", "patientIdSource", "label")}
+                for row in included
+            ],
+            "findings": findings,
+            "canFreeze": not any(item["severity"] == "error" for item in findings),
+            "executionEnabled": False,
+        }
+        return {**preview, "previewHash": preview_hash(preview)}, []
+
+    def _prepare_bound(self, spec):
         findings = []
 
         def finding(code, message, severity="error"):
@@ -166,8 +325,9 @@ class EvaluationService:
             raise StorageError(
                 "The development target is invalid.", "INVALID_PROTOCOL", 422
             ) from error
-        dataset, fields, rows = self.protocols._load_dataset(spec.datasetId)
-        same_dataset = spec.datasetId == protocol_manifest["datasetId"]
+        datasets, fields, rows = self._load_datasets(spec)
+        dataset = datasets[0][0]
+        same_dataset = protocol_manifest["datasetId"] in (spec.datasetIds or [spec.datasetId])
         if same_dataset and spec.patientIdentifiers == "independent":
             finding(
                 "SHARED_PATIENT_NAMESPACE", "The same dataset must use shared patient identifiers."
@@ -307,18 +467,21 @@ class EvaluationService:
                 "DEVELOPMENT_PATIENT_OVERLAP",
                 f"{len(patient_overlap)} selected patient IDs occur in model development.",
             )
-        development_dataset, development_rows = dataset, rows
-        if not same_dataset:
-            development_dataset, _fields, development_rows = self.protocols._load_dataset(
-                protocol_manifest["datasetId"]
-            )
+        development_dataset, _fields, development_rows = self.protocols._load_dataset(
+            protocol_manifest["datasetId"]
+        )
         development_sources = _slide_sources(
             self.store, development_dataset, development_rows, development_slides
         )
         source_identities = (
             set().union(*development_sources.values()) if development_sources else set()
         )
-        selected_sources = _slide_sources(self.store, dataset, included, selected_ids)
+        selected_sources = defaultdict(set)
+        for source_dataset, _dictionary, source_rows in datasets:
+            for slide, sources in _slide_sources(
+                self.store, source_dataset, source_rows, selected_ids
+            ).items():
+                selected_sources[slide].update(sources)
         source_overlap = sorted(
             slide
             for slide, sources in selected_sources.items()
@@ -449,7 +612,9 @@ class EvaluationService:
                 "warning",
             )
         preview = {
-            "spec": spec.model_dump(mode="json"),
+            "spec": spec.model_dump(
+                mode="json", exclude={"datasetIds"} if spec.datasetIds is None else set()
+            ),
             "target": target.model_dump(mode="json"),
             "summary": {
                 "includedSlides": len(included),
@@ -534,7 +699,7 @@ class EvaluationService:
             expected_revision=expected_revision,
             manifest={
                 "kind": "evaluation-cohort",
-                "schemaVersion": 1,
+                "schemaVersion": 2 if not preview["spec"]["protocolId"] else 1,
                 "datasetId": preview["spec"]["datasetId"],
                 **preview,
             },

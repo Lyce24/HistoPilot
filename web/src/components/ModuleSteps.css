@@ -2,7 +2,7 @@
   display: grid;
   grid-template-columns: 1fr 1.15fr 1.3fr;
   margin: -3px 0 26px;
-  border: 1px solid #dfe6e5;
+  border: 1px solid var(--theme-line);
   border-radius: 14px;
   background: #fff;
   overflow: hidden;
@@ -15,7 +15,7 @@
   padding: 21px 20px;
 }
 .module-brief-item + .module-brief-item {
-  border-left: 1px solid #e7eceb;
+  border-left: 1px solid var(--theme-line);
 }
 .module-brief-icon {
   display: grid;
@@ -23,14 +23,14 @@
   place-items: center;
   width: 33px;
   height: 33px;
-  border: 1px solid #e6e5ee;
+  border: 1px solid var(--theme-line);
   border-radius: 9px;
-  background: #f7f6fb;
-  color: #736187;
+  background: var(--theme-soft);
+  color: var(--brand-red);
 }
 .module-brief-item h2 {
   margin: 0 0 6px;
-  color: #677475;
+  color: var(--theme-muted);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.09em;
@@ -38,24 +38,24 @@
 }
 .module-brief-item p {
   margin: 0;
-  color: #354349;
+  color: var(--theme-ink);
   font-size: 12px;
   line-height: 1.65;
 }
 .module-brief-item small {
   display: block;
   margin-top: 7px;
-  color: #667a74;
+  color: var(--theme-muted);
   font-size: 11px;
   line-height: 1.55;
 }
 .module-brief-outcome {
-  background: #f4f8f5;
+  background: var(--theme-soft);
 }
 .module-brief-outcome .module-brief-icon {
-  color: #357965;
-  border-color: #dce9e0;
-  background: #eaf3ec;
+  color: var(--brand-brown);
+  border-color: var(--theme-line);
+  background: var(--theme-soft-hover);
 }
 @media (max-width: 1100px) {
   .module-brief-item {
@@ -73,6 +73,6 @@
   }
   .module-brief-item + .module-brief-item {
     border-left: 0;
-    border-top: 1px solid #e7eceb;
+    border-top: 1px solid var(--theme-line);
   }
 }

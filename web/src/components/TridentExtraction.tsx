@@ -19,6 +19,7 @@ import { DatasetSelect, Findings } from './ScientificUI';
 import { Badge, EmptyState, ErrorNotice, Icon, Panel } from './ui';
 import ServerFolderPicker from './ServerFolderPicker';
 import ExtractionProgress, { extractionModelLabel, extractionStateLabel, extractionTaskLabel } from './ExtractionProgress';
+import { StagePage, StageSteps } from './StageWorkflow';
 import './TridentExtraction.css';
 
 const stages = [
@@ -83,9 +84,9 @@ export default function TridentExtraction({
   const [busy, setBusy] = useState<'preview' | 'start' | 'cancel' | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const operationId = useRef<string | null>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
-  const jobsRef = useRef<HTMLDivElement>(null);
+  const [selectedPage, setPage] = useState<'settings' | 'review' | 'activity' | null>(null);
   const activeJobs = jobs.data?.jobs.filter(extractionActive) ?? [];
+  const page = selectedPage ?? (activeJobs.length ? 'activity' : 'settings');
   const finishedJobs = jobs.data?.jobs.filter((item) => !extractionActive(item)) ?? [];
   const recentJobs = [...activeJobs, ...finishedJobs.slice(0, 1)];
   const historyJobs = finishedJobs.slice(1);
@@ -107,7 +108,7 @@ export default function TridentExtraction({
   };
 
   function invalidatePreview() {
-    setPreview(null);
+    setPreview(null); setPage('settings');
     setError(null);
     operationId.current = null;
   }
@@ -134,7 +135,7 @@ export default function TridentExtraction({
       const next = await trident.preview(project, { datasetId, outputPath: outputPath.trim(), options });
       setPreview(next);
       operationId.current = null;
-      requestAnimationFrame(() => previewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+      setPage('review');
     });
   }
   async function updateJob(next: ExtractionJob) {
@@ -146,7 +147,13 @@ export default function TridentExtraction({
   return (
     <div className="trident-workflow">
       <ErrorNotice error={error ?? catalog.error ?? jobs.error ?? jobDetail.error} />
-      <Panel
+      <StageSteps label="Extraction steps" current={page} disabled={busy !== null} steps={[
+        { id: 'settings', title: 'Extraction settings' },
+        { id: 'review', title: 'Review extraction', disabled: !preview },
+        { id: 'activity', title: 'Runs & outputs', description: `${jobs.data?.jobs.length ?? 0} runs` },
+      ]} onChange={(step) => { if (step === 'settings' || step === 'activity' || step === 'review' && preview) setPage(step); }} />
+      <StagePage pageKey={page}>
+      {page === 'settings' ? <Panel
         title="Extract with TRIDENT"
         subtitle="Extract with a pathology foundation model, review the outputs, then freeze the features alone or together with verified packs."
         actions={<Badge tone="purple">TRIDENT</Badge>}
@@ -258,10 +265,11 @@ export default function TridentExtraction({
         ) : (
           <button type="button" className="btn btn-secondary" onClick={() => void catalog.refetch()}>Retry loading TRIDENT options</button>
         )}
-      </Panel>
+      </Panel> : null}
 
-      {preview ? (
-        <div ref={previewRef} className="trident-preview">
+      {page === 'review' && preview ? (
+        <div className="trident-preview">
+          <button type="button" className="btn btn-secondary pfm-back" disabled={busy !== null} onClick={() => setPage('settings')}>← Back to extraction settings</button>
           <Panel
             title="Extraction preflight"
             subtitle={`${preview.slideCount.toLocaleString()} slides · ${stages.find((stage) => stage.value === preview.spec.options.task)?.label ?? 'TRIDENT pipeline'}`}
@@ -290,7 +298,7 @@ export default function TridentExtraction({
                   operationId.current ??= `extraction:${Array.from(crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(16)).join('')}`;
                   await updateJob(await trident.start(project, preview.spec, preview.previewHash, operationId.current));
                   setPreview(null);
-                  requestAnimationFrame(() => jobsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+                  setPage('activity');
                 })}
               >
                 <Icon name="experiments" size={17} /> {busy === 'start' ? 'Launching…' : 'Start extraction'}
@@ -300,7 +308,7 @@ export default function TridentExtraction({
         </div>
       ) : null}
 
-      <div ref={jobsRef} className="trident-activity">
+      {page === 'activity' ? <div className="trident-activity">
       <Panel
         title="Extraction activity"
         subtitle="Follow active runs. When features are ready, inspect and save them before choosing a pack."
@@ -343,10 +351,11 @@ export default function TridentExtraction({
             ) : <p className="muted" role="status">Loading job details…</p>}
           </div>
         ) : (
-          <EmptyState title="No extraction jobs yet" description="Select a dataset and model above, then preview your TRIDENT pipeline." />
+          <EmptyState title="No extraction jobs yet" description="Choose extraction settings, then preview your TRIDENT pipeline." />
         )}
       </Panel>
-      </div>
+      </div> : null}
+      </StagePage>
     </div>
   );
 }

@@ -63,6 +63,15 @@ function completedBatch() {
 }
 
 describe('project roadmap progress', () => {
+  it('unlocks the self-contained BLCA walkthrough without claiming real completed artifacts', () => {
+    const source = workspace('synthetic-demo');
+    source.demoPipeline = { version: 1, synthetic: true, readOnly: true, seed: 20260912, sourceBasis: [], records: [{ id: 'demo-dataset', module: 'dataset', name: 'Synthetic BLCA slides', description: '', tags: [], steps: [] }] };
+    const roadmap = buildRoadmap(source);
+    expect(roadmap.every((module) => module.unlocked && module.blockers.length === 0)).toBe(true);
+    expect(roadmap.every((module) => module.status !== 'complete')).toBe(true);
+    expect(roadmap[0].evidence).toBe('1 illustrative record · synthetic walkthrough');
+    expect(roadmap.find((module) => module.id === 'evaluation')?.evidence).toBe('Illustrative workflow explanation');
+  });
   it('counts ready predictors as experiment outputs and never treats evaluation plans as completed results', () => {
     const predictor = { id: 'predictor-a', lifecycleState: 'active' } as RoadmapEvidence['predictors'][number];
     const record = { id: 'evaluation-a', lifecycleState: 'active', manifest: { status: 'planned' } } as RoadmapEvidence['modelEvaluations'][number];
@@ -123,14 +132,14 @@ describe('project roadmap progress', () => {
       { from: 'experiments', to: 'evaluation' }, { from: 'test-data', to: 'evaluation' },
       { from: 'evaluation', to: 'clinical-utility' }, { from: 'clinical-utility', to: 'interpretation' },
     ]);
-    expect(ROADMAP_MODULES.find((module) => module.id === 'test-data')?.prerequisites).toEqual(['cohort']);
+    expect(ROADMAP_MODULES.find((module) => module.id === 'test-data')?.prerequisites).toEqual(['dataset']);
     expect(ROADMAP_MODULES.find((module) => module.id === 'evaluation')?.prerequisites).toEqual(['experiments', 'test-data']);
     expect(ROADMAP_MODULES.find((module) => module.id === 'clinical-utility')?.prerequisites).toEqual(['evaluation']);
     expect(ROADMAP_MODULES.find((module) => module.id === 'interpretation')?.prerequisites).toEqual(['clinical-utility']);
   });
-  it('opens data first and gives test preparation a protocol prerequisite, without requiring completed models', () => {
+  it('opens test-cohort planning independently of development and feature extraction', () => {
     const roadmap = buildRoadmap(workspace());
-    expect(roadmap.filter((module) => module.unlocked).map((module) => module.id)).toEqual(['dataset', 'experiments', 'evaluation', 'clinical-utility', 'interpretation']);
+    expect(roadmap.filter((module) => module.unlocked).map((module) => module.id)).toEqual(['dataset', 'experiments', 'test-data', 'evaluation', 'clinical-utility', 'interpretation']);
     expect(roadmap.every((module) => module.status === 'not-started')).toBe(true);
     expect(modules().evaluation.blockers).toEqual(['experiments', 'test-data']);
     expect(roadmap).toHaveLength(8);
@@ -158,7 +167,7 @@ describe('project roadmap progress', () => {
     expect(roadmap.cohort.unlocked).toBe(true);
     expect(roadmap.experiments.unlocked).toBe(true);
     expect(roadmap.features.unlocked).toBe(false);
-    expect(roadmap['test-data'].unlocked).toBe(false);
+    expect(roadmap['test-data'].unlocked).toBe(true);
   });
 
   it('requires a persisted artifact even when an import draft says frozen', () => {

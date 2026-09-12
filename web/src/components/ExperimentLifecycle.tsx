@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
 import { cleanupApplyRequest, cleanupPollInterval, cleanupReviewMatches, lifecycle } from '../api/lifecycle';
@@ -7,8 +7,9 @@ import { CleanupReviewPanel } from '../pages/WorkspaceCleanup';
 import { ErrorNotice } from './ui';
 
 /** Reuses the workspace lifecycle review, including exact retries and dependency acknowledgement. */
-export default function ExperimentLifecycle({ project, recordKey, state, name }: {
+export default function ExperimentLifecycle({ project, recordKey, state, name, onLockChange }: {
   project: string; recordKey: string; state: LifecycleState; name: string;
+  onLockChange?: (locked: boolean) => void;
 }) {
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -17,21 +18,28 @@ export default function ExperimentLifecycle({ project, recordKey, state, name }:
   const [review, setReview] = useState<{ preview: CleanupPreview; operationId: string; uncertain: boolean } | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
+  const locked = busy || Boolean(review?.uncertain);
+  useEffect(() => { onLockChange?.(locked); }, [locked, onLockChange]);
+  useEffect(() => () => onLockChange?.(false), [onLockChange]);
   const [error, setError] = useState<Error | null>(null);
   const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState([recordKey]);
   const current = Boolean(review && !inventory.isError && cleanupReviewMatches(review.preview, inventory.data, review.preview.action, selected));
   async function preview(action: CleanupAction, keys = [recordKey]) {
+    if (inFlight.current || review?.uncertain) return;
+    inFlight.current = true;
     setOpen(true); setBusy(true); setReview(null); setAcknowledged(false); setError(null); setNotice(''); setSelected(keys);
     try {
       const result = await lifecycle.preview(project, action, keys);
       setReview({ preview: result, operationId: `experiment-cleanup:${crypto.randomUUID()}`, uncertain: false });
       await inventory.refetch();
     } catch (reason) { setError(reason instanceof Error ? reason : new Error('The change could not be reviewed.')); }
-    finally { setBusy(false); }
+    finally { inFlight.current = false; setBusy(false); }
   }
   async function apply() {
-    if (!review || busy || (!review.uncertain && (!current || !acknowledged))) return;
+    if (!review || inFlight.current || (!review.uncertain && (!current || !acknowledged))) return;
+    inFlight.current = true;
     setBusy(true); setError(null);
     try {
       await lifecycle.apply(project, cleanupApplyRequest(review.preview, review.operationId));
@@ -42,7 +50,7 @@ export default function ExperimentLifecycle({ project, recordKey, state, name }:
       if (reason instanceof ApiError) { setReview(null); setAcknowledged(false); void inventory.refetch(); }
       else setReview({ ...review, uncertain: true });
       setError(reason instanceof Error ? reason : new Error('The confirmation response was lost.'));
-    } finally { setBusy(false); }
+    } finally { inFlight.current = false; setBusy(false); }
   }
   return <section className="experiment-lifecycle" aria-label={`Manage ${name}`}>
     <div className="inline-actions">

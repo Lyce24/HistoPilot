@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { FeatureBundle } from '../api/bundles';
 import type { Configuration } from '../api/scientific';
-import FeatureBundleLibrary from './FeatureBundleLibrary';
+import FeatureBundleLibrary, { filterFeatureBundles } from './FeatureBundleLibrary';
 
 const source = {
   id: 'feature', versionLabel: { tag: 'UNI features', note: '' },
@@ -23,16 +23,31 @@ function bundle(withPack = true): FeatureBundle {
     },
   };
 }
-function render(items: FeatureBundle[]) {
+function render(items: FeatureBundle[], selectedId = items[0]?.id ?? '') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   try {
-    const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeatureBundleLibrary project="project" items={items} features={[source]} selectedId={items[0]?.id ?? ''} onSelect={() => {}} onPrepare={() => {}} /></QueryClientProvider>);
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeatureBundleLibrary project="project" items={items} features={[source]} selectedId={selectedId} onSelect={() => {}} onPrepare={() => {}} /></QueryClientProvider>);
     expect(client.getQueryCache().findAll().some((query) => query.queryKey.includes('selection'))).toBe(false);
     return html;
   } finally { client.clear(); }
 }
 
 describe('frozen feature bundle library', () => {
+  it('requires selecting a saved record before showing its immutable details', () => {
+    const html = render([bundle()], '');
+    expect(html).toContain('aria-label="Saved feature bundles"');
+    expect(html).toContain('aria-label="Open Reviewed BLCA"');
+    expect(html).toContain('Search feature bundles');
+    expect(html).toContain('All statuses');
+    expect(html).toContain('Last updated');
+    expect(html).toContain('data-record-key="configuration:bundle"');
+    expect(html).toContain('aria-label="Manage Reviewed BLCA"');
+    expect(html).not.toContain('Create feature bundle');
+    expect(html).not.toContain('<h2');
+    expect(html).not.toContain('Frozen bundle evidence');
+    expect(html).not.toContain('Edit bundle name &amp; note');
+    expect(html).not.toContain('/mmap/blca-verified');
+  });
   it('shows frozen feature and pack contents with MIL handoff, without a mutable loading choice', () => {
     const html = render([bundle()]);
     expect(html).toContain('UNI features');
@@ -52,7 +67,6 @@ describe('frozen feature bundle library', () => {
 
   it('represents a features-only bundle without implying that a pack exists', () => {
     const html = render([bundle(false)]);
-    expect(html).toContain('Features only');
     expect(html).toContain('Features alone');
     expect(html).toContain('No pack is included in this bundle.');
     expect(html).not.toContain('Included packs');
@@ -73,8 +87,29 @@ describe('frozen feature bundle library', () => {
 
   it('directs an empty library to preparation rather than presenting loading controls', () => {
     const html = render([]);
-    expect(html).toContain('No frozen bundles yet');
-    expect(html).toContain('Prepare a bundle');
+    expect(html).toContain('No feature bundles yet');
+    expect(html).toContain('Create a feature bundle');
     expect(html).not.toContain('Frozen bundle<select');
+  });
+
+  it('combines readiness with search across saved names, notes, IDs and feature sources', () => {
+    const verified = bundle();
+    const attention = { ...bundle(false), id: 'older-bundle', current: false, versionLabel: { ...verified.versionLabel!, tag: 'Legacy cohort', note: 'Requires new source' }, manifest: { ...verified.manifest, spec: { featureSetId: 'old-source', packArtifactIds: [] } } };
+    const items = [verified, attention];
+    expect(filterFeatureBundles(items, [source], ' uni ', 'verified', 'recent')).toEqual([verified]);
+    expect(filterFeatureBundles(items, [source], 'requires new', 'attention', 'recent')).toEqual([attention]);
+    expect(filterFeatureBundles(items, [source], 'older-bundle', '', 'recent')).toEqual([attention]);
+    expect(filterFeatureBundles(items, [source], 'Legacy', 'verified', 'recent')).toEqual([]);
+    expect(filterFeatureBundles(items, [source], 'missing', '', 'recent')).toEqual([]);
+  });
+
+  it('sorts by updated label, creation date or name without changing the saved order', () => {
+    const older = { ...bundle(), id: 'older', createdAt: '2026-09-01T12:00:00Z', versionLabel: { ...bundle().versionLabel!, tag: 'Zebra cohort', updatedAt: '2026-09-12T12:00:00Z' } };
+    const newer = { ...bundle(), id: 'newer', versionLabel: { ...bundle().versionLabel!, tag: 'Alpha cohort' } };
+    const items = [newer, older];
+    expect(filterFeatureBundles(items, [], '', '', 'recent').map((item) => item.id)).toEqual(['older', 'newer']);
+    expect(filterFeatureBundles(items, [], '', '', 'oldest').map((item) => item.id)).toEqual(['older', 'newer']);
+    expect(filterFeatureBundles(items, [], '', '', 'name').map((item) => item.id)).toEqual(['newer', 'older']);
+    expect(items.map((item) => item.id)).toEqual(['newer', 'older']);
   });
 });

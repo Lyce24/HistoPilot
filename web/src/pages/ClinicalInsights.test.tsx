@@ -11,15 +11,36 @@ import CurveChart from '../components/CurveChart';
 const workspace = { mode: 'local', project: { id: 'p', name: 'Evidence project' } } as Workspace;
 const clients: QueryClient[] = [];
 afterEach(() => { clients.splice(0).forEach((client) => client.clear()); vi.unstubAllGlobals(); });
-function render(page: 'clinical' | 'interpretation', options: { hash?: string; evaluations?: ModelEvaluation[]; predictors?: FrozenPredictor[] } = {}) {
+function render(page: 'clinical' | 'interpretation', options: { hash?: string; evaluations?: ModelEvaluation[]; predictors?: FrozenPredictor[]; seedLibrary?: boolean } = {}) {
   vi.stubGlobal('window', { location: { hash: options.hash ?? '' } });
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } }); clients.push(client);
   for (const key of ['clinical-analyses', 'interpretations']) client.setQueryData([key, 'p'], { items: [] });
+  if (options.seedLibrary !== false) client.setQueryData(['clinical-analyses', 'p', 'all'], { items: [] });
   client.setQueryData(['model-evaluations', 'p'], { items: options.evaluations ?? [] });
   client.setQueryData(['predictors', 'p'], { items: options.predictors ?? [] });
   return renderToStaticMarkup(<QueryClientProvider client={client}>{page === 'clinical' ? <LocalClinicalUtility workspace={workspace} /> : <LocalInterpretation workspace={workspace} />}</QueryClientProvider>);
 }
 describe('clinical utility evidence selection', () => {
+  it('opens with the saved analysis library and keeps settings behind create', () => {
+    const html = render('clinical');
+    expect(html).not.toContain('Stage 0 · Saved records');
+    expect(html).toContain('Search clinical analyses');
+    expect(html).toContain('Clinical analysis state');
+    expect(html).toContain('Sort clinical analyses');
+    expect(html).toContain('Create clinical analysis');
+    expect(html).toContain('No clinical analyses yet');
+    expect(html).not.toContain('Choose evaluation evidence');
+    expect(html).not.toContain('Operating threshold');
+    expect(html).not.toContain('Analyze clinical utility');
+  });
+  it('does not reuse the active-only analysis cache for the library with archived and trashed records', () => {
+    const html = render('clinical', { seedLibrary: false });
+    expect(html).toContain('Loading saved reports…');
+    expect(html).not.toContain('No clinical analyses yet');
+    const client = clients.at(-1)!;
+    expect(client.getQueryData(['clinical-analyses', 'p'])).toEqual({ items: [] });
+    expect(client.getQueryState(['clinical-analyses', 'p', 'all'])?.status).toBe('pending');
+  });
   it('cannot fabricate analysis from incomplete or deleted evaluation results', () => {
     const record = (id: string, status: 'completed' | 'running', lifecycleState: 'active' | 'trashed'): ModelEvaluation => ({ id, lifecycleState, contentHash: id, createdAt: '', manifest: { kind: 'model-evaluation', predictorId: 'p1', cohortId: 'cohort', experimentId: 'experiment', status: 'planned', name: id }, execution: { status } });
     const html = render('clinical', { hash: '#clinical-utility?evaluation=incomplete', evaluations: [record('incomplete', 'running', 'active'), record('deleted', 'completed', 'trashed')] });

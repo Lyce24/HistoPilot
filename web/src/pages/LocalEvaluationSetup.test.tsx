@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
+import type { ProtocolExploration } from '../api/scientific';
 import type { EvaluationPreview } from '../api/evaluation';
-import LocalEvaluationSetup, { EvaluationEvidence, EvaluationInferenceFields, EvaluationTargetMapping, evaluationConditionValue, evaluationLabelProblem, newEvaluationSpec } from './LocalEvaluationSetup';
+import LocalEvaluationSetup, { EvaluationEvidence, EvaluationInferenceFields, EvaluationTargetMapping, evaluationConditionValue, evaluationLabelProblem, newEvaluationSpec, TestCohortSummary, cohortDatasetIds, mergeTestDistributions, independentCohortSpec } from './LocalEvaluationSetup';
 
 const preview: EvaluationPreview = {
   spec: newEvaluationSpec(),
@@ -34,7 +35,7 @@ describe('later test cohort setup', () => {
     expect(legacy).toContain('match the patient aggregation used by frozen predictors');
   });
 
-  it('allows cohort preparation with no trained models and does not introduce split or run controls', () => {
+  it('starts with only a cohort registry and create action, without development prerequisites', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: [] });
     client.setQueryData(['scientific', 'project', 'datasets'], { datasets: [] });
@@ -45,16 +46,63 @@ describe('later test cohort setup', () => {
     try {
       const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={workspace} /></QueryClientProvider>);
       expect(html).toContain('Existing test cohort');
-      expect(html).toContain('while models are being developed');
-      expect(html).toContain('import and freeze it in Data');
-      expect(html).toContain('A trained model is not required to prepare one.');
-      expect(html).toContain('choose ready predictors from your experiments in Evaluate models');
+      expect(html).toContain('Create test cohort');
+      expect(html).toContain('Search test cohorts');
+      expect(html).toContain('Test cohort status');
+      expect(html).toContain('Sort test cohorts');
+      expect(html).toContain('Manage');
+      expect(html).toContain('data-record-key="draft:saved-cohort');
+      expect(html).not.toContain('Your test cohorts');
+      expect(html).not.toContain('Stage 0 · Saved records');
+      expect(html).toContain('Planned');
+      expect(html).not.toContain('Development protocol');
+      expect(html).not.toContain('Test feature bundle');
+      expect(html).not.toContain('Cohort name');
+      expect(html).not.toContain('Test cohort stages');
+      expect(html).not.toContain('Save draft');
       expect(html).not.toContain('Cross-validation folds');
       expect(html).not.toContain('Split seed');
       expect(html).not.toContain('Start inference');
-      expect(html.match(/<button[^>]*>Save draft<\/button>/)?.[0]).not.toContain('disabled');
-      expect(html).toMatch(/<button[^>]*disabled=""[^>]*><svg[^]*?Review cohort<\/button>/);
     } finally { client.clear(); }
+  });
+
+  it('summarizes selected test records and class distributions without evaluation checks', () => {
+    const html = renderToStaticMarkup(<TestCohortSummary preview={{ ...preview, findings: [] }} />);
+    expect(html).toContain('Selected test slides');
+    expect(html).toContain('Prediction target · selected test slides by class');
+    expect(html).toContain('Patient groups');
+    expect(html).toContain('Excluded slides');
+    expect(html).toContain('test-1');
+    expect(html).not.toContain('Exact feature coverage');
+    expect(html).not.toContain('Overlap with development');
+    expect(html).not.toContain('Missing pack slide IDs');
+  });
+
+  it('preserves single-dataset drafts and combines multi-dataset distributions with truncation evidence', () => {
+    expect(cohortDatasetIds({ ...newEvaluationSpec(), datasetId: 'one' })).toEqual(['one']);
+    expect(cohortDatasetIds({ ...newEvaluationSpec(), datasetId: 'one', datasetIds: ['one', 'two'] })).toEqual(['one', 'two']);
+    const source = (values: { value: string | null; slides: number }[], distinctCount: number) => ({ target: { field: 'grade', values, distinctCount } }) as ProtocolExploration;
+    const result = mergeTestDistributions([
+      source([{ value: 'high', slides: 2 }, { value: null, slides: 1 }], 2),
+      source([{ value: 'high', slides: 3 }, { value: 'low', slides: 2 }], 3),
+    ]);
+    expect(result.valueCounts).toEqual([{ value: 'high', count: 5 }, { value: 'low', count: 2 }, { value: null, count: 1 }]);
+    expect(result.valuesTruncated).toBe(true);
+    expect(newEvaluationSpec().protocolId).toBeFalsy();
+    expect(newEvaluationSpec().featureBundleId).toBeFalsy();
+    expect(newEvaluationSpec().developmentFeatureBundleId).toBeFalsy();
+  });
+
+  it('resumes old drafts as independent cohorts while preserving selected data and labels', () => {
+    const legacy = { ...newEvaluationSpec(), datasetId: 'test-dataset', protocolId: 'old-protocol', developmentFeatureBundleId: 'missing-development-features', featureBundleId: 'missing-test-features', target: preview.target, eligibility: [{ field: 'partition', op: 'eq' as const, value: 'test' }] };
+    const independent = independentCohortSpec(legacy);
+    expect(independent.protocolId).toBeFalsy();
+    expect(independent.developmentFeatureBundleId).toBeFalsy();
+    expect(independent.featureBundleId).toBeFalsy();
+    expect(independent.datasetId).toBe(legacy.datasetId);
+    expect(independent.target).toEqual(legacy.target);
+    expect(independent.eligibility).toEqual(legacy.eligibility);
+    expect(legacy.protocolId).toBe('old-protocol');
   });
 
   it('shows exact missing feature and pack IDs even when the bundle has many other slides', () => {

@@ -65,21 +65,28 @@ describe('MIL experiment loading ownership', () => {
     client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: [] });
     client.setQueryData(['feature-bundles', 'project'], { items: [] });
     const record: ModelExperiment = { id: 'one', key: 'draft:one', name: 'Stage test', notes: '', tags: [], revision: 1, state: 'active', status: 'created', legacy: false, createdAt: '', updatedAt: '', inputs: { protocolId: 'retained-protocol', featureBundleId: 'retained-bundle', loadingPolicy: 'native', packArtifactId: null }, batches: [], drafts: [], predictorId: null };
-    const render = (changes: Partial<ModelExperiment>, tab?: 'setup' | 'runs' | 'results') => renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentDetail workspace={workspace} record={{ ...record, ...changes }} initialTab={tab} onBack={() => {}} onOpen={() => {}} /></QueryClientProvider>);
+    const render = (changes: Partial<ModelExperiment>, tab?: 'setup' | 'runs' | 'results' | 'review') => renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentDetail workspace={workspace} record={{ ...record, ...changes }} initialTab={tab} onBack={() => {}} onOpen={() => {}} /></QueryClientProvider>);
     try {
       const planning = render({ stage: 'planning' }, 'runs');
       expect(planning).toMatch(/id="development-tab-runs"[^>]*disabled=""/);
       expect(planning).toMatch(/id="development-tab-results"[^>]*disabled=""/);
-      expect(planning).toMatch(/id="development-tab-batches"[^>]*aria-selected="true"/);
-      expect(planning).toContain('Add at least one batch before submitting');
+      expect(planning).toMatch(/id="development-tab-batches"[^>]*aria-current="step"/);
+      expect(planning).toContain('Continue to review &amp; submit');
+      expect(planning).not.toContain('Freeze &amp; submit experiment');
+      const review = render({ stage: 'planning' }, 'review');
+      expect(review).toContain('Add at least one batch before submitting');
+      expect(review).toContain('data-stage-page="review"');
+      expect(review).toMatch(/<button[^>]*disabled=""[^>]*>Freeze &amp; submit experiment/);
       const running = render({ stage: 'running', configurationLocked: true, status: 'running' });
-      expect(running).toMatch(/id="development-tab-runs"[^>]*aria-selected="true"/);
+      expect(running).toMatch(/id="development-tab-runs"[^>]*aria-current="step"/);
+      expect(running).toContain('Submitted plan');
+      expect(running).toMatch(/id="development-tab-runs"[^>]*><span[^>]*>4<\/span>/);
       expect(running).toMatch(/id="development-tab-results"[^>]*disabled=""/);
       expect(running).toMatch(/<fieldset class="mil-plan-fields" disabled=""/);
       expect(running).toContain('retained-protocol');
       expect(running).not.toContain('Check &amp; continue');
       const finished = render({ stage: 'finished', configurationLocked: true, status: 'completed' });
-      expect(finished).toMatch(/id="development-tab-results"[^>]*aria-selected="true"/);
+      expect(finished).toMatch(/id="development-tab-results"[^>]*aria-current="step"/);
       expect(finished).not.toMatch(/id="development-tab-results"[^>]*disabled=""/);
       expect(finished).toContain('Inputs, batches and runs are read-only');
       expect(finished).not.toContain('Review &amp; submit');
@@ -106,6 +113,7 @@ describe('MIL experiment loading ownership', () => {
     expect(experimentRoute('#experiments?experiment=one%2Ftwo&tab=runs')).toEqual({ id: 'one/two', tab: 'runs' });
     expect(experimentRoute('#experiments?experiment=one&tab=inputs')).toEqual({ id: 'one', tab: 'setup' });
     expect(experimentRoute('#experiments?experiment=one&tab=predictors')).toEqual({ id: 'one', tab: 'results' });
+    expect(experimentRoute('#experiments?experiment=one&tab=review')).toEqual({ id: 'one', tab: 'review' });
     expect(experimentRoute('#source-cv', 'results')).toEqual({ id: '', tab: 'results' });
   });
 

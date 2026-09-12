@@ -18,6 +18,7 @@ from uuid import uuid4
 from pydantic import Field, ValidationError
 from sqlalchemy import select
 
+from histopilot.application.blca_demo import DEMO_ID, demo_summary, load_demo
 from histopilot.application.local_workspace import LocalWorkspace, WorkspaceError, _identity, _now
 from histopilot.schemas.workspace import (
     ProjectConfig,
@@ -202,7 +203,7 @@ class ProjectWorkspace:
                 projects.append({**summary, "available": False, "unavailableReason": str(error)})
         projects.sort(key=lambda project: project["updatedAt"], reverse=True)
         return {
-            "projects": projects + [self._demo()],
+            "projects": projects + [demo_summary()],
             "defaultStoragePath": str(self.database.workspace),
         }
 
@@ -317,6 +318,8 @@ class ProjectWorkspace:
             return summary
 
     def _load(self, identity: str) -> tuple[dict, Path]:
+        if identity == DEMO_ID:
+            raise WorkspaceError("The BLCA demo is read only and has no local project folder.", 409)
         with self.database.sessions.begin() as session:
             record = session.get(Record, ("project", identity))
             if record is None:
@@ -329,7 +332,7 @@ class ProjectWorkspace:
 
     def scientific_store(self, identity: str) -> ScientificStore:
         """Resolve storage from the folder; the central registry holds no scientific state."""
-        if identity == "synthetic-v1":
+        if identity in ("synthetic-v1", DEMO_ID):
             raise StorageError(
                 "The synthetic demo has no local scientific store.", "DEMO_STORE_UNAVAILABLE"
             )
@@ -338,6 +341,8 @@ class ProjectWorkspace:
         return ScientificStore(path, document["id"])
 
     def workspace(self, identity: str) -> dict:
+        if identity == DEMO_ID:
+            return load_demo()
         if identity == "synthetic-v1":
             return {**self.legacy.workspace(), "project": self._demo()}
         document, path = self._load(identity)

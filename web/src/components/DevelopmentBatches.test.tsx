@@ -163,7 +163,7 @@ describe('development execution controls', () => {
     });
     const html = renderToStaticMarkup(<ExecutionEvidence execution={live} />);
     expect(html).toContain('from 6 requested');
-    expect(html).toContain('Observed peak: 7.00 GiB');
+    expect(html).toContain('24.00 GiB total VRAM · Peak 7.00 GiB');
     expect(html).toContain('GPU usage includes other programs');
     expect(html).toContain('/tmp/telemetry.jsonl');
     expect(html).toContain('3.00 GiB');
@@ -171,8 +171,9 @@ describe('development execution controls', () => {
     live.runs[0].status = 'completed';
     live.runs[0].progress = { epoch: 10, maxEpochs: 10, globalStep: 40, trainingLoss: 0.3, validation: { loss: 0.4 }, learningRate: 0.00003, cudaPeakAllocatedBytes: 2 ** 30, cudaPeakReservedBytes: 2 * 2 ** 30 };
     const finished = renderToStaticMarkup(<RunTable batch={batch} execution={live} />);
-    expect(finished).toContain('Sampled process-tree RAM peak: 3.00 GiB');
-    expect(finished).toContain('Run CUDA allocator peak: 1.00 GiB allocated / 2.00 GiB reserved');
-    expect(finished).toContain('Learning rate: 3.000e-5');
+    expect(finished).toContain('Process-tree RAM peak</dt><dd>3.00 GiB');
+    expect(finished).toContain('CUDA allocated peak</dt><dd>1.00 GiB');
+    expect(finished).toContain('CUDA reserved peak</dt><dd>2.00 GiB');
+    expect(finished).toContain('Learning rate</dt><dd>3.000e-5');
   });
 });

@@ -3,6 +3,7 @@ import type { ResourcePolicy, TrainingRecipe, TrainingMetricDetails, TrainingMet
 import type { LifecycleState } from './lifecycle';
 import type { Finding, ProtocolSpec } from './scientific';
 import type { MILExperimentSpec } from './mil';
+import type { EvaluationInference, EvaluationPreview } from './evaluation';
 
 export interface PredictorChoice {
   experimentId: string; experimentName: string; batchId: string; batchName: string;
@@ -58,10 +59,10 @@ export interface RefitBuild {
   manifest: Omit<PredictorManifest, 'kind'> & { kind: 'predictor-refit'; resources?: ResourcePolicy };
   execution?: ComputeExecution; predictorId?: string | null;
 }
-export interface EvaluationSelection { predictorId: string; cohortId: string; name: string }
+export interface EvaluationSelection { predictorId: string; cohortId: string; name: string; featureBundleId?: string; inference?: EvaluationInference; patientIdentifiers?: 'shared' | 'independent' }
 export interface ModelEvaluation {
   id: string; createdAt: string; contentHash: string; lifecycleState: LifecycleState;
-  manifest: EvaluationSelection & { kind: 'model-evaluation'; experimentId: string; status: 'planned'; [key: string]: unknown };
+  manifest: EvaluationSelection & { kind: 'model-evaluation'; experimentId: string; status: 'planned'; coverage?: EvaluationPreview['coverage']; overlap?: EvaluationPreview['overlap']; [key: string]: unknown };
   execution?: ComputeExecution;
 }
 export interface ModelEvaluationPreview {

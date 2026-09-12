@@ -15,7 +15,7 @@
 .experiment-predictor-table { overflow-x: auto; position: relative; }
 .experiment-predictor-table table { width: 100%; border-collapse: collapse; text-align: left; }
 .experiment-predictor-table :is(th, td) { padding: 12px; border-bottom: 1px solid var(--line); }
-.experiment-predictor-table th { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface-alt, #f8fafb); }
+.experiment-predictor-table th { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface-alt, var(--theme-canvas)); }
 .experiment-predictor-table small { display: block; color: var(--muted); margin-top: 4px; }
 .experiment-predictor-progress { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .experiment-predictor-progress progress { width: 100%; accent-color: var(--accent); }

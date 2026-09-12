@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from pydantic import Field, StrictInt, field_validator
 
 from histopilot.schemas.development import ResourcePolicy
-from histopilot.schemas.evaluations import ConfigurationId
+from histopilot.schemas.evaluations import ConfigurationId, InferenceSettings
 from histopilot.schemas.workspace import RequestModel
 
 
@@ -80,6 +80,9 @@ class EvaluationRunSelection(RequestModel):
     predictorId: ConfigurationId
     cohortId: ConfigurationId
     name: str = Field(min_length=1, max_length=120)
+    featureBundleId: ConfigurationId | None = None
+    inference: InferenceSettings | None = None
+    patientIdentifiers: Literal["shared", "independent"] | None = None
 
     @field_validator("name")
     @classmethod

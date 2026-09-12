@@ -27,6 +27,8 @@ import ProjectRoadmap, { ModuleStatus, moduleIcons, completedModuleLabel, type R
 import RoadmapModule from './pages/RoadmapModule';
 import { useRoadmap } from './components/useRoadmap';
 import WorkspaceErrorBoundary from './components/WorkspaceErrorBoundary';
+import { RecordManagementScope } from './components/RecordManagement';
+import BlcaDemo, { BlcaDemoOverview } from './pages/BlcaDemo';
 
 const pages: Record<Page, string> = {
   overview: 'Project roadmap', dataset: 'Datasets',
@@ -58,6 +60,21 @@ export function moduleForPage(page: Page) {
   return ['selection', 'predictor', 'post-development', 'source-cv'].includes(page) ? 'experiments' : page === 'reports' ? 'evaluation' : page;
 }
 export function Content({ page, workspace, roadmap }: { page: Page; workspace: Workspace; roadmap: Roadmap }) {
+  const stage = moduleForPage(page);
+  const stageNames: Partial<Record<Page, string>> = { dataset: 'datasets', cohort: 'protocols', features: 'feature bundles', experiments: 'experiments', 'test-data': 'test cohorts', evaluation: 'evaluations', 'clinical-utility': 'clinical analyses' };
+  const stageName = stageNames[stage];
+  return workspace.mode === 'local' && stageName
+    ? <RecordManagementScope key={`${workspace.project.id}:${stage}`} project={workspace.project.id} backLabel={`Back to ${stageName}`}><StageContent page={page} workspace={workspace} roadmap={roadmap} /></RecordManagementScope>
+    : <StageContent page={page} workspace={workspace} roadmap={roadmap} />;
+}
+function StageContent({ page, workspace, roadmap }: { page: Page; workspace: Workspace; roadmap: Roadmap }) {
+  if (workspace.mode === 'synthetic-demo' && workspace.demoPipeline) {
+    const moduleId = moduleForPage(page);
+    const module = roadmap.modules.find((item) => item.id === moduleId);
+    // The BLCA walkthrough is entirely self-contained; legacy links return to
+    // its orientation instead of exposing unrelated examples or live tools.
+    return module ? <BlcaDemo key={module.id} pipeline={workspace.demoPipeline} module={module.id} /> : <BlcaDemoOverview workspace={workspace} />;
+  }
   if (page === 'cleanup' && workspace.mode === 'local') return <WorkspaceCleanup workspace={workspace} />;
   if (workspace.mode === 'local' && workspace.project.lifecycleState === 'trashed') return <div className="roadmap-loading" role="status">
     <h1>This project is in Trash</h1>
@@ -141,6 +158,7 @@ function ExperimentWorkspace({ projectId, onExit }: { projectId: string; onExit:
 }
 function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit: () => void }) {
   const roadmap = useRoadmap(w);
+  const blcaDemo = w.mode === 'synthetic-demo' && Boolean(w.demoPipeline);
   const [page, setPage] = useState(currentPage);
   const [menu, setMenu] = useState(false);
   const [mobile, setMobile] = useState(() => matchMedia('(max-width: 720px)').matches);
@@ -175,39 +193,39 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
     <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); main.current?.focus(); }}>Skip to content</a>
     <div className={`app-shell research-shell ${menu ? 'nav-open' : ''}`}>
       <aside className="sidebar" id="sidebar" aria-label="Workspace navigation" inert={mobile && !menu}>
-        <a className="brand" href="#overview"><img src="/favicon.svg" width="35" height="35" alt="" /><span>HistoPilot<small>RESEARCH WORKSPACE</small></span></a>
+        <a className="brand" href="#overview"><img src="/favicon.svg?v=brown-palette-v2" width="35" height="35" alt="" /><span>HistoPilot<small>RESEARCH WORKSPACE</small></span></a>
         <button ref={closeButton} className="icon-button sidebar-close" aria-label="Close navigation" onClick={() => { setMenu(false); menuButton.current?.focus(); }}><Icon name="close" /></button>
         <button type="button" className="project-switch project-switch-button" onClick={onExit} aria-label="Back to start page"><span className="project-icon">{w.project.name.slice(0, 1).toUpperCase()}</span><div><small>{(w.project.lifecycleState ?? 'active').toUpperCase()} PROJECT</small><strong>{w.project.name}</strong></div><Icon name="chevron" size={14} /></button>
         <nav aria-label="Project roadmap and modules">
-          <a className={`nav-link roadmap-home-link ${page === 'overview' ? 'active' : ''}`} href="#overview" aria-current={page === 'overview' ? 'page' : undefined}><Icon name="branch" /><span>Project roadmap</span>{showState ? <small>{completed}/{roadmap.modules.length}</small> : null}</a>
+          <a className={`nav-link roadmap-home-link ${page === 'overview' ? 'active' : ''}`} href="#overview" aria-current={page === 'overview' ? 'page' : undefined}><Icon name="branch" /><span>Project roadmap</span>{showState ? <small>{blcaDemo ? 'Demo' : `${completed}/${roadmap.modules.length}`}</small> : null}</a>
           <div className="nav-label">PROJECT MODULES</div>
           {roadmap.modules.map((item) => {
             const locked = !roadmap.checksById[item.id].hasData || !item.unlocked;
-            const contents = <><Icon name={moduleIcons[item.id]} size={16} /><span>{item.shortTitle}</span>{showState ? locked ? <Icon name="lock" size={12} /> : <span className={`nav-status status-${item.status}`} aria-label={item.status === 'complete' ? completedModuleLabel(item.id) : item.status === 'draft' ? 'Saved work' : 'Not started'} /> : null}</>;
+            const contents = <><Icon name={moduleIcons[item.id]} size={16} /><span>{item.shortTitle}</span>{showState ? locked ? <Icon name="lock" size={12} /> : <span className={`nav-status status-${item.status}`} aria-label={blcaDemo ? 'Illustrative example' : item.status === 'complete' ? completedModuleLabel(item.id) : item.status === 'draft' ? 'Saved work' : 'Not started'} /> : null}</>;
             return locked ? <div key={item.id} className="nav-link nav-locked" aria-disabled="true" title={showState ? `Requires ${item.blockers.map((id) => roadmap.modules.find((m) => m.id === id)?.shortTitle).join(' + ') || 'compatible frozen inputs'}` : 'Checking prerequisites'}>{contents}</div>
-              : <a key={item.id} className={`nav-link ${module?.id === item.id ? 'active' : ''}`} href={`#${item.id}`} aria-current={module?.id === item.id ? 'page' : undefined}>{contents}</a>;
+              : <a key={item.id} className={`nav-link ${module?.id === item.id ? 'active' : ''}`} href={`#${item.id}`} onClick={(event) => { if ((w.mode === 'local' || blcaDemo) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && module?.id === item.id && ['dataset', 'cohort', 'features', 'experiments', 'source-cv', 'test-data', 'evaluation', 'reports', 'clinical-utility'].includes(page)) { event.preventDefault(); window.dispatchEvent(new Event('histopilot:stage-library')); } }} aria-current={module?.id === item.id ? 'page' : undefined}>{contents}</a>;
           })}
-          <div className="nav-label nav-system">PROJECT TOOLS</div>
+          {!blcaDemo ? <div className="nav-label nav-system">PROJECT TOOLS</div> : null}
           {w.mode === 'local' ? <a className={`nav-link ${page === 'cleanup' ? 'active' : ''}`} href="#cleanup" aria-current={page === 'cleanup' ? 'page' : undefined}><Icon name="folder" size={16} /><span>Workspace cleanup</span></a> : null}
-          {w.mode === 'synthetic-demo' ? <a className={`nav-link ${page === 'example-results' ? 'active' : ''}`} href="#example-results" aria-current={page === 'example-results' ? 'page' : undefined}><Icon name="evaluation" size={16} /><span>Illustrative results</span></a> : null}
-          {(w.mode === 'local' ? ['system'] as const : ['explorer', 'provenance', 'system'] as const).map((id) => <a key={id} className={`nav-link ${page === id ? 'active' : ''}`} href={`#${id}`} aria-current={page === id ? 'page' : undefined}><Icon name={id} size={16} /><span>{pages[id]}</span></a>)}
+          {w.mode === 'synthetic-demo' && !blcaDemo ? <a className={`nav-link ${page === 'example-results' ? 'active' : ''}`} href="#example-results" aria-current={page === 'example-results' ? 'page' : undefined}><Icon name="evaluation" size={16} /><span>Illustrative results</span></a> : null}
+          {(blcaDemo ? [] : w.mode === 'local' ? ['system'] as const : ['explorer', 'provenance', 'system'] as const).map((id) => <a key={id} className={`nav-link ${page === id ? 'active' : ''}`} href={`#${id}`} aria-current={page === id ? 'page' : undefined}><Icon name={id} size={16} /><span>{pages[id]}</span></a>)}
         </nav>
         <div className="sidebar-bottom"><div className="prototype-label"><span />Local workspace <b>v0.1</b></div><p>Your data. Your infrastructure.<br />Every step, traceable.</p></div>
       </aside>
       {mobile && menu ? <button className="nav-backdrop" aria-label="Close navigation overlay" onClick={() => setMenu(false)} /> : null}
       <div className="main-shell">
         <header className="topbar"><div className="breadcrumbs"><button ref={menuButton} className="icon-button mobile-menu" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="menu" /></button><button type="button" className="breadcrumb-home" onClick={onExit}>Projects</button><Icon name="chevron" size={12} /><a href="#overview" className="breadcrumb-project">{w.project.name}</a><Icon name="chevron" size={12} /><strong>{page === 'overview' ? 'Roadmap' : module?.shortTitle ?? pages[page]}</strong></div><div className="topbar-actions"><span className="demo-indicator"><span />{w.mode === 'synthetic-demo' ? 'Synthetic demo' : 'Saved locally'}</span><button className="btn btn-secondary btn-small" aria-label="Export workspace" onClick={() => downloadJSON('histopilot-workspace.json', { schema_version: '0.1.0', executable: false, ...w })}><Icon name="download" size={15} /><span>Export</span></button></div></header>
-        <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}`} id="main-content" tabIndex={-1} ref={main}>
-          {page !== 'overview' ? <div className="module-context"><a href="#overview"><span className="back-arrow"><Icon name="arrow" size={16} /></span>Back to roadmap</a>{module && showState ? <div><ModuleStatus status={module.status} completedLabel={completedModuleLabel(module.id)} />{!module.unlocked ? <Badge>Locked</Badge> : null}</div> : null}</div> : null}
+        <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}${['dataset', 'cohort', 'features', 'experiments', 'source-cv', 'test-data', 'evaluation', 'reports', 'clinical-utility'].includes(page) ? ' stage-workspace' : ''}`} id="main-content" tabIndex={-1} ref={main}>
+          {page !== 'overview' ? <div className="module-context"><a href="#overview"><span className="back-arrow"><Icon name="arrow" size={16} /></span>Back to roadmap</a>{module && showState ? <div>{blcaDemo ? <Badge>Illustrative</Badge> : <ModuleStatus status={module.status} completedLabel={completedModuleLabel(module.id)} />}{!module.unlocked ? <Badge>Locked</Badge> : null}</div> : null}</div> : null}
           {page !== 'overview' && roadmap.error ? <div className="callout callout-warning roadmap-refresh-warning" role="status"><span>Some project progress could not refresh. Your open module remains available.</span><button className="text-button" onClick={() => void roadmap.refetch()}>Retry</button></div> : null}
           <WorkspaceErrorBoundary key={page} onExit={onExit}>
             <Content page={page} workspace={w} roadmap={roadmap} />
           </WorkspaceErrorBoundary>
-          {page === 'dataset' || page === 'cohort' ? <JobTray inline projectId={w.mode === 'local' ? w.project.id : undefined} /> : null}
+          {!blcaDemo && (page === 'dataset' || page === 'cohort') ? <JobTray inline projectId={w.mode === 'local' ? w.project.id : undefined} /> : null}
           <footer className="content-footer"><span>HistoPilot <span className="footer-dot">·</span> Interactive PFM–MIL workflows</span><span>{w.mode === 'synthetic-demo' ? 'Synthetic data · Demonstration workspace' : 'Saved in your project folder'}</span></footer>
         </main>
       </div>
     </div>
-    {page !== 'dataset' && page !== 'cohort' ? <JobTray projectId={w.mode === 'local' ? w.project.id : undefined} /> : null}
+    {!blcaDemo && page !== 'dataset' && page !== 'cohort' ? <JobTray projectId={w.mode === 'local' ? w.project.id : undefined} /> : null}
   </>;
 }

@@ -7,6 +7,7 @@ import './local-workspace.css';
 import './scientific.css';
 import './clinical-workspace.css';
 import './roadmap.css';
+import './components/StageWorkflow.css';
 const client = new QueryClient({
   defaultOptions: { queries: { staleTime: 10000, retry: 1 }, mutations: { retry: false } },
 });

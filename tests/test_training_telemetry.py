@@ -133,6 +133,63 @@ def test_host_and_gpu_telemetry_is_rate_limited_durable_and_accumulates_sampled_
     assert state["telemetry"]["latest"]["gpus"][0]["usedMemoryGb"] == 2
 
 
+def test_cpu_utilization_uses_nonblocking_tick_deltas_and_preserves_unknowns(tmp_path, monkeypatch):
+    counters = iter(
+        [(100, 40), (200, 60), (200, 60), (10, 4), (110, 4), None, (210, 10), (310, 110)]
+    )
+    monkeypatch.setattr(process, "cpu_times", lambda: next(counters))
+    telemetry = process.ResourceTelemetry(tmp_path)
+    assert [telemetry.cpu_utilization() for _ in range(8)] == [
+        None,
+        80.0,
+        None,
+        None,
+        100.0,
+        None,
+        None,
+        0.0,
+    ]
+
+
+@pytest.mark.parametrize(
+    "content, expected",
+    [
+        ("cpu 20 5 10 50 15 0 0 0 10 4\ncpu0 1 2 3 4\n", (100, 65)),
+        ("cpu 20 5 10 50\n", (85, 50)),
+        ("cpu0 20 5 10 50\n", None),
+        ("cpu 1 2\n", None),
+        ("cpu 1 2 invalid 4\n", None),
+        ("cpu 1 2 -1 4\n", None),
+    ],
+)
+def test_cpu_ticks_do_not_double_count_guest_time(tmp_path, monkeypatch, content, expected):
+    from pathlib import Path
+
+    path = tmp_path / "stat"
+    path.write_text(content)
+    monkeypatch.setattr(process, "Path", lambda _value: Path(path))
+    assert process.cpu_times() == expected
+
+
+def test_missing_cpu_counters_do_not_prevent_other_telemetry(tmp_path, monkeypatch):
+    original_path = process.Path
+    missing_stat = tmp_path / "missing-stat"
+    monkeypatch.setattr(
+        process,
+        "Path",
+        lambda value: missing_stat if value == "/proc/stat" else original_path(value),
+    )
+    monkeypatch.setattr(process, "host_snapshot", host)
+    monkeypatch.setattr(process, "gpu_snapshot", lambda: {"gpus": [gpu()]})
+    telemetry = process.ResourceTelemetry(tmp_path)
+    state = {"runs": []}
+    observation = telemetry.record(state)
+    assert observation["host"]["cpuUtilizationPercent"] is None
+    assert observation["host"]["totalRamGb"] == 256
+    assert observation["gpus"][0]["utilizationPercent"] == 80
+    assert json.loads((tmp_path / "telemetry.jsonl").read_text()) == observation
+
+
 def test_device_health_changes_only_react_to_evidence_for_selected_gpus():
     baseline = {"gpus": [gpu()]}
     assert "driver changed" in process.device_health_failure(baseline, {"gpus": [gpu("561")]}, [0])

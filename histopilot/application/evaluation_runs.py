@@ -15,6 +15,7 @@ from histopilot.application.predictors import (
     reference,
 )
 from histopilot.schemas.development import ResourcePolicy
+from histopilot.schemas.evaluations import EvaluationSpec, InferenceSettings
 from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.schemas.protocols import TargetSpec
 from histopilot.storage.lifecycle import lifecycle_guard
@@ -58,6 +59,95 @@ class EvaluationRunService:
             raise StorageError("Evaluation record not found.", "MODEL_EVALUATION_NOT_FOUND", 404)
         return {**lifecycle_document(self.store, document), "execution": self.jobs.status(identity)}
 
+    def _test_bundle(self, selection, model, test, inference):
+        """Resolve once at review; execution also checks the reviewed feature references."""
+        if selection.featureBundleId:
+            return selection.featureBundleId
+        if test["spec"].get("featureBundleId"):
+            return test["spec"]["featureBundleId"]
+        selected = {row["slideId"] for row in test["memberships"]}
+        development = model["inputs"]["features"]
+        candidates = {}
+        for document in self.store.list_configurations("feature-bundle"):
+            try:
+                bundle = self.cohorts.bundles.get(document["id"])
+                if not bundle["current"]:
+                    continue
+                if inference.packArtifactId and not any(
+                    pack["id"] == inference.packArtifactId for pack in bundle["manifest"]["packs"]
+                ):
+                    continue
+                feature = self.store.get_configuration(bundle["manifest"]["feature"]["id"])
+                available = {row["slideId"] for row in feature["manifest"]["files"]}
+                contract = feature_contract(feature, bundle)
+                if not selected <= available or any(
+                    contract[key] != development[key]
+                    for key in ("dimensions", "dtype", "encoderId")
+                ):
+                    continue
+                # Several bundle revisions may verify the same feature inventory.
+                # They do not make the underlying feature choice ambiguous.
+                previous = candidates.get(feature["id"])
+                if previous is None or bundle["createdAt"] > previous["createdAt"]:
+                    candidates[feature["id"]] = bundle
+            except StorageError:
+                continue
+        if not candidates:
+            raise StorageError(
+                "No current feature bundle covers every selected test slide with this model's encoder, dimensions, and dtype. Extract and verify the missing test features, then select a bundle here.",
+                "EVALUATION_FEATURE_BUNDLE_REQUIRED",
+                409,
+            )
+        if len(candidates) > 1:
+            raise StorageError(
+                "More than one compatible test feature inventory is available. Select the test feature bundle to evaluate.",
+                "EVALUATION_FEATURE_BUNDLE_AMBIGUOUS",
+                409,
+            )
+        return next(iter(candidates.values()))["id"]
+
+    def _review_cohort(self, selection, model, test):
+        if test["spec"].get("target"):
+            target = TargetSpec.model_validate(test["spec"]["target"])
+            expected = TargetSpec.model_validate(model["target"])
+            if any(
+                getattr(target, key) != getattr(expected, key)
+                for key in ("task", "unit", "classes", "positiveClass")
+            ):
+                raise StorageError(
+                    "Test targets must match the selected model's task, prediction unit, class order, and positive class.",
+                    "TARGET_CONTRACT_MISMATCH",
+                    409,
+                )
+        inference = selection.inference or InferenceSettings.model_validate(
+            test["spec"].get("inference", {})
+        )
+        bundle_id = self._test_bundle(selection, model, test, inference)
+        spec = EvaluationSpec.model_validate(
+            {
+                **test["spec"],
+                "protocolId": model["inputs"]["protocol"]["id"],
+                "developmentFeatureBundleId": model["inputs"]["features"]["bundle"]["id"],
+                "featureBundleId": bundle_id,
+                "inference": inference.model_dump(),
+                "patientIdentifiers": selection.patientIdentifiers
+                or test["spec"]["patientIdentifiers"],
+            }
+        )
+        reviewed, _guards = self.cohorts._prepare_bound(spec)
+        errors = [item for item in reviewed["findings"] if item["severity"] == "error"]
+        if errors:
+            error = StorageError(errors[0]["message"], errors[0]["code"], 409)
+            error.findings = reviewed["findings"]
+            raise error
+        if reviewed["memberships"] != test["memberships"]:
+            raise StorageError(
+                "The test dataset or target membership changed. Review and freeze the cohort again.",
+                "EVALUATION_COHORT_STALE",
+                409,
+            )
+        return {**test, **reviewed}
+
     def _prepare(self, selection):
         predictor = self.predictors.get(selection.predictorId)
         cohort = self.cohorts.get(selection.cohortId)
@@ -68,6 +158,14 @@ class EvaluationRunService:
                 409,
             )
         model, test = predictor["manifest"], cohort["manifest"]
+        reviewed_at_evaluation = (
+            not test["spec"].get("protocolId")
+            or selection.featureBundleId is not None
+            or selection.inference is not None
+            or selection.patientIdentifiers is not None
+        )
+        if reviewed_at_evaluation:
+            test = self._review_cohort(selection, model, test)
         if (
             test["bindings"]["protocol"] != model["inputs"]["protocol"]
             or test["bindings"]["development"]["bundle"] != model["inputs"]["features"]["bundle"]
@@ -144,8 +242,11 @@ class EvaluationRunService:
             "kind": "model-evaluation",
             "schemaVersion": 1,
             "datasetId": test["datasetId"],
+            **(
+                {"datasetIds": test["spec"]["datasetIds"]} if test["spec"].get("datasetIds") else {}
+            ),
             "name": selection.name,
-            "selection": selection.model_dump(),
+            "selection": selection.model_dump(exclude_none=True),
             "experimentId": model["experimentId"],
             "predictorId": predictor["id"],
             "predictor": reference(predictor),
@@ -159,6 +260,15 @@ class EvaluationRunService:
             "results": None,
             "executionEnabled": True,
             "executionNote": EXECUTION_NOTE,
+            **(
+                {
+                    "coverage": test["coverage"],
+                    "overlap": test["overlap"],
+                    "findings": test["findings"],
+                }
+                if reviewed_at_evaluation
+                else {}
+            ),
         }
 
     def preview(self, selection):
@@ -168,7 +278,7 @@ class EvaluationRunService:
                 "canSave": True,
                 "previewHash": _hash(manifest),
                 "manifest": manifest,
-                "findings": [],
+                "findings": manifest.get("findings", []),
                 "executionEnabled": True,
                 "executionNote": EXECUTION_NOTE,
             }
@@ -177,7 +287,7 @@ class EvaluationRunService:
                 "canSave": False,
                 "previewHash": None,
                 "manifest": None,
-                "findings": [finding(error.code, str(error))],
+                "findings": getattr(error, "findings", [finding(error.code, str(error))]),
                 "executionEnabled": True,
                 "executionNote": EXECUTION_NOTE,
             }
@@ -192,7 +302,7 @@ class EvaluationRunService:
                 manifest = prior["manifest"]
                 if (
                     manifest.get("kind") != "model-evaluation"
-                    or manifest.get("selection") != selection.model_dump()
+                    or manifest.get("selection") != selection.model_dump(exclude_none=True)
                     or manifest.get("previewHash") != request.previewHash
                 ):
                     raise StorageError(
@@ -215,7 +325,17 @@ class EvaluationRunService:
     def _execution_plan(self, identity):
         document = self.get(identity)
         manifest = document["manifest"]
-        reviewed = self._prepare(EvaluationRunSelection.model_validate(manifest["selection"]))
+        selection = EvaluationRunSelection.model_validate(manifest["selection"])
+        if "coverage" in manifest:
+            # Auto selection is resolved by the saved review. New inventories
+            # must not silently replace it or make an existing plan ambiguous.
+            selection = selection.model_copy(
+                update={
+                    "featureBundleId": manifest["features"]["bundle"]["id"],
+                    "inference": InferenceSettings.model_validate(manifest["inference"]),
+                }
+            )
+        reviewed = self._prepare(selection)
         for key in ("predictor", "cohort", "target", "features", "inference"):
             if reviewed[key] != manifest[key]:
                 raise StorageError(

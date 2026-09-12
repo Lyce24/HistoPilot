@@ -20,13 +20,14 @@ describe('eight-module roadmap presentation', () => {
     expect(roadmapConnectionPath(freeze, evaluation, board)).toBe('M 630 460 C 630 477, 630 477, 630 494');
   });
 
-  it('renders eight cards and four phases while preserving the test protocol gate', () => {
+  it('renders eight cards and explains independent test-cohort preparation', () => {
     const html = renderToStaticMarkup(<RoadmapGraph modules={buildRoadmap(workspace)} />);
     expect(html.match(/data-module="/g)).toHaveLength(8);
     expect(html).not.toContain('data-module="post-development"');
     expect(html).not.toContain('Build predictors');
-    expect(html).toContain('Requires a frozen development protocol');
-    expect(html).toContain('Preparation can begin while models train');
+    expect(html).not.toContain('Requires a frozen development protocol');
+    expect(html).toContain('Create test cohorts before model development or feature extraction');
+    expect(html).toContain('Compatibility is checked in Evaluate models');
     expect(html).toContain('phase-develop');
     expect(html).toContain('phase-evaluate');
     expect(html).toContain('phase-insights');

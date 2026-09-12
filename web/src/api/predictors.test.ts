@@ -77,6 +77,22 @@ describe('experiment predictor and evaluation API contracts', () => {
     expect(saved.manifest.results).toBeNull();
     expect(saved.manifest.status).toBe('planned');
   });
+
+  it('binds feature and pack choices to both single and batch evaluation reviews and submissions', async () => {
+    const fetcher = vi.fn().mockImplementation(async (path: string) => response(path.endsWith('/session') ? { token: 'session' } : {}));
+    vi.stubGlobal('fetch', fetcher);
+    const { modelEvaluations } = await import('./predictors');
+    const { bulkEvaluations } = await import('./bulkEvaluations');
+    const inference = { loadingPolicy: 'packed' as const, packArtifactId: 'test-pack', batchSize: 1, numWorkers: 0, device: 'cpu' as const, precision: 'float32' as const, patientAggregation: 'mean' as const, decisionThreshold: 0 };
+    const single = { ...evaluation, featureBundleId: 'test-features', inference, patientIdentifiers: 'independent' as const };
+    const batch = { cohortId: evaluation.cohortId, scope: 'selected' as const, predictorIds: [evaluation.predictorId], featureBundleId: 'test-features', inference, patientIdentifiers: 'independent' as const };
+    await modelEvaluations.preview('p', single);
+    await modelEvaluations.save('p', single, 'single-review', 'single-operation');
+    await bulkEvaluations.preview('p', batch);
+    await bulkEvaluations.run('p', batch, { previewHash: 'batch-review', reviewedPredictorIds: batch.predictorIds }, 'batch-operation');
+    for (const [, options] of fetcher.mock.calls.slice(1)) expect(JSON.parse(options.body)).toMatchObject({ cohortId: evaluation.cohortId, featureBundleId: 'test-features', inference, patientIdentifiers: 'independent' });
+    expect(JSON.parse(fetcher.mock.calls[4][1].body)).toMatchObject({ reviewedPredictorIds: batch.predictorIds, previewHash: 'batch-review', operationId: 'batch-operation' });
+  });
 });
 
 it('keeps refit planning, training, cancellation and publication as separate authenticated actions', async () => {

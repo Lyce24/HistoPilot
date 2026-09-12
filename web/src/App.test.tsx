@@ -111,16 +111,18 @@ describe('experiment predictor navigation and direct URL gates', () => {
     } finally { client.clear(); }
   });
 
-  it('explains test cohort and experiment predictor readiness at evaluation entry', () => {
+  it('opens evaluation history before selecting new evaluation inputs', () => {
     const client = new QueryClient();
     for (const key of ['predictors', 'model-evaluations', 'evaluation-cohorts']) client.setQueryData([key, 'project'], { items: [] });
     try {
       const html = renderToStaticMarkup(<QueryClientProvider client={client}><Content page="evaluation" workspace={workspace} roadmap={roadmap(true)} /></QueryClientProvider>);
-      expect(html).toContain('Test cohorts');
-      expect(html).toContain('href="#experiments"');
-      expect(html).toContain('metrics use labeled records only');
-      expect(html).toContain('Each ready ensemble or refit predictor keeps its own results');
-      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review experiment evaluation/);
+      expect(html).toContain('aria-label="Search evaluations"');
+      expect(html).toContain('aria-label="Saved evaluations"');
+      expect(html).not.toContain('Stage 0 · Saved records');
+      expect(html).toContain('Create evaluation');
+      expect(html).toContain('Saved evaluations');
+      expect(html).not.toContain('1. Select experiments');
+      expect(html).not.toContain('Review experiment evaluation');
     } finally { client.clear(); }
   });
 });

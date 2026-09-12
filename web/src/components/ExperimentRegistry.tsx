@@ -1,5 +1,5 @@
 import { shortRecordId } from '../lib/recordLabels';
-import { useRef, useState } from 'react';
+import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
 import { experiments, experimentPollInterval, experimentStage, experimentStageLabel, experimentStatusLabel } from '../api/experiments';
@@ -8,7 +8,8 @@ import type { LifecycleState } from '../api/lifecycle';
 import { lifecycleLabel } from '../api/lifecycle';
 import { sameJSON } from '../lib/json';
 import { Badge, ErrorNotice, PageHeader, Panel } from './ui';
-import ExperimentLifecycle from './ExperimentLifecycle';
+import { RecordManageButton } from './RecordManagement';
+import { StageLibrary, StageLibraryToolbar, StagePage, StageSteps, useStageLibrary } from './StageWorkflow';
 import './ExperimentRegistry.css';
 
 export function filterExperiments<T extends Pick<ModelExperiment, 'id' | 'name' | 'notes' | 'tags' | 'state' | 'status' | 'createdAt' | 'updatedAt' | 'stage' | 'configurationLocked'>>(items: T[], state: LifecycleState | 'all', status: string, search: string, sort: string) {
@@ -99,6 +100,7 @@ export function CreateExperiment({ project, copy, templates = [], onCreated, onC
   const creating = useRef(false);
   const [error, setError] = useState<Error | null>(null);
   const [pending, setPending] = useState<CreateExperimentInput | null>(null);
+  useStageLibrary(() => { if (!busy && !pending) onClose(); });
   const source = sources.find((item) => item.id === sourceId) ?? (copy?.id === sourceId ? copy : undefined);
   function selectSource(id: string) {
     setSourceId(id);
@@ -130,7 +132,7 @@ export function CreateExperiment({ project, copy, templates = [], onCreated, onC
       <label className="label">Notes<textarea className="field" value={notes} maxLength={10000} onChange={(event) => setNotes(event.target.value)} placeholder="What are you testing in this experiment?" /></label>
     </fieldset>
     <ErrorNotice error={error} />{pending ? <p className="callout" role="status">The response was lost. Retry sends the same creation request and cannot create a second record.</p> : null}
-    <div className="inline-actions"><button className="btn btn-primary" disabled={busy || !name.trim()} type="submit">{busy ? 'Creating…' : pending ? 'Retry creation' : 'Create & open inputs'}</button><button className="btn btn-secondary" type="button" disabled={busy} onClick={onClose}>Close</button></div></form>
+    <div className="stage-actions"><button className="btn btn-secondary" type="button" disabled={busy || Boolean(pending)} onClick={onClose}>Back to experiments</button><button className="btn btn-primary" disabled={busy || !name.trim()} type="submit">{busy ? 'Creating…' : pending ? 'Retry creation' : 'Create & open inputs'}</button></div></form>
   </Panel>;
 }
 
@@ -166,47 +168,62 @@ export function ExperimentMetadata({ project, record }: { project: string; recor
   </form>;
 }
 
-export default function ExperimentRegistry({ project, onOpen }: { project: string; onOpen: (id: string) => void }) {
+export interface ExperimentLibraryFilters {
+  state: LifecycleState | 'all'; status: string; search: string; sort: string; selected: string[];
+}
+export const newExperimentLibraryFilters = (): ExperimentLibraryFilters => ({ state: 'active', status: '', search: '', sort: 'recent', selected: [] });
+
+export default function ExperimentRegistry({ project, onOpen, filters, onFiltersChange }: {
+  project: string; onOpen: (id: string) => void;
+  filters?: ExperimentLibraryFilters; onFiltersChange?: Dispatch<SetStateAction<ExperimentLibraryFilters>>;
+}) {
   const client = useQueryClient();
   const query = useQuery({ queryKey: ['model-experiments', project, 'summary'], queryFn: () => experiments.summaries(project), refetchInterval: (value) => experimentPollInterval(value.state.data) });
-  const [state, setState] = useState<LifecycleState | 'all'>('active');
-  const [status, setStatus] = useState('');
-  const [search, setSearch] = useState('');
-  const [sort, setSort] = useState('recent');
-  const [selected, setSelected] = useState<string[]>([]);
+  const [localFilters, setLocalFilters] = useState(newExperimentLibraryFilters);
+  const { state, status, search, sort, selected } = filters ?? localFilters;
+  const setFilters = onFiltersChange ?? setLocalFilters;
+  const setState = (value: LifecycleState | 'all') => setFilters((current) => ({ ...current, state: value }));
+  const setStatus = (value: string) => setFilters((current) => ({ ...current, status: value }));
+  const setSearch = (value: string) => setFilters((current) => ({ ...current, search: value }));
+  const setSort = (value: string) => setFilters((current) => ({ ...current, sort: value }));
+  const setSelected = (value: SetStateAction<string[]>) => setFilters((current) => ({ ...current, selected: typeof value === 'function' ? value(current.selected) : value }));
   const [creating, setCreating] = useState(false);
-  const [manage, setManage] = useState('');
+  const [comparing, setComparing] = useState(false);
+  useStageLibrary(() => { if (!creating) setComparing(false); });
   const items = query.data?.items ?? [];
-  const runningCount = items.filter((item) => experimentStage(item) === 'running').length;
   const visible = filterExperiments(items, state, status, search, sort);
   const comparisonQueries = useQueries({ queries: selected.map((id) => ({ queryKey: ['model-experiment', project, id], queryFn: () => experiments.get(project, id), refetchInterval: 15000 })) });
   const compared = comparisonQueries.flatMap((value) => value.data ? [value.data] : []);
-  const managed = items.find((item) => item.id === manage);
   return <div className="clinical-workspace experiment-registry">
-    <PageHeader eyebrow="02 DEVELOP" title="Experiments" description="Every experiment is a record of a development question, its inputs, training batches and results." actions={<button className="btn btn-primary" onClick={() => setCreating(true)}>Create experiment</button>} />
+    <PageHeader eyebrow="02 DEVELOP" title={creating ? 'Create experiment' : comparing ? 'Compare experiments' : 'Experiments'} description={creating ? 'Name your experiment or reuse a saved template, then continue to its inputs.' : comparing ? 'Compare saved inputs and training settings.' : 'Open an experiment to continue work or review results.'} actions={!creating ? comparing ? <button className="btn btn-secondary" onClick={() => { setComparing(false); }}>Back to experiments</button> : <button className="btn btn-primary" onClick={() => setCreating(true)}>Create experiment</button> : undefined} />
 
-    {creating ? <CreateExperiment project={project} templates={items} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); onOpen(item.id); }} /> : null}
+    <StagePage pageKey={creating ? 'create' : comparing ? 'comparison' : 'library'}>
+    {creating ? <><StageSteps label="New experiment steps" current="details" steps={[{ id: 'details', title: 'Experiment details', description: 'Name and optional template' }, { id: 'inputs', title: 'Inputs', description: 'Continue after creating the record', disabled: true }]} onChange={() => {}} /><CreateExperiment project={project} templates={items} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); onOpen(item.id); }} /></> : comparing ? <>
+      <ErrorNotice error={comparisonQueries.find((value) => value.error)?.error ?? null} />
+      {compared.length !== selected.length ? <p role="status">Loading selected experiment snapshots…</p> : compared.length >= 2 ? <ExperimentComparison items={compared} /> : <p>Select at least two experiments from the library to compare.</p>}
+      <div className="stage-actions"><button type="button" className="btn btn-secondary" onClick={() => setComparing(false)}>Back to experiment selection</button></div>
+    </> : <>
     <ErrorNotice error={query.error} />
-    <section className="card experiment-list" aria-label="Experiments">
-      <div className="experiment-list-heading"><div><h2>Experiments</h2><p className="muted">{items.length} records · {runningCount} {runningCount === 1 ? 'experiment' : 'experiments'} in progress</p></div><button className="btn btn-secondary btn-small" onClick={() => void query.refetch()}>Refresh</button></div>
-      <div className="experiment-state-tabs" role="group" aria-label="Experiment state">{(['active', 'archived', 'trashed', 'all'] as const).map((value) => <button key={value} aria-pressed={state === value} className={state === value ? 'selected' : ''} onClick={() => setState(value)}>{value === 'all' ? 'All records' : lifecycleLabel[value]} <span>{items.filter((item) => value === 'all' || item.state === value).length}</span></button>)}</div>
-      <div className="experiment-filters"><label className="label">Find experiments<input type="search" className="field" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, ID, notes or tag" /></label><label className="label">Stage<select className="field" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All stages</option>{Object.entries(experimentStageLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label className="label">Sort<select className="field" value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">Recently updated</option><option value="oldest">Created first</option><option value="name">Name</option></select></label></div>
-      <div className="experiment-selection"><span>Select 2–4 experiments to compare · {selected.length} selected</span>{selected.length ? <button className="text-button" onClick={() => setSelected([])}>Clear comparison</button> : null}</div>
-      {query.isPending ? <p className="panel-body" role="status">Loading experiments…</p> : visible.length ? <div className="experiment-table-scroll"><table className="experiment-record-table"><thead><tr><th scope="col"><span className="sr-only">Compare</span></th><th scope="col">Experiment</th><th scope="col">Stage</th><th scope="col">Inputs</th><th scope="col">Batches / runs</th><th scope="col">Updated</th><th scope="col">Actions</th></tr></thead><tbody>{visible.map((item) => <tr key={item.id}>
+    <StageLibrary project={project} title="Experiments">
+      <StageLibraryToolbar search={search} onSearch={setSearch} searchLabel="Search experiments" placeholder="Name, ID, notes or tag" count={query.isPending ? undefined : visible.length} total={items.length}
+        onReset={search || status || state !== 'active' || sort !== 'recent' ? () => { setSearch(''); setStatus(''); setState('active'); setSort('recent'); } : undefined}
+        actions={<button type="button" className="btn btn-secondary btn-small" disabled={query.isFetching} onClick={() => void query.refetch()}>{query.isFetching ? 'Refreshing…' : 'Refresh'}</button>}>
+        <label className="label">State<select className="field" aria-label="Experiment state" value={state} onChange={(event) => setState(event.target.value as LifecycleState | 'all')}>{(['active', 'archived', 'trashed', 'all'] as const).map((value) => <option key={value} value={value}>{value === 'all' ? 'All records' : lifecycleLabel[value]} ({items.filter((item) => value === 'all' || item.state === value).length})</option>)}</select></label>
+        <label className="label">Stage<select className="field" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All stages</option>{Object.entries(experimentStageLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="label">Sort<select className="field" value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">Last updated</option><option value="oldest">Oldest first</option><option value="name">Name</option></select></label>
+      </StageLibraryToolbar>
+      {selected.length ? <div className="experiment-selection"><span>{selected.length} selected <span className="muted">· Choose 2–4 to compare</span></span><div className="inline-actions"><button type="button" className="text-button" onClick={() => setSelected([])}>Clear comparison</button><button type="button" className="btn btn-secondary btn-small" disabled={selected.length < 2} onClick={() => setComparing(true)}>Compare selected experiments</button></div></div> : null}
+      {query.isPending ? <p className="panel-body" role="status">Loading experiments…</p> : visible.length ? <div className="experiment-table-scroll"><table className="experiment-record-table" aria-label="Saved experiments"><thead><tr><th scope="col"><span className="sr-only">Select 2–4 experiments to compare</span></th><th scope="col">Experiment</th><th scope="col">Stage</th><th scope="col">Training</th><th scope="col">Updated</th><th scope="col">Actions</th></tr></thead><tbody>{visible.map((item) => <tr key={item.id}>
         <td><input aria-label={`Compare ${item.name} ${item.id}`} type="checkbox" checked={selected.includes(item.id)} disabled={selected.length >= 4 && !selected.includes(item.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} /></td>
-        <th scope="row"><button className="text-button experiment-name" onClick={() => onOpen(item.id)}>{item.name}</button><small title={item.id}>{shortRecordId(item.id)}</small><div className="experiment-tags">{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}{item.legacy ? <Badge>Legacy record</Badge> : null}</div></th>
-        <td><Badge tone={experimentStage(item) === 'running' ? 'warning' : experimentStage(item) === 'finished' ? 'success' : 'neutral'}>{experimentStageLabel[experimentStage(item)]}</Badge>{experimentStage(item) !== 'planning' && experimentStatusLabel(item.status) !== experimentStageLabel[experimentStage(item)] ? <small>{experimentStatusLabel(item.status)}</small> : null}{item.state !== 'active' ? <small>{lifecycleLabel[item.state]}</small> : null}</td>
-        <td>{item.inputs ? <><small title={item.inputs.protocolId}>Targets: {shortRecordId(item.inputs.protocolId)}</small><small title={item.inputs.featureBundleId}>Features: {shortRecordId(item.inputs.featureBundleId)}</small></> : <span className="muted">Not configured</span>}</td>
-        <td>{item.batches.length + (experimentStage(item) === 'planning' ? item.batchPlans?.length ?? 0 : 0)} batches<small>{item.batches.length ? `${item.batches.reduce((total, batch) => total + batch.manifest.summary.runCount, 0)} planned runs` : item.batchPlans?.length ? 'Editable recipes' : 'No batches yet'}</small></td>
+        <th scope="row"><button className="text-button stage-record-name experiment-name" title={`Open ${item.name}`} onClick={() => onOpen(item.id)}>{item.name}</button><small title={item.id}>{shortRecordId(item.id)}</small>{item.tags.length || item.legacy ? <div className="experiment-tags">{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}{item.legacy ? <Badge>Legacy record</Badge> : null}</div> : null}</th>
+        <td><Badge tone={experimentStage(item) === 'running' ? 'orange' : experimentStage(item) === 'finished' ? 'green' : 'neutral'}>{experimentStageLabel[experimentStage(item)]}</Badge>{experimentStage(item) !== 'planning' && experimentStatusLabel(item.status) !== experimentStageLabel[experimentStage(item)] ? <small>{experimentStatusLabel(item.status)}</small> : null}{item.state !== 'active' ? <small>{lifecycleLabel[item.state]}</small> : null}</td>
+        <td>{(() => { const count = item.batches.length + (experimentStage(item) === 'planning' ? item.batchPlans?.length ?? 0 : 0); return `${count} ${count === 1 ? 'batch' : 'batches'}`; })()}<small>{item.batches.length ? `${item.batches.reduce((total, batch) => total + batch.manifest.summary.runCount, 0)} planned runs` : item.batchPlans?.length ? 'Editable recipes' : item.inputs ? 'Inputs selected' : 'Inputs not set'}</small></td>
 
         <td><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString()}</time></td>
-        <td><button className="btn btn-secondary btn-small" aria-expanded={manage === item.id} onClick={() => setManage(manage === item.id ? '' : item.id)}>Manage</button></td>
+        <td><RecordManageButton recordKey={item.key} name={item.name} /></td>
       </tr>)}</tbody></table></div> : <div className="experiment-empty"><h3>{items.length ? 'No experiments match this view' : 'Create your first experiment'}</h3><p>{items.length ? 'Adjust the stage, search or archive filters to find earlier work.' : 'Start with a name and a question. Add prepared targets, features and training batches after creating the record.'}</p></div>}
-    </section>
-    {managed ? <Panel title={`Manage: ${managed.name}`}><ExperimentLifecycle key={managed.id} project={project} recordKey={managed.key} state={managed.state} name={managed.name} /></Panel> : null}
-    <ErrorNotice error={comparisonQueries.find((value) => value.error)?.error ?? null} />
-    {selected.length >= 2 && compared.length !== selected.length ? <p role="status">Loading selected experiment snapshots…</p> : null}
-    {compared.length >= 2 && compared.length === selected.length ? <ExperimentComparison items={compared} /> : null}
-    <p className="muted">Archive keeps an experiment’s history available. Delete moves records to recoverable Trash; dependencies and running jobs are checked before confirmation. Files stay on disk.</p>
+    </StageLibrary>
+    </>}
+    </StagePage>
   </div>;
 }

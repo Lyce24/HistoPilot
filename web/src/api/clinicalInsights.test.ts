@@ -5,6 +5,18 @@ import { downloadArtifact, fetchArtifactBlob, request } from './client';
 vi.mock('./client', () => ({ request: vi.fn(), downloadArtifact: vi.fn(), fetchArtifactBlob: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
 describe('clinical and interpretation API contracts', () => {
+  it('opts clinical libraries into archived and trashed records without changing the default list scope', async () => {
+    const records = { items: [{ id: 'archived-report', lifecycleState: 'archived' }, { id: 'trashed-report', lifecycleState: 'trashed' }] };
+    vi.mocked(request).mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce(records);
+    expect(await clinicalAnalyses.list('project/1')).toEqual({ items: [] });
+    expect(await clinicalAnalyses.list('project/1', false)).toEqual({ items: [] });
+    expect(await clinicalAnalyses.list('project/1', true)).toEqual(records);
+    expect(vi.mocked(request).mock.calls.map(([path]) => path)).toEqual([
+      '/projects/project%2F1/clinical-analyses',
+      '/projects/project%2F1/clinical-analyses',
+      '/projects/project%2F1/clinical-analyses?include_inactive=true',
+    ]);
+  });
   it('publishes the reviewed clinical selection with the same hash and idempotency operation', async () => {
     const selection: ClinicalSelection = { evaluationId: 'eval', name: 'External utility', unit: 'patient', positiveClass: 'high', threshold: null, bins: 10, thresholdMin: .05, thresholdMax: .5, thresholdSteps: 91 };
     await clinicalAnalyses.save('project/1', selection, 'review-hash', 'operation');

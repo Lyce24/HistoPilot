@@ -145,7 +145,8 @@ describe('roadmap prerequisite query isolation', () => {
     expect(roadmap.checksById.experiments).toEqual({ isLoading: false, error: null, hasData: true });
     expect(roadmap.byId.experiments.unlocked).toBe(true);
     expect(roadmap.checksById.dataset.hasData).toBe(true);
-    expect(roadmap.checksById['test-data'].hasData).toBe(missing === 'bundles');
+    expect(roadmap.checksById['test-data']).toEqual({ isLoading: false, error: null, hasData: true });
+    expect(roadmap.byId['test-data'].unlocked).toBe(true);
   });
 
   it.each(['datasets', 'protocols', 'bundles'] as const)('retains cached prerequisites and unlock state after a %s refresh fails', (failed) => {

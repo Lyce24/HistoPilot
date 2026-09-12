@@ -33,6 +33,7 @@ jobs:
           with ZipFile(next(Path('dist').glob('*.whl'))) as wheel:
               assert 'histopilot/static/index.html' in wheel.namelist()
               assert 'histopilot/resources/demo_workspace.json' in wheel.namelist()
+              assert 'histopilot/resources/blca_demo_workspace.json' in wheel.namelist()
           PY
       - uses: actions/upload-artifact@v4
         with:

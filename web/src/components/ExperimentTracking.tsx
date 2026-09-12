@@ -1,12 +1,14 @@
 import { useId, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { development, trainingActive } from '../api/development';
+import { development } from '../api/development';
 import type { FrozenBatch, PlannedRun, TrainingExecution, TrainingHistory, TrainingMetricDetails, TrainingMetrics, TrainingRun } from '../api/development';
 import { finiteNumber } from '../lib/evidenceCharts';
 import { downloadJSON } from '../lib/download';
 import CurveChart from './CurveChart';
 import { Badge, ErrorNotice } from './ui';
 import './ExperimentTracking.css';
+
+export { ResourceCards } from './RunResourceUsage';
 
 export const gib = (value?: number | null) => finiteNumber(value) ? `${value.toFixed(2)} GiB` : 'Unavailable';
 export const metricValue = (value?: number | null) => finiteNumber(value) ? value.toFixed(4) : '—';
@@ -24,12 +26,16 @@ export function MetricEvidence({ details }: { details?: TrainingMetricDetails })
 
 function RunDiagnostics({ run, peakRamGb }: { run?: TrainingRun; peakRamGb?: number }) {
   const progress = run?.progress;
-  if (progress?.learningRate === undefined && progress?.cudaPeakAllocatedBytes === undefined && peakRamGb === undefined) return null;
-  return <details><summary>Training diagnostics</summary>
-    {finiteNumber(progress?.learningRate) ? <p>Learning rate: {progress.learningRate.toExponential(3)}</p> : null}
-    {finiteNumber(progress?.cudaPeakAllocatedBytes) ? <p>Run CUDA allocator peak: {gib(progress.cudaPeakAllocatedBytes / 2 ** 30)} allocated / {gib(progress.cudaPeakReservedBytes === undefined ? undefined : progress.cudaPeakReservedBytes / 2 ** 30)} reserved</p> : null}
-    {peakRamGb !== undefined ? <p>Sampled process-tree RAM peak: {gib(peakRamGb)}. Shared pages may be counted more than once.</p> : null}
-  </details>;
+  const available = [progress?.learningRate, progress?.globalStep, progress?.cudaPeakAllocatedBytes, progress?.cudaPeakReservedBytes, peakRamGb].some(finiteNumber);
+  return <><h4>Training diagnostics</h4>{available ? <dl className="experiment-run-facts">
+    <div><dt>Learning rate</dt><dd>{finiteNumber(progress?.learningRate) ? progress.learningRate.toExponential(3) : 'Unavailable'}</dd></div>
+    <div><dt>Global step</dt><dd>{finiteNumber(progress?.globalStep) ? progress.globalStep.toLocaleString() : 'Unavailable'}</dd></div>
+    <div><dt>CUDA allocated peak</dt><dd>{gib(finiteNumber(progress?.cudaPeakAllocatedBytes) ? progress.cudaPeakAllocatedBytes / 2 ** 30 : undefined)}</dd></div>
+    <div><dt>CUDA reserved peak</dt><dd>{gib(finiteNumber(progress?.cudaPeakReservedBytes) ? progress.cudaPeakReservedBytes / 2 ** 30 : undefined)}</dd></div>
+    <div><dt>Process-tree RAM peak</dt><dd>{gib(peakRamGb)}</dd></div>
+  </dl> : <p className="muted">No training diagnostics have been recorded for this run.</p>}
+    {finiteNumber(peakRamGb) ? <p className="muted">Process-tree RAM is sampled. Shared pages may be counted more than once.</p> : null}
+  </>;
 }
 
 export function runLabel(batch: FrozenBatch, run: PlannedRun | TrainingRun) {
@@ -44,30 +50,12 @@ export function EpochProgress({ run }: { run?: TrainingRun }) {
   return <div className="experiment-epoch"><span>Epoch {progress.epoch} / {progress.maxEpochs}</span><progress aria-label="Completed epochs" value={Math.min(progress.epoch, progress.maxEpochs)} max={progress.maxEpochs} />{run?.status === 'completed' && progress.epoch < progress.maxEpochs ? <small>Stopped early</small> : null}</div>;
 }
 
-export function ResourceCards({ execution }: { execution: TrainingExecution }) {
-  const telemetry = execution.telemetry;
-  const sample = telemetry?.latest;
-  const current = trainingActive(execution);
-  if (!sample) return <p className="muted">Resource measurements have not been recorded yet.</p>;
-  const stale = current && Date.now() - Date.parse(sample.at) > Math.max(45000, telemetry.intervalSeconds * 3000);
-  return <section className="experiment-resource-section" aria-label="Recorded resource usage">
-    <div className="experiment-tracking-heading"><h3>{current ? 'Resource usage' : 'Last resource sample'}</h3><small>Recorded {sample.at ? new Date(sample.at).toLocaleString() : 'time unavailable'}</small></div>
-    <div className="experiment-resource-cards">
-      {sample.gpus.map((gpu) => <div className="experiment-resource-card" key={gpu.index}><span>GPU {gpu.index} · {gpu.name}</span><strong>{finiteNumber(gpu.utilizationPercent) ? `${gpu.utilizationPercent.toFixed(0)}% utilization` : 'Utilization unavailable'}</strong><small>{gib(gpu.usedMemoryGb)} used / {gib(gpu.totalMemoryGb)} total</small><small>Observed peak: {gib(telemetry.peak.gpuUsedMemoryGb[String(gpu.index)])}</small></div>)}
-      <div className="experiment-resource-card"><span>Host memory</span><strong>{gib(sample.host.availableRamGb)} available</strong><small>{gib(sample.host.totalRamGb)} total RAM</small></div>
-    </div>
-    <p className="muted">Samples every {telemetry.intervalSeconds}s. GPU usage includes other programs.{!current ? ' These are recorded measurements, not live device usage.' : ''}</p>
-    {stale ? <p className="callout callout-warning" role="status">The resource sample is stale. Measurements may no longer reflect the active runs.</p> : null}
-    {sample.gpuProbeError ? <p className="callout callout-warning" role="status">GPU measurements unavailable: {sample.gpuProbeError}</p> : null}
-  </section>;
-}
-
-export function LossHistory({ history, validationMetric = 'loss', finished = false }: { history?: TrainingHistory; validationMetric?: 'loss' | 'accuracy' | 'auroc'; finished?: boolean }) {
+export function LossHistory({ history, validationMetric = 'loss', finished = false, illustrative = false }: { history?: TrainingHistory; validationMetric?: 'loss' | 'accuracy' | 'auroc'; finished?: boolean; illustrative?: boolean }) {
   const rows = history?.rows ?? [];
   if (history?.warning) return <p className="callout callout-warning" role="status">{history.warning}</p>;
   if (!rows.length) return <p className="callout">{finished ? 'No epoch history was recorded for this run.' : 'Loss history appears after the first completed epoch.'}</p>;
   const unit = rows.find((row) => row.checkpointUnit)?.checkpointUnit;
-  const description = `Recorded at each completed epoch. Validation${unit ? ` uses ${unit} scoring and` : ''} selects checkpoints; it is not held-out assessment.`;
+  const description = `${illustrative ? 'Synthetic example values for each epoch.' : 'Recorded at each completed epoch.'} Validation${unit ? ` uses ${unit} scoring and` : ''} selects checkpoints; it is not held-out assessment.`;
   const xRange = [rows[0].epoch, Math.max(rows[0].epoch + 1, rows[rows.length - 1].epoch)] as const;
   const trainingPoints = rows.map((row) => ({ x: row.epoch, y: row.trainingLoss }));
   const validationPoints = rows.map((row) => ({ x: row.epoch, y: row.validation.loss ?? null }));
@@ -78,7 +66,7 @@ export function LossHistory({ history, validationMetric = 'loss', finished = fal
       {hasLoss ? <CurveChart title="Loss history" description={description} xLabel="Epoch" integerX yLabel="Loss" xRange={xRange} series={[{ label: 'Training loss', points: trainingPoints }, { label: 'Validation loss', points: validationPoints, dashed: true }]} /> : <p className="callout">No loss measurements are available in the recorded history.</p>}
       {validationMetric !== 'loss' ? <CurveChart title={`Validation ${validationMetric === 'auroc' ? 'AUROC' : 'accuracy'}`} description={`Checkpoint selection metric${unit ? ` · ${unit} scoring` : ''}. Missing values remain gaps.`} xLabel="Epoch" integerX yLabel={validationMetric === 'auroc' ? 'AUROC' : 'Accuracy'} xRange={xRange} yRange={[0, 1]} series={[{ label: `Validation ${validationMetric === 'auroc' ? 'AUROC' : 'accuracy'}`, points: rows.map((row) => ({ x: row.epoch, y: row.validation[validationMetric] ?? null })) }]} /> : null}
     </div>
-    {history ? <button type="button" className="btn btn-secondary btn-small" onClick={() => downloadJSON(`${history.runId}-epoch-history.json`, history)}>Export epoch history</button> : null}
+    {history ? <button type="button" className="btn btn-secondary btn-small" onClick={() => downloadJSON(`${illustrative ? 'synthetic-' : ''}${history.runId}-epoch-history.json`, illustrative ? { ...history, synthetic: true, executable: false } : history)}>Export {illustrative ? 'synthetic ' : ''}epoch history</button> : null}
   </>;
 }
 
@@ -92,39 +80,85 @@ function RunHistory({ project, batch, run }: { project: string; batch: FrozenBat
   return <><ErrorNotice error={history.error} />{history.isError ? <><p className="muted">History refresh failed. Any curves shown are the last successfully loaded measurements.</p><button className="btn btn-secondary btn-small" type="button" onClick={() => void history.refetch()}>Retry epoch history</button></> : null}{history.isPending ? <p role="status">Loading epoch history…</p> : history.data ? <LossHistory history={history.data} validationMetric={metric} finished={!active} /> : null}</>;
 }
 
-export function RunDetails({ batch, run, peakRamGb, project }: { batch: FrozenBatch; run?: TrainingRun; peakRamGb?: number; project?: string }) {
+const detailTabs = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'checkpoints', label: 'Checkpoints' },
+  { id: 'diagnostics', label: 'Diagnostics' },
+  { id: 'artifacts', label: 'Artifacts' },
+] as const;
+type DetailTab = typeof detailTabs[number]['id'];
+
+export function RunDetails({ batch, run, peakRamGb, project, history, illustrative = false }: { batch: FrozenBatch; run?: TrainingRun; peakRamGb?: number; project?: string; history?: TrainingHistory; illustrative?: boolean }) {
+  const [tab, setTab] = useState<DetailTab>('overview');
+  const id = useId();
   if (!run) return <p className="muted">This run has not been queued yet.</p>;
+  const recipe = batch.manifest.configurations.find((item) => item.id === run.candidateId)?.recipe;
+  const validationMetric = recipe?.checkpointMetric === 'validation_auroc' ? 'auroc' : recipe?.checkpointMetric === 'validation_accuracy' ? 'accuracy' : 'loss';
   return <section className="experiment-run-detail" aria-label="Selected run details">
-    <div className="experiment-tracking-heading"><h3>{runLabel(batch, run)}</h3><Badge tone={run.status === 'failed' || run.status === 'interrupted' ? 'warning' : run.status === 'completed' ? 'success' : 'neutral'}>{run.status}</Badge></div>
+    <div className="experiment-tracking-heading"><div><span className="experiment-detail-eyebrow">Selected run</span><h3>{runLabel(batch, run)}</h3></div><Badge tone={run.status === 'failed' || run.status === 'interrupted' ? 'warning' : run.status === 'completed' ? 'success' : 'neutral'}>{run.status}</Badge></div>
     {run.error ? <p className="callout callout-warning" role="status">{run.error}</p> : null}
     {run.progressWarning ? <p className="callout callout-warning" role="status">{run.progressWarning}</p> : null}
-    {project ? <RunHistory key={run.id} project={project} batch={batch} run={run} /> : null}
-    <details><summary>Checkpoint validation and held-out assessment</summary><p>Checkpoint validation: {metricsText(run.metrics?.validation.selected)}</p><MetricEvidence details={run.metrics?.validation} /><p>Held-out assessment: {metricsText(run.metrics?.assessment.selected)}</p><MetricEvidence details={run.metrics?.assessment} /></details>
-    <RunDiagnostics run={run} peakRamGb={peakRamGb} />
-    {run.checkpointPath || run.outputPath ? <details><summary>Run artifacts</summary>{run.checkpointPath ? <p>Checkpoint: <code>{run.checkpointPath}</code></p> : null}{run.outputPath ? <p>Output: <code>{run.outputPath}</code></p> : null}</details> : null}
+    <div className="experiment-run-metrics" aria-label="Latest reported run metrics">
+      <div><span>Completed epochs</span><EpochProgress run={run} /></div>
+      <div><span>Training loss</span><strong>{metricValue(run.progress?.trainingLoss)}</strong><small>Latest completed epoch</small></div>
+      <div><span>Validation {validationMetric === 'auroc' ? 'AUROC' : validationMetric}</span><strong>{run.progress?.validation?.available === false ? '—' : metricValue(run.progress?.validation?.[validationMetric])}</strong><small>Latest checkpoint selection metric</small></div>
+      <div><span>Checkpoint</span><strong className="experiment-run-text-metric">{illustrative ? 'Illustrative' : run.checkpointPath ? 'Saved' : 'Not recorded'}</strong><small>{illustrative ? 'Reference only; no checkpoint file' : run.checkpointPath ? 'See Checkpoints and Artifacts' : 'Appears when available'}</small></div>
+    </div>
+    <div className="experiment-run-tabs" role="tablist" aria-label="Run details" onKeyDown={(event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const current = detailTabs.findIndex((item) => item.id === tab);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? detailTabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + detailTabs.length) % detailTabs.length;
+      setTab(detailTabs[next].id);
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+    }}>
+      {detailTabs.map((item) => <button type="button" role="tab" key={item.id} id={`${id}-tab-${item.id}`} aria-controls={`${id}-panel-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => setTab(item.id)}>{item.label}</button>)}
+    </div>
+    <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-overview`} aria-labelledby={`${id}-tab-overview`} hidden={tab !== 'overview'} tabIndex={0}>
+      {history ? <LossHistory history={history} validationMetric={validationMetric} finished={!['queued', 'running'].includes(run.status)} illustrative={illustrative} /> : project && !illustrative ? <RunHistory key={run.id} project={project} batch={batch} run={run} /> : <p className="muted">{illustrative ? 'No synthetic epoch history is included for this run.' : 'Open this run in its project to load epoch history.'}</p>}
+    </div>
+    <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-checkpoints`} aria-labelledby={`${id}-tab-checkpoints`} hidden={tab !== 'checkpoints'} tabIndex={0}>
+      <h4>Checkpoint validation and held-out assessment</h4>
+      <p className="muted">Validation selects the checkpoint. Held-out assessment measures the saved checkpoint on the assessment partition.</p>
+      <div className="experiment-checkpoint-grid"><section><h5>Checkpoint validation</h5><p>Checkpoint validation: {metricsText(run.metrics?.validation.selected)}</p><MetricEvidence details={run.metrics?.validation} /></section><section><h5>Held-out assessment</h5><p>Held-out assessment: {metricsText(run.metrics?.assessment.selected)}</p><MetricEvidence details={run.metrics?.assessment} /></section></div>
+    </div>
+    <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-diagnostics`} aria-labelledby={`${id}-tab-diagnostics`} hidden={tab !== 'diagnostics'} tabIndex={0}><RunDiagnostics run={run} peakRamGb={peakRamGb} /></div>
+    <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-artifacts`} aria-labelledby={`${id}-tab-artifacts`} hidden={tab !== 'artifacts'} tabIndex={0}>
+      <h4>Run artifacts</h4><dl className="experiment-run-facts experiment-artifact-paths"><div><dt>Run ID</dt><dd><code>{run.id}</code></dd></div>{run.checkpointPath ? <div><dt>Checkpoint</dt><dd><code>{run.checkpointPath}</code></dd></div> : null}{run.outputPath ? <div><dt>Output</dt><dd><code>{run.outputPath}</code></dd></div> : null}</dl>
+      {!run.checkpointPath && !run.outputPath ? <p className="muted">No checkpoint or output path has been recorded for this run.</p> : null}
+    </div>
   </section>;
 }
 
-export function RunTable({ batch, execution, project }: { batch: FrozenBatch; execution?: TrainingExecution | null; project?: string }) {
+export function RunTable({ batch, execution, project, histories, illustrative = false }: { batch: FrozenBatch; execution?: TrainingExecution | null; project?: string; histories?: Record<string, TrainingHistory>; illustrative?: boolean }) {
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
   const [selection, setSelection] = useState<string | null>(null);
   const id = useId();
   const actual = new Map(execution?.runs.map((run) => [run.id, run]) ?? []);
-  const filtered = batch.manifest.runs.filter((planned) => filter === 'all' || (actual.get(planned.id)?.status ?? 'planned') === filter);
+  const query = search.trim().toLocaleLowerCase();
+  const filtered = batch.manifest.runs.filter((planned) => (filter === 'all' || (actual.get(planned.id)?.status ?? 'planned') === filter)
+    && (!query || `${runLabel(batch, planned)} ${planned.id} ${planned.candidateId} ${planned.splitPlanId}`.toLocaleLowerCase().includes(query)));
   const pages = Math.max(1, Math.ceil(filtered.length / 50));
   const current = Math.min(page, pages - 1);
   const visible = filtered.slice(current * 50, (current + 1) * 50);
   const selected = visible.find((planned) => planned.id === selection) ?? visible.find((planned) => actual.get(planned.id)?.status === 'running') ?? visible[0];
   return <div className="experiment-run-tracker">
-    <div className="experiment-tracking-heading"><h3>Runs <span className="muted">({batch.manifest.runs.length})</span></h3><label className="experiment-run-filter" htmlFor={`${id}-filter`}>Status<select id={`${id}-filter`} className="field" value={filter} onChange={(event) => { setFilter(event.target.value); setPage(0); }}><option value="all">All statuses</option>{['planned', 'queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'].map((status) => <option key={status} value={status}>{status.charAt(0).toUpperCase() + status.slice(1)}</option>)}</select></label></div>
-    <div className="development-table experiment-runs-table"><table><thead><tr><th>Run</th><th>Status</th><th>Epoch</th><th>Training loss</th><th>Current validation loss</th></tr></thead><tbody>{visible.map((planned) => {
+    <div className="experiment-tracking-heading"><div><h3>Runs <span className="muted">({batch.manifest.runs.length})</span></h3><p className="experiment-tracking-hint">Select a run to inspect its metrics, checkpoints, and diagnostics.</p></div></div>
+    <div className="experiment-run-toolbar">
+      <label className="experiment-run-search" htmlFor={`${id}-search`}><span>Search runs</span><input type="search" id={`${id}-search`} className="field" placeholder="Configuration, fold, seed, or run ID" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></label>
+      <label className="experiment-run-filter" htmlFor={`${id}-filter`}>Status<select id={`${id}-filter`} className="field" value={filter} onChange={(event) => { setFilter(event.target.value); setPage(0); }}><option value="all">All statuses</option>{['planned', 'queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'].map((status) => <option key={status} value={status}>{status.charAt(0).toUpperCase() + status.slice(1)}</option>)}</select></label>
+      {search || filter !== 'all' ? <button type="button" className="btn btn-secondary btn-small" onClick={() => { setSearch(''); setFilter('all'); setPage(0); }}>Clear filters</button> : null}
+      <span className="experiment-run-count" role="status">{filtered.length === batch.manifest.runs.length ? `${filtered.length} runs` : `${filtered.length} of ${batch.manifest.runs.length} runs`}</span>
+    </div>
+    <div className="development-table experiment-runs-table"><table><caption className="sr-only">Batch runs. Select a run name to view its details below.</caption><thead><tr><th>Run</th><th>Status</th><th>Epoch</th><th>Training loss</th><th>Current validation loss</th></tr></thead><tbody>{visible.map((planned) => {
       const run = actual.get(planned.id);
-      return <tr key={planned.id} className={selected?.id === planned.id ? 'is-selected' : undefined}><th scope="row"><button type="button" className="experiment-run-select" aria-pressed={selected?.id === planned.id} onClick={() => setSelection(planned.id)}>{runLabel(batch, planned)}</button></th><td><Badge tone={run?.status === 'failed' || run?.status === 'interrupted' ? 'warning' : run?.status === 'completed' ? 'success' : 'neutral'}>{run?.status ?? 'planned'}</Badge>{run?.progressWarning ? <small>Progress unavailable</small> : null}</td><td><EpochProgress run={run} /></td><td>{metricValue(run?.progress?.trainingLoss)}</td><td>{metricValue(run?.progress?.validation?.loss)}</td></tr>;
+      return <tr key={planned.id} className={selected?.id === planned.id ? 'is-selected' : undefined}><th scope="row"><button type="button" className="experiment-run-select" aria-pressed={selected?.id === planned.id} onClick={() => setSelection(planned.id)}>{runLabel(batch, planned)}</button></th><td><Badge tone={run?.status === 'failed' || run?.status === 'interrupted' ? 'warning' : run?.status === 'completed' ? 'success' : 'neutral'}>{run?.status ?? 'planned'}</Badge>{run?.progressWarning ? <small>Progress unavailable</small> : null}</td><td><EpochProgress run={run} /></td><td>{metricValue(run?.progress?.trainingLoss)}</td><td>{run?.progress?.validation?.available === false ? '—' : metricValue(run?.progress?.validation?.loss)}</td></tr>;
     })}</tbody></table></div>
-    {!filtered.length ? <p className="muted">No runs match this status.</p> : null}
-    <p className="muted">Select a run for loss history and scoring details. Epoch progress counts completed epochs; early stopping can finish before the maximum.</p>
+    {!filtered.length ? <p className="muted">No runs match these filters.</p> : null}
+    <p className="experiment-tracking-hint">Epoch progress counts completed epochs; early stopping can finish before the maximum.</p>
     {pages > 1 ? <div className="inline-actions"><button type="button" className="btn btn-secondary btn-small" disabled={!current} onClick={() => setPage(current - 1)}>Previous</button><span>Page {current + 1} of {pages}</span><button type="button" className="btn btn-secondary btn-small" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>Next</button></div> : null}
-    {selected ? <RunDetails key={selected.id} project={project} batch={batch} run={actual.get(selected.id)} peakRamGb={execution?.telemetry?.peak.runRssGb[selected.id]} /> : null}
+    {selected ? <RunDetails key={selected.id} project={project} batch={batch} run={actual.get(selected.id)} peakRamGb={execution?.telemetry?.peak.runRssGb[selected.id]} history={histories?.[selected.id]} illustrative={illustrative} /> : null}
   </div>;
 }

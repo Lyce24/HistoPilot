@@ -21,10 +21,10 @@
   align-items: flex-start;
   gap: 10px;
   padding: 14px 16px;
-  border: 1px solid #ead9b7;
-  background: #fffbf2;
+  border: 1px solid var(--theme-line-strong);
+  background: var(--theme-soft);
   border-radius: 8px;
-  color: #795c2f;
+  color: var(--brand-brown);
   font-size: 12px;
   line-height: 1.7;
 }
@@ -32,7 +32,7 @@
 .feature-validation-summary { display: grid; justify-items: start; gap: 9px; }
 .feature-validation-summary > p { font-size: 13px; line-height: 1.7; }
 .feature-pack-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.feature-pack-bundle-summary { display: grid; gap: 8px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 9px; background: #f8f9fc; }
+.feature-pack-bundle-summary { display: grid; gap: 8px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 9px; background: var(--theme-soft); }
 .feature-pack-bundle-summary p { font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .feature-pack-bundle-summary .feature-pack-section-heading > div { min-width: 0; }
 .feature-pack-included-list { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
@@ -55,7 +55,7 @@
 .feature-pack-action > span { display: grid; gap: 5px; }
 .feature-pack-action strong { font-size: 13px; }
 .feature-pack-action small { font-size: 12px; color: var(--muted); }
-.feature-pack-action.is-selected { border-color: #a59adf; background: #f8f6ff; box-shadow: 0 0 0 1px #a59adf; }
+.feature-pack-action.is-selected { border-color: var(--brand-red); background: var(--theme-accent-soft); box-shadow: 0 0 0 1px var(--brand-red); }
 .feature-pack-options { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 9px; }
 .feature-pack-options h4 { margin: 0; font-size: 14px; }
 .feature-pack-options > div > p,
@@ -64,7 +64,7 @@
 .feature-pack-options .label > small { font-size: 11px; line-height: 1.6; }
 .feature-pack-destination { display: grid; gap: 10px; align-content: start; min-width: 0; }
 .feature-pack-destination > button { justify-self: start; }
-.feature-pack-review { padding: 20px; border: 1px solid #d9d2f1; border-radius: 10px; background: #fcfbff; }
+.feature-pack-review { padding: 20px; border: 1px solid var(--theme-line); border-radius: 10px; background: var(--theme-canvas); }
 .feature-pack-metrics { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 .feature-pack-metrics .metric-card { padding: 16px; }
 .feature-pack-output { display: grid; gap: 7px; font-size: 12px; overflow-wrap: anywhere; }
@@ -102,15 +102,15 @@
 .feature-pack-job > span:first-child { display: grid; gap: 5px; }
 .feature-pack-job strong { font-size: 12px; }
 .feature-pack-job small { font-size: 11px; color: var(--muted); }
-.feature-pack-job.is-selected { background: #f8f6ff; border-color: #b7ace5; }
-.feature-pack-progress { padding: 19px; background: #f8f9fc; border: 1px solid var(--line); border-radius: 9px; }
-.feature-pack-progress-succeeded { background: #f5fbf8; border-color: #c6e2d4; }
+.feature-pack-job.is-selected { background: var(--theme-accent-soft); border-color: var(--brand-red); }
+.feature-pack-progress { padding: 19px; background: var(--theme-soft); border: 1px solid var(--line); border-radius: 9px; }
+.feature-pack-progress-succeeded { background: var(--theme-canvas); border-color: var(--theme-line-strong); }
 .feature-pack-progress-heading > svg { flex-shrink: 0; margin-top: 1px; color: var(--accent); }
 .feature-pack-progress-heading > div { flex: 1; }
 .feature-pack-progress-heading > .badge { flex-shrink: 0; }
 .feature-pack-progress-caption { font-size: 11px; align-items: center; color: var(--muted); margin-top: 14px; }
 .feature-pack-progress-caption small { font-size: 10px; }
-.feature-pack-track { height: 7px; border-radius: 8px; overflow: hidden; background: #e6e3ef; margin-top: 8px; }
+.feature-pack-track { height: 7px; border-radius: 8px; overflow: hidden; background: var(--theme-soft); margin-top: 8px; }
 .feature-pack-track > span { display: block; height: 100%; background: var(--accent); border-radius: 8px; transition: width .3s ease; }
 .feature-pack-track.is-indeterminate > span { width: 28%; animation: feature-pack-wait 1.6s ease-in-out infinite; }
 @keyframes feature-pack-wait { from { transform: translateX(-100%); } to { transform: translateX(460%); } }

@@ -71,8 +71,8 @@ export function RoadmapGraph({ modules }: { modules: Module[] }) {
   return <div className="roadmap-board" ref={board}>
     <svg className="roadmap-connections" aria-hidden="true">
       <defs>
-        <marker id="roadmap-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="#b4c2c3" /></marker>
-        <marker id="roadmap-arrow-done" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="#419980" /></marker>
+        <marker id="roadmap-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="var(--theme-line-strong)" /></marker>
+        <marker id="roadmap-arrow-done" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="var(--brand-brown)" /></marker>
       </defs>
       {lines.map((line) => <path key={line.id} d={line.path} className={line.complete ? 'is-complete' : ''} markerEnd={`url(#roadmap-arrow${line.complete ? '-done' : ''})`} />)}
     </svg>
@@ -86,7 +86,7 @@ export function RoadmapGraph({ modules }: { modules: Module[] }) {
         <div className="roadmap-node-top"><span className="roadmap-node-icon"><Icon name={moduleIcons[module.id]} size={19} /></span><ModuleStatus status={module.status} completedLabel={completedModuleLabel(module.id)} /></div>
         <h3>{module.title}</h3>
         <p>{module.description}</p>
-        {module.id === 'test-data' ? <p className="roadmap-prerequisite-note">Requires a frozen development protocol. Preparation can begin while models train.</p> : null}
+        {module.id === 'test-data' ? <p className="roadmap-prerequisite-note">Create test cohorts before model development or feature extraction. Compatibility is checked in Evaluate models.</p> : null}
         {module.id === 'interpretation' ? <p className="roadmap-prerequisite-note">Use any compatible slides with a saved predictor, or continue from a clinical analysis.</p> : null}
         <div className="roadmap-node-bottom">
           <span>{!module.unlocked ? <><Icon name="lock" size={12} /> {blockers ? `Requires ${blockers}` : 'Review compatible inputs'}</> : module.status === 'complete' ? completedModuleAction(module.id) : module.id === 'experiments' ? 'Open experiments' : module.status === 'draft' ? 'Continue module' : 'Open module'}</span>
@@ -125,7 +125,7 @@ export default function ProjectRoadmap({ workspace, roadmap }: { workspace: Work
         <section className="roadmap-map" aria-label="Project module dependencies">
           <div className="roadmap-map-heading"><div><Icon name="branch" size={18} /><h2>From data to evidence</h2></div><div className="roadmap-legend" aria-label="Module status legend"><ModuleStatus status="complete" completedLabel="Complete" /><ModuleStatus status="draft" /><ModuleStatus status="not-started" /><span><Icon name="lock" size={12} /> Prerequisites required</span></div></div>
           <RoadmapGraph modules={roadmap.modules} />
-          <div className="roadmap-map-note"><Icon name="info" size={15} /><p>Arrows show the main workflow; cards list additional prerequisites. Green modules have completed evidence; yellow modules have saved work. Evaluate models requires both a ready predictor and prepared test data.</p></div>
+          <div className="roadmap-map-note"><Icon name="info" size={15} /><p>Arrows show the main workflow; cards list additional prerequisites and whether work is saved or complete. Evaluate models requires both a ready predictor and prepared test data.</p></div>
         </section>
       </>}
   </div>;

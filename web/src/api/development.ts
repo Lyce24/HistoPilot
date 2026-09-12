@@ -64,6 +64,19 @@ export interface TrainingHistoryRow {
 export interface TrainingHistory {
   runId: string; rows: TrainingHistoryRow[]; totalRows: number; truncated: boolean; warning?: string;
 }
+export interface TrainingResourceSample {
+  at: string;
+  host: Omit<TrainingHost, 'totalRamGb' | 'availableRamGb' | 'bootId' | 'kernel'> & {
+    totalRamGb: number | null; availableRamGb: number | null; bootId?: string; kernel?: string;
+  };
+  gpus: TrainingGPU[]; gpuProbeError?: string;
+  runs: { runId: string; pid: number; rssGb: number | null }[];
+}
+export interface TrainingResourceHistory {
+  batchId: string; rows: TrainingResourceSample[]; totalRows: number; truncated: boolean; warning?: string;
+  /** A bounded tail read may only know the number of rows in the inspected window. */
+  totalRowsIsLowerBound?: boolean;
+}
 export interface TrainingExecution {
   batchId: string; status: TrainingStatus; sessionName: string; logPath: string; outputPath: string;
   cancelRequested?: boolean; findings: Finding[];
@@ -73,11 +86,15 @@ export interface TrainingExecution {
   computePath?: string; computeVersion?: string; provenancePath?: string;
   telemetry?: {
     path: string; intervalSeconds: number;
-    latest: { at: string; host: TrainingHost; gpus: TrainingGPU[]; gpuProbeError?: string; runs: { runId: string; pid: number; rssGb: number }[] };
+    latest: TrainingResourceSample;
     peak: { hostUsedRamGb: number; runRssGb: Record<string, number>; gpuUsedMemoryGb: Record<string, number> };
   };
 }
-export interface TrainingHost { cpuCount: number; totalRamGb: number; availableRamGb: number; bootId: string; kernel: string }
+export interface TrainingHost {
+  cpuCount: number; totalRamGb: number; availableRamGb: number; bootId: string; kernel: string;
+  /** Older workers did not record CPU utilization; missing is not zero. */
+  cpuUtilizationPercent?: number | null;
+}
 export interface TrainingGPU { index: number; uuid: string; name: string; driverVersion: string; totalMemoryGb: number | null; usedMemoryGb: number | null; freeMemoryGb: number | null; utilizationPercent: number | null }
 export interface TrainingRuntime {
   available: boolean; python: string; versions: Record<string, string | null>;
@@ -103,6 +120,7 @@ export const development = {
   runtime: (project: string) => request<TrainingRuntime>(`/projects/${encodeURIComponent(project)}/mil-experiments/runtime`),
   execution: (project: string, batch: string) => request<TrainingExecution | null>(`${batchPrefix(project, batch)}/execution`),
   history: (project: string, batch: string, run: string) => request<TrainingHistory>(`${batchPrefix(project, batch)}/runs/${encodeURIComponent(run)}/history`),
+  resourceHistory: (project: string, batch: string, signal?: AbortSignal) => request<TrainingResourceHistory>(`${batchPrefix(project, batch)}/resources/history`, { signal }),
   launch: (project: string, batch: string, operationId: string) => request<TrainingExecution>(`${batchPrefix(project, batch)}/launch`, body({ operationId })),
   cancel: (project: string, batch: string, operationId: string) => request<TrainingExecution>(`${batchPrefix(project, batch)}/cancel`, body({ operationId })),
   resume: (project: string, batch: string, operationId: string) => request<TrainingExecution>(`${batchPrefix(project, batch)}/resume`, body({ operationId })),

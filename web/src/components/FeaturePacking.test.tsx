@@ -87,14 +87,14 @@ describe('feature preparation presentation', () => {
     client.setQueryData(['feature-packs', 'project', 'validation', 'features'], null);
     client.setQueryData(['feature-packs', 'project', 'job', 'packing-job'], job());
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeaturePacking project="project" configuration={configuration} configurations={[configuration]} onSelectVersion={() => {}} selectedPackIds={[]} onSelectedPackIdsChange={() => {}} /></QueryClientProvider>);
-    expect(html).toContain('Features only — skip packing');
-    expect(html).toContain('Features + new pack');
+    expect(html).not.toContain('Features only — skip packing');
+    expect(html).not.toContain('Features + new pack');
     expect(html).toContain('Optional packing');
-    expect(html).toContain('Features + existing pack');
-    expect(html).toContain('Validate feature contents');
+    expect(html).not.toContain('Features + existing pack');
+    expect(html).not.toContain('Validate feature contents');
     expect(html).not.toContain('Existing pack folder');
     expect(html).not.toContain('Destination folder');
-    expect(html).toContain('A job is already processing this version');
+    expect(html).toContain('data-stage-page="activity"');
     expect(html).toContain('Cancel job');
     expect(html).toContain('tmux attach -t hp-pack-example');
     expect(html).toContain('<details class="feature-pack-run-details">');
@@ -122,14 +122,15 @@ describe('feature preparation presentation', () => {
     client.clear();
   });
 
-  it('collapses historical jobs without presenting an old completed job as the current task', () => {
+  it('keeps historical jobs on the runs page without presenting an old job as the current task', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(['feature-packs', 'project'], { jobs: [job({ state: 'succeeded' })], artifacts: [], tmuxAvailable: true, formatAvailable: true, defaultOutputRoot: '/packs' });
     client.setQueryData(['feature-packs', 'project', 'validation', 'features'], report);
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeaturePacking project="project" configuration={configuration} configurations={[configuration]} onSelectVersion={() => {}} selectedPackIds={[]} onSelectedPackIdsChange={() => {}} /></QueryClientProvider>);
-    expect(html).toContain('Previous validation &amp; packing jobs (1)');
-    expect(html).toContain('<details class="feature-pack-history">');
-    expect(html).not.toContain('<details class="feature-pack-history" open');
+    expect(html).toContain('Runs &amp; results');
+    expect(html).toContain('1 jobs');
+    expect(html).toContain('data-stage-page="settings"');
+    expect(html).not.toContain('feature-pack-history');
     expect(html).not.toContain('aria-label="Current feature job"');
     expect(html).not.toContain('Training pack created');
     client.clear();

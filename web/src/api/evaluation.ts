@@ -13,10 +13,11 @@ export interface EvaluationInference {
 }
 
 export interface EvaluationSpec {
-  protocolId: string;
-  developmentFeatureBundleId: string;
+  protocolId?: string | null;
+  developmentFeatureBundleId?: string | null;
   datasetId: string;
-  featureBundleId: string;
+  datasetIds?: string[];
+  featureBundleId?: string | null;
   target: ProtocolSpec['target'] | null;
   eligibility: Condition[];
   patientIdentifiers: 'shared' | 'independent';
@@ -39,7 +40,7 @@ export interface EvaluationSummary {
 
 export interface EvaluationPreview {
   spec: EvaluationSpec;
-  target: ProtocolSpec['target'];
+  target: ProtocolSpec['target'] | null;
   summary: EvaluationSummary;
   coverage: {
     selectedSlideIds: string[];
@@ -72,8 +73,9 @@ export interface EvaluationCohort {
     kind: 'evaluation-cohort';
     datasetId: string;
     spec: EvaluationSpec;
-    target: ProtocolSpec['target'];
+    target: ProtocolSpec['target'] | null;
     summary: EvaluationSummary;
+    coverage?: Pick<EvaluationPreview['coverage'], 'selectedSlideIds'>;
     findings: Finding[];
   };
 }

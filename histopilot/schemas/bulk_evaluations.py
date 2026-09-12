@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from histopilot.schemas.evaluations import ConfigurationId
+from histopilot.schemas.evaluations import ConfigurationId, InferenceSettings
 from histopilot.schemas.workspace import RequestModel
 
 
@@ -13,6 +13,9 @@ class BulkEvaluationSelection(RequestModel):
     scope: Literal["all", "selected"] = "all"
     predictorIds: list[ConfigurationId] | None = Field(default=None, max_length=256)
     namePrefix: str = Field(default="Evaluation", min_length=1, max_length=60)
+    featureBundleId: ConfigurationId | None = None
+    inference: InferenceSettings | None = None
+    patientIdentifiers: Literal["shared", "independent"] | None = None
 
     @field_validator("namePrefix")
     @classmethod

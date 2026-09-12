@@ -1,4 +1,4 @@
-.setup-context { margin: 0 0 22px; padding: 14px 18px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfa; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.setup-context { margin: 0 0 22px; padding: 14px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--theme-canvas); color: var(--muted); font-size: 13px; line-height: 1.6; }
 .setup-context-flow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; }
 .setup-context-flow strong { margin-right: 5px; color: var(--ink); font-weight: 600; }
 .setup-context-flow > svg { flex-shrink: 0; }

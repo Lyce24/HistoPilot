@@ -61,7 +61,7 @@ describe('editable experiment batch plans', () => {
     expect(batchConfigurationCount({ ...plans[0].spec, mode: 'explicit', configurations: [recipe, legacy, { ...recipe, learningRate: 0.001 }] })).toBe(2);
   });
 
-  it('orders each batch from settings through compute and predictors before its single save action', () => {
+  it('separates each batch into configuration, training, compute and review pages while retaining form state', () => {
     const html = render();
     const editor = html.slice(html.indexOf('Add a training batch'));
     const sections = ['Start from a template', '>Batch name<', 'Parameter search &amp; repeats', 'aria-label="Settings"', 'Compute &amp; parallelism', 'Configure predictors', '>Add batch to plan<'];
@@ -69,6 +69,11 @@ describe('editable experiment batch plans', () => {
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
     expect(editor).not.toContain('Save predictor choices');
+    expect(html).toContain('aria-label="Batch configuration steps"');
+    expect(html).toContain('data-batch-step="1"');
+    expect(html).toContain('data-batch-step="2" hidden=""');
+    expect(html).toContain('data-batch-step="3" hidden=""');
+    expect(html).toContain('Continue to training settings');
   });
 
   it('keeps different saved batch predictor choices separate and visible when locked', () => {

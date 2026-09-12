@@ -33,7 +33,9 @@ describe('feature bundle preparation', () => {
     expect(html).toContain('Features only — skip packing');
     expect(html).toContain('Features + existing pack');
     expect(html).toContain('Features + new pack');
-    expect(html).toContain('Freeze this bundle');
+    expect(html).toContain('Continue to bundle review');
+    expect(html).toContain('data-stage-page="packing"');
+    expect(html).not.toContain('aria-label="Bundle review"');
     expect(html).toContain('as one immutable input');
     expect(html).toContain('A features-only bundle includes no pack.');
     expect(html).toContain('Review bundle');
