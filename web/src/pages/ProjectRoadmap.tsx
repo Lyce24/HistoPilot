@@ -8,12 +8,12 @@ export type Roadmap = ReturnType<typeof useRoadmap>;
 type Module = Roadmap['modules'][number];
 export const moduleIcons: Record<string, string> = {
   dataset: 'dataset', cohort: 'cohort', features: 'features', experiments: 'experiments',
-  'source-cv': 'evaluation', 'post-development': 'lock', selection: 'branch', predictor: 'lock',
+  'source-cv': 'evaluation', selection: 'experiments', predictor: 'experiments',
   'test-data': 'folder', evaluation: 'evaluation', reports: 'provenance',
   'clinical-utility': 'evaluation', interpretation: 'explorer',
 };
-export const completedModuleLabel = (id: string) => id === 'experiments' ? 'Completed runs available' : id === 'interpretation' ? 'Attention maps available' : id === 'clinical-utility' ? 'Analysis saved' : id === 'evaluation' ? 'Evaluation results available' : 'Complete & frozen';
-export const completedModuleAction = (id: string) => id === 'experiments' ? 'Review completed runs' : id === 'interpretation' ? 'Review attention maps' : id === 'clinical-utility' ? 'Review saved analysis' : id === 'evaluation' ? 'Review evaluation results' : 'Review frozen versions';
+export const completedModuleLabel = (id: string) => id === 'experiments' ? 'Experiment outputs available' : id === 'interpretation' ? 'Attention maps available' : id === 'clinical-utility' ? 'Analysis saved' : id === 'evaluation' ? 'Evaluation results available' : 'Complete & frozen';
+export const completedModuleAction = (id: string) => id === 'experiments' ? 'Review experiment outputs' : id === 'interpretation' ? 'Review attention maps' : id === 'clinical-utility' ? 'Review saved analysis' : id === 'evaluation' ? 'Review evaluation results' : 'Review frozen versions';
 export function ModuleStatus({ status, completedLabel = 'Complete & frozen' }: { status: Module['status']; completedLabel?: string }) {
   return <span className={`module-status status-${status}`}>
     <span aria-hidden="true" />

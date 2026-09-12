@@ -1,0 +1,66 @@
+[
+  {
+    "name": "Search modes, training and compute are grouped",
+    "passed": true
+  },
+  {
+    "name": "Advanced settings begin collapsed",
+    "passed": true
+  },
+  {
+    "name": "Desktop batch editor has no horizontal page overflow",
+    "passed": true
+  },
+  {
+    "name": "Fifteen configurations and three seeds produce forty-five groups",
+    "passed": true
+  },
+  {
+    "name": "Grid and training seeds save together without changing sibling batches",
+    "passed": true
+  },
+  {
+    "name": "Duplicate seeds block saving instead of changing the saved plan",
+    "passed": true
+  },
+  {
+    "name": "First custom configuration starts from the selected grid values",
+    "passed": true
+  },
+  {
+    "name": "An identical copied row does not inflate the training count",
+    "passed": true
+  },
+  {
+    "name": "Distinct custom settings update the count immediately",
+    "passed": true
+  },
+  {
+    "name": "Invalid values inside collapsed configurations reopen their groups and block save",
+    "passed": true
+  },
+  {
+    "name": "Explicit row edits preserve exact zero dropout and sibling settings",
+    "passed": true
+  },
+  {
+    "name": "Switching search modes retains custom row edits",
+    "passed": true
+  },
+  {
+    "name": "Mobile custom configuration editor has no horizontal overflow",
+    "passed": true
+  },
+  {
+    "name": "Submitted batches expose readable settings without editor controls",
+    "passed": true
+  },
+  {
+    "name": "All requests remain inside the fixture",
+    "passed": true
+  },
+  {
+    "name": "No browser page errors",
+    "passed": true
+  }
+]

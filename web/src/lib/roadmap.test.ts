@@ -63,35 +63,28 @@ function completedBatch() {
 }
 
 describe('project roadmap progress', () => {
-  it('counts frozen predictors independently and never treats evaluation plans as completed results', () => {
+  it('counts ready predictors as experiment outputs and never treats evaluation plans as completed results', () => {
     const predictor = { id: 'predictor-a', lifecycleState: 'active' } as RoadmapEvidence['predictors'][number];
     const record = { id: 'evaluation-a', lifecycleState: 'active', manifest: { status: 'planned' } } as RoadmapEvidence['modelEvaluations'][number];
     const roadmap = modules({ predictors: [predictor], modelEvaluations: [record] });
-    expect(roadmap['post-development'].status).toBe('complete');
-    expect(roadmap['post-development'].evidence).toBe('1 frozen predictor');
-    expect(roadmap.experiments.status).toBe('not-started');
+    expect(roadmap.experiments.status).toBe('complete');
+    expect(roadmap.experiments.evidence).toBe('1 ready predictor');
     expect(roadmap.evaluation.status).toBe('draft');
     expect(roadmap.evaluation.evidence).toBe('1 saved evaluation plan');
     expect(roadmap.evaluation.unlocked).toBe(true);
     const trashed = modules({ predictors: [{ ...predictor, lifecycleState: 'trashed' }], modelEvaluations: [{ ...record, lifecycleState: 'trashed' }] });
-    expect(trashed['post-development'].status).toBe('not-started');
+    expect(trashed.experiments.status).toBe('not-started');
     expect(trashed.evaluation.status).toBe('not-started');
   });
-  it('moves complete development evidence into a separate post-development gate without claiming a frozen predictor', () => {
+  it('keeps completed training distinct from predictor readiness inside Experiments', () => {
     const { batch, execution } = completedBatch();
     const live = modules({ batches: [batch], executions: [{ ...execution, status: 'running', runCounts: { ...execution.runCounts, completed: 2 } }] });
     expect(live.experiments.evidence).toBe('2/3 training runs completed · 1 active batch');
     expect(live.experiments.status).toBe('draft');
-    expect(live['post-development'].unlocked).toBe(true);
-    expect(live['post-development'].status).toBe('not-started');
     const complete = modules({ batches: [batch], executions: [execution] });
     expect(complete.experiments.evidence).toBe('1 completed development batch · 3/3 training runs completed');
     expect(complete.experiments.status).toBe('complete');
-    expect(complete['post-development'].unlocked).toBe(true);
-    expect(complete['post-development'].status).toBe('not-started');
-    expect(complete['post-development'].evidence).toBe('No frozen predictor');
-    expect(complete.evaluation.blockers).toContain('post-development');
-    expect(complete.evaluation.blockers).not.toContain('experiments');
+    expect(complete.evaluation.blockers).toContain('experiments');
   });
 
   it('requires a known complete batch with exact completed run membership, not partial candidates or inconsistent counts', () => {
@@ -114,35 +107,33 @@ describe('project roadmap progress', () => {
     const later = { ...execution, batchId: 'second-batch', status: 'running' as const, runCounts: { ...execution.runCounts, completed: 0 } };
     const roadmap = modules({ batches: [batch], executions: [execution, later], drafts: [draft('development-batch')] });
     expect(roadmap.experiments.status).toBe('complete');
-    expect(roadmap['post-development'].unlocked).toBe(true);
     expect(roadmap.evaluation.unlocked).toBe(true);
   });
 
-  it('links nine modules across four stages through clinical utility and interpretation', () => {
+  it('links eight modules across four stages through clinical utility and interpretation', () => {
     expect(ROADMAP_MODULES.map((module) => [module.id, module.phase])).toEqual([
       ['dataset', 'prepare'], ['cohort', 'prepare'], ['features', 'prepare'],
-      ['experiments', 'develop'], ['post-development', 'develop'],
+      ['experiments', 'develop'],
       ['test-data', 'evaluate'], ['evaluation', 'evaluate'],
       ['clinical-utility', 'insights'], ['interpretation', 'insights'],
     ]);
     expect(ROADMAP_CONNECTIONS).toEqual([
       { from: 'dataset', to: 'cohort' }, { from: 'dataset', to: 'features' },
       { from: 'cohort', to: 'experiments' }, { from: 'features', to: 'experiments' },
-      { from: 'experiments', to: 'post-development' },
-      { from: 'post-development', to: 'evaluation' }, { from: 'test-data', to: 'evaluation' },
+      { from: 'experiments', to: 'evaluation' }, { from: 'test-data', to: 'evaluation' },
       { from: 'evaluation', to: 'clinical-utility' }, { from: 'clinical-utility', to: 'interpretation' },
     ]);
     expect(ROADMAP_MODULES.find((module) => module.id === 'test-data')?.prerequisites).toEqual(['cohort']);
-    expect(ROADMAP_MODULES.find((module) => module.id === 'evaluation')?.prerequisites).toEqual(['post-development', 'test-data']);
+    expect(ROADMAP_MODULES.find((module) => module.id === 'evaluation')?.prerequisites).toEqual(['experiments', 'test-data']);
     expect(ROADMAP_MODULES.find((module) => module.id === 'clinical-utility')?.prerequisites).toEqual(['evaluation']);
     expect(ROADMAP_MODULES.find((module) => module.id === 'interpretation')?.prerequisites).toEqual(['clinical-utility']);
   });
   it('opens data first and gives test preparation a protocol prerequisite, without requiring completed models', () => {
     const roadmap = buildRoadmap(workspace());
-    expect(roadmap.filter((module) => module.unlocked).map((module) => module.id)).toEqual(['dataset', 'experiments', 'post-development', 'evaluation', 'clinical-utility', 'interpretation']);
+    expect(roadmap.filter((module) => module.unlocked).map((module) => module.id)).toEqual(['dataset', 'experiments', 'evaluation', 'clinical-utility', 'interpretation']);
     expect(roadmap.every((module) => module.status === 'not-started')).toBe(true);
-    expect(modules().evaluation.blockers).toEqual(['post-development', 'test-data']);
-    expect(roadmap).toHaveLength(9);
+    expect(modules().evaluation.blockers).toEqual(['experiments', 'test-data']);
+    expect(roadmap).toHaveLength(8);
   });
 
   it('counts saved clinical analyses and completed attention maps separately from plans', () => {
@@ -278,7 +269,7 @@ describe('project roadmap progress', () => {
     expect(roadmap['test-data'].status).toBe('complete');
     expect(roadmap['test-data'].unlocked).toBe(true);
     expect(roadmap.experiments.status).toBe('draft');
-    expect(roadmap.evaluation.blockers).toEqual(['post-development']);
+    expect(roadmap.evaluation.blockers).toEqual(['experiments']);
   });
 
   it('does not complete test preparation from a stale or unverified cohort', () => {

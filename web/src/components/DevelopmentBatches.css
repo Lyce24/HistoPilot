@@ -1,21 +1,21 @@
-.development-tabs { display: flex; gap: .35rem; flex-wrap: wrap; margin-bottom: 1.25rem; border-bottom: 1px solid var(--border); padding-bottom: .75rem; }
+.development-tabs { display: flex; gap: .35rem; flex-wrap: wrap; margin-bottom: 1.25rem; border-bottom: 1px solid var(--line); padding-bottom: .75rem; }
 .development-tabs button[aria-selected="true"] { background: var(--accent-soft, #e6f2ed); color: var(--accent-dark, #176b50); }
 .development-batches { display: grid; gap: 1.2rem; }
 .development-editor { border: 0; padding: 0; margin: 0 0 1rem; display: grid; gap: 1rem; min-width: 0; }
 .development-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: .85rem; }
 .development-check { display: flex; align-items: center; gap: .5rem; }
-.development-bag-mode { display: grid; align-content: start; gap: .6rem; border: 1px solid var(--border); border-radius: .5rem; min-width: 0; padding: .8rem; }
+.development-bag-mode { display: grid; align-content: start; gap: .6rem; border: 1px solid var(--line); border-radius: .5rem; min-width: 0; padding: .8rem; }
 .development-bag-mode legend { font-weight: 600; padding: 0 .2rem; }
 .development-bag-mode .label { margin-top: .25rem; }
 .development-bag-help { margin: 0; line-height: 1.5; }
 .development-bag-mode small { color: var(--text-muted, #64748b); line-height: 1.5; }
 .development-field-error { color: #b42318; line-height: 1.4; }
 .development-fields .field[aria-invalid="true"] { border-color: #b42318; }
-.development-recipe-row { border-bottom: 1px solid var(--border); padding-bottom: 1rem; display: grid; gap: .75rem; }
+.development-recipe-row { border-bottom: 1px solid var(--line); padding-bottom: 1rem; display: grid; gap: .75rem; }
 .development-count { line-height: 1.7; }
 .development-table { position: relative; overflow-x: auto; max-width: 100%; margin: .75rem 0; }
 .development-table table { border-collapse: collapse; width: 100%; text-align: left; font-variant-numeric: tabular-nums; }
-.development-table th, .development-table td { padding: .65rem .75rem; border-bottom: 1px solid var(--border); }
+.development-table th, .development-table td { padding: .65rem .75rem; border-bottom: 1px solid var(--line); }
 .development-table th { font-weight: 600; white-space: nowrap; }
 .development-table td { white-space: normal; }
 .development-table progress { accent-color: var(--accent, #087f8c); max-width: 100%; }
@@ -32,19 +32,82 @@
 .development-epoch { margin-top: .4rem; min-width: 8rem; font-size: .85em; }
 .development-epoch p { margin: .3rem 0; }
 .development-input-summary { margin: 0 0 1rem; color: var(--muted); }
-.development-resource-settings { display: grid; gap: .8rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+.development-resource-settings { display: grid; gap: .8rem; border-top: 1px solid var(--line); padding-top: 1rem; }
 .development-resource-settings h3 { margin: 0; font-size: 1rem; }
 .development-capacity { background: var(--accent-light, #eef6f2); border: 1px solid var(--line); border-radius: .6rem; padding: .85rem; }
 .development-capacity p { margin: .35rem 0; line-height: 1.5; }
 .development-capacity small { color: var(--muted); }
 .development-architecture summary > span { font-weight: 400; font-size: .85em; }
 .batch-plan-list { display: grid; gap: .75rem; }
-.batch-plan-card { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .75rem; padding: 1rem; border: 1px solid var(--border); border-radius: .7rem; min-width: 0; }
+.batch-plan-card { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .75rem; padding: 1rem; border: 1px solid var(--line); border-radius: .7rem; min-width: 0; }
 .batch-plan-card.is-editing { border-color: var(--accent); background: var(--accent-soft, #edf6f2); }
 .batch-plan-card h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
 .batch-plan-card p { margin: .35rem 0 0; font-size: .875rem; }
 .batch-plan-spec { width: 100%; min-width: 0; font-size: .875rem; }
-.batch-template-picker { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; gap: 1rem; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
+.batch-template-picker { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; gap: 1rem; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
 .batch-template-picker p { line-height: 1.5; }
 .development-telemetry { display: flex; flex-wrap: wrap; gap: .7rem 1.4rem; }
 @media (max-width: 650px) { .development-fields, .batch-template-picker { grid-template-columns: minmax(0, 1fr); } }
+
+/* Batch setup uses a short path through search, training and compute settings. */
+.batch-editor-section { display: grid; gap: 1rem; min-width: 0; }
+.batch-section-heading h3 { margin: 0; font-size: 1rem; font-weight: 650; }
+.batch-section-heading p { margin: .35rem 0 0; color: var(--muted); font-size: .85rem; line-height: 1.6; }
+.batch-name-field { max-width: 34rem; }
+.batch-configuration-modes { min-width: 0; padding: 0; margin: 0; border: 0; }
+.batch-configuration-modes legend { margin-bottom: .55rem; font-size: .8rem; font-weight: 600; }
+.batch-mode-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; }
+.batch-mode-option { display: flex; align-items: flex-start; gap: .6rem; min-width: 0; border: 1px solid var(--line); border-radius: .65rem; padding: .9rem; cursor: pointer; background: #fff; }
+.batch-mode-option input { margin-top: .15rem; accent-color: var(--accent); flex-shrink: 0; }
+.batch-mode-option strong, .batch-mode-option small { display: block; }
+.batch-mode-option strong { font-size: .85rem; line-height: 1.45; }
+.batch-mode-option small { margin-top: .25rem; color: var(--muted); font-size: .75rem; line-height: 1.5; }
+.batch-mode-option.is-selected { border-color: var(--accent); background: var(--accent-light); }
+.batch-mode-option:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.batch-grid-values { padding: 1rem; background: #f8f9fc; border: 1px solid var(--line); border-radius: .65rem; }
+.batch-grid-values .development-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.batch-grid-values p { margin: .65rem 0 0; font-size: .8rem; line-height: 1.6; }
+.batch-seeds-field { max-width: 34rem; }
+.batch-size-summary { display: grid; gap: .3rem; padding: .8rem 1rem; border-left: 3px solid var(--accent); background: var(--accent-light); border-radius: 0 .45rem .45rem 0; font-size: .8rem; line-height: 1.6; }
+.batch-size-summary span { color: var(--muted); }
+.batch-recipe-settings { display: grid; gap: .65rem; min-width: 0; }
+.batch-recipe-settings > .batch-editor-section { padding-top: .4rem; padding-bottom: .4rem; }
+.batch-primary-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.batch-bag-options { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; }
+.development-bag-mode > .label { max-width: 18rem; }
+.batch-settings-details.setup-details { margin: 0; padding: 0 1rem; }
+.batch-settings-details > summary { line-height: 1.5; }
+.batch-settings-details > summary small { margin-left: .8rem; font-size: .75rem; font-weight: 400; color: var(--muted); }
+.batch-settings-details > .development-fields, .batch-settings-details > .label { margin-bottom: 1rem; }
+.batch-settings-details > p { font-size: .8rem; line-height: 1.6; }
+.batch-stopping-settings { padding-top: 1rem; border-top: 1px solid var(--line); }
+.batch-stopping-settings > .development-check { margin-bottom: .85rem; font-size: .85rem; }
+.batch-custom-configurations { display: grid; gap: .75rem; min-width: 0; }
+.batch-custom-configurations > .btn { justify-self: start; }
+.batch-configuration-card { min-width: 0; border: 1px solid var(--line); border-radius: .65rem; }
+.development-batches .batch-configuration-card > summary { padding: 1rem; cursor: pointer; font-size: .9rem; line-height: 1.6; }
+.batch-configuration-card[open] > summary { border-bottom: 1px solid var(--line); background: #f8f9fc; border-radius: .65rem .65rem 0 0; }
+.batch-configuration-card > summary > .batch-recipe-summary { display: flex; margin: .45rem 0 0; }
+.batch-configuration-body { padding: 1rem; display: grid; gap: 1rem; }
+.batch-configuration-body > .text-button { justify-self: start; }
+.batch-recipe-summary { display: inline-flex; flex-wrap: wrap; gap: .35rem 1rem; color: var(--muted); font-size: .78rem; font-weight: 400; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.batch-recipe-summary > span { white-space: nowrap; }
+.batch-recipe-summary > strong { font-weight: 600; color: var(--ink); }
+.batch-editor-actions { border-top: 1px solid var(--line); padding-top: 1rem; }
+.batch-plan-settings { padding: .85rem 0 0; }
+.batch-settings-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 0 0 .85rem; }
+.batch-settings-summary dt { margin-bottom: .3rem; font-size: .75rem; font-weight: 600; color: var(--muted); }
+.batch-settings-summary dd { margin: 0; font-size: .85rem; overflow-wrap: anywhere; line-height: 1.5; }
+.batch-saved-recipe { display: grid; gap: .35rem; border-top: 1px solid var(--line); padding-top: .65rem; }
+.batch-plan-notes { white-space: pre-wrap; overflow-wrap: anywhere; }
+.batch-exact-settings { margin-top: 1rem; color: var(--muted); }
+.batch-exact-settings summary { cursor: pointer; }
+@media (max-width: 900px) { .batch-mode-options { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 650px) {
+  .batch-primary-fields, .batch-grid-values .development-fields, .batch-settings-summary { grid-template-columns: minmax(0, 1fr); }
+  .batch-settings-details > summary small { display: block; margin: .25rem 0 0 1rem; }
+  .batch-configuration-body { padding: .75rem; }
+}
+.batch-saved-recipe > summary { cursor: pointer; line-height: 1.5; }
+.batch-saved-recipe > summary > .batch-recipe-summary { display: flex; margin-top: .35rem; }
+.batch-saved-recipe > .batch-settings-summary { margin-top: 1rem; }

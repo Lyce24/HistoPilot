@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import DevelopmentBatches, { ExperimentBatchOverview, batchTemplate, updateBatchPlans } from './DevelopmentBatches';
+import DevelopmentBatches, { BatchPlanSettings, ExperimentBatchOverview, batchConfigurationCount, batchTemplate, updateBatchPlans } from './DevelopmentBatches';
+import { defaultRecipe } from '../api/development';
 import type { ExperimentBatch, ModelExperiment } from '../api/experiments';
 
 const inputs = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native' as const, packArtifactId: null };
@@ -25,6 +26,36 @@ describe('editable experiment batch plans', () => {
     expect(html).not.toContain('Launch batch');
     expect(html).not.toContain('Save draft');
     expect(html).not.toContain('Clone batch');
+  });
+
+  it('organizes search, training and compute with accessible mode choices and no invented fold count', () => {
+    const html = render();
+    expect(html).toContain('<legend>Configuration mode</legend>');
+    expect(html).toMatch(/<input(?=[^>]*value="single")(?=[^>]*checked="")[^>]*>/);
+    expect(html).toContain('Custom configurations');
+    expect(html).toContain('Parameter search &amp; repeats');
+    expect(html).toContain('Compute &amp; parallelism');
+    expect(html).toContain('1 configuration × 1 training seed = 1 training group');
+    expect(html).toContain('Check batch to confirm the total fold runs.');
+    expect(html).not.toContain('5 planned runs');
+  });
+
+  it('counts a fifteen-configuration grid with three training seeds before multiplying by folds', () => {
+    const spec = { ...plans[1].spec, trainingSeeds: [42, 43, 44], grid: { learningRates: [0.0001, 0.0002, 0.0003, 0.0004, 0.0005], weightDecays: [0, 0.0001, 0.001], maxEpochs: [100] } };
+    expect(batchConfigurationCount(spec)).toBe(15);
+    const html = renderToStaticMarkup(<BatchPlanSettings spec={spec} />);
+    expect(html).toContain('Parameter grid · 15 configurations');
+    expect(html).toContain('42, 43, 44');
+    expect(html).toContain('ABMIL · Shared training settings');
+    expect(html).toContain('Lowest validation loss');
+    expect(html).toContain('Patience 15');
+    expect(html).not.toContain('225 predictors');
+  });
+
+  it('matches backend deduplication for explicit recipes including omitted model defaults', () => {
+    const recipe = defaultRecipe();
+    const { embedDim: _embedding, attentionDim: _attention, ...legacy } = recipe;
+    expect(batchConfigurationCount({ ...plans[0].spec, mode: 'explicit', configurations: [recipe, legacy, { ...recipe, learningRate: 0.001 }] })).toBe(2);
   });
 
   it('protects configuration actions in running and finished experiments even without a readOnly prop', () => {

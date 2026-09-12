@@ -3,12 +3,33 @@ import type { BatchManifest, DevelopmentBatchSpec, FrozenBatch, TrainingExecutio
 import type { LifecycleState } from './lifecycle';
 import type { MILExperimentSpec } from './mil';
 import type { ScientificDraft } from './scientific';
+import type { ComputeExecution, PredictorManifest, PredictorMethod } from './predictors';
 
 export interface ExperimentBatch extends FrozenBatch {
   key: string; name: string; state: LifecycleState; status: string;
   inputSnapshot?: Record<string, unknown>; execution?: TrainingExecution | null;
 }
 export type ExperimentStage = 'planning' | 'running' | 'finished';
+export interface ExperimentPredictorPolicy {
+  method: 'skip' | 'refit' | 'ensemble' | 'both';
+  refitPercentile: number | null;
+}
+export interface ExperimentPredictorItem {
+  key: string;
+  source: { experimentId: string; batchId: string; candidateId: string; trainingSeed: number; splitSeed: number };
+  method: PredictorMethod; configurationNumber: number; foldCount: number; runIds: string[];
+  status: 'waiting' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  recordId: string | null; predictorId: string | null;
+  epochBudget: PredictorManifest['epochBudget'] | null; execution: ComputeExecution | null;
+  error: { code: string; message: string } | null;
+}
+export interface ExperimentPredictorExecution {
+  status: 'queued' | 'waiting' | 'running' | 'cancelling' | 'completed' | 'cancelled' | 'attention' | 'interrupted';
+  counts: { total: number; ensemble: number; refit: number; completed: number; waiting: number; active: number; failed: number; cancelled: number };
+  items?: ExperimentPredictorItem[];
+  error: { code: string; message: string } | null; updatedAt: string | null; sessionName: string | null; logPath: string | null;
+  retryable: boolean; cancellable: boolean;
+}
 export interface ExperimentBatchPlan { id: string; spec: DevelopmentBatchSpec }
 export interface ExperimentSubmission {
   operationId: string; expectedRevision: number; submittedAt: string;
@@ -24,6 +45,8 @@ export interface ModelExperiment {
   predictors?: { id: string; method: 'ensemble' | 'refit'; batchId: string; candidateId: string; trainingSeed: number; splitSeed: number; lifecycleState: LifecycleState }[];
   stage?: ExperimentStage; configurationLocked?: boolean;
   batchPlans?: ExperimentBatchPlan[]; submission?: ExperimentSubmission | null;
+  predictorPolicy?: ExperimentPredictorPolicy | null;
+  predictorExecution?: ExperimentPredictorExecution | null;
 }
 export interface ExperimentBatchSummary extends Omit<ExperimentBatch, 'manifest' | 'inputSnapshot' | 'execution'> {
   manifest: Pick<BatchManifest, 'kind' | 'version' | 'summary'> & {
@@ -36,6 +59,7 @@ export interface ModelExperimentSummary extends Omit<ModelExperiment, 'batches' 
 }
 export interface ExperimentInput {
   name: string; notes?: string; tags?: string[]; inputs?: MILExperimentSpec | null;
+  predictorPolicy?: ExperimentPredictorPolicy;
 }
 export interface CreateExperimentInput extends ExperimentInput { sourceExperimentId?: string; operationId: string }
 export interface UpdateExperimentInput extends ExperimentInput { expectedRevision: number; batchPlans?: ExperimentBatchPlan[] }
@@ -50,6 +74,8 @@ export const experiments = {
     request<ModelExperiment>(`${prefix(project)}/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   submit: (project: string, id: string, input: { expectedRevision: number; operationId: string }) =>
     request<ModelExperiment>(`${prefix(project)}/${encodeURIComponent(id)}/submit`, { method: 'POST', body: JSON.stringify(input) }),
+  predictorAction: (project: string, id: string, action: 'resume' | 'cancel', operationId: string) =>
+    request<ExperimentPredictorExecution>(`${prefix(project)}/${encodeURIComponent(id)}/predictors/${action}`, { method: 'POST', body: JSON.stringify({ operationId }) }),
 };
 /** Prefer the server's lifecycle; derive a conservative state for older saved responses. */
 export function experimentStage(item: Pick<ModelExperiment, 'stage' | 'status' | 'configurationLocked'>): ExperimentStage {

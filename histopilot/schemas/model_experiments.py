@@ -1,12 +1,27 @@
 """Typed commands for persistent model-development records, before inputs exist."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import Field, StrictInt, field_validator
+from pydantic import Field, StrictInt, field_validator, model_validator
 
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.schemas.workspace import RequestModel
+
+
+class ExperimentPredictorPolicy(RequestModel):
+    method: Literal["skip", "ensemble", "refit", "both"] = "ensemble"
+    refitPercentile: float | None = Field(
+        default=None, ge=1, le=100, allow_inf_nan=False, strict=True
+    )
+
+    @model_validator(mode="after")
+    def chosen_epoch_policy(self):
+        if self.method in {"refit", "both"} and self.refitPercentile is None:
+            raise ValueError("Choose the best-checkpoint epoch percentile for refit training.")
+        if self.method in {"skip", "ensemble"} and self.refitPercentile is not None:
+            raise ValueError("This predictor choice does not use a refit epoch percentile.")
+        return self
 
 
 class ExperimentValues(RequestModel):
@@ -14,6 +29,7 @@ class ExperimentValues(RequestModel):
     notes: str = Field(default="", max_length=10000)
     tags: list[str] = Field(default_factory=list, max_length=32)
     inputs: MILInputSpec | None = None
+    predictorPolicy: ExperimentPredictorPolicy = Field(default_factory=ExperimentPredictorPolicy)
 
     @field_validator("name")
     @classmethod

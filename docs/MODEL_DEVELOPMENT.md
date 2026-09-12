@@ -1,6 +1,6 @@
 # Experiments, predictors and evaluations
 
-The current Experiments UI and submission rules are described in [experiment lifecycle](EXPERIMENT_LIFECYCLE.md). This document describes ownership across the broader application; the Experiments workspace itself displays only experiment planning, runs and results.
+The current Experiments UI and submission rules are described in [experiment lifecycle](EXPERIMENT_LIFECYCLE.md). This document describes ownership across the broader application; the Experiments workspace includes predictor planning, automatic creation and ready outputs alongside development runs and results.
 
 The workflow continues into **04 Clinical insights**: completed evaluations feed **Clinical utility**, and refit or ensemble predictors feed **Model interpretation**. Reports preserve evaluation lineage; attention studies can use the same lineage or arbitrary compatible slides. See [Clinical insights](CLINICAL_INSIGHTS.md) for statistics, coordinate alignment, full-bag attention, viewing dependencies and exports.
 
@@ -41,12 +41,11 @@ Predictor identity is unique per `(experimentId, batchId, candidateId, trainingS
 | 01 Prepare | Datasets | Import slide/patient metadata and save dataset versions. |
 | 01 Prepare | Targets & splits | Select development data, define labels, and create development folds. No external test data. |
 | 01 Prepare | Slide features | Register or extract features, check coverage, and create verified bundles. |
-| 02 Develop | Experiments | Create experiments, compare inputs, configure batches, and inspect runs/results. |
-| 02 Develop | Build predictors | Select configuration/seed groups and build ensembles, refits, or Both. |
+| 02 Develop | Experiments | Plan inputs, batches and Skip/Refit/Ensemble/Both outputs; submit once, track folds/refits, then review results and ready predictors. |
 | 03 Evaluate | Test cohorts | Select test records and inference settings, without training splits. |
 | 03 Evaluate | Evaluate models | Evaluate selected or all compatible predictors on a reviewed test cohort, then inspect/export each result. |
 
-**Build predictors** replaces “Post-development freeze”: it describes both available actions, including actual refit training. “Save plan” saves immutable settings; “Train” or “Run” starts computation; “Publish predictor” registers verified weights. Existing hash routes and API paths remain compatible; `#build-predictors`, `#predictors`, `#test-cohorts` and `#evaluate-models` are also accepted. Raw record IDs remain in saved inputs, URLs, tooltips and exports; lists show compact IDs and wrap long text inside table cells.
+Predictor creation is part of Experiments. The roadmap connects Experiments directly to Evaluate models. Legacy predictor hash routes remain recognized: scoped links open the source experiment, and historical refit jobs retain a hidden recovery view. Raw record IDs remain in saved inputs, URLs, tooltips and exports; lists show compact IDs and wrap long text inside table cells.
 
 ## Experiment workspace
 
@@ -55,8 +54,8 @@ Predictor identity is unique per `(experimentId, batchId, candidateId, trainingS
 - Select two to four experiments to compare, choose a baseline and a saved batch within each, then inspect all values or differences only. Comparison includes data/protocol/features, loading, target/split definitions, every recipe field, seeds and resource settings. Different datasets or split plans stay visible; scores from different cohorts must not be interpreted as controlled comparisons.
 - Open an experiment for its own inputs and batches. There is no global “latest batch” fallback. If multiple batches exist, select one explicitly.
 - Batch display names can be reused across experiments. Submission generates distinct publication identities for each owner and plan; existing frozen tags remain unchanged. Current training capability is supplied by the service, independently of capability flags stored in older immutable plans.
-- Inputs and saved batch recipes are editable only during Planning. Submission locks both before workers launch. Already frozen batches retain their original experiment revision, exact input IDs/hashes, recipes, resources and split memberships. Renaming an experiment cannot move its runs or change its frozen scientific settings.
-- Historical unowned batch plans and saved input drafts appear as read-only legacy records without rewriting their manifests or worker archives. During creation, selecting an experiment as a template copies its inputs and recipes into an editable new plan; historical runs stay with their original record.
+- Inputs, saved batch recipes and predictor choices are editable only during Planning. Submission locks all three before workers launch. Already frozen batches retain their original experiment revision, exact input IDs/hashes, recipes, resources and split memberships. Renaming an experiment cannot move its runs or change its frozen scientific settings.
+- Historical unowned batch plans and saved input drafts appear as read-only legacy records without rewriting their manifests or worker archives. During creation, selecting an experiment as a template copies its inputs, recipes and predictor choices into an editable new plan; historical runs stay with their original record.
 
 Registry responses use compact summaries. Full snapshots and per-run progress are loaded for opened experiments and selected comparisons, rather than transmitted for every record on each table refresh.
 
@@ -67,7 +66,7 @@ Both methods start with **k-fold ABMIL** results: one complete set of folds for 
 - **Fold ensemble:** publish the existing best fold checkpoints. Inference averages their per-class probabilities. Checkpoints are loaded one at a time to limit peak VRAM.
 - **Refit on all development data:** save a reviewed plan, train one fresh model, then publish its completed checkpoint. The selected recipe and seed carry over. Every development slide is included exactly once in the training dataset; validation, assessment and external test loaders are absent during refit.
 
-Select multiple configuration/seed rows and choose **Both** to publish each ensemble and create its corresponding refit training plan in one reviewed action. The review distinguishes new records from reusable records and shows each refit epoch budget. Reusing a refit retains its existing epoch policy; changing the requested percentile does not replace it. Stable operation receipts preserve successful items if submission is interrupted. Creating a refit plan does not start training: the refit table exposes train, cancel, resume and publish actions for individual plans and eligible selected plans.
+Choose Skip, Refit, Ensemble or Both in the experiment before submission. Both creates one ensemble and one refit for every configuration/training-seed/split-seed group across all batches. Refits train and publish automatically after the complete source batch finishes; a durable coordinator persists the reviewed request and stable operation receipts before dispatch. Refits run sequentially within each experiment using the batch resource policy and shared admission leases. A failed coordinator can resume without rebuilding completed predictors. Historical experiments lacking a submitted policy retain explicit refit recovery controls and never start automatic jobs.
 
 ### Refit epoch budget
 
@@ -75,7 +74,7 @@ Choose median (P50), P75, P90, maximum (P100), or a custom percentile from 1 thr
 
 Legacy runs can recover the exact best epoch from a complete validation history matching the checkpoint-selection metric. Missing evidence blocks refit; the stopped epoch count is never substituted. Refit trains for the fixed budget with no early stopping. Cosine schedules use that budget, and warmup is bounded to fit it. The source recipe remains recorded.
 
-A saved refit plan inherits the batch resource policy, restricted to one model and at most one GPU. Launching, cancelling, resuming and publishing are separate actions. Resume preserves data, recipe, resources, runtime versions and pinned worker code. Incomplete epochs replay from the last complete checkpoint. Publication requires the final checkpoint, matching receipt and stopped worker process group.
+A saved refit plan inherits the batch resource policy, restricted to one model and at most one GPU. The experiment coordinator launches and publishes automatically; cancelling or resuming the experiment’s predictor work preserves the frozen policy. Resume preserves data, recipe, resources, runtime versions and pinned worker code. Incomplete epochs replay from the last complete checkpoint. Publication requires the final checkpoint, matching receipt and stopped worker process group.
 
 Publication uses the lifecycle lock, fresh evidence and preview hash. Identical retries return the original record. Published predictors prevent launch/resume of their source batch so its checkpoint evidence remains unchanged. Both methods retain their experiment and input history through archive/restore.
 
@@ -83,7 +82,7 @@ Publication uses the lifecycle lock, fresh evidence and preview hash. Identical 
 
 Choose an ensemble or refit predictor and a compatible test cohort, review the inputs, save the plan, then select **Run evaluation**. Test cohorts are prepared in 03 Evaluate with no new splits. Each predictor can have multiple evaluation records, including evaluations on the same test cohort for comparing the refit and ensemble.
 
-For a cohort-wide comparison, select a test cohort and **all active predictors** or an explicit subset. Review lists each compatible predictor and each blocked reason before **Run all compatible predictors**. The submitted request fixes the reviewed predictor IDs; predictors created afterward are excluded. Changes to reviewed inputs require another review. Each request creates distinct evaluation records, while an identical retry continues partial submission without duplicating jobs. Batch history keeps each predictor's experiment, configuration and seeds alongside its own job and result.
+For a cohort-wide comparison, select a test cohort and **all shown predictors** or an explicit subset. Source experiment, method and search filters organize the available ready predictors. Review lists each compatible predictor and each blocked reason before **Run all compatible predictors**. The submitted request fixes the reviewed predictor IDs; predictors created afterward are excluded. Changes to reviewed inputs require another review. Each request creates distinct evaluation records, while an identical retry continues partial submission without duplicating jobs. Batch history keeps each predictor's experiment, configuration and seeds alongside its own job and result.
 
 Cancel an evaluation batch to prevent remaining submissions and request cancellation of its active jobs. Completed results stay intact, and cancellation remains pending while workers stop. Retry failed or interrupted evaluations through their individual controls; replaying a batch submission does not automatically restart a failed compute attempt.
 

@@ -116,7 +116,7 @@ class CleanupService:
         compute=None,
         evaluation_batches=None,
     ):
-        self.store = store
+        self.store, self.filesystem = store, filesystem
         self.metadata = LifecycleStore(store.folder, store.project_id)
         self.project_name = project_name
         self.training = training or TrainingService(store, filesystem)
@@ -168,6 +168,30 @@ class CleanupService:
             )
             if record["payload"].get("type") == "model-experiment":
                 items[key]["configurationLocked"] = bool(record["payload"].get("submission"))
+                submission = record["payload"].get("submission") or {}
+                policy = submission.get("predictorPolicy")
+                if policy and policy["method"] != "skip":
+                    from histopilot.application.experiment_predictors import (
+                        ExperimentPredictorService,
+                    )
+
+                    coordinator = ExperimentPredictorService(self.store, self.filesystem)
+                    execution = coordinator.status(record["id"], summary=True)
+                    if execution:
+                        _plan, coordinator_state = coordinator._read(record["id"])
+                        session = coordinator_state.get("sessionName")
+                        alive = _confirmed_live(coordinator_state.get("process")) or bool(
+                            session and coordinator.executor.running(session)
+                        )
+                        status = {
+                            "waiting": "queued",
+                            "cancelling": "running",
+                            "attention": "failed",
+                        }.get(execution["status"], execution["status"])
+                        self._job(items[key], status, alive, execution["status"] == "cancelling")
+                        # Cancellation here would also need to choose which fold
+                        # batches to stop. The experiment owns that explicit UI.
+                        items[key]["job"]["cancellable"] = False
             else:
                 spec = record["payload"].get("spec")
                 owner = record["payload"].get("experimentId") or (

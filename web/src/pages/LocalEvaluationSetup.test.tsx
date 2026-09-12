@@ -48,7 +48,7 @@ describe('later test cohort setup', () => {
       expect(html).toContain('while models are being developed');
       expect(html).toContain('import and freeze it in Data');
       expect(html).toContain('A trained model is not required to prepare one.');
-      expect(html).toContain('choose an ensemble or refit predictor in Evaluate models');
+      expect(html).toContain('choose ready predictors from your experiments in Evaluate models');
       expect(html).not.toContain('Cross-validation folds');
       expect(html).not.toContain('Split seed');
       expect(html).not.toContain('Start inference');

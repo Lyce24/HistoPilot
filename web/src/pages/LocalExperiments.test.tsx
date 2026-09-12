@@ -102,6 +102,7 @@ describe('MIL experiment loading ownership', () => {
     expect(experimentRoute('#experiments')).toEqual({ id: '', tab: 'setup' });
     expect(experimentRoute('#experiments?experiment=one%2Ftwo&tab=runs')).toEqual({ id: 'one/two', tab: 'runs' });
     expect(experimentRoute('#experiments?experiment=one&tab=inputs')).toEqual({ id: 'one', tab: 'setup' });
+    expect(experimentRoute('#experiments?experiment=one&tab=predictors')).toEqual({ id: 'one', tab: 'results' });
     expect(experimentRoute('#source-cv', 'results')).toEqual({ id: '', tab: 'results' });
   });
 

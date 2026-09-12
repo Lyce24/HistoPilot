@@ -10,10 +10,12 @@ import { Badge, ErrorNotice, Panel } from './ui';
 import { Findings, SavedNotice } from './ScientificUI';
 import { downloadJSON } from '../lib/download';
 import { sameJSON } from '../lib/json';
+import { plannedConfigurationCount } from '../lib/experimentPredictors';
 import './DevelopmentBatches.css';
 import DevelopmentExecution from './DevelopmentExecution';
 import NumericField, { reportEditorValidity } from './NumericField';
 import TrainingCapacity from './TrainingCapacity';
+import BatchNumberList, { validateBatchNumberList } from './BatchNumberList';
 
 export type DevelopmentTab = 'setup' | 'batches' | 'runs' | 'results';
 export const developmentTabs: { id: DevelopmentTab; label: string }[] = [
@@ -48,44 +50,106 @@ export function RecipeFields({ value, onChange, gridMode = false }: { value: Tra
   const resolved = withRecipeDefaults(value);
   const bagModeId = useId();
   const [sampledBagSize, setSampledBagSize] = useState(value.bagSize ?? 4096);
-  return <><div className="development-fields">
-    {!gridMode ? <>
-    <NumericField label="Learning rate" value={value.learningRate} integer={false} min={0} minExclusive onChange={(learningRate) => onChange({ ...value, learningRate })} />
-    <NumericField label="Weight decay" value={value.weightDecay} integer={false} min={0} onChange={(weightDecay) => onChange({ ...value, weightDecay })} />
-    <NumericField label="Maximum epochs" value={value.maxEpochs} min={1} max={100000} onChange={(maxEpochs) => onChange({ ...value, maxEpochs })} />
-    </> : null}
-    <NumericField label="Batch size" value={value.batchSize} min={1} max={4096} onChange={(batchSize) => onChange({ ...value, batchSize })} />
-    <fieldset className="development-bag-mode"><legend>Training bag</legend>
-      <label className="development-check"><input type="radio" name={bagModeId} checked={value.bagSize !== null} onChange={() => onChange({ ...value, bagSize: sampledBagSize })} /> Sample patches per bag</label>
-      <label className="development-check"><input type="radio" name={bagModeId} checked={value.bagSize === null} onChange={() => { if (value.bagSize !== null) setSampledBagSize(value.bagSize); onChange({ ...value, bagSize: null }); }} /> Use whole bag for training</label>
-      {value.bagSize === null ? <p className="development-bag-help">Train with every available patch in each slide. No patch sampling is applied. Larger bags require more memory.</p>
-        : <NumericField label="Patches per bag" value={value.bagSize} min={1} max={1000000} onChange={(bagSize) => onChange({ ...value, bagSize })} />}
-      <small>Validation and assessment always use whole bags.</small>
-    </fieldset>
-    <NumericField label="Early-stopping patience" value={value.patience} min={1} max={10000} disabled={!value.earlyStopping} onChange={(patience) => onChange({ ...value, patience })} />
-    <label className="label">Checkpoint selection<select className="field" value={value.checkpointMetric} onChange={(e) => onChange({ ...value, checkpointMetric: e.target.value as TrainingRecipe['checkpointMetric'] })}><option value="validation_loss">Lowest validation loss</option><option value="validation_auroc">Highest validation AUROC</option><option value="validation_accuracy">Highest validation accuracy</option></select></label>
-    <label className="development-check"><input type="checkbox" checked={value.earlyStopping} onChange={(e) => onChange({ ...value, earlyStopping: e.target.checked })} /> Use early stopping</label>
-  </div><details className="development-architecture setup-details"><summary>Advanced model &amp; training settings <span className="muted">· ABMIL · {resolved.precision === '32-true' ? 'FP32' : resolved.precision} · {resolved.lrScheduler === 'cosine' ? 'Cosine learning rate' : 'Constant learning rate'}</span></summary>
-  <div className="development-fields">
-    <label className="label">Model<select className="field" value={value.model} onChange={(e) => onChange({ ...value, model: e.target.value })}><option value="abmil">ABMIL</option>{value.model !== 'abmil' ? <option value={value.model} disabled>{value.model} (unavailable)</option> : null}</select></label>
-    <label className="label">Optimizer<select className="field" value={value.optimizer} onChange={(e) => onChange({ ...value, optimizer: e.target.value as TrainingRecipe['optimizer'] })}><option value="adamw">AdamW</option><option value="adam">Adam</option><option value="sgd">SGD</option></select></label>
-    <label className="label">Precision<select className="field" value={resolved.precision} onChange={(e) => onChange({ ...value, precision: e.target.value as TrainingRecipe['precision'] })}><option value="32-true">FP32 (standard)</option><option value="16-mixed">FP16 mixed (CUDA)</option><option value="bf16-mixed">BF16 mixed (supported device)</option></select><small>Mixed precision can reduce GPU memory use. Device support is checked before training.</small></label>
-    <NumericField label="Accumulate batches" value={resolved.accumulateGradBatches!} min={1} max={4096} onChange={(accumulateGradBatches) => onChange({ ...value, accumulateGradBatches })} />
-    <NumericField label="Gradient clipping norm" value={resolved.gradientClipNorm!} min={0} integer={false} onChange={(gradientClipNorm) => onChange({ ...value, gradientClipNorm })} />
-    <label className="label">Learning-rate schedule<select className="field" value={resolved.lrScheduler} onChange={(e) => onChange({ ...value, lrScheduler: e.target.value as TrainingRecipe['lrScheduler'], warmupEpochs: e.target.value === 'none' ? 0 : resolved.warmupEpochs })}><option value="none">Constant learning rate</option><option value="cosine">Cosine decay</option></select></label>
-    {resolved.lrScheduler === 'cosine' ? <>
-      <NumericField label="Warmup epochs" value={resolved.warmupEpochs!} min={0} max={gridMode ? 99999 : value.maxEpochs - 1} onChange={(warmupEpochs) => onChange({ ...value, warmupEpochs })} />
-      <NumericField label="Final LR fraction" value={resolved.finalLrFraction!} min={0} minExclusive max={1} integer={false} onChange={(finalLrFraction) => onChange({ ...value, finalLrFraction })} />
-    </> : null}
-    <NumericField label="Minimum training epochs" value={resolved.minEpochs!} min={1} max={gridMode ? 100000 : value.maxEpochs} onChange={(minEpochs) => onChange({ ...value, minEpochs })} />
-    <NumericField label="Early-stopping minimum improvement" value={resolved.earlyStoppingMinDelta!} min={0} integer={false} disabled={!value.earlyStopping} onChange={(earlyStoppingMinDelta) => onChange({ ...value, earlyStoppingMinDelta })} />
-  </div>
-  <p className="muted">Gradient clipping 0 disables clipping. Accumulation combines several batches per optimizer update. Minimum epochs delay stopping; the best validation checkpoint can still come from an earlier epoch.</p>
-  <div className="development-fields">
-    {([['embedDim', 'Embedding dimensions', 1], ['attentionDim', 'Attention dimensions', 1], ['numFcLayers', 'Fully connected layers', 1], ['dropout', 'Dropout', 0], ['inputDropout', 'Input dropout', 0]] as const).map(([key, label, min]) => <NumericField key={key} label={label} value={resolved[key]!} min={min} max={key === 'dropout' || key === 'inputDropout' ? 1 : key === 'numFcLayers' ? 8 : 8192} maxExclusive={key === 'dropout' || key === 'inputDropout'} integer={key !== 'dropout' && key !== 'inputDropout'} onChange={(number) => onChange({ ...value, [key]: number })} />)}
-    <label className="development-check"><input type="checkbox" checked={resolved.gatedAttention} onChange={(e) => onChange({ ...value, gatedAttention: e.target.checked })} /> Gated attention</label>
-    <label className="development-check"><input type="checkbox" checked={resolved.gradientCheckpointing} onChange={(e) => onChange({ ...value, gradientCheckpointing: e.target.checked })} /> Gradient checkpointing</label>
-  </div></details></>;
+  return <div className="batch-recipe-settings">
+    <section className="batch-editor-section" aria-label={gridMode ? 'Shared training settings' : 'Training settings'}>
+      <div className="batch-section-heading"><h3>{gridMode ? 'Shared training settings' : 'Training settings'}</h3><p>{gridMode ? 'Applied to every combination in the parameter grid.' : 'The model and settings used for each fold.'}</p></div>
+      <div className="development-fields batch-primary-fields">
+        <label className="label">Model<select className="field" value={value.model} onChange={(e) => onChange({ ...value, model: e.target.value })}><option value="abmil">ABMIL</option>{value.model !== 'abmil' ? <option value={value.model} disabled>{value.model} (unavailable)</option> : null}</select></label>
+        {!gridMode ? <>
+          <NumericField label="Learning rate" value={value.learningRate} integer={false} min={0} minExclusive onChange={(learningRate) => onChange({ ...value, learningRate })} />
+          <NumericField label="Weight decay" value={value.weightDecay} integer={false} min={0} onChange={(weightDecay) => onChange({ ...value, weightDecay })} />
+          <NumericField label="Maximum epochs" value={value.maxEpochs} min={1} max={100000} onChange={(maxEpochs) => onChange({ ...value, maxEpochs })} />
+        </> : null}
+        <NumericField label="Batch size" value={value.batchSize} min={1} max={4096} onChange={(batchSize) => onChange({ ...value, batchSize })} />
+      </div>
+      <fieldset className="development-bag-mode"><legend>Training bag</legend>
+        <div className="batch-bag-options">
+          <label className="development-check"><input type="radio" name={bagModeId} checked={value.bagSize !== null} onChange={() => onChange({ ...value, bagSize: sampledBagSize })} /> Sample patches per bag</label>
+          <label className="development-check"><input type="radio" name={bagModeId} checked={value.bagSize === null} onChange={() => { if (value.bagSize !== null) setSampledBagSize(value.bagSize); onChange({ ...value, bagSize: null }); }} /> Use whole bag for training</label>
+        </div>
+        {value.bagSize === null ? <p className="development-bag-help">Train with every available patch in each slide. No patch sampling is applied. Larger bags require more memory.</p>
+          : <NumericField label="Patches per bag" value={value.bagSize} min={1} max={1000000} onChange={(bagSize) => onChange({ ...value, bagSize })} />}
+        <small>Validation and assessment always use whole bags.</small>
+      </fieldset>
+    </section>
+    <details className="batch-settings-details setup-details"><summary><span>Optimization &amp; stopping</span>{' '}<small>{resolved.optimizer.toUpperCase()} · {resolved.lrScheduler === 'cosine' ? 'Cosine decay' : 'Constant learning rate'} · {resolved.earlyStopping ? `Patience ${resolved.patience}` : 'No early stopping'}</small></summary>
+      <div className="development-fields">
+        <label className="label">Optimizer<select className="field" value={value.optimizer} onChange={(e) => onChange({ ...value, optimizer: e.target.value as TrainingRecipe['optimizer'] })}><option value="adamw">AdamW</option><option value="adam">Adam</option><option value="sgd">SGD</option></select></label>
+        <label className="label">Checkpoint selection<select className="field" value={value.checkpointMetric} onChange={(e) => onChange({ ...value, checkpointMetric: e.target.value as TrainingRecipe['checkpointMetric'] })}><option value="validation_loss">Lowest validation loss</option><option value="validation_auroc">Highest validation AUROC</option><option value="validation_accuracy">Highest validation accuracy</option></select></label>
+        <label className="label">Learning-rate schedule<select className="field" value={resolved.lrScheduler} onChange={(e) => onChange({ ...value, lrScheduler: e.target.value as TrainingRecipe['lrScheduler'], warmupEpochs: e.target.value === 'none' ? 0 : resolved.warmupEpochs })}><option value="none">Constant learning rate</option><option value="cosine">Cosine decay</option></select></label>
+        <NumericField label="Gradient clipping norm" value={resolved.gradientClipNorm!} min={0} integer={false} onChange={(gradientClipNorm) => onChange({ ...value, gradientClipNorm })} />
+        {resolved.lrScheduler === 'cosine' ? <>
+          <NumericField label="Warmup epochs" value={resolved.warmupEpochs!} min={0} max={gridMode ? 99999 : value.maxEpochs - 1} onChange={(warmupEpochs) => onChange({ ...value, warmupEpochs })} />
+          <NumericField label="Final LR fraction" value={resolved.finalLrFraction!} min={0} minExclusive max={1} integer={false} onChange={(finalLrFraction) => onChange({ ...value, finalLrFraction })} />
+        </> : null}
+      </div>
+      <div className="batch-stopping-settings"><label className="development-check"><input type="checkbox" checked={value.earlyStopping} onChange={(e) => onChange({ ...value, earlyStopping: e.target.checked })} /> Use early stopping</label>
+        <div className="development-fields">
+          <NumericField label="Early-stopping patience" value={value.patience} min={1} max={10000} disabled={!value.earlyStopping} onChange={(patience) => onChange({ ...value, patience })} />
+          <NumericField label="Early-stopping minimum improvement" value={resolved.earlyStoppingMinDelta!} min={0} integer={false} disabled={!value.earlyStopping} onChange={(earlyStoppingMinDelta) => onChange({ ...value, earlyStoppingMinDelta })} />
+          <NumericField label="Minimum training epochs" value={resolved.minEpochs!} min={1} max={gridMode ? 100000 : value.maxEpochs} onChange={(minEpochs) => onChange({ ...value, minEpochs })} />
+        </div>
+      </div>
+      <p className="muted">Gradient clipping 0 disables clipping. Minimum epochs delay stopping; the best validation checkpoint can still come from an earlier epoch.</p>
+    </details>
+    <details className="batch-settings-details setup-details"><summary><span>Model architecture</span>{' '}<small>{resolved.embedDim} embedding · {resolved.attentionDim} attention · Dropout {resolved.dropout}</small></summary>
+      <div className="development-fields">
+        {([['embedDim', 'Embedding dimensions', 1], ['attentionDim', 'Attention dimensions', 1], ['numFcLayers', 'Fully connected layers', 1], ['dropout', 'Dropout', 0], ['inputDropout', 'Input dropout', 0]] as const).map(([key, label, min]) => <NumericField key={key} label={label} value={resolved[key]!} min={min} max={key === 'dropout' || key === 'inputDropout' ? 1 : key === 'numFcLayers' ? 8 : 8192} maxExclusive={key === 'dropout' || key === 'inputDropout'} integer={key !== 'dropout' && key !== 'inputDropout'} onChange={(number) => onChange({ ...value, [key]: number })} />)}
+        <label className="development-check"><input type="checkbox" checked={resolved.gatedAttention} onChange={(e) => onChange({ ...value, gatedAttention: e.target.checked })} /> Gated attention</label>
+      </div>
+    </details>
+    <details className="batch-settings-details setup-details"><summary><span>Precision &amp; memory</span>{' '}<small>{resolved.precision === '32-true' ? 'FP32' : resolved.precision} · {resolved.accumulateGradBatches} batch{resolved.accumulateGradBatches === 1 ? '' : 'es'} per update</small></summary>
+      <div className="development-fields">
+        <label className="label">Precision<select className="field" value={resolved.precision} onChange={(e) => onChange({ ...value, precision: e.target.value as TrainingRecipe['precision'] })}><option value="32-true">FP32 (standard)</option><option value="16-mixed">FP16 mixed (CUDA)</option><option value="bf16-mixed">BF16 mixed (supported device)</option></select><small>Mixed precision can reduce GPU memory use. Device support is checked before training.</small></label>
+        <NumericField label="Accumulate batches" value={resolved.accumulateGradBatches!} min={1} max={4096} onChange={(accumulateGradBatches) => onChange({ ...value, accumulateGradBatches })} />
+        <label className="development-check"><input type="checkbox" checked={resolved.gradientCheckpointing} onChange={(e) => onChange({ ...value, gradientCheckpointing: e.target.checked })} /> Gradient checkpointing</label>
+      </div>
+      <p className="muted">Accumulation combines several batches per optimizer update. Gradient checkpointing trades extra computation for lower memory use.</p>
+    </details>
+  </div>;
+}
+
+const configurationModes = [
+  { id: 'single', name: 'Single configuration', description: 'One model setup, repeated for each seed.' },
+  { id: 'grid', name: 'Parameter grid', description: 'Run every combination of the parameter values.' },
+  { id: 'explicit', name: 'Custom configurations', description: 'Set up and compare individual configurations.' },
+] as const;
+
+export const batchConfigurationCount = plannedConfigurationCount;
+
+export function RecipeSummary({ recipe }: { recipe: TrainingRecipe }) {
+  return <span className="batch-recipe-summary"><strong>{recipe.model.toUpperCase()}</strong><span>LR {recipe.learningRate}</span><span>WD {recipe.weightDecay}</span><span>{recipe.maxEpochs} epochs max</span><span>{recipe.bagSize === null ? 'Whole bags' : `${recipe.bagSize.toLocaleString()} patches / bag`}</span></span>;
+}
+
+export function BatchPlanSettings({ spec }: { spec: DevelopmentBatchSpec }) {
+  const count = batchConfigurationCount(spec);
+  const recipes = spec.mode === 'explicit' ? spec.configurations : [spec.recipe];
+  return <div className="batch-plan-settings">
+    <dl className="batch-settings-summary">
+      <div><dt>Parameter search</dt><dd>{configurationModes.find((mode) => mode.id === spec.mode)?.name} · {count} configuration{count === 1 ? '' : 's'}</dd></div>
+      <div><dt>Training seeds</dt><dd>{spec.trainingSeeds.join(', ')}</dd></div>
+      {spec.mode === 'grid' ? <><div><dt>Learning rates</dt><dd>{spec.grid.learningRates.join(', ')}</dd></div><div><dt>Weight decays</dt><dd>{spec.grid.weightDecays.join(', ')}</dd></div><div><dt>Maximum epochs</dt><dd>{spec.grid.maxEpochs.join(', ')}</dd></div></> : null}
+      <div><dt>Compute</dt><dd>{spec.resources.gpuIds.length ? `GPU ${spec.resources.gpuIds.join(', ')}` : 'CPU'} · {spec.resources.maxConcurrentRuns} concurrent run{spec.resources.maxConcurrentRuns === 1 ? '' : 's'}</dd></div>
+      <div><dt>Reservation per run</dt><dd>{spec.resources.cpuThreadsPerRun} CPU threads · {spec.resources.ramGbPerRun} GiB RAM</dd></div>
+    </dl>
+    {spec.mode === 'grid' ? <p className="muted">The parameter grid supplies learning rate, weight decay and maximum epochs. Other training settings are shared.</p> : null}
+    {recipes.map((recipe, index) => {
+      const resolved = withRecipeDefaults(recipe);
+      return <details key={index} className="batch-saved-recipe"><summary>{spec.mode === 'grid' ? <strong>{recipe.model.toUpperCase()} · Shared training settings</strong> : <><strong>Configuration {index + 1}</strong><RecipeSummary recipe={recipe} /></>}</summary>
+        <dl className="batch-settings-summary">
+          <div><dt>Training bag</dt><dd>{recipe.bagSize === null ? 'Whole bag (all patches)' : `${recipe.bagSize} patches maximum`} · Batch size {recipe.batchSize}</dd></div>
+          <div><dt>Checkpoint selection</dt><dd>{recipe.checkpointMetric === 'validation_loss' ? 'Lowest validation loss' : recipe.checkpointMetric === 'validation_auroc' ? 'Highest validation AUROC' : 'Highest validation accuracy'}</dd></div>
+          <div><dt>Optimization</dt><dd>{recipe.optimizer.toUpperCase()} · {resolved.lrScheduler === 'cosine' ? `Cosine decay · ${resolved.warmupEpochs} warmup epochs · Final LR fraction ${resolved.finalLrFraction}` : 'Constant learning rate'}</dd></div>
+          <div><dt>Early stopping</dt><dd>{recipe.earlyStopping ? `Patience ${recipe.patience} · Minimum improvement ${resolved.earlyStoppingMinDelta}` : 'Disabled'} · Minimum epochs {resolved.minEpochs}</dd></div>
+          <div><dt>Model architecture</dt><dd>{resolved.embedDim} embedding · {resolved.attentionDim} attention · {resolved.numFcLayers} fully connected layer{resolved.numFcLayers === 1 ? '' : 's'} · {resolved.gatedAttention ? 'Gated attention' : 'Ungated attention'}</dd></div>
+          <div><dt>Regularization</dt><dd>Dropout {resolved.dropout} · Input dropout {resolved.inputDropout} · Gradient clipping {resolved.gradientClipNorm}</dd></div>
+          <div><dt>Precision &amp; memory</dt><dd>{resolved.precision === '32-true' ? 'FP32' : resolved.precision === '16-mixed' ? 'FP16 mixed' : 'BF16 mixed'} · Accumulate {resolved.accumulateGradBatches} batch{resolved.accumulateGradBatches === 1 ? '' : 'es'} · Gradient checkpointing {resolved.gradientCheckpointing ? 'on' : 'off'}</dd></div>
+        </dl>
+      </details>;
+    })}
+    {spec.notes ? <p className="batch-plan-notes">{spec.notes}</p> : null}
+    <details className="batch-exact-settings"><summary>All saved settings</summary><pre className="experiment-snapshot">{JSON.stringify(spec, null, 2)}</pre></details>
+  </div>;
 }
 
 export default function DevelopmentBatches({ project, inputs, experimentName, experimentId, experimentRevision, ownedBatches, ownedDrafts, executionImplemented = false, readOnly = false, record, experimentStage, onPlanDirtyChange, tab, onOpenSetup, onRestoreInputs }: {
@@ -102,6 +166,8 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   const [mode, setMode] = useState<DevelopmentBatchSpec['mode']>('single');
   const [rows, setRows] = useState(() => [{ id: 0, recipe: defaultRecipe() }]);
   const nextRowId = useRef(1);
+  const explicitInitialized = useRef(false);
+  const configurationModeId = useId();
   const [seeds, setSeeds] = useState('42');
   const [lrs, setLrs] = useState('0.0001, 0.0003, 0.001');
   const [wds, setWds] = useState('0, 0.0001');
@@ -134,6 +200,30 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
     if (gpuSelection.some((id) => id > 127)) throw new Error('GPU IDs must be between 0 and 127.');
   } catch (reason) { gpuSelectionError = reason instanceof Error ? reason.message : 'Enter valid GPU IDs.'; }
 
+  let plannedConfigurations: number | null = null;
+  let plannedSeeds: number | null = null;
+  try {
+    if (validateBatchNumberList(seeds, { label: 'Training seeds', min: 0, max: 2 ** 32 - 1 })) throw new Error('Invalid seeds');
+    if (mode === 'grid' && (validateBatchNumberList(lrs, { label: 'Learning rates', integer: false, min: 0, minExclusive: true }) || validateBatchNumberList(wds, { label: 'Weight decays', integer: false, min: 0 }) || validateBatchNumberList(epochs, { label: 'Maximum epochs', min: 1, max: 100000 }))) throw new Error('Invalid grid');
+    plannedConfigurations = batchConfigurationCount({ mode, configurations: rows.map((row) => row.recipe), grid: {
+      learningRates: mode === 'grid' ? parseNumberList(lrs, 'Learning rates', false, Number.MIN_VALUE) : [],
+      weightDecays: mode === 'grid' ? parseNumberList(wds, 'Weight decays') : [],
+      maxEpochs: mode === 'grid' ? parseNumberList(epochs, 'Maximum epochs', true, 1) : [],
+    } });
+    plannedSeeds = parseNumberList(seeds, 'Training seeds', true).length;
+  } catch { /* Counts remain unavailable while a list is incomplete or invalid. */ }
+  function changeMode(next: DevelopmentBatchSpec['mode']) {
+    if (next === 'explicit' && !explicitInitialized.current) {
+      let initial = recipe;
+      if (mode === 'grid') {
+        if (!reportEditorValidity(editor.current)) return;
+        initial = { ...recipe, learningRate: parseNumberList(lrs, 'Learning rates', false, Number.MIN_VALUE)[0], weightDecay: parseNumberList(wds, 'Weight decays')[0], maxEpochs: parseNumberList(epochs, 'Maximum epochs', true, 1)[0] };
+      }
+      explicitInitialized.current = true;
+      setRows([{ id: nextRowId.current++, recipe: { ...initial } }]);
+    }
+    setMode(next);
+  }
   function edit() { if (!dirty && !workingPlan) setEditorRevision(experimentRevision); setDirty(true); setPreview(null); setMessage(''); setError(null); }
   function specification(): DevelopmentBatchSpec {
     return { version: 1, experimentId, experimentRevision, experimentName, batchName: name.trim(), inputs, recipe, mode,
@@ -171,6 +261,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   function load(spec: DevelopmentBatchSpec, planId?: string, copy = false) {
     if (dirty && !window.confirm('Discard the unsaved batch edits and open this configuration?')) return false;
     setEditorVersion((version) => version + 1);
+    explicitInitialized.current = spec.mode === 'explicit';
     if (!sameJSON(inputs, spec.inputs)) onRestoreInputs(spec.inputs, spec.experimentName);
     setWorkingPlan(planId ?? null); setEditorRevision(experimentRevision);
     setName(copy ? `${spec.batchName.slice(0, 70)} copy` : spec.batchName); setRecipe(withRecipeDefaults(spec.recipe)); setResources(spec.resources); setMode(spec.mode);
@@ -192,9 +283,9 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
     {tab !== 'batches' && items.length > 1 ? <ExperimentBatchOverview batches={items} view={tab} onSelect={setSelected} /> : null}
     {tab === 'batches' && plans.length ? <Panel title={`Batch plans (${plans.length})`} subtitle={locked ? 'These settings were locked when the experiment was submitted.' : 'Edit or remove a batch before submission. All batches use the experiment’s saved inputs.'}>
       <div className="batch-plan-list">{plans.map((plan) => <article key={plan.id} className={`batch-plan-card${workingPlan === plan.id ? ' is-editing' : ''}`}>
-        <div><h3>{plan.spec.batchName}</h3><p className="muted">{plan.spec.mode === 'grid' ? 'Parameter grid' : plan.spec.mode === 'explicit' ? `${plan.spec.configurations.length} configurations` : 'Single configuration'} · {plan.spec.trainingSeeds.length} training seed{plan.spec.trainingSeeds.length === 1 ? '' : 's'}</p></div>
+        <div><h3>{plan.spec.batchName}</h3><p className="muted">{batchConfigurationCount(plan.spec)} configuration{batchConfigurationCount(plan.spec) === 1 ? '' : 's'} × {plan.spec.trainingSeeds.length} training seed{plan.spec.trainingSeeds.length === 1 ? '' : 's'}</p></div>
         {!locked ? <div className="inline-actions"><button className="btn btn-secondary btn-small" disabled={busy} onClick={() => load(plan.spec, plan.id)}>Edit batch</button><button className="text-button" disabled={busy} onClick={() => load(plan.spec, undefined, true)}>Duplicate</button><button className="text-button" disabled={busy || dirty || stale} onClick={() => void removePlan(plan.id)}>Remove</button></div> : <Badge>Locked</Badge>}
-        <details className="batch-plan-spec"><summary>View settings</summary><pre className="experiment-snapshot">{JSON.stringify(plan.spec, null, 2)}</pre></details>
+        <details className="batch-plan-spec"><summary>View settings</summary><BatchPlanSettings spec={plan.spec} /></details>
       </article>)}</div>
     </Panel> : null}
     {tab === 'batches' && !locked ? <>
@@ -204,23 +295,32 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
         {stale ? <p role="alert" className="callout">The saved experiment changed while you were editing. <button className="text-button" onClick={() => load(plans.find((plan) => plan.id === workingPlan)?.spec ?? batchTemplate('baseline', inputs, experimentName), plans.find((plan) => plan.id === workingPlan)?.id)}>Reload the saved plan</button> before saving.</p> : null}
         <fieldset key={editorVersion} ref={editor} disabled={busy || stale} className="development-editor" onChange={edit}>
           <legend className="sr-only">Batch configuration</legend>
-          <div className="development-fields"><label className="label">Batch name<input required className="field" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} /></label>
-          <label className="label">Configuration mode<select className="field" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}><option value="single">Single configuration</option><option value="grid">Parameter grid</option><option value="explicit">Explicit configuration rows</option></select></label></div>
-          {mode !== 'explicit' ? <RecipeFields value={recipe} onChange={setRecipe} gridMode={mode === 'grid'} /> : <div className="stack">{rows.map((row, index) => <div className="development-recipe-row" key={row.id}><strong>Configuration {index + 1}</strong><RecipeFields value={row.recipe} onChange={(value) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, recipe: value } : item))} /><button type="button" className="text-button" disabled={rows.length === 1} onClick={() => { setRows((current) => current.filter((item) => item.id !== row.id)); edit(); }}>Remove configuration</button></div>)}<button type="button" className="btn btn-secondary" onClick={() => { const id = nextRowId.current++; setRows((current) => [...current, { id, recipe: { ...current[current.length - 1].recipe } }]); edit(); }}>Add configuration</button></div>}
-          {mode === 'grid' ? <div className="development-fields">{([['Learning rates', lrs, setLrs], ['Weight decays', wds, setWds], ['Maximum epochs', epochs, setEpochs]] as const).map(([label, value, setter]) => <label className="label" key={label}>{label}<input className="field" value={value} onChange={(e) => setter(e.target.value)} /><small>Comma-separated values; these replace the corresponding base recipe values.</small></label>)}</div> : null}
-          <label className="label">Training seeds<input className="field" value={seeds} onChange={(e) => setSeeds(e.target.value)} /><small>Comma-separated seeds. Frozen split assignments stay unchanged.</small></label>
-          <section className="development-resource-settings" aria-label="Parallel training"><h3>Parallel training</h3><div className="development-fields">
+          <label className="label batch-name-field">Batch name<input required className="field" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} /></label>
+          <section className="batch-editor-section" aria-label="Parameter search and repeats">
+            <div className="batch-section-heading"><h3>Parameter search &amp; repeats</h3><p>Each distinct configuration runs across the experiment’s frozen folds for every training seed.</p></div>
+            <fieldset className="batch-configuration-modes"><legend>Configuration mode</legend><div className="batch-mode-options">{configurationModes.map((option) => <label key={option.id} className={`batch-mode-option${mode === option.id ? ' is-selected' : ''}`}>
+              <input type="radio" name={configurationModeId} value={option.id} checked={mode === option.id} onChange={() => changeMode(option.id)} /><span><strong>{option.name}</strong><small>{option.description}</small></span>
+            </label>)}</div></fieldset>
+            {mode === 'grid' ? <div className="batch-grid-values"><div className="development-fields"><BatchNumberList label="Learning rates" value={lrs} onChange={setLrs} integer={false} min={0} minExclusive /><BatchNumberList label="Weight decays" value={wds} onChange={setWds} integer={false} min={0} /><BatchNumberList label="Maximum epochs" value={epochs} onChange={setEpochs} min={1} max={100000} /></div><p className="muted">Enter comma-separated values. Every learning rate × weight decay × epoch limit becomes a configuration.</p></div> : null}
+            <div className="batch-seeds-field"><BatchNumberList label="Training seeds" value={seeds} onChange={setSeeds} min={0} max={2 ** 32 - 1} hint="Comma-separated, for example 42, 43, 44. These repeat training; they do not change the frozen folds." /></div>
+            <div className="batch-size-summary" role="status" aria-live="polite">{plannedConfigurations !== null && plannedSeeds !== null ? <><strong>{plannedConfigurations} configuration{plannedConfigurations === 1 ? '' : 's'} × {plannedSeeds} training seed{plannedSeeds === 1 ? '' : 's'} = {plannedConfigurations * plannedSeeds} training group{plannedConfigurations * plannedSeeds === 1 ? '' : 's'}</strong><span>Each group runs all frozen folds. Check batch to confirm the total fold runs.</span></> : <span>Enter valid parameter values and training seeds to see the planned size.</span>}</div>
+          </section>
+          {mode !== 'explicit' ? <RecipeFields value={recipe} onChange={setRecipe} gridMode={mode === 'grid'} /> : <section className="batch-custom-configurations" aria-label="Custom configurations"><div className="batch-section-heading"><h3>Configurations</h3><p>Open a configuration to adjust its settings. Added configurations copy the last one; identical rows train only once.</p></div>{rows.map((row, index) => <details className="batch-configuration-card" key={row.id} open={index === 0 ? true : undefined}>
+            <summary><strong>Configuration {index + 1}</strong><RecipeSummary recipe={row.recipe} /></summary>
+            <div className="batch-configuration-body"><RecipeFields value={row.recipe} onChange={(value) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, recipe: value } : item))} /><button type="button" className="text-button" disabled={rows.length === 1} onClick={() => { setRows((current) => current.filter((item) => item.id !== row.id)); edit(); }}>Remove configuration {index + 1}</button></div>
+          </details>)}<button type="button" className="btn btn-secondary" disabled={rows.length >= 512} onClick={() => { const id = nextRowId.current++; setRows((current) => [...current, { id, recipe: { ...current[current.length - 1].recipe } }]); edit(); }}>Add configuration</button></section>}
+          <section className="development-resource-settings batch-editor-section" aria-label="Parallel training"><div className="batch-section-heading"><h3>Compute &amp; parallelism</h3><p>Choose the device and how many fold runs may train at once.</p></div><div className="development-fields">
             <label className="label">Run on<select className="field" value={gpus.trim() ? 'gpu' : 'cpu'} onChange={(e) => setGpus(e.target.value === 'cpu' ? '' : '0')}><option value="gpu">GPU</option><option value="cpu">CPU</option></select></label>
             <NumericField label="Concurrent runs" value={resources.maxConcurrentRuns} min={1} max={128} onChange={(maxConcurrentRuns) => setResources((current) => ({ ...current, maxConcurrentRuns }))} />
             {gpus.trim() ? <NumericField label="Runs per GPU" value={resources.runsPerGpu} min={1} max={16} onChange={(runsPerGpu) => setResources((current) => ({ ...current, runsPerGpu }))} /> : null}
           </div>{gpuSelectionError ? <p className="callout" role="status">{gpuSelectionError}</p> : <TrainingCapacity resources={{ ...resources, gpuIds: gpuSelection }} runtime={runtime.data} />}
-          <details className="setup-details"><summary>Advanced resource settings</summary><p className="muted">CPU threads run model operations; data workers load features. RAM is a scheduling reservation per run, not an enforced memory cap.</p><div className="development-fields">
-            <label className="label">Allowed GPU IDs<input className="field" value={gpus} onChange={(e) => setGpus(e.target.value)} /><small>Comma-separated; leave empty for CPU.</small></label>
+          <details className="setup-details batch-settings-details"><summary><span>Advanced resource settings</span>{' '}<small>{resources.cpuThreadsPerRun} CPU threads · {resources.ramGbPerRun} GiB per run</small></summary><p className="muted">CPU threads run model operations; data workers load features. RAM is a scheduling reservation per run, not an enforced memory cap.</p><div className="development-fields">
+            <BatchNumberList label="Allowed GPU IDs" value={gpus} onChange={setGpus} min={0} max={127} maxItems={128} allowEmpty hint="Comma-separated; leave empty for CPU." />
             {([['cpuThreadsPerRun', 'CPU threads per run', 1, 256], ['dataLoaderWorkers', 'Data workers per loader', 0, 64], ['ramGbPerRun', 'RAM reservation per run (GiB)', Number.MIN_VALUE, undefined]] as const).map(([key, label, min, max]) => <NumericField key={key} label={label} value={resources[key]} min={min} max={max} integer={key !== 'ramGbPerRun'} onChange={(number) => setResources((current) => ({ ...current, [key]: number }))} />)}
           </div></details></section>
-          <details className="setup-details"><summary>Batch notes (optional)</summary><label className="label">Notes<textarea className="field" value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} /></label></details>
+          <details className="setup-details batch-settings-details"><summary>Batch notes (optional)</summary><label className="label">Notes<textarea className="field" value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} /></label></details>
         </fieldset>
-        <div className="inline-actions"><button type="button" className="btn btn-primary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim() || (!!workingPlan && !dirty)} onClick={() => void action('save')}>{busy ? 'Working…' : workingPlan ? 'Save batch changes' : 'Add batch to plan'}</button><button type="button" className="btn btn-secondary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim()} onClick={() => void action('preview')}>Check batch</button>{workingPlan || dirty ? <button className="text-button" disabled={busy} onClick={() => { if (load(batchTemplate('baseline', inputs, experimentName))) setDirty(false); }}>{dirty ? 'Discard batch edits' : 'New batch'}</button> : null}{dirty ? <span className="muted" role="status">Unsaved batch edits</span> : null}</div>
+        <div className="inline-actions batch-editor-actions"><button type="button" className="btn btn-primary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim() || (!!workingPlan && !dirty)} onClick={() => void action('save')}>{busy ? 'Working…' : workingPlan ? 'Save batch changes' : 'Add batch to plan'}</button><button type="button" className="btn btn-secondary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim()} onClick={() => void action('preview')}>Check batch</button>{workingPlan || dirty ? <button className="text-button" disabled={busy} onClick={() => { if (load(batchTemplate('baseline', inputs, experimentName))) setDirty(false); }}>{dirty ? 'Discard batch edits' : 'New batch'}</button> : null}{dirty ? <span className="muted" role="status">Unsaved batch edits</span> : null}</div>
       </Panel>
       {preview ? <Panel title="Resolved batch"><Findings findings={preview.findings} /><p className="development-count" aria-live="polite"><strong>{preview.summary.configurationCount}</strong> configurations × <strong>{preview.summary.trainingSeedCount}</strong> training seeds × <strong>{preview.summary.splitPlanCount}</strong> frozen split plans = <strong>{preview.summary.runCount}</strong> planned runs</p><ConfigurationTable batch={preview} /></Panel> : null}
       {savedDrafts.length ? <details className="setup-details"><summary>Earlier batch drafts</summary><p className="muted">Load an earlier draft and add it to this experiment’s plan. Drafts are not submitted automatically.</p>{savedDrafts.map((draft) => <div className="development-saved-row" key={draft.id}><span>{draft.name}</span><button type="button" className="btn btn-secondary btn-small" onClick={() => load(draft.payload.spec as unknown as DevelopmentBatchSpec)}>Use draft settings</button></div>)}</details> : null}

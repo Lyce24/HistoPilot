@@ -10,6 +10,7 @@ from histopilot.schemas.model_experiments import (
     SubmitModelExperiment,
     UpdateModelExperiment,
 )
+from histopilot.schemas.predictors import PredictorAction
 
 
 def model_experiments_router(projects, filesystem):
@@ -41,5 +42,15 @@ def model_experiments_router(projects, filesystem):
     @router.post("/{experiment_id}/submit", status_code=202)
     def submit(identity: str, experiment_id: str, payload: SubmitModelExperiment):
         return service(identity).submit(experiment_id, payload)
+
+    @router.post("/{experiment_id}/predictors/resume", status_code=202)
+    def resume_predictors(identity: str, experiment_id: str, payload: PredictorAction):
+        return (
+            service(identity)._predictors().launch(experiment_id, payload.operationId, resume=True)
+        )
+
+    @router.post("/{experiment_id}/predictors/cancel", status_code=202)
+    def cancel_predictors(identity: str, experiment_id: str, payload: PredictorAction):
+        return service(identity)._predictors().cancel(experiment_id, payload.operationId)
 
     return router

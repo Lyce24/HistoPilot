@@ -164,6 +164,33 @@ class PredictorService:
     def __init__(self, store, filesystem):
         self.store, self.filesystem = store, filesystem
 
+    def require_work_open(self, experiment_id):
+        """Older manual commands cannot reopen closed experiment predictor work.
+
+        This guard belongs to mutations/creation previews, not evidence reads:
+        existing predictors must remain verifiable and usable for evaluation.
+        Publication retries return their accepted receipt before this check.
+        """
+        if experiment_id.startswith("legacy-"):
+            return
+        submission = self.store.get_draft(experiment_id)["payload"].get("submission") or {}
+        if not submission.get("predictorPolicy"):
+            return
+        from histopilot.application.experiment_predictors import ExperimentPredictorService
+
+        coordinator = ExperimentPredictorService(self.store, self.filesystem)
+        folder = coordinator.folder(experiment_id)
+        closed = (folder / "cancel.requested").exists()
+        if (folder / "state.json").exists():
+            _plan, state = coordinator._read(experiment_id)
+            closed = closed or state["status"] in {"completed", "cancelled", "cancelling"}
+        if closed:
+            raise StorageError(
+                "This experiment's predictor work is closed. Copy the experiment to create or retrain predictors; its existing predictors remain available for evaluation.",
+                "EXPERIMENT_PREDICTORS_LOCKED",
+                409,
+            )
+
     def list(self, *, include_inactive=False):
         return {
             "items": [
@@ -342,6 +369,21 @@ class PredictorService:
         if manifest.get("kind") != "mil-batch":
             raise StorageError("Select a development batch.", "INVALID_BATCH", 422)
         experiment = self._experiment(selection.experimentId, batch)
+        policy = None
+        if not experiment.get("legacy"):
+            submission = self.store.get_draft(selection.experimentId)["payload"].get("submission")
+            policy = (submission or {}).get("predictorPolicy")
+            if policy and (
+                selection.batchId not in submission["batchIds"]
+                or policy["method"] not in {selection.method, "both"}
+                or selection.method == "refit"
+                and policy["refitPercentile"] != selection.refitPercentile
+            ):
+                raise StorageError(
+                    "Predictor creation must preserve this experiment's submitted method and refit epoch policy. Copy the experiment to change them.",
+                    "EXPERIMENT_PREDICTOR_POLICY_LOCKED",
+                    409,
+                )
         existing = self._existing(selection)
         if existing and not allow_existing:
             raise StorageError(
@@ -502,6 +544,7 @@ class PredictorService:
             "batchId": batch["id"],
             "batch": reference(batch),
             "candidateId": selection.candidateId,
+            **({"candidateNumber": candidate["number"]} if policy else {}),
             "trainingSeed": selection.trainingSeed,
             "splitSeed": selection.splitSeed,
             "runIds": [row["runId"] for row in checkpoints],
@@ -535,6 +578,7 @@ class PredictorService:
 
     def preview(self, selection):
         try:
+            self.require_work_open(selection.experimentId)
             manifest = self._prepare(selection)
             return {
                 "canFreeze": True,
@@ -573,6 +617,7 @@ class PredictorService:
                         "This operation belongs to another predictor.", "OPERATION_CONFLICT", 409
                     )
                 return lifecycle_document(self.store, prior)
+            self.require_work_open(selection.experimentId)
             manifest = self._prepare(selection)
             if evidence_hash(manifest) != request.previewHash:
                 raise StorageError(

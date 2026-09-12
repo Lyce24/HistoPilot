@@ -1,4 +1,5 @@
-.mil-workspace { display: grid; gap: 20px; }
+.mil-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.mil-workspace > * { min-width: 0; }
 .mil-plan-fields { min-width: 0; display: grid; gap: 20px; border: 0; padding: 0; margin: 0; }
 .mil-loading-options { border: 0; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .mil-loading-options legend { margin-bottom: 12px; font-weight: 600; }

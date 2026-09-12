@@ -1,5 +1,7 @@
 # Experiments redesign verification
 
+For the subsequent integration of automatic predictor choices, reorganized batches and direct evaluation handoff, see the [experiment-owned predictors review](../experiment-predictors/README.md). The results below describe the earlier lifecycle implementation.
+
 Branch: `HistoPilot-dev`. Verified 2026-09-12 using temporary scientific projects, mocked executors and invented browser records. No HistoPilot server or real training job was started or restarted. The main checkout remains unchanged.
 
 ## Results

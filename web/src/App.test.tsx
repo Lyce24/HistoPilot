@@ -9,7 +9,7 @@ import { useRoadmap } from './components/useRoadmap';
 
 const workspace = { mode: 'local', project: { id: 'project' }, dataset: { slideCount: 0 }, drafts: [], featureSets: [], cohortSnapshots: [] } as unknown as Workspace;
 function roadmap(unlocked = false, hasData = true): Roadmap {
-  const modules = buildRoadmap(workspace).map((module) => module.id === 'post-development' ? { ...module, unlocked, blockers: unlocked ? [] : module.blockers } : module);
+  const modules = buildRoadmap(workspace).map((module) => module.id === 'experiments' ? { ...module, unlocked, blockers: unlocked ? [] : module.blockers } : module);
   return {
     modules, byId: Object.fromEntries(modules.map((module) => [module.id, module])),
     checksById: Object.fromEntries(modules.map((module) => [module.id, { hasData, isLoading: !hasData, error: null }])),
@@ -17,7 +17,7 @@ function roadmap(unlocked = false, hasData = true): Roadmap {
   } as Roadmap;
 }
 
-describe('post-development navigation and direct URL gates', () => {
+describe('experiment predictor navigation and direct URL gates', () => {
   it.each(['overview', 'dataset', 'experiments', 'source-cv', 'test-data', 'clinical-utility', 'interpretation'] as const)('keeps a trashed project on its recovery path for direct %s navigation', (page) => {
     const html = renderToStaticMarkup(<Content page={page} workspace={{ ...workspace, project: { ...workspace.project, lifecycleState: 'trashed' } }} roadmap={roadmap(false, false)} />);
     expect(html).toContain('This project is in Trash');
@@ -57,9 +57,9 @@ describe('post-development navigation and direct URL gates', () => {
     expect(html).toContain('Restore to Active');
     expect(html).not.toContain('Checking module prerequisites');
   });
-  it.each(['#selection', '#predictor', '#post-development'])('routes %s to the separate post-development module', (hash) => {
+  it.each(['#selection', '#predictor', '#post-development'])('keeps %s as a legacy route owned by Experiments', (hash) => {
     expect(pageFromHash(hash)).toBe('post-development');
-    expect(moduleForPage(pageFromHash(hash))).toBe('post-development');
+    expect(moduleForPage(pageFromHash(hash))).toBe('experiments');
   });
 
   it.each([
@@ -73,8 +73,8 @@ describe('post-development navigation and direct URL gates', () => {
   it('preserves the development-results alias without using it to bypass a ready predictor', () => {
     expect(pageFromHash('#source-cv')).toBe('source-cv');
     expect(moduleForPage('source-cv')).toBe('experiments');
-    expect(moduleForPage('selection')).toBe('post-development');
-    expect(moduleForPage('predictor')).toBe('post-development');
+    expect(moduleForPage('selection')).toBe('experiments');
+    expect(moduleForPage('predictor')).toBe('experiments');
     expect(pageFromHash('#unknown')).toBe('overview');
     expect(pageFromHash('#experiments?experiment=draft-1&tab=runs')).toBe('experiments');
     expect(pageFromHash('#post-development?experiment=draft-1')).toBe('post-development');
@@ -82,10 +82,10 @@ describe('post-development navigation and direct URL gates', () => {
     expect(pageFromHash('#cleanup?key=configuration%3Aone')).toBe('cleanup');
   });
 
-  it.each(['post-development', 'selection', 'predictor'] as const)('gates direct %s navigation until development completes', (page) => {
+  it.each(['post-development', 'selection', 'predictor'] as const)('applies the experiment gate to legacy %s navigation', (page) => {
     const html = renderToStaticMarkup(<Content page={page} workspace={workspace} roadmap={roadmap()} />);
     expect(html).toContain('Complete the prerequisites to unlock this module');
-    expect(html).toContain('Complete a development batch');
+    expect(html).toContain('Experiments');
     expect(html).not.toContain('Predictor selection and freeze');
   });
 
@@ -95,32 +95,32 @@ describe('post-development navigation and direct URL gates', () => {
     expect(html).not.toContain('Predictor selection and freeze');
   });
 
-  it('opens a standalone post-development page with an honest capability boundary', () => {
+  it('retains historical predictors and refit recovery without a new build step', () => {
     const client = new QueryClient();
     client.setQueryData(['predictors', 'project'], { items: [] });
     client.setQueryData(['predictor-choices', 'project'], { items: [] });
     try {
       const html = renderToStaticMarkup(<QueryClientProvider client={client}><Content page="post-development" workspace={workspace} roadmap={roadmap(true)} /></QueryClientProvider>);
-      expect(html).toContain('Build predictors');
-      expect(html).toContain('separate ensembles and refits for every experiment, configuration and seed');
+      expect(html).toContain('Historical predictors');
+      expect(html).toContain('automatic builds are managed inside each experiment');
       expect(html).toContain('Predictor library');
-      expect(html).toContain('separate refit plan for every selected seed');
+      expect(html).toContain('Refit jobs');
       expect(html).toContain('href="#experiments"');
       expect(html).not.toContain('Launch batch');
-      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review predictor/);
+      expect(html).not.toContain('Review predictor');
     } finally { client.clear(); }
   });
 
-  it('explains both final evaluation prerequisites and names post-development as the predictor owner', () => {
+  it('explains test cohort and experiment predictor readiness at evaluation entry', () => {
     const client = new QueryClient();
     for (const key of ['predictors', 'model-evaluations', 'evaluation-cohorts']) client.setQueryData([key, 'project'], { items: [] });
     try {
       const html = renderToStaticMarkup(<QueryClientProvider client={client}><Content page="evaluation" workspace={workspace} roadmap={roadmap(true)} /></QueryClientProvider>);
       expect(html).toContain('Test cohorts');
-      expect(html).toContain('href="#post-development"');
+      expect(html).toContain('href="#experiments"');
       expect(html).toContain('metrics use labeled records only');
       expect(html).toContain('Each run saves predictions and metrics independently');
-      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review all predictors/);
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review all shown predictors/);
     } finally { client.clear(); }
   });
 });

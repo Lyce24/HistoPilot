@@ -18,7 +18,7 @@ import LocalProtocol from './pages/LocalProtocol';
 import LocalFeatures from './pages/LocalFeatures';
 import LocalExperiments from './pages/LocalExperiments';
 import LocalEvaluationSetup from './pages/LocalEvaluationSetup';
-import LocalPostDevelopment from './pages/LocalPostDevelopment';
+import LegacyPredictorRoute from './components/LegacyPredictorRoute';
 import LocalModelEvaluation from './pages/LocalModelEvaluation';
 import WorkspaceCleanup from './pages/WorkspaceCleanup';
 import LocalClinicalUtility from './pages/LocalClinicalUtility';
@@ -32,8 +32,8 @@ const pages: Record<Page, string> = {
   overview: 'Project roadmap', dataset: 'Datasets',
   cohort: 'Targets & splits', features: 'Slide features',
   experiments: 'Experiments', 'source-cv': 'Development results',
-  'post-development': 'Build predictors',
-  selection: 'Build predictors', predictor: 'Build predictors',
+  'post-development': 'Historical predictors',
+  selection: 'Experiments', predictor: 'Experiments',
   'test-data': 'Test cohorts', evaluation: 'Evaluate models',
   'clinical-utility': 'Clinical utility', interpretation: 'Model interpretation',
   reports: 'Metrics, clinical analyses and reports', 'example-results': 'Illustrative results', explorer: 'Slide explorer',
@@ -55,7 +55,7 @@ export function projectFromUrl(href = window.location.href): string | null {
   return params.get('project') ?? params.get('experiment');
 }
 export function moduleForPage(page: Page) {
-  return page === 'selection' || page === 'predictor' ? 'post-development' : page === 'source-cv' ? 'experiments' : page === 'reports' ? 'evaluation' : page;
+  return ['selection', 'predictor', 'post-development', 'source-cv'].includes(page) ? 'experiments' : page === 'reports' ? 'evaluation' : page;
 }
 export function Content({ page, workspace, roadmap }: { page: Page; workspace: Workspace; roadmap: Roadmap }) {
   if (page === 'cleanup' && workspace.mode === 'local') return <WorkspaceCleanup workspace={workspace} />;
@@ -81,7 +81,7 @@ export function Content({ page, workspace, roadmap }: { page: Page; workspace: W
     if (page === 'clinical-utility') return <LocalClinicalUtility workspace={workspace} />;
     if (page === 'interpretation') return <LocalInterpretation workspace={workspace} />;
     if (page === 'source-cv') return <LocalExperiments workspace={workspace} initialTab="results" />;
-    if (moduleId === 'post-development') return <LocalPostDevelopment workspace={workspace} />;
+    if (['post-development', 'selection', 'predictor'].includes(page)) return <LegacyPredictorRoute workspace={workspace} />;
     if (page === 'dataset') return <LocalDataset workspace={workspace} />;
     if (page === 'cohort') return <LocalProtocol workspace={workspace} />;
     if (page === 'features') return <LocalFeatures workspace={workspace} />;

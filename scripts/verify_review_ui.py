@@ -73,8 +73,8 @@ def main():
         browser("open", (output / "index.html").as_uri())
         browser("set", "viewport", "1440", "1100")
         check(
-            "Project roadmap renders nine modules",
-            "document.querySelectorAll('[data-module]').length === 9",
+            "Project roadmap renders eight modules",
+            "document.querySelectorAll('[data-module]').length === 8",
         )
         check(
             "Fresh project begins with datasets",
@@ -187,7 +187,7 @@ def main():
         click("Project workspace")
         check(
             "Project navigation recovers after another view failed",
-            "document.querySelectorAll('[data-module]').length === 9",
+            "document.querySelectorAll('[data-module]').length === 8",
         )
     finally:
         (output / "checks.json").write_text(json.dumps(results, indent=2) + "\n")

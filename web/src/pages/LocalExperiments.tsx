@@ -19,6 +19,9 @@ import SetupContext from '../components/SetupContext';
 import { protocolBundleCompatible } from '../lib/roadmap';
 import { preparationLink, usePreparationContext, type PreparationContext } from '../lib/preparationRoute';
 import PreparationNotice from '../components/PreparationNotice';
+import ExperimentPredictorPlan from '../components/ExperimentPredictorPlan';
+import ExperimentPredictors from '../components/ExperimentPredictors';
+import { defaultPredictorPolicy, includesRefit, predictorPolicyLabel } from '../lib/experimentPredictors';
 import './LocalExperiments.css';
 
 const initialSpec = (): MILExperimentSpec => ({
@@ -53,9 +56,9 @@ export function LoadingOptions({ value, hasPacks, onChange }: {
 }
 
 const stages: { id: ExperimentStage; description: string }[] = [
-  { id: 'planning', description: 'Adjust inputs and batches' },
-  { id: 'running', description: 'Track runs and resources' },
-  { id: 'finished', description: 'Review results' },
+  { id: 'planning', description: 'Plan inputs, batches and predictors' },
+  { id: 'running', description: 'Track folds and predictor creation' },
+  { id: 'finished', description: 'Review results and evaluate predictors' },
 ];
 
 export function ExperimentStages({ stage }: { stage: ExperimentStage }) {
@@ -84,6 +87,7 @@ export function ExperimentSubmissionControl({ project, record, disabledReason, o
   const retryable = Boolean(pending || submission?.retryable);
   const canSubmit = record.state === 'active' && !record.legacy && (stage === 'planning' || retryable);
   const batchCount = (record.batchPlans?.length ?? 0) + record.batches.filter((batch) => batch.state === 'active').length;
+  const predictorPolicy = record.predictorPolicy ?? defaultPredictorPolicy();
   async function submit() {
     if (inFlight.current || !canSubmit || (disabledReason && !retryable)) return;
     inFlight.current = true; setBusy(true); setError(null); onSubmissionPendingChange?.(true);
@@ -106,9 +110,9 @@ export function ExperimentSubmissionControl({ project, record, disabledReason, o
   }
   if (stage === 'finished' || record.legacy) return null;
   return <section className="experiment-submission" aria-label="Experiment submission">
-    {stage === 'planning' ? <div className="experiment-submit-summary"><div><strong>Plan before you submit</strong><p>Save your inputs and batch recipes. Submission freezes the complete plan and starts training.</p></div><button type="button" className="btn btn-primary" disabled={busy || !canSubmit || Boolean(disabledReason)} aria-expanded={reviewing} onClick={() => setReviewing((value) => !value)}>Review &amp; submit</button></div> : null}
+    {stage === 'planning' ? <div className="experiment-submit-summary"><div><strong>Plan before you submit</strong><p>Save your inputs, batches and predictor choices. Submission freezes the complete plan and starts training.</p></div><button type="button" className="btn btn-primary" disabled={busy || !canSubmit || Boolean(disabledReason)} aria-expanded={reviewing} onClick={() => setReviewing((value) => !value)}>Review &amp; submit</button></div> : null}
     {stage === 'planning' && disabledReason ? <p className="muted">{disabledReason}</p> : null}
-    {reviewing && stage === 'planning' ? <div className="experiment-submit-review"><h3>Submit {record.name}</h3><p>{batchCount} saved {batchCount === 1 ? 'batch' : 'batches'} will be submitted together. Inputs and batch settings become permanently read-only. To change a submitted plan, create a new experiment using it as a template.</p><button type="button" className="btn btn-primary" disabled={busy || !canSubmit || Boolean(disabledReason)} onClick={() => void submit()}>{busy ? 'Submitting experiment…' : 'Freeze & submit experiment'}</button></div> : null}
+    {reviewing && stage === 'planning' ? <div className="experiment-submit-review"><h3>Submit {record.name}</h3><p>{batchCount} saved {batchCount === 1 ? 'batch' : 'batches'} will be submitted together. Inputs, batch settings and predictor choices become permanently read-only. To change a submitted plan, create a new experiment using it as a template.</p><p><strong>Predictors: {predictorPolicyLabel(predictorPolicy)}</strong>{includesRefit(predictorPolicy) ? ` · refit epoch budget P${predictorPolicy.refitPercentile}` : ''}. {predictorPolicy.method === 'skip' ? 'This experiment will run cross-validation only.' : 'Predictor creation runs automatically after the source folds complete.'}</p><button type="button" className="btn btn-primary" disabled={busy || !canSubmit || Boolean(disabledReason)} onClick={() => void submit()}>{busy ? 'Submitting experiment…' : 'Freeze & submit experiment'}</button></div> : null}
     <ErrorNotice error={error} />
     {submission?.error ? <p className="callout" role="status">Submission needs attention: {submission.error.message} The saved plan remains locked.</p> : null}
     {pending ? <p className="callout" role="status">The submission response was lost. Retry uses the same submission identity and keeps the saved plan unchanged.</p> : null}
@@ -124,6 +128,7 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
   const [selectedSpec, setSpec] = useState<MILExperimentSpec | null>(record.inputs);
   const [baseInputs, setBaseInputs] = useState(record.inputs);
   const [planDirty, setPlanDirty] = useState(false);
+  const [predictorDirty, setPredictorDirty] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const stage = experimentStage(record);
   const readOnly = record.legacy || record.state !== 'active' || record.configurationLocked === true || stage !== 'planning';
@@ -189,8 +194,8 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
     {record.state !== 'active' ? <p className="callout">This experiment is {lifecycleLabel[record.state].toLowerCase()}. Its saved history remains visible. Restore it to Active to manage it; submitted configurations remain locked.</p> : null}
     <details className="setup-details"><summary>Manage experiment</summary><ExperimentMetadata project={project} record={record} /><ExperimentLifecycle key={record.id} project={project} recordKey={record.key} state={record.state} name={name} /></details>
     <ExperimentStages stage={stage} />
-    {stage !== 'planning' ? <p className="experiment-stage-notice"><Icon name="lock" size={16} />{stage === 'running' ? 'Inputs and batches are locked. Follow training progress in Runs; results open when the experiment finishes.' : 'This experiment is finished. Inputs, batches and runs are read-only. Results summarize the completed work.'}</p> : <p className="muted">Inputs and batches are editable during planning. Runs open after submission; results open when the experiment finishes.</p>}
-    <ExperimentSubmissionControl project={project} record={record} onSubmissionPendingChange={setSubmitting} disabledReason={!record.inputs ? 'Save experiment inputs before submitting.' : stale ? 'Reload saved inputs before submitting this experiment.' : dirty || planDirty ? 'Save or discard your input and batch edits before submitting.' : !(record.batchPlans?.length || record.batches.some((batch) => batch.state === 'active')) ? 'Add at least one batch before submitting.' : null} onSubmitted={() => { setTab('runs'); if (typeof window !== 'undefined') window.history.replaceState(null, '', preparationLink('experiments', context, { experiment: record.id, tab: 'runs' })); }} />
+    {stage !== 'planning' ? <p className="experiment-stage-notice"><Icon name="lock" size={16} />{stage === 'running' ? 'Inputs, batches and predictor choices are locked. Follow fold and refit progress in Runs; results open when the experiment finishes.' : 'This experiment is finished. Inputs, batches and runs are read-only. Results summarize the completed work and its predictors.'}</p> : <p className="muted">Inputs, batches and predictor choices are editable during planning. Runs open after submission; results open when the experiment finishes.</p>}
+    <ExperimentSubmissionControl project={project} record={record} onSubmissionPendingChange={setSubmitting} disabledReason={!record.inputs ? 'Save experiment inputs before submitting.' : stale ? 'Reload saved inputs before submitting this experiment.' : dirty || planDirty ? 'Save or discard your input and batch edits before submitting.' : predictorDirty ? 'Save or discard predictor choices before submitting.' : !(record.batchPlans?.length || record.batches.some((batch) => batch.state === 'active')) ? 'Add at least one batch before submitting.' : null} onSubmitted={() => { setTab('runs'); if (typeof window !== 'undefined') window.history.replaceState(null, '', preparationLink('experiments', context, { experiment: record.id, tab: 'runs' })); }} />
     <nav className="development-tabs" role="tablist" aria-label="Experiments" onKeyDown={(event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
@@ -272,6 +277,8 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
       <p className="muted">Save the experiment inputs before creating a batch. Each frozen batch preserves its exact input and training snapshot. Training starts when you submit the complete experiment.</p>
     </Panel> : null}
     </div>
+    <div hidden={tab !== 'batches'}><ExperimentPredictorPlan project={project} record={record} protocol={protocolSpec} readOnly={readOnly || submitting} batchDirty={planDirty} onDirtyChange={setPredictorDirty} /></div>
+    {(tab === 'runs' || tab === 'results') && stage !== 'planning' ? <ExperimentPredictors project={project} record={record} /> : null}
     <div hidden={tab === 'setup'}><DevelopmentBatches record={record} experimentStage={stage} onPlanDirtyChange={setPlanDirty} project={project} inputs={record.inputs ?? initialSpec()} experimentName={name} experimentId={record.id} experimentRevision={record.revision} ownedBatches={record.batches} ownedDrafts={record.drafts} executionImplemented={record.executionImplemented === true} readOnly={readOnly || submitting} tab={tab === 'setup' ? 'batches' : tab} onOpenSetup={() => changeTab('setup')} onRestoreInputs={(inputs) => { if (!sameJSON(record.inputs, inputs)) { setSpec(inputs); setPreview(null); changeTab('setup'); setMessage('This batch uses different inputs. Review and save them before creating the copy.'); } }} /></div>
     </div>
     <details className="setup-details"><summary>Exact input history &amp; configuration snapshots</summary>
@@ -286,7 +293,7 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
 export function experimentRoute(hash: string, fallback: DevelopmentTab = 'setup') {
   const params = new URLSearchParams(hash.split('?')[1] ?? '');
   const value = params.get('tab');
-  const tab = value === 'inputs' ? 'setup' : developmentTabs.some((item) => item.id === value) ? value as DevelopmentTab : fallback;
+  const tab = value === 'inputs' ? 'setup' : value === 'predictors' ? 'results' : developmentTabs.some((item) => item.id === value) ? value as DevelopmentTab : fallback;
   return { id: params.get('experiment') ?? '', tab };
 }
 export default function LocalExperiments({ workspace, initialTab = 'setup' }: { workspace: Workspace; initialTab?: DevelopmentTab }) {

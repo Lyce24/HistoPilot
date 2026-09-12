@@ -121,6 +121,49 @@ def main():
             "document.body.innerText.includes('Manage experiment') && !document.body.innerText.includes('Create from these inputs')",
         )
         click("Batches")
+        check(
+            "Template copies predictor choices and counts groups across folds",
+            f"{current}.predictorPolicy.method === 'both' && {current}.predictorPolicy.refitPercentile === 75 && document.body.innerText.includes('4 predictors planned') && document.body.innerText.includes('2 k-fold groups · 10 fold runs')",
+        )
+        evaluate(
+            'document.querySelector(\'input[name^="predictor-policy-"][value="skip"]\').click(); true'
+        )
+        check(
+            "Skip removes refit controls and prevents unsaved submission",
+            f"!document.body.innerText.includes('Refit epoch budget') && document.body.innerText.includes('0 predictors planned') && {button('Review & submit')}.disabled",
+        )
+        click("Save predictor choices")
+        check(
+            "Skip is saved explicitly",
+            f"{current}.predictorPolicy.method === 'skip' && {current}.predictorPolicy.refitPercentile === null && !{button('Review & submit')}.disabled",
+        )
+        evaluate(
+            'document.querySelector(\'input[name^="predictor-policy-"][value="refit"]\').click(); true'
+        )
+        check(
+            "Refit counts one predictor per complete fold group",
+            "document.body.innerText.includes('2 predictors planned') && document.body.innerText.includes('0 ensembles + 2 refits')",
+        )
+        fill("Refit epoch budget", "custom", "select")
+        fill("Custom percentile", "")
+        check(
+            "Blank percentile blocks saving and submission",
+            f"{button('Save predictor choices')}.disabled && {button('Review & submit')}.disabled",
+        )
+        fill("Custom percentile", "101")
+        check(
+            "Out-of-range percentile is rejected",
+            f"{button('Save predictor choices')}.disabled && document.body.innerText.includes('percentile from 1 to 100')",
+        )
+        fill("Refit epoch budget", "75", "select")
+        evaluate(
+            'document.querySelector(\'input[name^="predictor-policy-"][value="both"]\').click(); true'
+        )
+        click("Save predictor choices")
+        check(
+            "Both and P75 save before submission",
+            f"{current}.predictorPolicy.method === 'both' && {current}.predictorPolicy.refitPercentile === 75 && !{button('Review & submit')}.disabled",
+        )
         click("Edit batch")
         evaluate(
             f"(() => {{ const record = {current}; record.batchPlans[0].spec.recipe.learningRate = 0.0006; record.revision += 1; window.__experimentReview.refresh(); return true; }})()"
@@ -160,7 +203,7 @@ def main():
         click("Review & submit")
         check(
             "Submission explains the permanent configuration lock",
-            "document.body.innerText.includes('Inputs and batch settings become permanently read-only')",
+            "document.body.innerText.includes('Inputs, batch settings and predictor choices become permanently read-only') && document.body.innerText.includes('refit epoch budget P75')",
         )
         evaluate(
             f"(() => {{ const el = {button('Freeze & submit experiment')}; el.click(); el.click(); return true; }})()"
@@ -207,10 +250,51 @@ def main():
             "Submitted batches have no edit or remove actions",
             "!document.body.innerText.includes('Edit batch') && !document.body.innerText.includes('Add batch to plan') && !document.body.innerText.includes('Clone batch')",
         )
+        check(
+            "Submitted predictor choices are immutable",
+            "document.querySelector('.experiment-predictor-fields').disabled && !document.body.innerText.includes('Save predictor choices')",
+        )
+        click("Finish folds only")
+        click("Runs")
+        check(
+            "Completed folds keep Results locked until refits finish",
+            f"{current}.batches.every(batch => batch.status === 'completed') && {current}.stage === 'running' && document.getElementById('development-tab-results').disabled && document.body.innerText.includes('Epoch 8 / 18') && document.body.innerText.includes('Loss 0.2710')",
+        )
+        check(
+            "Completed ensembles become available for scoped evaluation",
+            f"document.body.innerText.includes('3 ready to evaluate') && [...document.querySelectorAll('a')].some(el => el.textContent.includes('Evaluate predictors') && el.hash.includes('experiment=' + {current}.id))",
+        )
+        browser("screenshot", str(output / "experiments-refit-tracking.png"))
+        evaluate(
+            f"(() => {{ const record = {current}; record.predictorExecution.status = 'interrupted'; record.predictorExecution.retryable = true; record.predictorExecution.cancellable = false; window.__experimentReview.refresh(); window.__experimentReview.losePredictorAction(); return true; }})()"
+        )
+        check(
+            "Interrupted predictor creation offers recovery",
+            f"{button('Resume predictor creation')} !== undefined",
+        )
+        click("Resume predictor creation")
+        check(
+            "Lost predictor resume response retains recovery action",
+            f"{button('Retry resume request')} !== undefined",
+        )
+        click("Retry resume request")
+        check(
+            "Predictor resume retries use the same operation",
+            "window.__experimentReview.predictorActions.length === 2 && window.__experimentReview.predictorActions[0].operationId === window.__experimentReview.predictorActions[1].operationId",
+        )
         click("Finish selected fixture")
         check(
             "Finishing unlocks results while preserving configuration lock",
             f"{current}.stage === 'finished' && !document.getElementById('development-tab-results').disabled",
+        )
+        check(
+            "Finished predictors expose epoch provenance and evaluation links",
+            "document.body.innerText.includes('6 ready to evaluate') && document.body.innerText.includes('18 epochs · P75') && !document.body.innerText.includes('Cancel remaining predictors')",
+        )
+        fill("Predictor method", "refit", "select")
+        check(
+            "Predictor library filters refits independently of job history",
+            "[...document.querySelectorAll('.experiment-predictor-table')].at(-1).querySelectorAll('tbody tr').length === 3",
         )
         click("Results")
         check(

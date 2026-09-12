@@ -145,7 +145,9 @@ describe('development execution controls', () => {
 
   it('discloses optional optimization settings while keeping grid values unambiguous', () => {
     const html = renderToStaticMarkup(<RecipeFields value={{ ...defaultRecipe(), lrScheduler: 'cosine', warmupEpochs: 3, minEpochs: 5, precision: 'bf16-mixed' }} gridMode onChange={() => {}} />);
-    expect(html).toContain('Advanced model &amp; training settings');
+    expect(html).toContain('Optimization &amp; stopping');
+    expect(html).toContain('Model architecture');
+    expect(html).toContain('Precision &amp; memory');
     expect(html).toContain('Warmup epochs');
     expect(html).toContain('Minimum training epochs');
     expect(html).toContain('Final LR fraction');

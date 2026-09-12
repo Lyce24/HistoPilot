@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from histopilot.application.feature_bundles import _hash
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
+from histopilot.schemas.model_experiments import ExperimentPredictorPolicy
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 
@@ -134,7 +135,7 @@ def require_execution_contract(expected, actual):
 
 
 class ModelExperimentService:
-    def __init__(self, store, filesystem, *, training=None):
+    def __init__(self, store, filesystem, *, training=None, predictor_execution=None):
         self.store, self.filesystem = store, filesystem
         # Training imports batch planning. Keep this dependency lazy.
         if training is None:
@@ -142,6 +143,35 @@ class ModelExperimentService:
 
             training = TrainingService(store, filesystem)
         self.training = training
+        self.predictor_execution = predictor_execution
+
+    def _predictors(self):
+        if self.predictor_execution is None:
+            from histopilot.application.experiment_predictors import ExperimentPredictorService
+
+            self.predictor_execution = ExperimentPredictorService(
+                self.store, self.filesystem, training=self.training
+            )
+        return self.predictor_execution
+
+    def _start_predictors(self, identity, submission):
+        if (
+            not submission.get("predictorPolicy")
+            or submission["predictorPolicy"]["method"] == "skip"
+        ):
+            return
+        try:
+            self._predictors().launch(
+                identity, "experiment-predictors-" + _hash(submission["operationId"])
+            )
+        except (StorageError, OSError, ValueError, RuntimeError) as error:
+            # Fold submission is already durable. Keep its receipt intact and
+            # make coordinator startup failures explicitly recoverable.
+            submission["predictorStartupError"] = {
+                "code": getattr(error, "code", "EXPERIMENT_PREDICTORS_LAUNCH_FAILED"),
+                "message": str(error),
+            }
+            self._save_submission(identity, submission)
 
     def require_editable(self, identity, expected_revision=None, *, metadata_only=False):
         if identity.startswith("legacy-"):
@@ -255,6 +285,9 @@ class ModelExperimentService:
                         "Restore the source experiment before copying it.", "RECORD_TRASHED", 409
                     )
                 values["inputs"] = deepcopy(source["inputs"])
+                values["predictorPolicy"] = deepcopy(
+                    source["predictorPolicy"] or ExperimentPredictorPolicy().model_dump()
+                )
             plans = []
             if source:
                 plans = deepcopy(source["batchPlans"])
@@ -333,10 +366,10 @@ class ModelExperimentService:
                 key in request.model_fields_set
                 and request.model_dump()[key]
                 != record["payload"].get(key, [] if key == "batchPlans" else None)
-                for key in ("inputs", "batchPlans")
+                for key in ("inputs", "batchPlans", "predictorPolicy")
             ):
                 raise StorageError(
-                    "Submitted inputs and batch plans cannot change. Copy this experiment to adjust them.",
+                    "Submitted inputs, batch plans and predictor choices cannot change. Copy this experiment to adjust them.",
                     "EXPERIMENT_CONFIGURATION_LOCKED",
                     409,
                 )
@@ -414,6 +447,7 @@ class ModelExperimentService:
                         409,
                     )
                 if submission["status"] == "submitted":
+                    self._start_predictors(identity, submission)
                     return self.get(identity)
             else:
                 record = self.require_editable(identity, request.expectedRevision)
@@ -515,6 +549,9 @@ class ModelExperimentService:
                     "publications": publications,
                     "launchedBatchIds": [],
                     "executionContract": contracts[0],
+                    "predictorPolicy": ExperimentPredictorPolicy.model_validate(
+                        record["payload"].get("predictorPolicy", {})
+                    ).model_dump(),
                     "error": None,
                     "experiment": {
                         "id": identity,
@@ -589,6 +626,8 @@ class ModelExperimentService:
                     },
                 )
             self._save_submission(identity, submission)
+            if submission["status"] == "submitted":
+                self._start_predictors(identity, submission)
             return self.get(identity)
 
     @staticmethod
@@ -699,6 +738,50 @@ class ModelExperimentService:
             predictor_ids.setdefault(item["method"], item["id"])
         submission = payload.get("submission")
         stage, locked = experiment_stage(batches, submission, legacy=legacy)
+        predictor_policy = (
+            submission.get("predictorPolicy")
+            if submission
+            else None
+            if legacy
+            else payload.get("predictorPolicy", ExperimentPredictorPolicy().model_dump())
+        )
+        predictor_execution = None
+        if submission and predictor_policy and predictor_policy["method"] != "skip":
+            try:
+                predictor_execution = self._predictors().status(identity, summary=summary)
+                if predictor_execution is None:
+                    predictor_execution = self._predictors().pending(
+                        identity,
+                        submission.get("predictorStartupError")
+                        or {
+                            "code": "EXPERIMENT_PREDICTORS_NOT_STARTED",
+                            "message": "Predictor coordination has not started. Finish submission, then resume predictor creation.",
+                        },
+                        summary=summary,
+                    )
+            except (StorageError, OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+                predictor_execution = self._predictors().public(
+                    {
+                        "status": "attention",
+                        "items": [],
+                        "error": {
+                            "code": getattr(error, "code", "EXPERIMENT_PREDICTORS_INVALID"),
+                            "message": str(error),
+                        },
+                    },
+                    summary=summary,
+                )
+            if stage == "finished" and predictor_execution["status"] not in {
+                "completed",
+                "cancelled",
+            }:
+                stage = "running"
+        status_rows = batches
+        if predictor_execution:
+            predictor_status = {"waiting": "queued", "attention": "failed"}.get(
+                predictor_execution["status"], predictor_execution["status"]
+            )
+            status_rows = [*batches, {"state": "active", "status": predictor_status}]
         public_submission = (
             None
             if not submission
@@ -729,9 +812,11 @@ class ModelExperimentService:
             "tags": payload.get("tags", []),
             "revision": record.get("revision", 1),
             "state": states.get(key, {}).get("state", "active"),
-            "status": aggregate_status(batches, inputs is not None or bool(drafts)),
+            "status": aggregate_status(status_rows, inputs is not None or bool(drafts)),
             "stage": stage,
             "configurationLocked": locked,
+            "predictorPolicy": predictor_policy,
+            "predictorExecution": predictor_execution,
             "batchPlans": payload.get("batchPlans", []),
             "submission": public_submission,
             "legacy": legacy,

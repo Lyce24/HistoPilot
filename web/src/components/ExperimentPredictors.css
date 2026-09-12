@@ -1,0 +1,24 @@
+.experiment-predictor-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.experiment-predictor-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.experiment-predictor-option { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 16px; cursor: pointer; }
+.experiment-predictor-option.selected { border-color: var(--accent); background: var(--accent-light); }
+.experiment-predictor-option:has(input:disabled) { cursor: default; }
+.experiment-predictor-option input { flex: 0 0 auto; margin-top: 4px; }
+.experiment-predictor-option span { display: grid; gap: 8px; min-width: 0; }
+.experiment-predictor-option small { line-height: 1.6; color: var(--muted); }
+.experiment-refit-budget { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(200px, 2fr); gap: 16px 24px; margin-top: 20px; align-items: start; }
+.experiment-refit-budget p { color: var(--muted); line-height: 1.6; margin: 0; }
+.experiment-predictor-count { display: flex; flex-wrap: wrap; gap: 10px 24px; margin-top: 20px; padding: 16px; border-radius: 10px; background: var(--surface-alt, var(--accent-light)); }
+.experiment-predictor-count span { color: var(--muted); }
+.experiment-predictor-tools { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; align-items: end; }
+.experiment-predictor-tools .label { flex: 1 1 180px; }
+.experiment-predictor-table { overflow-x: auto; position: relative; }
+.experiment-predictor-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.experiment-predictor-table :is(th, td) { padding: 12px; border-bottom: 1px solid var(--line); }
+.experiment-predictor-table th { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface-alt, #f8fafb); }
+.experiment-predictor-table small { display: block; color: var(--muted); margin-top: 4px; }
+.experiment-predictor-progress { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.experiment-predictor-progress progress { width: 100%; accent-color: var(--accent); }
+.experiment-predictor-progress label.experiment-predictor-tools { display: grid; max-width: 320px; align-items: start; }
+@media (max-width: 1000px) { .experiment-predictor-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .experiment-predictor-options, .experiment-refit-budget { grid-template-columns: 1fr; } }

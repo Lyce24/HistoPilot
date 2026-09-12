@@ -21,7 +21,7 @@ export function useRoadmap(workspace: Workspace) {
   const featureBundles = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project), enabled });
   const batches = useQuery({ queryKey: ['development-batches', project], queryFn: () => development.list(project), enabled, refetchInterval: (query) => developmentPollInterval(query.state.data) });
   const evaluationCohorts = useQuery({ queryKey: ['evaluation-cohorts', project], queryFn: () => evaluation.list(project), enabled });
-  const frozenPredictors = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), enabled });
+  const frozenPredictors = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), enabled, refetchInterval: 10000 });
   const evaluationRecords = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), enabled });
   const clinicalRecords = useQuery({ queryKey: ['clinical-analyses', project], queryFn: () => clinicalAnalyses.list(project), enabled });
   const interpretationRecords = useQuery({ queryKey: ['interpretations', project], queryFn: () => interpretations.list(project), enabled, refetchInterval: 10000 });
@@ -51,10 +51,8 @@ export function useRoadmap(workspace: Workspace) {
   const inputQueries = [datasets, protocols, featureBundles];
   const checksById = Object.fromEntries(modules.map(({ id, retainedWork }) => {
     const result = check(
-    id === 'dataset' || (enabled && ['experiments', 'post-development', 'evaluation', 'clinical-utility', 'interpretation'].includes(id))
+    id === 'dataset' || (enabled && ['experiments', 'evaluation', 'clinical-utility', 'interpretation'].includes(id))
       ? []
-      : id === 'post-development'
-        ? [batches]
       : id === 'evaluation'
         ? [batches, evaluationCohorts]
       : id === 'clinical-utility'

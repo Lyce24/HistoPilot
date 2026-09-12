@@ -1,0 +1,70 @@
+[
+  {
+    "name": "Experiment link shows 90 predictors, not 450 fold models",
+    "passed": true
+  },
+  {
+    "name": "The linked experiment retains every configuration, seed and method",
+    "passed": true
+  },
+  {
+    "name": "Downstream evidence navigation has no separate predictor step",
+    "passed": true
+  },
+  {
+    "name": "Desktop has no horizontal page overflow",
+    "passed": true
+  },
+  {
+    "name": "Method filtering selects exactly 45 refit predictors",
+    "passed": true
+  },
+  {
+    "name": "Filtered review pins only the shown experiment and method IDs",
+    "passed": true
+  },
+  {
+    "name": "Review preserves the exact predictor count",
+    "passed": true
+  },
+  {
+    "name": "Mocked submission contains exactly the reviewed 45 predictors",
+    "passed": true
+  },
+  {
+    "name": "A skipped experiment never falls back to other experiments' predictors",
+    "passed": true
+  },
+  {
+    "name": "No predictor selection blocks evaluation review",
+    "passed": true
+  },
+  {
+    "name": "Global selection groups source experiments without merging weights",
+    "passed": true
+  },
+  {
+    "name": "Changing the source updates the whole evaluation selection",
+    "passed": true
+  },
+  {
+    "name": "Single predictor selection retains the selected source experiment",
+    "passed": true
+  },
+  {
+    "name": "Single source link opens that predictor within its experiment",
+    "passed": true
+  },
+  {
+    "name": "Mobile evaluation has no horizontal page overflow",
+    "passed": true
+  },
+  {
+    "name": "All requests used the offline fixture",
+    "passed": true
+  },
+  {
+    "name": "No browser page errors",
+    "passed": true
+  }
+]

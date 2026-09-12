@@ -227,6 +227,7 @@ class RefitService:
                         "This operation belongs to another refit plan.", "OPERATION_CONFLICT", 409
                     )
                 return lifecycle_document(self.store, prior)
+            self.predictors.require_work_open(selection.experimentId)
             manifest = self.predictors._prepare(selection)
             if evidence_hash(manifest) != request.previewHash:
                 raise StorageError(
@@ -252,12 +253,34 @@ class RefitService:
     def launch(self, identity, request, *, resume=False):
         with lifecycle_guard(self.store.folder):
             record = self.get(identity)
+            self.predictors.require_work_open(record["manifest"]["experimentId"])
             self._verify_sources(record)
             resources = (
                 request.resources.model_dump()
                 if request.resources is not None
                 else record["manifest"]["resources"]
             )
+            owner = record["manifest"].get("experimentId", "")
+            if owner and not owner.startswith("legacy-"):
+                submission = self.store.get_draft(owner)["payload"].get("submission") or {}
+                if submission.get("predictorPolicy"):
+                    if resources != record["manifest"]["resources"]:
+                        raise StorageError(
+                            "This refit inherits its submitted experiment resources. Copy the experiment to change them.",
+                            "EXPERIMENT_CONFIGURATION_LOCKED",
+                            409,
+                        )
+                    from histopilot.application.model_experiments import (
+                        execution_contract,
+                        require_execution_contract,
+                    )
+                    from histopilot.workers.training_process import compute_snapshot
+
+                    runtime = self.jobs.runtime()
+                    require_execution_contract(
+                        submission["executionContract"],
+                        execution_contract({"code": compute_snapshot(), "runtime": runtime}),
+                    )
             if resources["maxConcurrentRuns"] != 1 or len(resources["gpuIds"]) > 1:
                 raise StorageError(
                     "A refit trains one model on at most one GPU.", "REFIT_RESOURCES_INVALID", 422
@@ -293,6 +316,7 @@ class RefitService:
                     )
                 return lifecycle_document(self.store, prior)
             record = self.get(identity)
+            self.predictors.require_work_open(record["manifest"]["experimentId"])
             self._verify_sources(record)
             status = self.jobs.status(identity)
             from histopilot.application.lifecycle import _confirmed_live

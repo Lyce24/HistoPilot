@@ -10,7 +10,6 @@ export type RoadmapModuleId =
   | 'cohort'
   | 'features'
   | 'experiments'
-  | 'post-development'
   | 'test-data'
   | 'evaluation'
   | 'clinical-utility'
@@ -45,13 +44,8 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
   },
   {
     id: 'experiments', title: 'Experiments', shortTitle: 'Experiments', phase: 'develop',
-    description: 'Create experiments, compare their inputs, manage batches and inspect every run and result.',
+    description: 'Plan training, track runs, and generate ensemble or refit predictors for every configuration and seed.',
     prerequisites: ['cohort', 'features'],
-  },
-  {
-    id: 'post-development', title: 'Build predictors', shortTitle: 'Build predictors', phase: 'develop',
-    description: 'Create an ensemble from fold checkpoints or refit one model on all development data.',
-    prerequisites: ['experiments'],
   },
   {
     id: 'test-data', title: 'Test cohorts', shortTitle: 'Test cohorts', phase: 'evaluate',
@@ -61,7 +55,7 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
   {
     id: 'evaluation', title: 'Evaluate models', shortTitle: 'Evaluate models', phase: 'evaluate',
     description: 'Select a predictor and test cohort for each evaluation, with a separate record for every chain.',
-    prerequisites: ['post-development', 'test-data'],
+    prerequisites: ['experiments', 'test-data'],
   },
   {
     id: 'clinical-utility', title: 'Clinical utility', shortTitle: 'Clinical utility', phase: 'insights',
@@ -79,8 +73,7 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
 export const ROADMAP_CONNECTIONS: readonly { from: RoadmapModuleId; to: RoadmapModuleId }[] = [
   { from: 'dataset', to: 'cohort' }, { from: 'dataset', to: 'features' },
   { from: 'cohort', to: 'experiments' }, { from: 'features', to: 'experiments' },
-  { from: 'experiments', to: 'post-development' },
-  { from: 'post-development', to: 'evaluation' }, { from: 'test-data', to: 'evaluation' },
+  { from: 'experiments', to: 'evaluation' }, { from: 'test-data', to: 'evaluation' },
   { from: 'evaluation', to: 'clinical-utility' }, { from: 'clinical-utility', to: 'interpretation' },
 ];
 
@@ -199,7 +192,10 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
 
   const retainedPredictors = demo ? [] : saved.predictors.filter((item) => item.lifecycleState !== 'trashed');
   const retainedEvaluations = demo ? [] : saved.modelEvaluations.filter((item) => item.lifecycleState !== 'trashed');
-  states['post-development'] = progress(retainedPredictors.length, 0, 'frozen predictor', '', 'No frozen predictor');
+  if (retainedPredictors.length) {
+    const published = `${retainedPredictors.length} ready predictor${retainedPredictors.length === 1 ? '' : 's'}`;
+    states.experiments = { status: 'complete', artifactCount: Math.max(states.experiments.artifactCount, retainedPredictors.length), evidence: states.experiments.artifactCount ? `${states.experiments.evidence} · ${published}` : published };
+  }
   const completedEvaluations = retainedEvaluations.filter((item) => item.execution?.status === 'completed').length;
   states.evaluation = progress(completedEvaluations, retainedEvaluations.length - completedEvaluations, 'completed evaluation', 'saved evaluation plan', 'No evaluation of a predictor');
   const clinicalAnalyses = demo ? [] : saved.clinicalAnalyses.filter((item) => item.lifecycleState !== 'trashed');
@@ -212,7 +208,7 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
   const retained: Partial<Record<RoadmapModuleId, boolean>> = demo ? {} : {
     cohort: saved.protocols.length > 0 || protocolDrafts.length > 0,
     features: saved.features.length > 0 || saved.bundles.length > 0,
-    experiments: saved.batches.length > 0 || modelDrafts.length > 0,
+    experiments: saved.batches.length > 0 || modelDrafts.length > 0 || retainedPredictors.length > 0,
     'test-data': saved.evaluationCohorts.length > 0 || saved.drafts.some((draft) => draft.payload.type === 'evaluation-cohort'),
   };
   return ROADMAP_MODULES.map((module) => {
@@ -220,7 +216,7 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     // need an accessible editor/results view; opening it does not authorize a
     // new publication or run, which always passes the backend input checks.
     const retainedWork = retained[module.id] === true;
-    const blockers = retainedWork ? [] : module.prerequisites.filter((id) => states[id].status !== 'complete');
+    const blockers = retainedWork ? [] : module.prerequisites.filter((id) => module.id === 'evaluation' && id === 'experiments' ? retainedPredictors.length === 0 : states[id].status !== 'complete');
     const compatibilityIssue = module.id === 'experiments' && !retainedWork && blockers.length === 0 && !compatibleInputs
       ? 'Freeze a feature bundle for the same dataset as the protocol, including any features or pack required by that protocol.'
       : undefined;
@@ -228,7 +224,7 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     // These pages are registries: users can create an experiment before inputs,
     // inspect historical chains and recover records without completing all other
     // experiments. Individual training/freeze/evaluation actions check readiness.
-    const registry = !demo && ['experiments', 'post-development', 'evaluation', 'clinical-utility', 'interpretation'].includes(module.id);
+    const registry = !demo && ['experiments', 'evaluation', 'clinical-utility', 'interpretation'].includes(module.id);
     return { ...module, ...states[module.id], blockers, unlocked: registry || blockers.length === 0, compatibilityIssue, retainedWork };
   });
 }

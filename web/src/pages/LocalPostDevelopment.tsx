@@ -19,19 +19,19 @@ import '../components/RunWorkspace.css';
 export const predictorChoiceKey = (choice: PredictorChoice) => predictorSourceKey(choice);
 const experimentLink = (id: string) => `#experiments?experiment=${encodeURIComponent(id)}`;
 
-export default function LocalPredictors({ workspace }: { workspace: Workspace }) {
+export default function LocalPredictors({ workspace, historical = false }: { workspace: Workspace; historical?: boolean }) {
   const parameters = useHashParameters();
   const sourceExperiment = parameters.get('experiment') ?? '';
   const sourcePredictor = parameters.get('predictor') ?? '';
   const requestedTab = parameters.get('tab');
-  const initialTab = requestedTab === 'library' || requestedTab === 'refits' ? requestedTab : sourcePredictor ? 'library' : 'build';
-  return <PredictorWorkspace key={`${workspace.project.id}:${sourceExperiment}:${sourcePredictor}:${initialTab}`} workspace={workspace} sourceExperiment={sourceExperiment} sourcePredictor={sourcePredictor} initialTab={initialTab} />;
+  const initialTab = requestedTab === 'library' || requestedTab === 'refits' ? requestedTab : sourcePredictor || historical ? 'library' : 'build';
+  return <PredictorWorkspace key={`${workspace.project.id}:${sourceExperiment}:${sourcePredictor}:${initialTab}`} historical={historical} workspace={workspace} sourceExperiment={sourceExperiment} sourcePredictor={sourcePredictor} initialTab={initialTab} />;
 }
-function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, initialTab }: { workspace: Workspace; sourceExperiment: string; sourcePredictor: string; initialTab: 'build' | 'library' | 'refits' }) {
+function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, initialTab, historical }: { workspace: Workspace; sourceExperiment: string; sourcePredictor: string; initialTab: 'build' | 'library' | 'refits'; historical: boolean }) {
   const project = workspace.project.id;
   const client = useQueryClient();
   const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchInterval: 10000 });
-  const choices = useQuery({ queryKey: ['predictor-choices', project], queryFn: () => predictors.choices(project), refetchInterval: 15000 });
+  const choices = useQuery({ queryKey: ['predictor-choices', project], queryFn: () => predictors.choices(project), enabled: !historical, refetchInterval: historical ? false : 15000 });
   const refits = useQuery({ queryKey: ['refit-builds', project], queryFn: () => predictors.refits(project), refetchInterval: 5000 });
   const [tab, setTab] = useState<'build' | 'library' | 'refits'>(initialTab);
   const [state, setState] = useState<LifecycleState | 'all'>(sourcePredictor ? 'all' : 'active');
@@ -47,12 +47,13 @@ function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, init
   const builds = (refits.data?.items ?? []).filter((item) => !sourceExperiment || item.manifest.experimentId === sourceExperiment);
   const build = builds.find((item) => item.id === buildId);
   return <div className="clinical-workspace model-chains run-workspace">
-    <PageHeader eyebrow="02 DEVELOP" title="Build predictors" description="Build separate ensembles and refits for every experiment, configuration and seed. Review inputs, manage jobs, and compare results in one workspace." actions={<a className="btn btn-secondary" href="#evaluation">Run predictors on a test cohort</a>} />
+    <PageHeader eyebrow="02 DEVELOP" title={historical ? 'Historical predictors' : 'Build predictors'} description={historical ? 'Inspect existing predictors and recover older refit jobs. New predictor settings and automatic builds are managed inside each experiment.' : 'Build separate ensembles and refits for every experiment, configuration and seed. Review inputs, manage jobs, and compare results in one workspace.'} actions={<a className="btn btn-secondary" href="#evaluation">Run predictors on a test cohort</a>} />
+    {historical ? <p className="callout">Create and configure new predictor work in <a href="#experiments">Experiments</a>. This page retains historical predictors and unfinished refit jobs.</p> : null}
     <EvidenceChain current="post-development" experimentId={sourceExperiment} predictorId={sourcePredictor} />
     {sourcePredictor || sourceExperiment ? <p className="callout">{sourcePredictor ? 'Showing the linked predictor.' : 'Showing one experiment.'} <a href="#post-development?tab=library">Show all experiments and predictors</a></p> : null}
-    <ErrorNotice error={registry.error ?? choices.error ?? refits.error} />
+    <ErrorNotice error={registry.error ?? (!historical ? choices.error : null) ?? refits.error} />
     <div className="run-kpis"><span><strong>{allPredictors.filter((item) => item.lifecycleState === 'active').length}</strong>published predictors</span><span><strong>{builds.length}</strong>refit plans</span><span><strong>{new Set(allPredictors.map((item) => item.manifest.experimentId)).size}</strong>experiments</span></div>
-    <nav className="run-tabs" aria-label="Predictor workspace">{([['build','Build predictors'],['library','Predictor library'],['refits','Refit jobs']] as const).map(([key,label]) => <button type="button" key={key} aria-pressed={tab===key} className={tab===key?'selected':''} onClick={() => setTab(key)}>{label}</button>)}</nav>
+    <nav className="run-tabs" aria-label="Predictor workspace">{([['build','Build predictors'],['library','Predictor library'],['refits','Refit jobs']] as const).filter(([key]) => !historical || key !== 'build').map(([key,label]) => <button type="button" key={key} aria-pressed={tab===key} className={tab===key?'selected':''} onClick={() => setTab(key)}>{label}</button>)}</nav>
     {tab === 'build' ? <Panel title="Build predictors" subtitle="Select completed seed groups, then choose Ensemble, Refit or Both."><BulkPredictorBuilder project={project} choices={choices.data?.items ?? []} sourceExperiment={sourceExperiment} refresh={async () => { await refresh(); }} /></Panel> : null}
     {tab === 'library' ? <Panel title="Predictor library" subtitle="Every configuration and seed pair keeps its own ensemble and refit. Archived and deleted records remain recoverable.">
       <div className="run-toolbar"><label className="label run-search">Search predictors<input className="field" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, experiment or seed" /></label><label className="label">Predictor visibility<select className="field" value={state} onChange={(event) => setState(event.target.value as typeof state)}><option value="active">Active</option><option value="archived">Archived</option><option value="trashed">Trash</option><option value="all">All records</option></select></label><label className="label">Method<select className="field" value={method} onChange={(event) => setMethod(event.target.value)}><option value="all">All methods</option><option value="ensemble">Ensemble</option><option value="refit">Refit</option></select></label><label className="label">Group by<select className="field" value={groupBy} onChange={(event) => setGroupBy(event.target.value)}><option value="experiment">Experiment</option><option value="none">No grouping</option></select></label><label className="label">Sort<select className="field" value={sort} onChange={(event) => setSort(event.target.value)}><option value="seed">Seed</option><option value="name">Name</option><option value="recent">Recently created</option></select></label></div>

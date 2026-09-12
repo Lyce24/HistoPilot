@@ -19,6 +19,7 @@ export interface PredictorSelection {
   method?: PredictorMethod; refitPercentile?: number;
 }
 export interface PredictorManifest extends PredictorSelection {
+  candidateNumber?: number;
   kind: 'frozen-predictor'; runIds: string[];
   checkpoints: { runId: string; path: string; sha256: string; bytes: number }[];
   sourceCheckpoints?: { runId: string; path: string; sha256: string; bytes: number }[];

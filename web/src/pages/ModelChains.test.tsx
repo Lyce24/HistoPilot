@@ -157,10 +157,10 @@ describe('model development predictor and evaluation chains', () => {
     expect(html.match(/>Ready to run<\/span>/g)).toHaveLength(2);
     expect(html).toContain('Accuracy');
     expect(html).toContain('AUROC');
-    expect(html).toContain('Run all predictors');
+    expect(html).toContain('Choose predictors');
     expect(html).not.toContain('>Launch evaluation');
     expect(html).not.toContain('>Run inference');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review all predictors/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review all shown predictors/);
   });
 
   it('deep-links to the requested predictor and restricts cohorts by protocol and development features', () => {
@@ -178,8 +178,8 @@ describe('model development predictor and evaluation chains', () => {
   it('does not substitute an active predictor when a link points to deleted weights', () => {
     const deleted = predictor('deleted', undefined, 'trashed'), active = predictor('active');
     const html = render('evaluate', { hash: '#evaluation?predictor=deleted', predictors: [deleted, active], cohorts: [cohort('active', active)] });
-    expect(html).not.toContain('<option value="deleted"');
-    expect(html).toContain('Build predictors');
+    expect(html).toContain('<option value="deleted" disabled="" selected="">Linked predictor unavailable');
+    expect(html).toContain('Predictors appear automatically');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review evaluation/);
     expect(html).not.toContain('class target grade');
   });
@@ -190,7 +190,7 @@ describe('model development predictor and evaluation chains', () => {
     expect(defaultView).toContain('<option value="active"');
     expect(defaultView).not.toMatch(/<option[^>]*value="archived"[^>]*>Predictor archived/);
     const linked = render('evaluate', { hash: '#evaluation?predictor=archived', predictors: [active, archived] });
-    expect(linked).toMatch(/<option[^>]*value="archived"[^>]*>Predictor archived · Fold ensemble · archived/);
+    expect(linked).toMatch(/<option[^>]*value="archived"[^>]*>Configuration candidate-archived · Train 11 \/ split 42 · Fold ensemble · archived/);
     expect(linked).toContain('#experiments?experiment=experiment-archived');
     expect(linked).toContain('class target grade');
   });

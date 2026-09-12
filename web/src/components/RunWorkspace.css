@@ -4,7 +4,7 @@
 .run-toolbar > .run-search { flex: 2 1 240px; }
 .run-selection-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 12px 14px; background: #eef4f1; border: 1px solid var(--line); border-radius: 6px; margin: 12px 0; }
 .run-selection-bar > strong { margin-right: auto; }
-.run-table-scroll { overflow-x: auto; max-width: 100%; border: 1px solid var(--line); border-radius: 7px; }
+.run-table-scroll { position: relative; overflow-x: auto; max-width: 100%; border: 1px solid var(--line); border-radius: 7px; }
 table.run-table { width: 100%; min-width: 880px; table-layout: fixed; white-space: normal; font-size: 12px; }
 .run-table th, .run-table td { padding: 11px 12px; overflow-wrap: anywhere; vertical-align: top; }
 .run-table th { font-size: 10px; overflow-wrap: normal; }
@@ -31,3 +31,6 @@ table.run-table { width: 100%; min-width: 880px; table-layout: fixed; white-spac
 .run-bulk-review .chain-details { font-size: 11px; }
 .run-cohort-action { border: 1px solid var(--line); border-radius: 10px; padding: 18px; background: #f4f8f6; }
 @media (max-width: 720px) { .run-toolbar { align-items: stretch; } .run-toolbar > .label { flex-basis: 100%; } .run-methods label { padding: 10px; } }
+
+.evaluation-predictor-table { max-height: 480px; overflow: auto; }
+.evaluation-predictor-table thead { position: sticky; top: 0; z-index: 1; background: var(--canvas, #f5f7f6); }

@@ -54,7 +54,12 @@ def experiment(tmp_path):
     training = Training(development.store)
     service = ModelExperimentService(development.store, development.filesystem, training=training)
     record = service.create(
-        CreateModelExperiment(name="Study", operationId="create", inputs=spec.inputs)
+        CreateModelExperiment(
+            name="Study",
+            operationId="create",
+            inputs=spec.inputs,
+            predictorPolicy={"method": "skip", "refitPercentile": None},
+        )
     )
     values = spec.model_dump()
     values["batchName"] = "First"
@@ -429,3 +434,66 @@ def test_copy_merges_equivalent_saved_frozen_and_legacy_draft_recipes(experiment
     assert service.create(command)["id"] == copied["id"]
     assert service.store.get_configuration(frozen["id"])["manifest"] == frozen["manifest"]
     assert training.launches == []
+
+
+def test_predictor_policy_freezes_with_submission_and_copy_reopens_it(experiment):
+    from histopilot.application.experiment_predictors import ExperimentPredictorService
+
+    service, _, record, training = experiment
+    record = service.update(
+        record["id"],
+        UpdateModelExperiment(
+            name=record["name"],
+            expectedRevision=record["revision"],
+            predictorPolicy={"method": "both", "refitPercentile": 75},
+        ),
+    )
+
+    class Predictors:
+        public = staticmethod(ExperimentPredictorService.public)
+        launches = []
+
+        def launch(self, identity, operation):
+            self.launches.append((identity, operation))
+
+        def status(self, identity, summary=False):
+            return self.public({"status": "waiting", "items": []})
+
+    coordinator = Predictors()
+    service.predictor_execution = coordinator
+    submitted = submit(service, record)
+    policy = {"method": "both", "refitPercentile": 75.0}
+    assert submitted["predictorPolicy"] == policy
+    assert (
+        service.store.get_draft(record["id"])["payload"]["submission"]["predictorPolicy"] == policy
+    )
+    assert len(coordinator.launches) == 1
+    for changed in ({"method": "skip"}, {"method": "both", "refitPercentile": 50}):
+        with pytest.raises(StorageError) as error:
+            service.update(
+                record["id"],
+                UpdateModelExperiment(
+                    name=record["name"],
+                    expectedRevision=submitted["revision"],
+                    predictorPolicy=changed,
+                ),
+            )
+        assert error.value.code == "EXPERIMENT_CONFIGURATION_LOCKED"
+    copied = service.create(
+        CreateModelExperiment(
+            name="New comparison",
+            operationId="copy-predictors",
+            sourceExperimentId=record["id"],
+        )
+    )
+    assert copied["predictorPolicy"] == policy and copied["stage"] == "planning"
+    updated = service.update(
+        copied["id"],
+        UpdateModelExperiment(
+            name=copied["name"],
+            expectedRevision=copied["revision"],
+            predictorPolicy={"method": "skip"},
+        ),
+    )
+    assert updated["predictorPolicy"]["method"] == "skip"
+    assert updated["predictorExecution"] is None and len(training.launches) == 2

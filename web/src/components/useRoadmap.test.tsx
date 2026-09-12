@@ -100,22 +100,22 @@ describe('roadmap prerequisite query isolation', () => {
     seed(value);
     value.removeQueries({ queryKey: keys.batches, exact: true });
     const roadmap = probe(value);
-    expect(roadmap.checksById['post-development']).toEqual({ isLoading: false, error: null, hasData: true });
+    expect(roadmap.checksById.experiments).toEqual({ isLoading: false, error: null, hasData: true });
     expect(roadmap.checksById.evaluation.hasData).toBe(true);
     expect(roadmap.checksById['test-data']).toEqual({ isLoading: false, error: null, hasData: true });
     expect(roadmap.byId['test-data'].unlocked).toBe(true);
-    expect(roadmap.byId['post-development'].unlocked).toBe(true);
-    expect(roadmap.byId['post-development'].status).toBe('not-started');
+    expect(roadmap.byId.experiments.unlocked).toBe(true);
+    expect(roadmap.byId.experiments.status).toBe('not-started');
   });
 
-  it('keeps post-development readiness separate from the test-cohort listing', () => {
+  it('keeps experiment readiness separate from the test-cohort listing', () => {
     const value = client();
     seed(value);
     value.removeQueries({ queryKey: keys.evaluation, exact: true });
     const failure = new Error('Test cohorts unavailable');
     fail(value, keys.evaluation, failure);
     const roadmap = probe(value);
-    expect(roadmap.checksById['post-development']).toEqual({ isLoading: false, error: null, hasData: true });
+    expect(roadmap.checksById.experiments).toEqual({ isLoading: false, error: null, hasData: true });
     expect(roadmap.checksById.evaluation).toEqual({ isLoading: false, error: null, hasData: true });
     expect(roadmap.error).toBe(failure);
   });
@@ -189,7 +189,7 @@ describe('roadmap prerequisite query isolation', () => {
     expect(roadmap.byId.experiments.status).toBe('draft');
     expect(roadmap.checksById.experiments).toEqual({ isLoading: false, hasData: true, error: null });
     expect(roadmap.error).toBe(error);
-    expect(roadmap.byId['post-development'].unlocked).toBe(true);
+    expect(roadmap.byId.experiments.unlocked).toBe(true);
   });
 
   it('does not require draft or feature-source listings to establish model input prerequisites', () => {

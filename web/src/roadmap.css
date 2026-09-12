@@ -92,7 +92,6 @@
 .node-cohort { grid-area: 2 / 1; }
 .node-features { grid-area: 2 / 3; }
 .node-experiments { grid-area: 3 / 2; }
-.node-post-development { grid-area: 3 / 3; }
 .node-test-data { grid-area: 4 / 2; }
 .node-evaluation { grid-area: 4 / 3; }
 .node-clinical-utility { grid-area: 5 / 2; }

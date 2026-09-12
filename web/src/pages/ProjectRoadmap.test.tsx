@@ -8,7 +8,7 @@ const workspace = {
   mode: 'local', project: { id: 'project' }, dataset: { slideCount: 0 }, drafts: [], featureSets: [], cohortSnapshots: [],
 } as unknown as Workspace;
 
-describe('nine-module roadmap presentation', () => {
+describe('eight-module roadmap presentation', () => {
   it('draws side-to-side arrows between paired cards and a vertical arrow into evaluation', () => {
     const model = { left: 300, top: 400, right: 500, bottom: 560, width: 200, height: 160 };
     const freeze = { left: 550, top: 400, right: 750, bottom: 560, width: 200, height: 160 };
@@ -20,11 +20,11 @@ describe('nine-module roadmap presentation', () => {
     expect(roadmapConnectionPath(freeze, evaluation, board)).toBe('M 630 460 C 630 477, 630 477, 630 494');
   });
 
-  it('renders nine cards and four phases while preserving the test protocol gate', () => {
+  it('renders eight cards and four phases while preserving the test protocol gate', () => {
     const html = renderToStaticMarkup(<RoadmapGraph modules={buildRoadmap(workspace)} />);
-    expect(html.match(/data-module="/g)).toHaveLength(9);
-    expect(html).toContain('data-module="post-development"');
-    expect(html).toContain('Build predictors');
+    expect(html.match(/data-module="/g)).toHaveLength(8);
+    expect(html).not.toContain('data-module="post-development"');
+    expect(html).not.toContain('Build predictors');
     expect(html).toContain('Requires a frozen development protocol');
     expect(html).toContain('Preparation can begin while models train');
     expect(html).toContain('phase-develop');
@@ -39,7 +39,7 @@ describe('nine-module roadmap presentation', () => {
 
   it('labels completed training evidence without implying predictor freezing', () => {
     const html = renderToStaticMarkup(<ModuleStatus status="complete" completedLabel={completedModuleLabel('experiments')} />);
-    expect(html).toContain('Completed runs available');
+    expect(html).toContain('Experiment outputs available');
     expect(html).not.toContain('frozen');
     expect(completedModuleLabel('post-development')).toBe('Complete & frozen');
   });
@@ -47,7 +47,7 @@ describe('nine-module roadmap presentation', () => {
   it('uses result-specific actions for completed compute and analysis modules', () => {
     const modules = buildRoadmap(workspace).map((module) => ({ ...module, status: 'complete' as const, unlocked: true }));
     const html = renderToStaticMarkup(<RoadmapGraph modules={modules} />);
-    expect(html).toContain('Review completed runs');
+    expect(html).toContain('Review experiment outputs');
     expect(html).toContain('Review attention maps');
     expect(html).toContain('Review saved analysis');
     expect(html).toContain('Review evaluation results');
@@ -59,7 +59,7 @@ describe('nine-module roadmap presentation', () => {
     const roadmap = { modules, byId: Object.fromEntries(modules.map((module) => [module.id, module])), hasData: true, isLoading: false, error: null } as Roadmap;
     const html = renderToStaticMarkup(<ProjectRoadmap workspace={workspace} roadmap={roadmap} />);
     expect(html).toContain('Review workflow prerequisites');
-    expect(html).toContain('8 modules still need completed evidence');
+    expect(html).toContain('7 modules still need completed evidence');
     expect(html).not.toContain('Your roadmap is complete');
     expect(html).toContain('href="#dataset"');
     const completed = { ...roadmap, modules: modules.map((module) => ({ ...module, status: 'complete' as const, unlocked: true })) };
