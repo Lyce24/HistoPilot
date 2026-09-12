@@ -160,9 +160,7 @@ def test_metadata_updates_preserve_omitted_inputs_and_allow_explicit_clears(prep
     assert updated["notes"] == "Keep this note" and updated["tags"] == ["reviewed"]
     updated = service.update(
         experiment["id"],
-        UpdateModelExperiment(
-            name="Cleared", expectedRevision=3, inputs=None, notes="", tags=[]
-        ),
+        UpdateModelExperiment(name="Cleared", expectedRevision=3, inputs=None, notes="", tags=[]),
     )
     assert updated["inputs"] is None
     assert updated["notes"] == "" and updated["tags"] == []
@@ -434,3 +432,58 @@ def test_registry_api_project_isolation_auth_and_generic_route_bypass_are_protec
                 },
             )
             assert response.status_code == 409, response.text
+        # Simulate an already accepted submission without starting any workers.
+        store = ScientificStore(tmp_path / "owned", project["id"])
+        current = store.get_draft(record["id"])
+        locked = store.update_draft(
+            record["id"],
+            expected_revision=current["revision"],
+            name=current["name"],
+            payload={
+                **current["payload"],
+                "submission": {
+                    "operationId": "accepted",
+                    "expectedRevision": 2,
+                    "submittedAt": "2026-09-12T12:00:00+00:00",
+                    "status": "launching",
+                    "batchIds": [],
+                    "publications": [],
+                    "error": None,
+                },
+            },
+        )
+        locked_payload = {
+            **owned,
+            "spec": {"experimentId": record["id"], "experimentRevision": locked["revision"]},
+        }
+        response = client.post(
+            base + "/drafts",
+            json={"kind": "experiment", "name": "Cannot add", "payload": locked_payload},
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["code"] == "EXPERIMENT_CONFIGURATION_LOCKED"
+        response = client.patch(
+            base + "/drafts/" + saved.json()["id"],
+            json={"name": "Cannot edit", "expectedRevision": 1, "payload": locked_payload},
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["code"] == "EXPERIMENT_CONFIGURATION_LOCKED"
+        response = client.patch(
+            prefix + "/" + record["id"],
+            json={
+                "name": "Cannot change inputs",
+                "expectedRevision": locked["revision"],
+                "inputs": {"protocolId": "another", "featureBundleId": "another"},
+            },
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["code"] == "EXPERIMENT_CONFIGURATION_LOCKED"
+        response = client.patch(
+            base + "/drafts/" + record["id"],
+            json={
+                "name": "Cannot remove lock",
+                "expectedRevision": locked["revision"],
+                "payload": {"type": "experiment"},
+            },
+        )
+        assert response.status_code == 409, response.text

@@ -86,9 +86,11 @@ class DevelopmentService:
         with lifecycle_guard(self.store.folder):
             return self._preview(spec)
 
-    def _preview(self, spec: DevelopmentBatchSpec):
-        experiment = None
-        if spec.experimentId:
+    def _preview(self, spec: DevelopmentBatchSpec, *, experiment_record=None):
+        # A submitted experiment may finish publishing its previously reviewed
+        # recipes. Only the experiment service supplies this saved owner snapshot.
+        experiment = experiment_record
+        if spec.experimentId and experiment is None:
             experiment = ModelExperimentService(self.store, self.filesystem).require_editable(
                 spec.experimentId, spec.experimentRevision
             )
@@ -215,7 +217,7 @@ class DevelopmentService:
         with lifecycle_guard(self.store.folder):
             return self._freeze(spec, preview_hash, operation_id, version_label)
 
-    def _freeze(self, spec, preview_hash, operation_id, version_label):
+    def _freeze(self, spec, preview_hash, operation_id, version_label, *, experiment_record=None):
         prior = self.store.configuration_publication(operation_id)
         before_publish = None
         if prior:
@@ -229,7 +231,7 @@ class DevelopmentService:
                     "This operation ID belongs to another batch.", "OPERATION_CONFLICT", 409
                 )
         else:
-            preview = self.preview(spec)
+            preview = self._preview(spec, experiment_record=experiment_record)
             if not preview["canFreeze"]:
                 raise StorageError(
                     "Resolve batch findings before freezing.", "BATCH_PREFLIGHT_BLOCKED", 409

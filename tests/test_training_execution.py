@@ -153,6 +153,9 @@ def test_promoted_checkpoint_batch_cannot_resume_even_if_predictor_hidden(execut
 def test_archived_experiment_blocks_new_training_but_preserves_launch_replay(execution):
     import hashlib
 
+    from histopilot.application.model_experiments import ModelExperimentService
+    from histopilot.schemas.model_experiments import SubmitModelExperiment
+
     service, original, executor, _ = execution
     owner = service.store.create_draft(
         "experiment",
@@ -164,7 +167,15 @@ def test_archived_experiment_blocks_new_training_but_preserves_launch_replay(exe
         original,
         lambda manifest: manifest["spec"].update(experimentId=owner["id"], experimentRevision=1),
     )
-    state = service.launch(batch["id"], "owned-launch")
+    with pytest.raises(StorageError) as unsubmitted:
+        service.launch(batch["id"], "owned-launch")
+    assert unsubmitted.value.code == "EXPERIMENT_SUBMISSION_REQUIRED"
+    submitted = ModelExperimentService(service.store, service.filesystem, training=service).submit(
+        owner["id"], SubmitModelExperiment(expectedRevision=1, operationId="submit-owner")
+    )
+    assert submitted["submission"]["status"] == "submitted", submitted["submission"]
+    state = service.execution(batch["id"])
+    operation = next(iter(read_json(Path(state["outputPath"]) / "operations.json")))
     executor.sessions.clear()
     lifecycle = service.store.lifecycle
     lifecycle.apply(
@@ -176,7 +187,7 @@ def test_archived_experiment_blocks_new_training_but_preserves_launch_replay(exe
     with pytest.raises(StorageError) as error:
         service.launch(batch["id"], "resume-archived", resume=True)
     assert error.value.code == "EXPERIMENT_ARCHIVED"
-    assert service.launch(batch["id"], "owned-launch")["batchId"] == state["batchId"]
+    assert service.launch(batch["id"], operation)["batchId"] == state["batchId"]
     assert len(executor.launches) == 1
 
 
@@ -370,6 +381,14 @@ def test_failed_launch_is_recorded_without_claiming_live_workers(execution):
     state = service.execution(frozen["id"])
     assert state["status"] == "failed"
     assert not executor.launches
+    original_plan = (Path(state["outputPath"]) / "plan.json").read_bytes()
+    executor.failure = None
+    recovered = service.launch(frozen["id"], "launch-fails")
+    assert recovered["status"] == "queued" and len(executor.launches) == 1
+    assert (Path(state["outputPath"]) / "plan.json").read_bytes() == original_plan
+    assert read_json(Path(state["outputPath"]) / "operations.json")["launch-fails"] == "launch"
+    assert service.launch(frozen["id"], "launch-fails")["status"] == "queued"
+    assert len(executor.launches) == 1
 
 
 @pytest.mark.parametrize("finished", [False, True])
@@ -904,3 +923,78 @@ def test_resume_rejects_incompatible_frozen_session_without_rehashing_plan(execu
     assert error.value.code == "TRAINING_LOCATION_CHANGED"
     assert {name: (folder / name).read_bytes() for name in before} == before
     assert len(executor.launches) == 1
+
+
+@pytest.mark.parametrize("drift", ["code", "versions", "pythonVersion"])
+def test_partial_experiment_submission_rejects_environment_drift_without_touching_live_batch(
+    execution, monkeypatch, drift
+):
+    from histopilot.application.model_experiments import ModelExperimentService
+    from histopilot.schemas.model_experiments import SubmitModelExperiment
+
+    training, original, executor, _source = execution
+    owner = training.store.create_draft(
+        "experiment",
+        "Owned comparison",
+        {
+            "type": "model-experiment",
+            "inputs": original["manifest"]["spec"]["inputs"],
+        },
+    )
+    owned = []
+    for index in range(2):
+        manifest = copy.deepcopy(original["manifest"])
+        manifest["spec"].update(
+            experimentId=owner["id"], experimentRevision=1, batchName=f"Batch {index + 1}"
+        )
+        owned.append(
+            training.store.publish_configuration(manifest=manifest, operation_id=f"owned-{index}")
+        )
+    experiments = ModelExperimentService(training.store, training.filesystem, training=training)
+    command = SubmitModelExperiment(expectedRevision=1, operationId="submit-comparison")
+    original_launch = training.launch
+    launch_count = 0
+
+    def lose_launch(identity, operation):
+        nonlocal launch_count
+        launch_count += 1
+        if launch_count == 2:
+            raise StorageError(
+                "Synthetic interrupted submission before dispatch", "TEST_INTERRUPTED"
+            )
+        return original_launch(identity, operation)
+
+    monkeypatch.setattr(training, "launch", lose_launch)
+    partial = experiments.submit(owner["id"], command)
+    assert partial["submission"]["status"] == "attention"
+    assert len(executor.launches) == 1
+    live_batch = training.execution(executor.launches[0][2].parent.name)
+    assert live_batch["status"] == "queued"
+    original_state = copy.deepcopy(live_batch)
+    contract = training.store.get_draft(owner["id"])["payload"]["submission"]["executionContract"]
+    assert contract["code"]["sha256"] and contract["runtime"]["python"]
+    monkeypatch.setattr(training, "launch", original_launch)
+    original_runtime = training.runtime
+    original_snapshot = __import__(
+        "histopilot.application.training", fromlist=["compute_snapshot"]
+    ).compute_snapshot
+    if drift == "code":
+        monkeypatch.setattr(
+            "histopilot.application.training.compute_snapshot",
+            lambda: {**original_snapshot(), "sha256": "0" * 64},
+        )
+    elif drift == "versions":
+        training.runtime = lambda: {**original_runtime(), "versions": {"torch": "different"}}
+    else:
+        training.runtime = lambda: {**original_runtime(), "pythonVersion": "different"}
+    rejected = experiments.submit(owner["id"], command)
+    assert rejected["submission"]["error"]["code"] == "EXPERIMENT_RUNTIME_CHANGED"
+    assert rejected["configurationLocked"] and rejected["stage"] == "running"
+    assert len(executor.launches) == 1
+    assert training.execution(live_batch["batchId"]) == original_state
+    training.runtime = original_runtime
+    monkeypatch.setattr("histopilot.application.training.compute_snapshot", original_snapshot)
+    recovered = experiments.submit(owner["id"], command)
+    assert recovered["submission"]["status"] == "submitted"
+    assert len(executor.launches) == 2
+    assert recovered["submission"]["batchIds"] == partial["submission"]["batchIds"]

@@ -1,8 +1,10 @@
 # Experiments, predictors and evaluations
 
+The current Experiments UI and submission rules are described in [experiment lifecycle](EXPERIMENT_LIFECYCLE.md). This document describes ownership across the broader application; the Experiments workspace itself displays only experiment planning, runs and results.
+
 The workflow continues into **04 Clinical insights**: completed evaluations feed **Clinical utility**, and refit or ensemble predictors feed **Model interpretation**. Reports preserve evaluation lineage; attention studies can use the same lineage or arbitrary compatible slides. See [Clinical insights](CLINICAL_INSIGHTS.md) for statistics, coordinate alignment, full-bag attention, viewing dependencies and exports.
 
-Experiments is a registry of persistent experiments. Creating an experiment saves a name, notes, tags and stable identity before any training inputs are required. Open the experiment to manage Inputs, Batches, Runs and Development results.
+Experiments is a registry of persistent experiments. Creating an experiment saves a name, notes, tags and stable identity before any training inputs are required. Open the experiment to manage Inputs, Batches, Runs and Results through Planning, Running and Finished stages.
 
 The interface draws on W&B’s [workspace tables](https://docs.wandb.ai/models/track/workspaces), [search and filters](https://docs.wandb.ai/models/runs/filter-runs), and [baseline comparisons](https://docs.wandb.ai/models/runs/compare-runs). HistoPilot uses these interaction patterns with its local scientific records; it does not require a W&B account or upload data to W&B.
 
@@ -52,9 +54,9 @@ Predictor identity is unique per `(experimentId, batchId, candidateId, trainingS
 - Active, Archived, Trash and All records views retain the history of created, planned, queued, running, partial, finished, failed, interrupted and cancelled work. “Scheduled (queued)” means an actual queued execution, not a calendar scheduler.
 - Select two to four experiments to compare, choose a baseline and a saved batch within each, then inspect all values or differences only. Comparison includes data/protocol/features, loading, target/split definitions, every recipe field, seeds and resource settings. Different datasets or split plans stay visible; scores from different cohorts must not be interpreted as controlled comparisons.
 - Open an experiment for its own inputs and batches. There is no global “latest batch” fallback. If multiple batches exist, select one explicitly.
-- Batch display names can be reused across experiments; generated frozen version tags include the owning experiment ID. Existing tags remain unchanged. Current training capability is supplied by the service, independently of capability flags stored in older immutable plans.
-- Input changes update the experiment’s working defaults. Already frozen batches retain their original experiment revision, exact input IDs/hashes, recipes, resources and split memberships. Renaming an experiment cannot move its runs to another experiment.
-- Historical unowned batch plans and saved input drafts appear as read-only legacy records without rewriting their manifests or worker archives. “Create from these inputs” creates a new experiment; historical runs stay with their original record.
+- Batch display names can be reused across experiments. Submission generates distinct publication identities for each owner and plan; existing frozen tags remain unchanged. Current training capability is supplied by the service, independently of capability flags stored in older immutable plans.
+- Inputs and saved batch recipes are editable only during Planning. Submission locks both before workers launch. Already frozen batches retain their original experiment revision, exact input IDs/hashes, recipes, resources and split memberships. Renaming an experiment cannot move its runs or change its frozen scientific settings.
+- Historical unowned batch plans and saved input drafts appear as read-only legacy records without rewriting their manifests or worker archives. During creation, selecting an experiment as a template copies its inputs and recipes into an editable new plan; historical runs stay with their original record.
 
 Registry responses use compact summaries. Full snapshots and per-run progress are loaded for opened experiments and selected comparisons, rather than transmitted for every record on each table refresh.
 

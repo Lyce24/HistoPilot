@@ -2,6 +2,8 @@
 
 Reviewed 2026-09-12. Branch: **`HistoPilot-dev`**, created from **`722343e`** in `/home/yc_liu/projects/HistoPilot-dev`. The existing clean `dev` worktree was reused to create the requested branch. `main` and the separate `hp_v2` worktree were not modified.
 
+Follow-up: the [Experiments lifecycle redesign](EXPERIMENT_LIFECYCLE.md) adds editable planning, permanent submission locks, experiment templates and local run tracking. Its [verification record](dev-review/experiments/README.md) supplements the initial audit below.
+
 ## Verdict
 
 **HistoPilot has a credible foundation for supervised, single-user pathology research. Its scientific persistence and separation of development from evaluation are stronger than its operational recovery and some of its UI guidance.** The most valuable improvements are to make its promises match what actually runs, catch incompatible inputs earlier, and keep failures understandable and recoverable.

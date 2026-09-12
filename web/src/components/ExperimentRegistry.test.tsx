@@ -20,6 +20,8 @@ describe('experiment registry and exact comparison', () => {
     expect(filterExperiments(items, 'archived', 'completed', 'same', 'name').map((item) => item.id)).toEqual(['two']);
     expect(filterExperiments(items, 'all', '', 'learning rate', 'name').map((item) => item.id)).toEqual(['three']);
     expect(filterExperiments(items, 'all', '', 'baseline', 'name').map((item) => item.id)).toEqual(['one']);
+    expect(filterExperiments(items, 'all', 'planning', '', 'name').map((item) => item.id)).toEqual(['one']);
+    expect(filterExperiments(items, 'all', 'finished', '', 'name').map((item) => item.id)).toEqual(['two']);
     expect(items.map((item) => item.id)).toEqual(['one', 'two', 'three']);
   });
 
@@ -42,13 +44,39 @@ describe('experiment registry and exact comparison', () => {
     expect(comparisonSnapshot(item, 'other-experiment-batch')).not.toHaveProperty('batch');
   });
 
+  it('compares editable recipes before submission without duplicating retained plans afterward', () => {
+    const spec = batch('saved-plan', 'one').manifest.spec;
+    const item = experiment('one', { inputs, stage: 'planning', batchPlans: [{ id: 'editable', spec }] });
+    expect(comparisonSnapshot(item, 'plan:editable')).toMatchObject({ inputs, batch: { recipe: defaultRecipe(), trainingSeeds: [42], resources: defaultResources() } });
+    expect(comparisonSnapshot(item, 'plan:editable')).not.toHaveProperty('batch.splitPlans');
+    const planning = renderToStaticMarkup(<ExperimentComparison items={[item, experiment('two')]} />);
+    expect(planning).toContain('value="plan:editable"');
+    expect(planning).toContain('Editable recipe');
+    const finished = renderToStaticMarkup(<ExperimentComparison items={[{ ...item, stage: 'finished', batches: [batch('submitted', 'one')] }, experiment('two')]} />);
+    expect(finished).not.toContain('value="plan:editable"');
+    expect(finished).toContain('value="submitted"');
+  });
+
   it('shows create-first fields and comparison baseline controls with inspectable missing values', () => {
     const create = renderToStaticMarkup(<CreateExperiment project="p" onCreated={() => {}} onClose={() => {}} />);
     expect(create).toContain('Experiment name'); expect(create).toContain('Tags'); expect(create).toContain('Notes');
+    expect(create).toContain('Start from template'); expect(create).toContain('Blank experiment');
     expect(create).not.toContain('Development protocol'); expect(create).not.toContain('Launch batch');
     const compare = renderToStaticMarkup(<ExperimentComparison items={[experiment('one', { inputSnapshot: { dataset: { id: 'd' } } }), experiment('two')]} />);
     expect(compare).toContain('Baseline'); expect(compare).toContain('Differences only'); expect(compare).toContain('Not recorded');
     expect(compare).toContain('dataset.id'); expect(compare).toContain('No current project defaults are substituted');
+  });
+
+  it('offers existing experiments as complete editable templates while excluding trash', () => {
+    const source = experiment('source-one', { name: 'Baseline', inputs, state: 'archived', stage: 'finished', batches: [batch('batch-one', 'source-one')] });
+    const html = renderToStaticMarkup(<CreateExperiment project="p" copy={source} templates={[source, experiment('trash-only', { state: 'trashed' })]} onCreated={() => {}} onClose={() => {}} />);
+    expect(html).toContain('Baseline copy');
+    expect(html).toContain('saved inputs and batch recipes');
+    expect(html).toContain('editable plan');
+    expect(html).toContain('Runs and results stay with the source experiment');
+    expect(html).toContain('Create &amp; open inputs');
+    expect(html).not.toContain('trash-only');
+    expect(html).not.toContain('Only saved inputs are copied');
   });
 
   it('renders all lifecycle views without mixing another experiment’s same-name batches into details', () => {
@@ -59,6 +87,8 @@ describe('experiment registry and exact comparison', () => {
     try {
       const registry = renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentRegistry project="p" onOpen={() => {}} /></QueryClientProvider>);
       expect(registry).toContain('Archived'); expect(registry).toContain('Trash'); expect(registry).toContain('All records');
+      expect(registry).toContain('All stages'); expect(registry).toContain('Planning');
+      expect(registry).not.toContain('Predictors'); expect(registry).not.toContain('#post-development'); expect(registry).not.toContain('#evaluation');
       const detail = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned]} ownedDrafts={[]} tab="runs" onOpenSetup={() => {}} onRestoreInputs={() => {}} /></QueryClientProvider>);
       expect(detail).toContain('owned-only'); expect(detail).not.toContain('UNRELATED-BATCH');
       const multiple = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned, batch('second-owned', 'one')]} ownedDrafts={[]} tab="runs" onOpenSetup={() => {}} onRestoreInputs={() => {}} /></QueryClientProvider>);

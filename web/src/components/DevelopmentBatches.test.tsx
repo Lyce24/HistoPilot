@@ -85,9 +85,10 @@ describe('development execution controls', () => {
     live.runs[0].progress = { epoch: 3, maxEpochs: 10, globalStep: 12, trainingLoss: 0.7, validation: { loss: 0.8 } };
     const html = renderToStaticMarkup(<RunTable batch={batch} execution={live} />);
     expect(html).toContain('Epoch 3 / 10');
-    expect(html).toContain('Training loss: 0.7000');
-    expect(html).toContain('Current validation loss: 0.8000');
-    expect(html).toMatch(/Current validation loss: 0.8000<\/p><\/div><\/td><td>—<\/td><td>—<\/td>/);
+    expect(html).toContain('<th>Training loss</th><th>Current validation loss</th>');
+    expect(html).toContain('<td>0.7000</td><td>0.8000</td>');
+    expect(html).toContain('Checkpoint validation: —');
+    expect(html).toContain('Held-out assessment: —');
   });
 
   it('keeps training state and artifacts inspectable when a run progress file is unreadable', () => {
@@ -104,7 +105,7 @@ describe('development execution controls', () => {
     live.runs[0].progress = { epoch: 1, maxEpochs: 10, globalStep: 1 } as NonNullable<TrainingExecution['runs'][number]['progress']>;
     const html = renderToStaticMarkup(<RunTable batch={batch} execution={live} />);
     expect(html).toContain('Epoch 1 / 10');
-    expect(html).not.toContain('Current validation loss');
+    expect(html).toContain('<td>—</td><td>—</td>');
   });
 
   it('offers the ABMIL architecture defaults including zero dropout without requiring CUDA', () => {

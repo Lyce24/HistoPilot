@@ -83,4 +83,14 @@ describe('development batch intent', () => {
     expect(fetcher.mock.calls.map((call) => call[0])).toEqual(['/api/v1/session', '/api/v1/projects/project/mil-experiments/runtime', '/api/v1/projects/project/mil-experiments/batches/batch/execution', '/api/v1/projects/project/mil-experiments/batches/batch/results']);
     expect(fetcher.mock.calls.slice(1).every((call) => call[1].method === undefined)).toBe(true);
   });
+
+  it('reads durable history from the exact selected run without mutating or conflating batch identity', async () => {
+    const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' })).mockResolvedValueOnce(response({ runId: 'run/b', rows: [], totalRows: 0, truncated: false }));
+    vi.stubGlobal('fetch', fetcher);
+    const { development } = await import('./development');
+    await development.history('project/one', 'batch/a', 'run/b');
+    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/projects/project%2Fone/mil-experiments/batches/batch%2Fa/runs/run%2Fb/history');
+    expect(fetcher.mock.calls[1][1].method).toBeUndefined();
+  });
 });

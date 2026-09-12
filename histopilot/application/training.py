@@ -294,10 +294,13 @@ class TrainingService:
             if replay:
                 return previous
             owner = batch["manifest"]["spec"].get("experimentId")
+            experiment_record = None
             if owner:
                 from histopilot.application.model_experiments import ModelExperimentService
 
-                ModelExperimentService(self.store, self.filesystem).require_editable(owner)
+                experiment_record = ModelExperimentService(
+                    self.store, self.filesystem, training=self
+                ).require_training_action(owner, identity, resume=resume)
             if any(
                 item["manifest"].get("batchId") == identity
                 for item in self.store.list_configurations(
@@ -313,6 +316,18 @@ class TrainingService:
                 raise StorageError(
                     "This batch already has active training workers.", "TRAINING_ACTIVE"
                 )
+            # A failed tmux start has durable plan/state but no accepted launch
+            # receipt. Retrying the same launch safely resumes that exact plan.
+            if (
+                previous
+                and not resume
+                and previous["status"] == "failed"
+                and any(
+                    item.get("code") == "TRAINING_LAUNCH_FAILED"
+                    for item in previous.get("findings", [])
+                )
+            ):
+                resume = True
             if previous and not resume:
                 raise StorageError(
                     "This batch was already launched. Resume its unfinished runs or clone a new batch.",
@@ -324,6 +339,7 @@ class TrainingService:
                     "TRAINING_NOT_RESUMABLE",
                 )
             plan, freshness = self._prepare(batch)
+            prepared_runtime = plan["runtime"]
             provenance = {"at": now(), "host": host_snapshot(), **gpu_snapshot()}
             session = "hp-train-" + hashlib.sha256(str(folder).encode()).hexdigest()[:16]
             if resume:
@@ -351,6 +367,18 @@ class TrainingService:
                 plan = original_plan
             else:
                 plan.update(outputPath=str(folder), sessionName=session)
+            submission = (experiment_record or {}).get("payload", {}).get("submission")
+            if submission:
+                from histopilot.application.model_experiments import (
+                    execution_contract,
+                    require_execution_contract,
+                )
+
+                # Resumes retain their archived original worker code while the
+                # currently installed interpreter still has to match the common
+                # experiment contract. Live batches never pass through here.
+                contract = execution_contract({**plan, "runtime": prepared_runtime})
+                require_execution_contract(submission.get("executionContract"), contract)
             package_root = prepare_compute_archive(folder, plan.get("code", {}))
             freshness()
             if self.executor.running(session):

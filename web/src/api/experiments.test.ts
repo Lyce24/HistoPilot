@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { experimentPollInterval, experimentStatusLabel } from './experiments';
+import { experimentPollInterval, experimentStage, experimentStatusLabel } from './experiments';
 import type { ModelExperiment } from './experiments';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
@@ -36,5 +36,32 @@ describe('model experiment identity contracts', () => {
     expect(experimentStatusLabel('completed')).toBe('Finished');
     for (const status of ['queued', 'running', 'cancelling']) expect(experimentPollInterval({ items: [{ status } as ModelExperiment] })).toBe(3000);
     expect(experimentPollInterval({ items: [{ status: 'completed' } as ModelExperiment] })).toBe(15000);
+  });
+
+  it('copies recipes by stable source identity and submits the full experiment with one retry identity', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' }))
+      .mockResolvedValueOnce(response({ id: 'copy', stage: 'planning', batchPlans: [] }))
+      .mockRejectedValueOnce(new TypeError('Submission response lost'))
+      .mockResolvedValueOnce(response({ id: 'copy', stage: 'running', configurationLocked: true }));
+    vi.stubGlobal('fetch', fetcher);
+    const { experiments } = await import('./experiments');
+    await experiments.create('p', { name: 'New hypothesis', tags: ['comparison'], sourceExperimentId: 'source/one', operationId: 'create-one' });
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ name: 'New hypothesis', tags: ['comparison'], sourceExperimentId: 'source/one', operationId: 'create-one' });
+    const submission = { expectedRevision: 5, operationId: 'submit-once' };
+    await expect(experiments.submit('p', 'copy/one', submission)).rejects.toMatchObject({ code: 'SERVICE_UNREACHABLE' });
+    await expect(experiments.submit('p', 'copy/one', submission)).resolves.toMatchObject({ stage: 'running', configurationLocked: true });
+    expect(fetcher.mock.calls[2][0]).toBe('/api/v1/projects/p/model-experiments/copy%2Fone/submit');
+    expect(fetcher.mock.calls[2][1].body).toBe(fetcher.mock.calls[3][1].body);
+    expect(JSON.parse(fetcher.mock.calls[3][1].body)).toEqual(submission);
+    expect(fetcher.mock.calls.some(([url]) => String(url).includes('/launch'))).toBe(false);
+  });
+
+  it('uses the authoritative stage and keeps interrupted and failed work locked for recovery', () => {
+    expect(experimentStage({ status: 'created' })).toBe('planning');
+    expect(experimentStage({ status: 'planned' })).toBe('planning');
+    expect(experimentStage({ status: 'created', configurationLocked: true })).toBe('running');
+    for (const status of ['queued', 'running', 'failed', 'interrupted']) expect(experimentStage({ status })).toBe('running');
+    for (const status of ['completed', 'cancelled']) expect(experimentStage({ status })).toBe('finished');
+    expect(experimentStage({ status: 'failed', stage: 'finished' })).toBe('finished');
   });
 });

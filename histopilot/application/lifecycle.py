@@ -163,7 +163,18 @@ class CleanupService:
         for record in self.store.list_datasets(include_inactive=True):
             add("dataset", record, "dataset", record["manifest"].get("name", "Dataset"))
         for record in self.store.list_drafts(include_inactive=True):
-            add("draft", record, record["payload"].get("type", record["kind"]), record["name"])
+            key = add(
+                "draft", record, record["payload"].get("type", record["kind"]), record["name"]
+            )
+            if record["payload"].get("type") == "model-experiment":
+                items[key]["configurationLocked"] = bool(record["payload"].get("submission"))
+            else:
+                spec = record["payload"].get("spec")
+                owner = record["payload"].get("experimentId") or (
+                    spec.get("experimentId") if isinstance(spec, dict) else None
+                )
+                if owner:
+                    items[key]["experimentKey"] = f"draft:{owner}"
         for record in self.store.list_configurations(include_inactive=True):
             manifest = record["manifest"]
             spec = manifest.get("spec", {})
@@ -176,8 +187,13 @@ class CleanupService:
             )
             key = add("configuration", record, manifest["kind"], name)
             if manifest["kind"] == "mil-batch":
+                owner = spec.get("experimentId")
+                if owner:
+                    items[key]["experimentKey"] = f"draft:{owner}"
                 execution = self.training.execution(record["id"], include_inactive=True)
                 if execution:
+                    if owner and f"draft:{owner}" in items:
+                        items[f"draft:{owner}"]["configurationLocked"] = True
                     folder = self.store.folder / "training" / record["id"]
                     # A terminal state can precede final process cleanup. Confirm
                     # that neither scheduler nor any child still owns work.
@@ -191,7 +207,11 @@ class CleanupService:
                         execution.get("cancelRequested", False),
                     )
                     documents[key] = [record, _read_optional(folder / "plan.json")]
-            elif manifest["kind"] in {"predictor-refit", "model-evaluation", "model-interpretation"}:
+            elif manifest["kind"] in {
+                "predictor-refit",
+                "model-evaluation",
+                "model-interpretation",
+            }:
                 execution = self.compute.status(record["id"], include_inactive=True)
                 if execution["status"] != "not_started":
                     self._job(
@@ -316,6 +336,18 @@ class CleanupService:
                 missing,
             )
         else:
+            locked_members = [
+                key
+                for key in selected
+                if items[key].get("experimentKey") not in selected
+                and items.get(items[key].get("experimentKey"), {}).get("configurationLocked")
+            ]
+            if locked_members and project_key not in selected:
+                block(
+                    "EXPERIMENT_CONFIGURATION_LOCKED",
+                    "Submitted batches stay with their experiment. Manage the whole experiment together, or copy it to adjust its batches.",
+                    locked_members,
+                )
             if project_key in selected and len(selected) > 1:
                 block(
                     "PROJECT_SEPARATE",
@@ -456,7 +488,8 @@ class CleanupService:
                     self.evaluation_batches
                     if item["kind"] == "evaluation-batch"
                     else self.compute
-                    if item["kind"] in {"predictor-refit", "model-evaluation", "model-interpretation"}
+                    if item["kind"]
+                    in {"predictor-refit", "model-evaluation", "model-interpretation"}
                     else self.training
                 )
                 result = service.cancel(item["id"], request.operationId)

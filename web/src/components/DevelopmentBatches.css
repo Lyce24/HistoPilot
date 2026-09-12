@@ -13,11 +13,12 @@
 .development-fields .field[aria-invalid="true"] { border-color: #b42318; }
 .development-recipe-row { border-bottom: 1px solid var(--border); padding-bottom: 1rem; display: grid; gap: .75rem; }
 .development-count { line-height: 1.7; }
-.development-table { overflow-x: auto; max-width: 100%; margin: .75rem 0; }
+.development-table { position: relative; overflow-x: auto; max-width: 100%; margin: .75rem 0; }
 .development-table table { border-collapse: collapse; width: 100%; text-align: left; font-variant-numeric: tabular-nums; }
 .development-table th, .development-table td { padding: .65rem .75rem; border-bottom: 1px solid var(--border); }
 .development-table th { font-weight: 600; white-space: nowrap; }
 .development-table td { white-space: normal; }
+.development-table progress { accent-color: var(--accent, #087f8c); max-width: 100%; }
 .development-saved-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; padding: .5rem 0; }
 .mil-protocol-summary { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }
 .development-execution { display: grid; gap: .9rem; margin-top: 1rem; }
@@ -37,5 +38,13 @@
 .development-capacity p { margin: .35rem 0; line-height: 1.5; }
 .development-capacity small { color: var(--muted); }
 .development-architecture summary > span { font-weight: 400; font-size: .85em; }
+.batch-plan-list { display: grid; gap: .75rem; }
+.batch-plan-card { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .75rem; padding: 1rem; border: 1px solid var(--border); border-radius: .7rem; min-width: 0; }
+.batch-plan-card.is-editing { border-color: var(--accent); background: var(--accent-soft, #edf6f2); }
+.batch-plan-card h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.batch-plan-card p { margin: .35rem 0 0; font-size: .875rem; }
+.batch-plan-spec { width: 100%; min-width: 0; font-size: .875rem; }
+.batch-template-picker { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; gap: 1rem; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
+.batch-template-picker p { line-height: 1.5; }
 .development-telemetry { display: flex; flex-wrap: wrap; gap: .7rem 1.4rem; }
-@media (max-width: 650px) { .development-fields { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 650px) { .development-fields, .batch-template-picker { grid-template-columns: minmax(0, 1fr); } }

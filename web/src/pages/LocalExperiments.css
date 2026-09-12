@@ -14,4 +14,22 @@
 .mil-plan-review { margin-bottom: 18px; }
 .mil-workspace code { overflow-wrap: anywhere; }
 .mil-initial-settings summary { cursor: pointer; font-weight: 600; margin-bottom: 14px; }
+.experiment-stages { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.experiment-stages li { display: flex; align-items: center; gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); }
+.experiment-stages li.current { border-color: var(--accent); background: var(--accent-light); color: var(--text); }
+.experiment-stages li.complete .experiment-stage-number { color: var(--accent); border-color: var(--accent); }
+.experiment-stage-number { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 30px; border: 1px solid var(--line); border-radius: 50%; font-weight: 650; }
+.experiment-stages li.current .experiment-stage-number { background: var(--accent); color: white; border-color: var(--accent); }
+.experiment-stages small { display: block; line-height: 1.5; margin-top: 4px; }
+.experiment-stage-notice { display: flex; align-items: flex-start; gap: 10px; margin: 0; color: var(--muted); line-height: 1.6; }
+.experiment-stage-notice svg { flex: 0 0 auto; margin-top: 4px; }
+.experiment-submission:empty { display: none; }
+.experiment-submission { border: 1px solid var(--line); border-radius: 12px; padding: 20px; background: var(--surface, white); }
+.experiment-submit-summary { display: flex; gap: 24px; align-items: center; justify-content: space-between; }
+.experiment-submit-summary p { margin: 6px 0 0; color: var(--muted); line-height: 1.5; }
+.experiment-submit-summary button { flex: 0 0 auto; }
+.experiment-submit-review { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 18px; }
+.experiment-submit-review h3 { margin-top: 0; }
+.experiment-submit-review p { max-width: 850px; line-height: 1.65; }
+@media (max-width: 700px) { .experiment-stages { grid-template-columns: 1fr; gap: 8px; } .experiment-stages li { padding: 12px 16px; } .experiment-submit-summary { align-items: flex-start; flex-direction: column; gap: 16px; } }
 @media (max-width: 850px) { .mil-loading-options { grid-template-columns: 1fr; } }

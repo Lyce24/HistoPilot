@@ -1,13 +1,18 @@
-"""Stable experiment records and immutable batch history over scientific storage.
+"""Editable experiment plans become irrevocable submissions before work starts.
 
-The record's input choices are editable defaults. A frozen batch keeps its own
-owner revision, input hashes, recipes and memberships. Older batches and saved
-plans are projected as read-only records without rewriting their evidence.
+Submission pins inputs, batch recipes and a common execution environment. Worker
+evidence determines progress; idempotent receipts recover partial dispatch. Older
+batches and saved plans remain readable without rewriting their evidence.
 """
+
+from copy import deepcopy
+from datetime import UTC, datetime
+from uuid import uuid4
 
 from pydantic import ValidationError
 
 from histopilot.application.feature_bundles import _hash
+from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
@@ -87,6 +92,47 @@ def aggregate_status(batches, has_plan=False):
     return "partial"
 
 
+def experiment_stage(batches, submission=None, *, legacy=False):
+    # Hidden evidence must never reopen a submitted experiment. Unknown evidence
+    # also locks fail-closed; it is not proof that training never started.
+    locked = bool(submission) or legacy or any(row["status"] != "planned" for row in batches)
+    if not locked:
+        return "planning", False
+    expected = set((submission or {}).get("batchIds", []))
+    publications = (submission or {}).get("publications", [])
+    complete_intent = all(row.get("batchId") for row in publications)
+    actual = {row["id"] for row in batches}
+    stage_batches = [row for row in batches if row["id"] in expected] if submission else batches
+    finished = (
+        bool(stage_batches)
+        and complete_intent
+        and expected <= actual
+        and all(row["status"] in {"completed", "cancelled"} for row in stage_batches)
+    )
+    return ("finished" if finished else "running"), True
+
+
+def execution_contract(plan):
+    """Comparable worker code and interpreter identity, excluding live telemetry."""
+    runtime = plan.get("runtime", {})
+    return {
+        "code": deepcopy(plan.get("code")),
+        "runtime": {
+            key: deepcopy(runtime.get(key))
+            for key in ("python", "pythonVersion", "cudaVersion", "versions")
+        },
+    }
+
+
+def require_execution_contract(expected, actual):
+    if expected != actual:
+        raise StorageError(
+            "Training code or the Python environment changed after experiment review. Restore the submitted environment to continue, or copy this experiment for a new comparison.",
+            "EXPERIMENT_RUNTIME_CHANGED",
+            409,
+        )
+
+
 class ModelExperimentService:
     def __init__(self, store, filesystem, *, training=None):
         self.store, self.filesystem = store, filesystem
@@ -97,7 +143,7 @@ class ModelExperimentService:
             training = TrainingService(store, filesystem)
         self.training = training
 
-    def require_editable(self, identity, expected_revision=None):
+    def require_editable(self, identity, expected_revision=None, *, metadata_only=False):
         if identity.startswith("legacy-"):
             raise StorageError(
                 "Historical experiments are read-only. Create a new experiment to continue.",
@@ -122,10 +168,70 @@ class ModelExperimentService:
                 "REVISION_CONFLICT",
                 409,
             )
+        if not metadata_only and self._configuration_locked(record):
+            raise StorageError(
+                "This experiment has been submitted. Copy it to adjust inputs or batches.",
+                "EXPERIMENT_CONFIGURATION_LOCKED",
+                409,
+            )
         return record
+
+    def _owned_batches(self, identity):
+        return [
+            batch
+            for batch in self.store.list_configurations("mil-batch", include_inactive=True)
+            if batch["manifest"].get("spec", {}).get("experimentId") == identity
+        ]
+
+    def _configuration_locked(self, record):
+        if record["payload"].get("submission"):
+            return True
+        for batch in self._owned_batches(record["id"]):
+            try:
+                if self.training.execution(
+                    batch["id"], include_inactive=True, include_progress=False
+                ):
+                    return True
+            except (StorageError, ValueError, OSError, KeyError, TypeError):
+                return True
+        return False
+
+    @staticmethod
+    def _normalize_plans(plans, *, identity, revision, name, inputs, deduplicate=False):
+        if plans and not inputs:
+            raise StorageError(
+                "Choose inputs before saving batch plans.", "EXPERIMENT_INPUTS_REQUIRED", 422
+            )
+        normalized = [
+            {
+                "id": plan["id"],
+                "spec": DevelopmentBatchSpec.model_validate(
+                    {
+                        **plan["spec"],
+                        "experimentId": identity,
+                        "experimentRevision": revision,
+                        "experimentName": name,
+                        "inputs": inputs,
+                    }
+                ).model_dump(),
+            }
+            for plan in plans
+        ]
+        unique = {}
+        for plan in normalized:
+            unique.setdefault(_hash(plan["spec"]), plan)
+        if len(unique) != len(normalized) and not deduplicate:
+            raise StorageError(
+                "Two batch plans are identical. Remove the duplicate or give the new batch its own name and settings.",
+                "EXPERIMENT_DUPLICATE_BATCH",
+                422,
+            )
+        return list(unique.values())
 
     def create(self, request):
         values = request.model_dump(exclude={"operationId"})
+        if values.get("sourceExperimentId") is None:
+            values.pop("sourceExperimentId", None)
         digest = _hash(values)
         with lifecycle_guard(self.store.folder):
             for record in self.store.list_drafts(include_inactive=True):
@@ -141,15 +247,78 @@ class ModelExperimentService:
                             409,
                         )
                     return self.get(record["id"])
-            if request.inputs:
-                input_snapshot(self.store, request.inputs)
+            source = None
+            if request.sourceExperimentId:
+                source = self.get(request.sourceExperimentId)
+                if source["state"] == "trashed":
+                    raise StorageError(
+                        "Restore the source experiment before copying it.", "RECORD_TRASHED", 409
+                    )
+                values["inputs"] = deepcopy(source["inputs"])
+            plans = []
+            if source:
+                plans = deepcopy(source["batchPlans"])
+                source_payload = (
+                    {}
+                    if source["legacy"]
+                    else self.store.get_draft(source["id"], include_inactive=True)["payload"]
+                )
+                published = {
+                    row.get("batchId")
+                    for row in (source_payload.get("submission") or {}).get("publications", [])
+                }
+                for batch in source["batches"]:
+                    if batch["state"] != "trashed" and batch["id"] not in published:
+                        plans.append(
+                            {
+                                "id": "copy-" + uuid4().hex,
+                                "spec": deepcopy(batch["manifest"]["spec"]),
+                            }
+                        )
+                for draft in source["drafts"]:
+                    if (
+                        draft["state"] != "trashed"
+                        and draft.get("payload", {}).get("type") == "development-batch"
+                    ):
+                        try:
+                            spec = DevelopmentBatchSpec.model_validate(
+                                draft["payload"]["spec"]
+                            ).model_dump()
+                        except (ValidationError, KeyError) as error:
+                            raise StorageError(
+                                "An old batch draft is incomplete. Complete its recipe before copying.",
+                                "EXPERIMENT_COPY_INVALID",
+                                422,
+                            ) from error
+                        plans.append({"id": "copy-" + uuid4().hex, "spec": spec})
+                if len(plans) > 100:
+                    raise StorageError(
+                        "Limit copied experiments to 100 batch plans.", "EXPERIMENT_TOO_LARGE", 422
+                    )
+                plans = self._normalize_plans(
+                    plans,
+                    identity=None,
+                    revision=None,
+                    name=request.name,
+                    inputs=values.get("inputs"),
+                    deduplicate=True,
+                )
+            if values.get("inputs"):
+                input_snapshot(self.store, values["inputs"], include_inactive=source is not None)
+            # Inputs and recipes are copied in the same transaction. A replay can
+            # never observe a partially copied experiment or re-read a changed source.
             record = self.store.create_draft(
                 "experiment",
                 request.name,
                 {
                     "type": EXPERIMENT_TYPE,
-                    "version": 1,
-                    **{key: value for key, value in values.items() if key != "name"},
+                    "version": 2,
+                    **{
+                        key: value
+                        for key, value in values.items()
+                        if key not in {"name", "sourceExperimentId"}
+                    },
+                    "batchPlans": plans,
                     "creationOperationId": request.operationId,
                     "creationRequestHash": digest,
                 },
@@ -158,7 +327,19 @@ class ModelExperimentService:
 
     def update(self, identity, request):
         with lifecycle_guard(self.store.folder):
-            record = self.require_editable(identity, request.expectedRevision)
+            record = self.require_editable(identity, request.expectedRevision, metadata_only=True)
+            locked = self._configuration_locked(record)
+            if locked and any(
+                key in request.model_fields_set
+                and request.model_dump()[key]
+                != record["payload"].get(key, [] if key == "batchPlans" else None)
+                for key in ("inputs", "batchPlans")
+            ):
+                raise StorageError(
+                    "Submitted inputs and batch plans cannot change. Copy this experiment to adjust them.",
+                    "EXPERIMENT_CONFIGURATION_LOCKED",
+                    409,
+                )
             if request.inputs:
                 input_snapshot(self.store, request.inputs)
             # PATCH omissions retain saved inputs and metadata. Explicit null
@@ -168,12 +349,246 @@ class ModelExperimentService:
                 for key, value in request.model_dump(exclude={"expectedRevision", "name"}).items()
                 if key in request.model_fields_set
             }
+            if not locked:
+                plans = values.get("batchPlans", record["payload"].get("batchPlans", []))
+                values["batchPlans"] = self._normalize_plans(
+                    plans,
+                    identity=identity,
+                    revision=record["revision"] + 1,
+                    name=request.name,
+                    inputs=values.get("inputs", record["payload"].get("inputs")),
+                )
             self.store.update_draft(
                 identity,
                 expected_revision=request.expectedRevision,
                 name=request.name,
                 payload={**record["payload"], **values},
             )
+            return self.get(identity)
+
+    def require_training_action(self, identity, batch_id, *, resume=False):
+        record = self.require_editable(identity, metadata_only=True)
+        presented = self.get(identity)
+        if presented["stage"] == "finished":
+            raise StorageError(
+                "This experiment is finished. Copy it to start new runs.",
+                "EXPERIMENT_FINISHED",
+                409,
+            )
+        submission = record["payload"].get("submission")
+        if submission:
+            if batch_id not in submission["batchIds"]:
+                raise StorageError(
+                    "This batch is outside the submitted experiment.",
+                    "EXPERIMENT_CONFIGURATION_LOCKED",
+                    409,
+                )
+        elif not resume or not self.training.execution(batch_id, include_inactive=True):
+            raise StorageError(
+                "Submit this experiment to freeze all inputs and batches before training.",
+                "EXPERIMENT_SUBMISSION_REQUIRED",
+                409,
+            )
+        return record
+
+    def _save_submission(self, identity, submission):
+        record = self.store.get_draft(identity)
+        return self.store.update_draft(
+            identity,
+            expected_revision=record["revision"],
+            name=record["name"],
+            payload={**record["payload"], "submission": deepcopy(submission)},
+        )
+
+    def submit(self, identity, request):
+        from histopilot.application.development import DevelopmentService
+
+        with lifecycle_guard(self.store.folder, timeout=5):
+            record = self.require_editable(identity, metadata_only=True)
+            submission = deepcopy(record["payload"].get("submission"))
+            if submission:
+                if submission["operationId"] != request.operationId:
+                    raise StorageError(
+                        "This experiment is already submitted. Retry its original submission or resume an unfinished batch.",
+                        "EXPERIMENT_ALREADY_SUBMITTED",
+                        409,
+                    )
+                if submission["status"] == "submitted":
+                    return self.get(identity)
+            else:
+                record = self.require_editable(identity, request.expectedRevision)
+                if not record["payload"].get("inputs"):
+                    raise StorageError(
+                        "Choose experiment inputs before submission.",
+                        "EXPERIMENT_INPUTS_REQUIRED",
+                        422,
+                    )
+                plans = self._normalize_plans(
+                    record["payload"].get("batchPlans", []),
+                    identity=identity,
+                    revision=record["revision"],
+                    name=record["name"],
+                    inputs=record["payload"]["inputs"],
+                )
+                states = self.store.lifecycle.read()["records"]
+                batches = [
+                    batch
+                    for batch in self._owned_batches(identity)
+                    if states.get(f"configuration:{batch['id']}", {}).get("state", "active")
+                    == "active"
+                ]
+                if any(
+                    batch["manifest"].get("spec", {}).get("inputs") != record["payload"]["inputs"]
+                    for batch in batches
+                ):
+                    raise StorageError(
+                        "An existing frozen batch uses different inputs from this experiment. Archive that batch during planning, then add its settings as an editable batch with the current inputs, or copy the experiment.",
+                        "EXPERIMENT_BATCH_INPUTS_MISMATCH",
+                        409,
+                    )
+                if not plans and not batches:
+                    raise StorageError(
+                        "Save at least one batch plan before submission.",
+                        "EXPERIMENT_BATCHES_REQUIRED",
+                        422,
+                    )
+                development = DevelopmentService(self.store, self.filesystem)
+                publications, freshness_checks, contracts = [], [], []
+                for plan in plans:
+                    spec = DevelopmentBatchSpec.model_validate(plan["spec"])
+                    preview = development.preview(spec)
+                    if not preview["canFreeze"]:
+                        raise StorageError(
+                            "Resolve batch findings before submission: "
+                            + "; ".join(
+                                row["message"]
+                                for row in preview["findings"]
+                                if row["severity"] == "error"
+                            ),
+                            "BATCH_PREFLIGHT_BLOCKED",
+                            409,
+                        )
+                    manifest = {
+                        key: value
+                        for key, value in preview.items()
+                        if key not in {"canFreeze", "findings"}
+                    }
+                    _plan, freshness = self.training._prepare(
+                        {
+                            "id": "submission-preflight",
+                            "contentHash": _hash(manifest),
+                            "manifest": manifest,
+                        }
+                    )
+                    freshness_checks.append(freshness)
+                    contracts.append(execution_contract(_plan))
+                    publications.append(
+                        {
+                            "planId": plan["id"],
+                            "spec": spec.model_dump(),
+                            "previewHash": preview["previewHash"],
+                            "operationId": "experiment-batch-"
+                            + _hash(
+                                {
+                                    "experiment": identity,
+                                    "operation": request.operationId,
+                                    "plan": plan["id"],
+                                }
+                            ),
+                            "batchId": None,
+                        }
+                    )
+                for batch in batches:
+                    _plan, freshness = self.training._prepare(batch)
+                    freshness_checks.append(freshness)
+                    contracts.append(execution_contract(_plan))
+                for contract in contracts[1:]:
+                    require_execution_contract(contracts[0], contract)
+                for freshness in freshness_checks:
+                    freshness()
+                submission = {
+                    "operationId": request.operationId,
+                    "expectedRevision": request.expectedRevision,
+                    "submittedAt": datetime.now(UTC).isoformat(),
+                    "status": "launching",
+                    "batchIds": [batch["id"] for batch in batches],
+                    "publications": publications,
+                    "launchedBatchIds": [],
+                    "executionContract": contracts[0],
+                    "error": None,
+                    "experiment": {
+                        "id": identity,
+                        "revision": record["revision"],
+                        "name": record["name"],
+                        "payload": {
+                            key: record["payload"].get(key, [] if key == "tags" else "")
+                            for key in ("notes", "tags")
+                        },
+                    },
+                }
+                # All scientific/runtime checks precede the irreversible receipt.
+                # It is durable before any publication or external worker launch.
+                self._save_submission(identity, submission)
+            try:
+                development = DevelopmentService(self.store, self.filesystem)
+                for publication in submission["publications"]:
+                    if publication["batchId"]:
+                        continue
+                    frozen = development._freeze(
+                        DevelopmentBatchSpec.model_validate(publication["spec"]),
+                        publication["previewHash"],
+                        publication["operationId"],
+                        {
+                            "tag": "Batch " + publication["operationId"][-12:],
+                            "note": "Submitted with " + submission["experiment"]["name"],
+                        },
+                        experiment_record=submission["experiment"],
+                    )
+                    publication["batchId"] = frozen["id"]
+                    if frozen["id"] not in submission["batchIds"]:
+                        submission["batchIds"].append(frozen["id"])
+                    self._save_submission(identity, submission)
+                for batch_id in submission["batchIds"]:
+                    if batch_id in submission["launchedBatchIds"]:
+                        continue
+                    execution = self.training.execution(
+                        batch_id, include_inactive=True, include_progress=False
+                    )
+                    failed_start = (
+                        execution
+                        and execution["status"] == "failed"
+                        and any(
+                            item.get("code") == "TRAINING_LAUNCH_FAILED"
+                            for item in execution.get("findings", [])
+                        )
+                    )
+                    if execution and not failed_start:
+                        # The worker may have accepted or finished before either
+                        # launch acknowledgement was saved. Existing execution
+                        # evidence owns this batch; never dispatch it again.
+                        submission["launchedBatchIds"].append(batch_id)
+                        self._save_submission(identity, submission)
+                        continue
+                    operation = "experiment-launch-" + _hash(
+                        {
+                            "experiment": identity,
+                            "operation": request.operationId,
+                            "batch": batch_id,
+                        }
+                    )
+                    self.training.launch(batch_id, operation)
+                    submission["launchedBatchIds"].append(batch_id)
+                    self._save_submission(identity, submission)
+                submission.update(status="submitted", error=None)
+            except (StorageError, OSError, ValueError, RuntimeError) as error:
+                submission.update(
+                    status="attention",
+                    error={
+                        "code": getattr(error, "code", "EXPERIMENT_SUBMISSION_FAILED"),
+                        "message": str(error),
+                    },
+                )
+            self._save_submission(identity, submission)
             return self.get(identity)
 
     @staticmethod
@@ -282,6 +697,26 @@ class ModelExperimentService:
         predictor_ids = {}
         for item in predictor_records:
             predictor_ids.setdefault(item["method"], item["id"])
+        submission = payload.get("submission")
+        stage, locked = experiment_stage(batches, submission, legacy=legacy)
+        public_submission = (
+            None
+            if not submission
+            else {
+                **{
+                    key: submission[key]
+                    for key in (
+                        "operationId",
+                        "expectedRevision",
+                        "submittedAt",
+                        "status",
+                        "batchIds",
+                        "error",
+                    )
+                },
+                "retryable": submission["status"] != "submitted" and stage != "finished",
+            }
+        )
         return {
             "id": identity,
             "projectId": self.store.project_id,
@@ -295,6 +730,10 @@ class ModelExperimentService:
             "revision": record.get("revision", 1),
             "state": states.get(key, {}).get("state", "active"),
             "status": aggregate_status(batches, inputs is not None or bool(drafts)),
+            "stage": stage,
+            "configurationLocked": locked,
+            "batchPlans": payload.get("batchPlans", []),
+            "submission": public_submission,
             "legacy": legacy,
             "createdAt": record["createdAt"],
             "updatedAt": record.get("updatedAt", record["createdAt"]),

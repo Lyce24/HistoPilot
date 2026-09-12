@@ -5,7 +5,11 @@ from typing import Literal
 from fastapi import APIRouter
 
 from histopilot.application.model_experiments import ModelExperimentService
-from histopilot.schemas.model_experiments import CreateModelExperiment, UpdateModelExperiment
+from histopilot.schemas.model_experiments import (
+    CreateModelExperiment,
+    SubmitModelExperiment,
+    UpdateModelExperiment,
+)
 
 
 def model_experiments_router(projects, filesystem):
@@ -33,5 +37,9 @@ def model_experiments_router(projects, filesystem):
     @router.patch("/{experiment_id}")
     def update(identity: str, experiment_id: str, payload: UpdateModelExperiment):
         return service(identity).update(experiment_id, payload)
+
+    @router.post("/{experiment_id}/submit", status_code=202)
+    def submit(identity: str, experiment_id: str, payload: SubmitModelExperiment):
+        return service(identity).submit(experiment_id, payload)
 
     return router

@@ -53,6 +53,14 @@ export interface TrainingRun {
   progress?: { epoch: number; maxEpochs: number; globalStep: number; trainingLoss: number | null; validation: TrainingMetrics; learningRate?: number; cudaPeakAllocatedBytes?: number; cudaPeakReservedBytes?: number } | null;
   progressWarning?: string | null;
 }
+export interface TrainingHistoryRow {
+  /** One-based completed epoch, matching the live progress snapshot. */
+  epoch: number; trainingLoss: number | null; validation: TrainingMetrics;
+  learningRate: number | null; checkpointUnit: 'slide' | 'patient' | null;
+}
+export interface TrainingHistory {
+  runId: string; rows: TrainingHistoryRow[]; totalRows: number; truncated: boolean; warning?: string;
+}
 export interface TrainingExecution {
   batchId: string; status: TrainingStatus; sessionName: string; logPath: string; outputPath: string;
   cancelRequested?: boolean; findings: Finding[];
@@ -91,6 +99,7 @@ export const development = {
   list: (project: string) => request<DevelopmentBatchList>(prefix(project)),
   runtime: (project: string) => request<TrainingRuntime>(`/projects/${encodeURIComponent(project)}/mil-experiments/runtime`),
   execution: (project: string, batch: string) => request<TrainingExecution | null>(`${batchPrefix(project, batch)}/execution`),
+  history: (project: string, batch: string, run: string) => request<TrainingHistory>(`${batchPrefix(project, batch)}/runs/${encodeURIComponent(run)}/history`),
   launch: (project: string, batch: string, operationId: string) => request<TrainingExecution>(`${batchPrefix(project, batch)}/launch`, body({ operationId })),
   cancel: (project: string, batch: string, operationId: string) => request<TrainingExecution>(`${batchPrefix(project, batch)}/cancel`, body({ operationId })),
   resume: (project: string, batch: string, operationId: string) => request<TrainingExecution>(`${batchPrefix(project, batch)}/resume`, body({ operationId })),
