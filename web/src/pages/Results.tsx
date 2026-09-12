@@ -125,7 +125,7 @@ export function OverviewPage({ workspace }: PageProps) {
           title="Example results"
           subtitle="Illustrative comparisons on a shared dataset and split."
           actions={
-            <a className="text-link" href="#evaluation">
+            <a className="text-link" href="#example-results">
               View evaluation →
             </a>
           }
@@ -149,7 +149,7 @@ export function OverviewPage({ workspace }: PageProps) {
                         <td>
                           <a
                             className="table-link"
-                            href="#evaluation"
+                            href="#example-results"
                             onClick={() => selectResult(result.id)}
                           >
                             EXP-{String(index + 1).padStart(3, '0')}

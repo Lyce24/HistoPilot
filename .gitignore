@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv-training/
 .pytest_cache/
 .ruff_cache/
 build/
@@ -42,5 +43,10 @@ test-results/
 *.ckpt
 *.safetensors
 
-docs/
-examples/
+# Keep local research evidence, incident logs, and generated browser harnesses private
+/docs/evidence/
+/docs/incidents/
+/docs/verification/**/harness.tsx
+/docs/verification/**/build.mjs
+/docs/verification/**/index.html
+/docs/verification/**/dist/

@@ -94,6 +94,27 @@ export async function request<T>(
 }
 const SCIENTIFIC_SAVE_RESTART = 'The running HistoPilot server does not support this save. Restart HistoPilot, then try saving again here. Your entered tag and note have been kept; you do not need to reload this page.';
 
+/** Load viewer images with the same session authentication as JSON and downloads. */
+export async function fetchArtifactBlob(path: string, signal?: AbortSignal, retrySession = true): Promise<Blob> {
+  const activeSession = await sessionDetails();
+  const response = await fetch(`${BASE}${path}`, { headers: { 'X-HistoPilot-Token': activeSession.token }, credentials: 'same-origin', cache: 'no-store', signal });
+  if (response.status === 401 && retrySession) { session = null; return fetchArtifactBlob(path, signal, false); }
+  if (!response.ok) throw await responseError(response);
+  return response.blob();
+}
+
+/** Download a verified artifact using the same session authentication as JSON APIs. */
+export async function downloadArtifact(path: string, filename: string, retrySession = true): Promise<void> {
+  const activeSession = await sessionDetails();
+  const response = await fetch(`${BASE}${path}`, { headers: { 'X-HistoPilot-Token': activeSession.token }, credentials: 'same-origin', cache: 'no-store' });
+  if (response.status === 401 && retrySession) { session = null; return downloadArtifact(path, filename, false); }
+  if (!response.ok) throw await responseError(response);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /** Gate metadata-aware writes so an older running server cannot freeze without the label. */
 export async function requestScientificSave<T>(
   path: string,

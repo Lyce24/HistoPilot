@@ -1,1 +1,1 @@
-"""TODO: provide a native ABMIL baseline through MILPort."""
+"""Native ABMIL runtime discovery; model and Lightning imports stay in compute workers."""

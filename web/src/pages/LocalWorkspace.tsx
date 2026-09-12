@@ -334,7 +334,7 @@ function SavedExperimentInputs({ project }: { project: string }) {
             {protocols.data?.configurations.length ? (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Cohort / protocol</th><th>Dataset</th><th>Bound features</th><th>Version note</th></tr></thead>
+                  <thead><tr><th>Development protocol</th><th>Dataset</th><th>Bound features</th><th>Version note</th></tr></thead>
                   <tbody>
                     {protocols.data.configurations.map((protocol) => {
                       const featureId = (protocol.manifest.spec as ProtocolSpec).featureSetId;
@@ -371,7 +371,7 @@ function SavedExperimentInputs({ project }: { project: string }) {
               </div>
             ) : <p className="muted">Inspect and attach embeddings in <a href="#features">PFM & features</a>.</p>}
           </section>
-          <p className="muted">These frozen inputs are available for planning. MIL training is not connected yet.</p>
+          <p className="muted">Use these frozen inputs to configure development batches. Supported ABMIL batches can be launched explicitly from Experiments.</p>
         </div>
       )}
     </Panel>
@@ -611,7 +611,7 @@ export default function LocalWorkspace({
           </ul>
           <p className="muted">
             Each scientific page exposes its saved immutable records and provenance. Model
-            execution and run lineage are not connected yet.
+            development also records batch execution, fold checkpoints and assessment predictions.
           </p>
         </Panel>
       </>

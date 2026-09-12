@@ -22,6 +22,7 @@ from histopilot.adapters import trident
 from histopilot.adapters.trident.progress import build_progress
 from histopilot.schemas.extractions import ExtractionSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
     _reject_symlink_components,
@@ -211,6 +212,10 @@ class ExtractionService:
                 "configurations",
                 "extractions",
                 "packing",
+                "training",
+                "compute-jobs",
+                "predictor-builds",
+                "evaluation-batches",
                 "jobs",
                 "drafts",
                 ".staging",
@@ -218,6 +223,9 @@ class ExtractionService:
                 ".git",
                 ".codex",
                 ".histopilot-write.lock",
+                ".histopilot-lifecycle.lock",
+                "histopilot-lifecycle.json",
+                "histopilot-project.json",
                 "histopilot-state.sqlite",
                 "histopilot-state.sqlite-wal",
                 "histopilot-state.sqlite-shm",
@@ -365,7 +373,8 @@ class ExtractionService:
                     "Choose an empty output folder. Attach existing TRIDENT features in the feature folder panel.",
                 )
         if any(
-            _overlaps(item["outputPath"], output) and self.get(item["id"])["state"] in ACTIVE
+            _overlaps(item["outputPath"], output)
+            and self.get(item["id"], include_inactive=True)["state"] in ACTIVE
             for item in jobs
         ):
             finding("OUTPUT_BUSY", "An extraction is already using this output folder.")
@@ -454,6 +463,12 @@ class ExtractionService:
         return self._prepare(spec)[0]
 
     def submit(self, spec: ExtractionSpec, preview_hash: str, operation_id: str) -> dict:
+        with lifecycle_guard(self.store.folder, timeout=5):
+            lifecycle = LifecycleStore(self.store.folder, self.store.project_id)
+            lifecycle.assert_document_usable(spec.model_dump(mode="json"))
+            return self._submit(spec, preview_hash, operation_id)
+
+    def _submit(self, spec: ExtractionSpec, preview_hash: str, operation_id: str) -> dict:
         self.store.initialize()
         with writer_lock(self.store.folder):
             for existing in self._jobs():
@@ -488,7 +503,7 @@ class ExtractionService:
                     return self.get(existing["id"])
                 if (
                     _overlaps(existing["outputPath"], preview["spec"]["outputPath"])
-                    and self.get(existing["id"])["state"] in ACTIVE
+                    and self.get(existing["id"], include_inactive=True)["state"] in ACTIVE
                 ):
                     raise StorageError("An extraction already owns this output.", "OUTPUT_BUSY")
             identity = f"extraction-{uuid4().hex}"
@@ -594,7 +609,11 @@ class ExtractionService:
             _write(folder / "job.json", job)
         return self.get(identity)
 
-    def get(self, identity: str, *, logs=False) -> dict:
+    def get(self, identity: str, *, logs=False, include_inactive=False) -> dict:
+        if not include_inactive:
+            LifecycleStore(self.store.folder, self.store.project_id).assert_usable(
+                [f"extraction:{identity}"]
+            )
         job = self._job_record(identity)
         folder = self.folder / identity
         if (folder / "result.json").exists():
@@ -699,19 +718,35 @@ class ExtractionService:
                 "Inspect worker logs and artifact findings; skipped errors do not count as success."
             )
 
-    def list(self) -> dict:
+    def list(self, *, include_inactive=False) -> dict:
+        states = LifecycleStore(self.store.folder, self.store.project_id).read()["records"]
+        jobs = [self.get(item["id"], include_inactive=True) for item in self._jobs()]
         return {
             "jobs": sorted(
-                [self.get(item["id"]) for item in self._jobs()],
+                [
+                    job
+                    for job in jobs
+                    if include_inactive
+                    or job["state"] in ACTIVE
+                    or states.get(f"extraction:{job['id']}", {}).get("state", "active") == "active"
+                ],
                 key=lambda item: item["createdAt"],
                 reverse=True,
             )
         }
 
     def cancel(self, identity: str) -> dict:
+        with lifecycle_guard(self.store.folder, timeout=5):
+            return self._cancel(identity)
+
+    def _cancel(self, identity: str) -> dict:
         with writer_lock(self.store.folder):
-            job = self.get(identity)
-            if job["state"] not in ACTIVE:
+            job = self.get(identity, include_inactive=True)
+            if (
+                job["state"] not in ACTIVE
+                and not self.executor.running(job["sessionName"])
+                and not self._live_process(self.folder / identity)
+            ):
                 return job
             marker = self.folder / identity / "cancelled"
             if not marker.exists():
@@ -727,4 +762,4 @@ class ExtractionService:
                         os.killpg(process["pid"], signal.SIGTERM)
                     except ProcessLookupError:
                         pass
-        return self.get(identity, logs=True)
+        return self.get(identity, logs=True, include_inactive=True)

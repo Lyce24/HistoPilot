@@ -23,10 +23,18 @@ import tempfile
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-import h5py
 import numpy as np
 
 CHUNK_BYTES = 16 * 1024 * 1024
+
+
+def _h5py():
+    """Import h5py lazily so the control service never loads HDF5 libraries on startup."""
+    import h5py
+
+    return h5py
+
+
 FORMAT = "oceanpath-packed-v1"
 STAMP_KEYS = ("sizeBytes", "mtimeNs", "ctimeNs", "deviceId", "inode")
 PAYLOADS = ("features.bin", "coords.bin", "index.parquet", "meta.json")
@@ -237,6 +245,7 @@ def _semantic(value):
 
 
 def _dataset(handle, key):
+    h5py = _h5py()
     if not isinstance(handle.get(key, getlink=True), h5py.HardLink):
         raise PackedStoreError(f"{key} must be an embedded HDF5 dataset.")
     dataset = handle[key]
@@ -314,7 +323,7 @@ def _scan(
             if identity in seen_inodes:
                 raise PackedStoreError("Different slide IDs reference the same feature file.")
             seen_inodes.add(identity)
-            feature_handle = stack.enter_context(h5py.File(stream, "r"))
+            feature_handle = stack.enter_context(_h5py().File(stream, "r"))
             features = _dataset(feature_handle, "features")
             if len(features.shape) != 2 or not all(features.shape) or features.dtype.kind != "f":
                 raise PackedStoreError(f"{slide}: features must be nonempty floating [N,D].")
@@ -346,7 +355,7 @@ def _scan(
                 coords_stream, coords_stamp = stack.enter_context(
                     _source(coords_path, entry.get("coordinateFile", {}))
                 )
-                coords_handle = stack.enter_context(h5py.File(coords_stream, "r"))
+                coords_handle = stack.enter_context(_h5py().File(coords_stream, "r"))
             coords = _dataset(coords_handle, "coords")
             if coords.shape != (count, 2) or coords.dtype.kind not in {"i", "u"}:
                 raise PackedStoreError(f"{slide}: coords must have one integer XY pair per row.")

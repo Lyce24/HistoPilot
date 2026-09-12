@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "dataset_id": "crc-demo-v1",
+  "cohort_id": "cohort-demo-all",
+  "split_id": "split-demo-42",
+  "feature_set_id": "feature-uni2-demo",
+  "encoder_id": "uni2",
+  "mil_model": "abmil",
+  "task": "binary_classification",
+  "positive_label": "Mutant",
+  "seeds": [
+    42,
+    84
+  ],
+  "folds": 5,
+  "aggregation": "mean"
+}

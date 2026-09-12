@@ -1,5 +1,7 @@
 # Architecture
 
+> **Scope of this document:** the sections below describe the initial prototype architecture and include historical implementation status. The current local application also implements scientific datasets/protocols/features, isolated native ABMIL training, checkpointed recovery, predictor ensembles/refits, test inference, and lifecycle cleanup. The empty generic/demo jobs API is not the native execution path. See [README.md](../README.md), [MODEL_DEVELOPMENT.md](MODEL_DEVELOPMENT.md), [WORKSPACE_CLEANUP.md](WORKSPACE_CLEANUP.md), and the [v2 integration review](V2_INTEGRATION_REVIEW.md) for the implemented workflows and current limitations.
+
 HistoPilot is a local-first, self-hosted web application. A browser UI controls a local Python service; the service owns scientific state and schedules future isolated Python workers; original WSIs stay external and generated artifacts stay on local storage.
 
 The current implementation connects the UI to persisted **synthetic** cohorts and experiment drafts. It establishes real API, database, configuration, and packaging boundaries while leaving image ingestion, GPU execution, full audits, scientific artifact storage, and real evaluation unimplemented.
@@ -88,7 +90,7 @@ erDiagram
     Run ||--o{ Result : produces
 ```
 
-The domain records in [`histopilot/domain/`](histopilot/domain/) contain stable IDs and artifact references, not ORM sessions, browser state, image arrays, or GPU tensors. `DatasetVersion` records sources, a content hash, and optional parent version. `FeatureSet` records encoder/checkpoint identity, covered slides, feature/coordinate locations, extraction configuration, and geometry. `Experiment` fixes cohort/split/features/MIL intent; `Run` identifies one seed/fold execution; `Result` links a run to predictions, ground truth, metrics, and optional attention.
+The domain records in [`histopilot/domain/`](../histopilot/domain/) contain stable IDs and artifact references, not ORM sessions, browser state, image arrays, or GPU tensors. `DatasetVersion` records sources, a content hash, and optional parent version. `FeatureSet` records encoder/checkpoint identity, covered slides, feature/coordinate locations, extraction configuration, and geometry. `Experiment` fixes cohort/split/features/MIL intent; `Run` identifies one seed/fold execution; `Result` links a run to predictions, ground truth, metrics, and optional attention.
 
 `Block`, `TissueMask`, and `PatchSet` are planned extensions between specimen, slide, and feature artifacts. They must preserve the patient identity path. The initial hierarchy does not implement those entities yet.
 
@@ -96,7 +98,7 @@ Frozen Python dataclasses express the domain shape but do not validate foreign k
 
 ## One GUI/CLI experiment contract
 
-Both the experiment API and CLI use `histopilot.contracts.experiment.ExperimentSpec`. The [JSON Schema](examples/experiment.schema.json) and [example experiment specification](examples/crc_kras/experiment-spec.json) describe the same versioned contract.
+Both the experiment API and CLI use `histopilot.contracts.experiment.ExperimentSpec`. The [JSON Schema](../examples/experiment.schema.json) and [example experiment specification](../examples/crc_kras/experiment-spec.json) describe the same versioned contract.
 
 ```text
 GUI command / CLI JSON or YAML
@@ -147,7 +149,7 @@ Use REST for commands and reads; add SSE for status, logs, and telemetry when th
 
 A future content-addressed feature ID should hash canonical dataset, preprocessing, encoder, and checkpoint identity. Changing an input creates a new artifact identity rather than silently reusing incompatible files. Store arrays separately from application metadata, retain patch-coordinate alignment, and avoid introducing a new feature binary format for the first adapter.
 
-SQLite is a local application database, not the bulk scientific query engine. The current schema version identifies the initial metadata layout; it is not a full migration framework. See [workspace layout](docs/workspace.md) for current and planned on-disk paths and the [API reference](docs/api.md) for the implemented command surface.
+SQLite is a local application database, not the bulk scientific query engine. The current schema version identifies the initial metadata layout; it is not a full migration framework. See [workspace layout](workspace.md) for current and planned on-disk paths and the [API reference](api.md) for the implemented command surface.
 
 ## WSI and coordinate contract
 
@@ -183,4 +185,4 @@ Result ── Run ── Experiment ── Cohort ── DatasetVersion
            └── MIL checkpoint + seed/fold + code + environment + logs
 ```
 
-The [OceanPath plan](docs/oceanpath.md) identifies concrete reuse candidates. The [roadmap](docs/roadmap.md) orders implementation around one complete and verifiable real experiment.
+The [OceanPath plan](oceanpath.md) identifies concrete reuse candidates. The [roadmap](roadmap.md) orders implementation around one complete and verifiable real experiment.

@@ -106,6 +106,7 @@ export function DatasetSelect({
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       >
+        {value && !versions.some((version) => version.id === value) ? <option value={value} disabled>Selected dataset unavailable — choose a frozen dataset</option> : null}
         {allowEmpty || !value ? (
           <option value="">
             {versions.length ? 'Choose a frozen dataset' : 'No frozen datasets yet'}

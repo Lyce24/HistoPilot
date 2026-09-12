@@ -6,6 +6,7 @@ import './styles.css';
 import './local-workspace.css';
 import './scientific.css';
 import './clinical-workspace.css';
+import './roadmap.css';
 const client = new QueryClient({
   defaultOptions: { queries: { staleTime: 10000, retry: 1 }, mutations: { retry: false } },
 });

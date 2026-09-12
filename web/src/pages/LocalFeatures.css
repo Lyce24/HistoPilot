@@ -20,6 +20,8 @@
 .pfm-back { margin: 0 0 15px; }
 .pfm-library { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 24px; align-items: start; }
 .pfm-library > .pfm-version-select { display: none; }
+.pfm-content[aria-label='Prepare feature bundle'] .pfm-library { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.pfm-content[aria-label='Prepare feature bundle'] .pfm-library > .pfm-version-select { display: grid; max-width: 640px; }
 .pfm-library-list { display: grid; gap: 9px; min-width: 0; }
 .pfm-library-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 7px; }
 .pfm-library-heading h2 { margin: 0; font-size: 14px; }

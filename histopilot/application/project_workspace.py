@@ -26,6 +26,7 @@ from histopilot.schemas.workspace import (
 )
 from histopilot.storage.database import Database, Record
 from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
+from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError, fsync_directory, writer_lock
 from histopilot.storage.scientific import ScientificStore
 
@@ -97,6 +98,10 @@ class ProjectWorkspace:
             "storagePath": str(path),
             "mode": "local",
             "available": True,
+            "lifecycleState": LifecycleStore(path, document["id"])
+            .read()["records"]
+            .get(f"project:{document['id']}", {})
+            .get("state", "active"),
         }
 
     @staticmethod
@@ -193,7 +198,7 @@ class ProjectWorkspace:
                 if document["id"] != summary["id"]:
                     raise WorkspaceError("The folder now belongs to a different experiment.", 409)
                 projects.append(self._summary(document, path))
-            except (FilesystemError, WorkspaceError) as error:
+            except (FilesystemError, WorkspaceError, StorageError) as error:
                 projects.append({**summary, "available": False, "unavailableReason": str(error)})
         projects.sort(key=lambda project: project["updatedAt"], reverse=True)
         return {
@@ -399,7 +404,8 @@ class ProjectWorkspace:
         choices = self._validate_config(config)
         with self.lock:
             _, path = self._load(identity)
-            with writer_lock(path):
+            with lifecycle_guard(path), writer_lock(path):
+                LifecycleStore(path, identity).assert_usable([f"project:{identity}"])
                 document = self._read(path)
                 if document["id"] != identity:
                     raise WorkspaceError("The folder now belongs to a different experiment.", 409)
@@ -413,7 +419,8 @@ class ProjectWorkspace:
     def add_source(self, identity: str, value: str, role: str) -> dict:
         with self.lock:
             _, path = self._load(identity)
-            with writer_lock(path):
+            with lifecycle_guard(path), writer_lock(path):
+                LifecycleStore(path, identity).assert_usable([f"project:{identity}"])
                 document = self._read(path)
                 if document["id"] != identity:
                     raise WorkspaceError("The folder now belongs to a different experiment.", 409)

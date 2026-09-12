@@ -10,6 +10,7 @@ type Role = 'train' | 'val' | 'test';
 
 export function SplitPools({
   pools,
+  development = false,
   validationFraction,
   onChange,
   onFractionChange,
@@ -19,6 +20,7 @@ export function SplitPools({
   targetField,
 }: {
   pools: Pools;
+  development?: boolean;
   validationFraction: number;
   onChange: (update: Partial<Pools>, validationFraction?: number) => void;
   onFractionChange: (fraction: number) => void;
@@ -28,15 +30,18 @@ export function SplitPools({
   targetField: string;
 }) {
   const fixedValidation = pools.validationSource === 'fixed';
-  const roles: Role[] = fixedValidation ? ['test', 'train', 'val'] : ['test', 'train'];
+  const roles: Role[] = development
+    ? fixedValidation ? ['train', 'val'] : ['train']
+    : fixedValidation ? ['test', 'train', 'val'] : ['test', 'train'];
   return (
-    <section className="stack split-pools" aria-label="Training and test sources">
+    <section className="stack split-pools" aria-label={development ? 'Development data sources' : 'Training and test sources'}>
       <div className="split-strategy-heading">
         <span className="split-section-caption">A · DATA SELECTION</span>
-        <h3>Set aside test data first</h3>
+        <h3>{development ? 'Select the development data' : 'Set aside test data first'}</h3>
         <p className="muted">
-          The remaining eligible groups become your training pool. You can also use your own
-          training conditions.
+          {development
+            ? 'Use all eligible groups or select training records using conditions or source column values. Only selected groups enter this protocol.'
+            : 'The remaining eligible groups become your training pool. You can also use your own training conditions.'}
         </p>
       </div>
       <div className="science-grid-two">
@@ -84,8 +89,9 @@ export function SplitPools({
         <>
           {imported}
           <p className="muted">
-            Map the source values to training and test
+            {development ? 'Map the source values to training' : 'Map the source values to training and test'}
             {fixedValidation ? ', plus validation' : ''}.
+            {development ? ' Unmapped values remain outside the development cohort.' : ''}
             {fixedValidation
               ? ' Existing validation assignments are preserved.'
               : ' If your file has a validation set, choose fixed validation above or explicitly map those rows into training.'}
@@ -106,8 +112,8 @@ export function SplitPools({
                 {role === 'test'
                   ? '1. Final test set'
                   : role === 'train'
-                    ? '2. Training pool'
-                    : '3. Fixed validation set'}
+                    ? development ? '1. Development training pool' : '2. Training pool'
+                    : development ? '2. Development validation' : '3. Fixed validation set'}
               </h4>
               <p>
                 {role === 'test'
@@ -138,8 +144,9 @@ export function SplitPools({
               </label>
               {pools.trainSelection === 'remaining' ? (
                 <p className="callout">
-                  Training includes every eligible group outside your test and fixed validation
-                  sets.
+                  {development
+                    ? 'Training includes every eligible group outside fixed validation. Use cohort filters above or your own training conditions when the file contains other populations.'
+                    : 'Training includes every eligible group outside your test and fixed validation sets.'}
                 </p>
               ) : null}
             </>
@@ -154,6 +161,7 @@ export function SplitPools({
             </p>
           ) : live.data?.partitions && live.data.cohort ? (
             <PartitionLive
+              development={development}
               partition={live.data.partitions[role]}
               label={
                 role === 'train'
@@ -170,7 +178,7 @@ export function SplitPools({
               total={live.data.cohort.totalSlides}
             />
           ) : (
-            <p className="muted">Define both training and test to see set counts.</p>
+            <p className="muted">{development ? 'Select development records to see counts.' : 'Define both training and test to see set counts.'}</p>
           )}
         </div>
       ))}
@@ -186,7 +194,9 @@ export function SplitPools({
         </div>
         {fixedValidation ? (
           <p className="muted">
-            Your fixed validation set stays separate from fitting, CV assessment and final test.
+            {development
+              ? 'Fixed development validation stays separate from fitting and development assessment.'
+              : 'Your fixed validation set stays separate from fitting, CV assessment and final test.'}
             In site/cohort CV, validation groups from the held-out site are omitted from that
             plan.
           </p>
@@ -204,7 +214,7 @@ export function SplitPools({
               />
               <span aria-hidden="true">%</span>
             </span>
-            <small>Default: 15%. The final test set is never used for early stopping.</small>
+            <small>{development ? 'Default: 15%. Assessment groups are excluded from early stopping.' : 'Default: 15%. The final test set is never used for early stopping.'}</small>
           </label>
         )}
       </div>

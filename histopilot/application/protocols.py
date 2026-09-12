@@ -16,6 +16,12 @@ from decimal import Decimal, InvalidOperation
 import regex
 from pydantic import ValidationError
 
+from histopilot.application.development_splits import (
+    ALGORITHM_V4,
+    development_assignments,
+    development_summary,
+    select_development_pools,
+)
 from histopilot.application.explicit_pools import (
     ALGORITHM_V3,
     explicit_assignments,
@@ -249,6 +255,20 @@ def _valid_patient(row):
     return isinstance(patient, str) and bool(patient) and patient == patient.strip()
 
 
+def _development_selection_groups(rows):
+    """Keep unresolved rows selectable without inventing patient identities.
+
+    Temporary tuple keys cannot collide with supplied patient IDs. A selected
+    unresolved row is rejected before any split generation; an unselected row
+    does not become a prerequisite for a development cohort.
+    """
+    groups = defaultdict(list)
+    for row in rows:
+        key = (0, row["patientId"]) if _valid_patient(row) else (1, row["slideId"])
+        groups[key].append(row)
+    return groups
+
+
 def _cohort_stats(rows):
     verified = {
         row["patientId"]
@@ -419,15 +439,15 @@ class ProtocolService:
             )
             mode = request.splitMode
         if "version" in split and (
-            type(split["version"]) is not int or split["version"] not in (1, 2, 3)
+            type(split["version"]) is not int or split["version"] not in (1, 2, 3, 4)
         ):
-            finding("INVALID_STRATEGY_CONFIG", "The split version must be 1, 2 or 3.")
+            finding("INVALID_STRATEGY_CONFIG", "The split version must be 1, 2, 3 or 4.")
         if "heldOutSource" in split and (
             not isinstance(split["heldOutSource"], str)
             or split["heldOutSource"] not in {"fractions", "rules", "imported"}
         ):
             finding("INVALID_STRATEGY_CONFIG", "Choose fractions, rules or predefined partitions.")
-        modern = split.get("version") in (2, 3) or mode in {
+        modern = split.get("version") in (2, 3, 4) or mode in {
             "monte_carlo",
             "leave_one_domain_out",
             "nested_kfold",
@@ -482,18 +502,23 @@ class ProtocolService:
                     ],
                     "distinctCount": len(counts),
                 }
+        development = split.get("version") == 4
         groups = defaultdict(list)
-        for row in eligible:
-            if _valid_patient(row):
-                groups[row["patientId"]].append(row)
-        self._identity_findings(eligible, groups, finding)
-        if result["cohort"]["unlinkedSlideCount"] or any(
+        if development:
+            groups = _development_selection_groups(eligible)
+        else:
+            for row in eligible:
+                if _valid_patient(row):
+                    groups[row["patientId"]].append(row)
+            self._identity_findings(eligible, groups, finding)
+        if (not development and result["cohort"]["unlinkedSlideCount"]) or any(
             item["code"] == "INVALID_STRATEGY_CONFIG" for item in findings
         ):
             # Eligibility counts remain useful; unresolved identities cannot be
             # silently treated as acknowledged independent groups in partition counts.
             return {**result, "valid": False}
-        if split.get("version") == 3:
+        if split.get("version") in (3, 4):
+            development = split.get("version") == 4
             try:
                 pools = PoolSpec.model_validate(split.get("pools", {}))
                 validate(
@@ -507,20 +532,36 @@ class ProtocolService:
                     raise FilterFailure(
                         "UNKNOWN_FIELD", "The predefined pool column is not in the frozen dataset."
                     )
-                _assignments, direct, expanded, remaining = select_pools(
+                selector = select_development_pools if development else select_pools
+                _assignments, direct, expanded, remaining = selector(
                     groups, pools, evaluator, finding, _fixed_assignments
                 )
+                if development:
+                    selected_rows = expanded["train"] + expanded["val"]
+                    self._identity_findings(
+                        selected_rows,
+                        {key: rows for key, rows in groups.items() if key in _assignments},
+                        finding,
+                    )
             except ValidationError:
                 finding(
                     "INVALID_POOL_SETTINGS",
-                    "Complete the training and test pool settings to see matching counts.",
+                    "Complete the development source settings to see matching counts."
+                    if development
+                    else "Complete the training and test pool settings to see matching counts.",
                 )
                 return {**result, "valid": False, "selectionBasis": "pools"}
             except FilterFailure as error:
                 finding(error.code, str(error))
                 return {**result, "valid": False, "selectionBasis": "pools"}
             if any(
-                item["code"] in {"OVERLAPPING_PATIENT_RULES", "IMPORTED_PATIENT_LEAKAGE"}
+                item["code"]
+                in {
+                    "OVERLAPPING_PATIENT_RULES",
+                    "IMPORTED_PATIENT_LEAKAGE",
+                    "MISSING_PATIENT_ID",
+                    "FALLBACK_PATIENT_ID_COLLISION",
+                }
                 for item in findings
             ):
                 return {**result, "valid": False, "selectionBasis": "pools"}
@@ -543,10 +584,26 @@ class ProtocolService:
                 for role in PARTITIONS
             }
             result["unassigned"] = _cohort_stats(remaining)
+            if development and result["target"]:
+                selected_rows = expanded["train"] + expanded["val"]
+                counts = Counter(evaluator.field(row, request.targetField) for row in selected_rows)
+                result["target"] = {
+                    "field": request.targetField,
+                    "values": [
+                        {"value": value, "slides": count}
+                        for value, count in sorted(
+                            counts.items(),
+                            key=lambda item: (-item[1], item[0] is None, item[0] or ""),
+                        )[:20]
+                    ],
+                    "distinctCount": len(counts),
+                }
             return {
                 **result,
                 "selectionBasis": "pools",
-                "message": "Cross-validation uses the selected training pool. The external test pool is reserved for final evaluation. Validation comes from training unless a fixed validation pool is selected.",
+                "message": "Development plans use the selected training groups and early-stop validation. Unmatched rows stay outside this protocol."
+                if development
+                else "Cross-validation uses the selected training pool. The external test pool is reserved for final evaluation. Validation comes from training unless a fixed validation pool is selected.",
                 "valid": not any(item["severity"] == "error" for item in findings),
             }
         if modern and not uses_rules:
@@ -633,11 +690,26 @@ class ProtocolService:
     def _preview(self, draft_id, expected_revision, *, allow_frozen):
         spec, dataset, fields, rows = self._load(draft_id, expected_revision, allow_frozen)
         modern = spec.split.version >= 2
-        explicit = spec.split.version == 3
-        algorithm = ALGORITHM_V3 if explicit else ALGORITHM_V2 if modern else ALGORITHM
+        explicit = spec.split.version >= 3
+        development = spec.split.version == 4
+        algorithm = (
+            ALGORITHM_V4
+            if development
+            else ALGORITHM_V3
+            if explicit
+            else ALGORITHM_V2
+            if modern
+            else ALGORITHM
+        )
         findings = []
 
         def finding(code, message, severity="error"):
+            if development:
+                # Shared CV code retains its historical internal assessment key.
+                # Translate role wording without changing user field/class names.
+                message = message.replace(
+                    ": reported test requests", ": development assessment requests"
+                ).replace(": test has fewer than", ": development assessment has fewer than")
             if not any(item["code"] == code and item["message"] == message for item in findings):
                 findings.append({"severity": severity, "code": code, "message": message})
 
@@ -779,6 +851,26 @@ class ProtocolService:
                 eligible = [row for row in rows if evaluator.conjunction(row, spec.eligibility)]
             except FilterFailure as error:
                 finding(error.code, str(error))
+        development_pool_assignments = {}
+        if development and not any(item["severity"] == "error" for item in findings):
+            # Select development sources before interpreting their labels. A
+            # combined metadata file can contain unrelated, unlabeled rows.
+            source_groups = _development_selection_groups(eligible)
+            try:
+                selected, _direct, _expanded, _remaining = select_development_pools(
+                    source_groups, spec.split.pools, evaluator, finding, _fixed_assignments
+                )
+                eligible = _expanded["train"] + _expanded["val"]
+                self._identity_findings(
+                    eligible,
+                    {key: rows for key, rows in source_groups.items() if key in selected},
+                    finding,
+                )
+                development_pool_assignments = {
+                    key[1]: role for key, role in selected.items() if key[0] == 0
+                }
+            except FilterFailure as error:
+                finding(error.code, str(error))
         for row in eligible:
             raw = evaluator.field(row, spec.target.field)
             if raw is None:
@@ -885,9 +977,24 @@ class ProtocolService:
         pool_assignments = {}
         if explicit and not any(item["severity"] == "error" for item in findings):
             try:
-                pool_assignments, _direct, _expanded, _remaining = select_pools(
-                    groups, spec.split.pools, evaluator, finding, _fixed_assignments
-                )
+                if development:
+                    pool_assignments = {
+                        patient: role
+                        for patient, role in development_pool_assignments.items()
+                        if patient in groups
+                    }
+                    for role in ("train", "val"):
+                        if (
+                            role == "train" or spec.split.pools.validationSource == "fixed"
+                        ) and role not in pool_assignments.values():
+                            finding(
+                                f"{role.upper()}_POOL_EMPTY",
+                                f"The selected {role} pool has no groups after target mapping.",
+                            )
+                else:
+                    pool_assignments, _direct, _expanded, _remaining = select_pools(
+                        groups, spec.split.pools, evaluator, finding, _fixed_assignments
+                    )
             except FilterFailure as error:
                 finding(error.code, str(error))
         feature_hash = None
@@ -957,7 +1064,8 @@ class ProtocolService:
         )
         if modern and not any(item["severity"] == "error" for item in findings):
             if explicit:
-                plans, training_groups = explicit_assignments(
+                assign = development_assignments if development else explicit_assignments
+                plans, training_groups = assign(
                     spec,
                     groups,
                     pool_assignments,
@@ -1110,7 +1218,15 @@ class ProtocolService:
                         "tune": "Inner held-out data for model selection; outer and external test groups are excluded",
                     },
                 }
-                if explicit
+                if explicit and not development
+                else {}
+            ),
+            **(
+                {
+                    "poolCounts": pool_counts(groups, pool_assignments, spec.target.classes),
+                    **development_summary(spec),
+                }
+                if development
                 else {}
             ),
         }

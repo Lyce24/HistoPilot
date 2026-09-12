@@ -1,0 +1,31 @@
+.evaluation-setup { display: grid; gap: 20px; }
+.evaluation-fields { display: grid; gap: 20px; min-width: 0; border: 0; padding: 0; margin: 0; }
+.evaluation-inherited { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--accent-light); }
+.evaluation-inherited > div { display: grid; gap: 6px; }
+.evaluation-inherited span { color: var(--muted); font-size: 12px; }
+.evaluation-inherited strong { overflow-wrap: anywhere; }
+.evaluation-conditions { display: grid; gap: 14px; }
+.evaluation-condition { display: grid; grid-template-columns: 1fr 1fr 1.3fr auto; gap: 12px; align-items: end; }
+.evaluation-condition .icon-button { margin-bottom: 3px; }
+.evaluation-checkbox { display: flex; align-items: start; gap: 10px; }
+.evaluation-checkbox input { margin-top: 4px; }
+.evaluation-labels > .stack, .evaluation-inference { margin-top: 16px; }
+.evaluation-label-mapping { display: grid; gap: 12px; }
+.evaluation-label-mapping > .btn { justify-self: start; }
+.evaluation-mapping-row { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 12px; }
+.evaluation-setup summary { font-weight: 600; cursor: pointer; }
+.evaluation-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.evaluation-counts > div { display: grid; gap: 5px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.evaluation-counts strong { font-size: 24px; }
+.evaluation-counts span { color: var(--muted); font-size: 12px; }
+.evaluation-evidence { display: grid; gap: 18px; }
+.evaluation-slide-ids pre { max-height: 230px; overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.evaluation-actions, .evaluation-availability { margin-top: 18px; }
+.evaluation-freeze { display: grid; gap: 14px; margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line); }
+.evaluation-freeze .btn { justify-self: start; }
+.evaluation-version-note { display: block; color: var(--muted); margin-top: 5px; }
+@media (max-width: 850px) {
+  .evaluation-condition { grid-template-columns: 1fr; }
+  .evaluation-condition .icon-button { justify-self: end; }
+  .evaluation-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

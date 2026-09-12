@@ -1,0 +1,33 @@
+{
+  "checks": [
+    "24 slides on first page",
+    "thumbnails rendered",
+    "missing features disabled",
+    "second page six slides",
+    "case-insensitive search full inventory",
+    "selection preserved pages and search",
+    "no matches explained",
+    "empty search retains selection",
+    "late search does not replace current result",
+    "single click uses selected ensemble and pack",
+    "ensemble full viewer rendered",
+    "ensemble mean plus two member options",
+    "completed batch card renders real overlay",
+    "batch preserves exact selected membership across pages",
+    "all completed batch cards display attention overlays",
+    "lost response locks new requests",
+    "retry retains operation and creates no duplicate studies",
+    "predictor change resets selections and results",
+    "single refit uses original features",
+    "refit viewer excludes ensemble members",
+    "queued batch updates to completed with overlays",
+    "gallery status tracks job completion",
+    "pack change clears selection and results",
+    "bundle-other change clears selection and results",
+    "folder change updates gallery source",
+    "desktop 1440 and mobile 390 have no horizontal overflow"
+  ],
+  "unexpectedNetworkRequests": [],
+  "browserRuntimeErrors": [],
+  "mode": "Static actual React components, controlled API responses, real synthetic ABMIL maps; no server started"
+}

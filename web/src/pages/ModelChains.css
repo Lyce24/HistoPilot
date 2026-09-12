@@ -1,0 +1,32 @@
+.model-chains { min-width: 0; }
+.chain-banner { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; padding: 1rem 1.25rem; background: var(--surface-soft, #f2f7f5); border: 1px solid var(--border, #dce6e1); border-radius: 12px; margin-bottom: 1.5rem; }
+.chain-filters, .chain-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 0; margin: 1rem 0; border: 0; }
+.chain-fields .field, .chain-filters .field { min-width: 0; width: 100%; }
+.chain-table { width: 100%; table-layout: fixed; min-width: 740px; white-space: normal; }
+.chain-table th { overflow-wrap: anywhere; }
+.chain-table td { vertical-align: top; max-width: 360px; overflow-wrap: anywhere; }
+.chain-table small { display: block; margin-top: .4rem; }
+.chain-evidence { padding-left: 1.25rem; }
+.chain-evidence li { margin-bottom: 1rem; overflow-wrap: anywhere; }
+.chain-evidence code, .chain-evidence small { display: block; }
+.model-chains .table-wrap { max-width: 100%; overflow-x: auto; }
+.model-chains .panel { min-width: 0; }
+.chain-details { overflow-wrap: anywhere; white-space: pre-wrap; max-height: 420px; overflow: auto; }
+.chain-wide { grid-column: 1 / -1; }
+.predictor-methods { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.predictor-method { display: flex; align-items: flex-start; gap: .75rem; padding: 1rem; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.predictor-method.selected { border-color: var(--accent); background: var(--surface-soft, #f2f7f5); }
+.predictor-method input { flex: 0 0 auto; margin-top: .3rem; }
+.predictor-method span { min-width: 0; }
+.predictor-method small { display: block; color: var(--muted); margin-top: .5rem; }
+.record-path { display: block; overflow-wrap: anywhere; white-space: pre-wrap; margin: .5rem 0; }
+.refit-detail { margin-top: 1.25rem; }
+.compute-job-controls { margin: 1rem 0; }
+.model-chains .inline-actions { flex-wrap: wrap; }
+.model-chains .text-button { white-space: normal; text-align: left; overflow-wrap: anywhere; max-width: 100%; }
+.chain-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1rem; margin: 1rem 0; }
+.chain-metrics > div { padding: 1rem; border: 1px solid var(--line); border-radius: 8px; }
+.chain-metrics strong, .chain-metrics span { display: block; }
+.chain-metrics span { color: var(--muted); }
+@media (max-width: 720px) { .predictor-methods { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .chain-fields, .chain-filters { grid-template-columns: 1fr; } .chain-banner { gap: .6rem; } }

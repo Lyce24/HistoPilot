@@ -167,7 +167,9 @@ class PoolSpec(RequestModel):
 
 
 class SplitSpec(RequestModel):
-    version: Literal[1, 2, 3] = 1
+    # Versions 1–3 retain their original frozen meanings. Version 4 contains
+    # development assignments only; independent inference cohorts live elsewhere.
+    version: Literal[1, 2, 3, 4] = 1
     mode: Literal[
         "rules",
         "kfold",
@@ -230,12 +232,23 @@ class SplitSpec(RequestModel):
             "held_out",
         }:
             raise ValueError("Choose one of the five evaluation strategies.")
-        if (self.version == 3) != (self.pools is not None):
-            raise ValueError("Version 3 requires explicit training and test pool settings.")
-        if self.version == 3 and any(
+        if (self.version >= 3) != (self.pools is not None):
+            raise ValueError("Versions 3 and 4 require explicit source selection settings.")
+        if self.version >= 3 and any(
             getattr(self.rules, role) for role in ("train", "val", "test")
         ):
-            raise ValueError("Version 3 partition rules belong in the pool settings.")
+            raise ValueError("Partition rules belong in the source selection settings.")
+        if self.version == 4:
+            if self.pools.rules.test or (
+                self.pools.imported and "test" in self.pools.imported.partitionLabels.values()
+            ):
+                raise ValueError(
+                    "Development protocols cannot reserve test data. Define inference cohorts in Model evaluation."
+                )
+            if self.heldOutSource != "fractions" or self.ratios.test:
+                raise ValueError(
+                    "Development assessment uses its strategy fraction; external holdout settings are not allowed."
+                )
         uses_imported = self.mode == "imported" or (
             self.version == 2 and self.mode == "held_out" and self.heldOutSource == "imported"
         )

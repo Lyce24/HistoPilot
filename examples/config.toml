@@ -1,0 +1,14 @@
+# Optional: copy to ~/.histopilot/config.toml and edit for your workstation.
+# This example has safe defaults and does not grant access to any data directory.
+
+[server]
+host = "127.0.0.1"
+port = 8787
+
+[storage]
+workspace = "~/.histopilot/workspace"
+data_roots = []
+# Grant only the directories you want the server folder picker to browse:
+# data_roots = ["/mnt/pathology/crc", "/mnt/pathology/external-validation"]
+# Paths refer to the Python service's machine, not the browser's machine.
+# Original WSIs are referenced in place; no upload or automatic copy occurs.

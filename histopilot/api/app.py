@@ -27,9 +27,11 @@ from histopilot.schemas.workspace import (
 )
 from histopilot.storage.database import SCHEMA_VERSION, Database
 from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
+from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.extraction_process import TmuxExtractionExecutor
 
+from .lifecycle import lifecycle_router
 from .scientific import scientific_router
 from .security import configure_browser_boundary
 
@@ -124,9 +126,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/v1/projects/{identity}/drafts", status_code=201)
     def create_project_draft(identity: str, payload: CreateDraftRequest):
-        return projects.scientific_store(identity).create_draft(
-            kind=payload.kind, name=payload.name, payload=payload.payload
-        )
+        store = projects.scientific_store(identity)
+        with lifecycle_guard(store.folder):
+            guard_experiment_draft(store, payload.payload)
+            return store.create_draft(kind=payload.kind, name=payload.name, payload=payload.payload)
 
     @app.get("/api/v1/projects/{identity}/drafts/{draft_id}")
     def project_draft(identity: str, draft_id: str):
@@ -134,12 +137,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/v1/projects/{identity}/drafts/{draft_id}")
     def update_project_draft(identity: str, draft_id: str, payload: UpdateDraftRequest):
-        return projects.scientific_store(identity).update_draft(
-            draft_id,
-            expected_revision=payload.expectedRevision,
-            name=payload.name,
-            payload=payload.payload,
-        )
+        store = projects.scientific_store(identity)
+        with lifecycle_guard(store.folder):
+            current = store.get_draft(draft_id)
+            guard_experiment_draft(store, payload.payload, current["payload"])
+            return store.update_draft(
+                draft_id,
+                expected_revision=payload.expectedRevision,
+                name=payload.name,
+                payload=payload.payload,
+            )
+
+    def guard_experiment_draft(store, payload, previous=None):
+        from histopilot.application.model_experiments import ModelExperimentService
+
+        if (
+            payload.get("type") == "model-experiment"
+            or (previous or {}).get("type") == "model-experiment"
+        ):
+            raise StorageError(
+                "Manage model experiments through their experiment record.",
+                "EXPERIMENT_TYPED_ENDPOINT_REQUIRED",
+                409,
+            )
+        spec = payload.get("spec") or {}
+        old_spec = (previous or {}).get("spec") or {}
+        spec = spec if isinstance(spec, dict) else {}
+        old_spec = old_spec if isinstance(old_spec, dict) else {}
+        nested_owner, direct_owner = spec.get("experimentId"), payload.get("experimentId")
+        if nested_owner is not None and direct_owner is not None and nested_owner != direct_owner:
+            raise StorageError(
+                "The draft names conflicting experiment owners.", "EXPERIMENT_OWNER_CHANGED", 409
+            )
+        owner = nested_owner if nested_owner is not None else direct_owner
+        old_owner = old_spec.get("experimentId") or (previous or {}).get("experimentId")
+        if old_owner and (owner != old_owner or payload.get("type") != previous.get("type")):
+            raise StorageError(
+                "A batch draft cannot change its experiment owner.", "EXPERIMENT_OWNER_CHANGED", 409
+            )
+        if owner is not None:
+            revision = spec.get("experimentRevision", payload.get("experimentRevision"))
+            if (
+                payload.get("experimentRevision") is not None
+                and spec.get("experimentRevision") is not None
+                and payload["experimentRevision"] != spec["experimentRevision"]
+            ):
+                raise StorageError(
+                    "The draft names conflicting experiment revisions.",
+                    "INVALID_EXPERIMENT_REFERENCE",
+                    422,
+                )
+            if not isinstance(owner, str) or not owner or type(revision) is not int or revision < 1:
+                raise StorageError(
+                    "A batch draft requires its experiment ID and revision.",
+                    "INVALID_EXPERIMENT_REFERENCE",
+                    422,
+                )
+            if payload.get("type") not in ("development-batch", "mil-experiment"):
+                raise StorageError(
+                    "Invalid experiment draft type.", "INVALID_EXPERIMENT_DRAFT", 422
+                )
+            ModelExperimentService(store, filesystem).require_editable(owner, revision)
 
     @app.get("/api/v1/projects/{identity}/datasets")
     def project_datasets(identity: str):
@@ -239,9 +297,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raise HTTPException(501, "Compute execution is not implemented. No job was submitted.")
 
     app.include_router(scientific_router(projects, filesystem))
+    app.include_router(lifecycle_router(projects, filesystem))
+    from histopilot.api.clinical import clinical_router
+    from histopilot.api.evaluations import evaluation_router
+    from histopilot.api.interpretation import interpretation_router
     from histopilot.api.mil import mil_router
+    from histopilot.api.model_experiments import model_experiments_router
+    from histopilot.api.predictors import evaluation_run_router, predictor_router
 
     app.include_router(mil_router(projects, filesystem))
+    app.include_router(evaluation_router(projects, filesystem))
+    app.include_router(model_experiments_router(projects, filesystem))
+    app.include_router(predictor_router(projects, filesystem))
+    app.include_router(evaluation_run_router(projects, filesystem))
+    app.include_router(clinical_router(projects, filesystem))
+    app.include_router(interpretation_router(projects, filesystem))
 
     @app.get("/{path:path}")
     def frontend(path: str):

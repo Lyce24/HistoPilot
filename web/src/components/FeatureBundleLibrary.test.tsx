@@ -42,7 +42,7 @@ describe('frozen feature bundle library', () => {
     expect(html).toContain('/mmap/blca-verified');
     expect(html).toContain('float32');
     expect(html).toContain('1,191,065 patches');
-    expect(html).toContain('href="#experiments"');
+    expect(html).toContain('href="#experiments?dataset=dataset&amp;bundle=bundle"');
     expect(html).toContain('Create another bundle to change the included packs.');
     expect(html).not.toContain('Use pack');
     expect(html).not.toContain('Load this feature version from');

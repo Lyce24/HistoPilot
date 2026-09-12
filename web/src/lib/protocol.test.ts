@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { inferTargetSettings, preservePositiveClass } from './protocol';
+import { inferTargetSettings, newDevelopmentSplit, preservePositiveClass } from './protocol';
+
+describe('new development protocols', () => {
+  it('starts with all eligible training records and no reserved population', () => {
+    expect(newDevelopmentSplit([9, 27], 3)).toMatchObject({
+      version: 4, mode: 'kfold', folds: 3, seeds: [9, 27],
+      pools: {
+        source: 'rules', trainSelection: 'remaining', validationSource: 'training_fraction',
+        rules: { train: [], val: [], test: [] },
+      },
+    });
+  });
+
+  it('creates independent drafts so selections cannot leak across experiments', () => {
+    const first = newDevelopmentSplit();
+    first.pools!.rules.train.push({ field: 'cohort', op: 'eq', value: 'development' });
+    expect(newDevelopmentSplit().pools!.rules.train).toEqual([]);
+  });
+});
 
 describe('positive class when suggesting source-value labels', () => {
   it('preserves high when discovered values reorder the original low/high classes', () => {

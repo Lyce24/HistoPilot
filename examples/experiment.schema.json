@@ -1,0 +1,104 @@
+{
+  "additionalProperties": false,
+  "description": "Shape validation only; the application must resolve every referenced artifact.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "dataset_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "title": "Dataset Id",
+      "type": "string"
+    },
+    "cohort_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "title": "Cohort Id",
+      "type": "string"
+    },
+    "split_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "title": "Split Id",
+      "type": "string"
+    },
+    "feature_set_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "title": "Feature Set Id",
+      "type": "string"
+    },
+    "encoder_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "title": "Encoder Id",
+      "type": "string"
+    },
+    "mil_model": {
+      "maxLength": 200,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "title": "Mil Model",
+      "type": "string"
+    },
+    "task": {
+      "const": "binary_classification",
+      "default": "binary_classification",
+      "title": "Task",
+      "type": "string"
+    },
+    "positive_label": {
+      "default": "Mutant",
+      "minLength": 1,
+      "title": "Positive Label",
+      "type": "string"
+    },
+    "seeds": {
+      "items": {
+        "maximum": 4294967295,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Seeds",
+      "type": "array"
+    },
+    "folds": {
+      "default": 5,
+      "maximum": 10,
+      "minimum": 2,
+      "title": "Folds",
+      "type": "integer"
+    },
+    "aggregation": {
+      "default": "mean",
+      "enum": [
+        "mean",
+        "max"
+      ],
+      "title": "Aggregation",
+      "type": "string"
+    }
+  },
+  "required": [
+    "dataset_id",
+    "cohort_id",
+    "split_id",
+    "feature_set_id",
+    "encoder_id",
+    "mil_model",
+    "seeds"
+  ],
+  "title": "ExperimentSpec",
+  "type": "object"
+}

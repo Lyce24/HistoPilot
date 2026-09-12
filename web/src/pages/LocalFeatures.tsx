@@ -18,17 +18,24 @@ import FeatureFolderExamples from '../components/FeatureFolderExamples';
 import VersionLabelEditor from '../components/VersionLabelEditor';
 import FeatureBundlePreparation from '../components/FeatureBundlePreparation';
 import FeatureBundleLibrary from '../components/FeatureBundleLibrary';
+import SetupContext from '../components/SetupContext';
 import { bundles } from '../api/bundles';
 import { configurationVersionLabel, datasetVersionLabel } from '../lib/versionLabels';
+import { preparationLink, usePreparationContext, type PreparationContext } from '../lib/preparationRoute';
+import PreparationNotice from '../components/PreparationNotice';
 import './LocalFeatures.css';
 export default function LocalFeatures({ workspace: w }: { workspace: Workspace }) {
+  const context = usePreparationContext();
+  return <FeaturesWorkspace key={`${context.datasetId ?? ''}:${context.protocolId ?? ''}`} workspace={w} context={context} />;
+}
+function FeaturesWorkspace({ workspace: w, context }: { workspace: Workspace; context: PreparationContext }) {
   const project = w.project.id;
   const datasets = useDatasets(project);
   const configurations = useConfigurations(project, 'feature');
   const frozenBundles = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project) });
   const refresh = useRefreshScientific(project);
   const [spec, setSpec] = useState<FeatureSpec>({
-    datasetId: w.dataset.id,
+    datasetId: context.datasetId ?? w.dataset.id,
     path: w.sources.find((source) => source.role === 'features')?.path ?? '',
     encoderId: undefined, fileSuffix: '.h5', idSuffix: '', recursive: false, layout: 'auto',
   });
@@ -42,8 +49,9 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
   const [selectedBundle, setSelectedBundle] = useState('');
   const [bundleSeed, setBundleSeed] = useState<{ featureId: string; packIds: string[]; revision: number } | null>(null);
   const workflowRef = useRef<HTMLDivElement>(null);
-  const versions = configurations.data?.configurations ?? [];
-  const bundleItems = frozenBundles.data?.items ?? [];
+  const scopedDatasetId = context.datasetId ? spec.datasetId : undefined;
+  const versions = (configurations.data?.configurations ?? []).filter((item) => !scopedDatasetId || item.manifest.datasetId === scopedDatasetId);
+  const bundleItems = (frozenBundles.data?.items ?? []).filter((item) => !scopedDatasetId || item.manifest.datasetId === scopedDatasetId);
   const activeView = view ?? (bundleItems.length ? 'bundles' : versions.length ? 'library' : 'add');
   const configuration = versions.find((item) => item.id === selected) ?? versions[0];
   const selectedId = configuration?.id ?? '';
@@ -100,10 +108,15 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
   return (
     <>
       <PageHeader
-        eyebrow="PATHOLOGY FOUNDATION MODELS"
-        title="PFM & features"
-        description="Extract or attach features, add optional verified packs, and freeze them together as a reusable bundle."
+        eyebrow="MODEL INPUTS · FEATURES"
+        title="Prepare slide features"
+        description="Choose existing features or extract them, check slide coverage, then freeze a feature bundle."
       />
+      <SetupContext input="A frozen dataset and slide features or images" output="A verified feature bundle for model development">
+        A bundle saves the feature files and any optional packs together. Packing is optional; full feature validation is required either way.
+      </SetupContext>
+      <PreparationNotice context={context} />
+      {context.datasetId ? <p className="muted">Feature sources and bundles shown here belong to the selected dataset. <a href="#features">Show all project features</a></p> : null}
       <nav className="pfm-navigation" aria-label="Feature sections">
         <button type="button" disabled={busy} aria-pressed={activeView === 'bundles'} className={activeView === 'bundles' ? 'is-selected' : ''} onClick={() => setView('bundles')}>
           <Icon name="lock" /> Frozen bundles <span>{bundleItems.length}</span>
@@ -117,14 +130,16 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
       <div ref={workflowRef} className="pfm-workspace" tabIndex={-1}>
       {configurations.isPending || frozenBundles.isPending ? <p className="muted" role="status">Loading feature sources and bundles…</p> : <>
       <section hidden={activeView !== 'bundles'} className="pfm-content" aria-label="Frozen feature bundles">
-        <FeatureBundleLibrary project={project} items={bundleItems} features={versions} selectedId={selectedBundle} onSelect={setSelectedBundle} onPrepare={prepareBundle} />
+        <FeatureBundleLibrary project={project} items={bundleItems} features={versions} selectedId={selectedBundle} onSelect={setSelectedBundle} onPrepare={prepareBundle} context={context} />
       </section>
-      <section hidden={activeView !== 'add'} className="pfm-content" aria-label="Add features">
+      {activeView !== 'bundles' ? (
         <ol className="pfm-workflow-steps" aria-label="Add features workflow">
-          <li aria-current={!preview ? 'step' : undefined} className={!preview ? 'is-current' : 'is-complete'}><span>{preview ? <Icon name="check" size={14} /> : '1'}</span><div><strong>Choose features</strong><small>Use a folder or extract with a PFM</small></div></li>
-          <li aria-current={preview ? 'step' : undefined} className={preview ? 'is-current' : ''}><span>2</span><div><strong>Review coverage</strong><small>Check the source against your dataset</small></div></li>
-          <li><span>3</span><div><strong>Pack &amp; freeze bundle</strong><small>Features alone or with verified packs</small></div></li>
+          <li aria-current={activeView === 'add' && !preview ? 'step' : undefined} className={activeView === 'add' && !preview ? 'is-current' : 'is-complete'}><span>{preview || activeView === 'library' ? <Icon name="check" size={14} /> : '1'}</span><div><strong>Choose features</strong><small>Use a folder or extract with a PFM</small></div></li>
+          <li aria-current={activeView === 'add' && preview ? 'step' : undefined} className={activeView === 'library' ? 'is-complete' : preview ? 'is-current' : ''}><span>{activeView === 'library' ? <Icon name="check" size={14} /> : '2'}</span><div><strong>Review coverage</strong><small>Check the source against your dataset</small></div></li>
+          <li aria-current={activeView === 'library' ? 'step' : undefined} className={activeView === 'library' ? 'is-current' : ''}><span>3</span><div><strong>Validate &amp; freeze</strong><small>Packing is optional</small></div></li>
         </ol>
+      ) : null}
+      <section hidden={activeView !== 'add'} className="pfm-content" aria-label="Add features">
         {preview ? <button type="button" className="text-button pfm-back" disabled={busy} onClick={() => { setPreview(null); focusWorkflow(); }}>← Back to feature settings</button> : null}
         <div hidden={Boolean(preview)} className="pfm-content">
           <div className="pfm-modes" role="group" aria-label="Where will the features come from?">
@@ -136,7 +151,7 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
             </button>
           </div>
           <div className="pfm-content" hidden={mode !== 'extract'}>
-            <TridentExtraction workspace={w} datasets={datasets.data?.datasets ?? []} onAttach={(input) => {
+            <TridentExtraction workspace={context.datasetId ? { ...w, dataset: { ...w.dataset, id: context.datasetId } } : w} datasets={datasets.data?.datasets ?? []} onAttach={(input) => {
               edit({ ...input, layout: 'auto', fileSuffix: '.h5', recursive: false, idSuffix: '', coordinatesPath: undefined });
               setMode('attach'); setView('add'); focusWorkflow();
             }} />
@@ -156,16 +171,6 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
                 onChange={(datasetId) => edit({ datasetId })}
               />
               <label className="label">
-                Encoder identity (optional)
-                <input
-                  className="field"
-                  value={spec.encoderId ?? ''}
-                  placeholder="Auto-detect from TRIDENT folder, e.g. uni_v1"
-                  onChange={(event) => edit({ encoderId: event.target.value || undefined })}
-                />
-                <small>Specify the TRIDENT encoder name when a root contains multiple encoders.</small>
-              </label>
-              <label className="label">
                 Feature directory or TRIDENT job root
                 <input
                   className="field mono"
@@ -182,15 +187,15 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
                 />
               </div>
             </div>
-            <p className="muted">
-              HDF5 files are matched to Slide_ID. TRIDENT folders are discovered automatically,
-              including patch coordinates and encoder metadata. Each configuration uses one
-              encoder and representation; source files stay in place.
-            </p>
-            <FeatureFolderExamples />
+            <p className="muted">Features are matched to Slide_ID. TRIDENT folders and encoder metadata are detected automatically; source files stay in place.</p>
             <details className="pfm-source-details">
-              <summary>Advanced Options for existing features</summary>
+              <summary>Advanced file matching and encoder settings{spec.encoderId ? ` · ${spec.encoderId}` : ''}</summary>
               <div className="science-grid-two">
+                <label className="label">
+                  Encoder identity (optional)
+                  <input className="field" value={spec.encoderId ?? ''} placeholder="Auto-detect, e.g. uni_v1" onChange={(event) => edit({ encoderId: event.target.value || undefined })} />
+                  <small>Choose an encoder when a TRIDENT root contains several.</small>
+                </label>
                 <label className="label">
                   Folder layout
                   <select className="field" value={spec.layout ?? 'auto'} onChange={(event) => edit({ layout: event.target.value as FeatureSpec['layout'] })}>
@@ -222,7 +227,9 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
                   <span>Include subfolders<small>For a single encoder stored across nested directories.</small></span>
                 </label>
               </div>
+              <FeatureFolderExamples />
             </details>
+            {!spec.datasetId || !spec.path.trim() ? <p className="muted">Choose a frozen dataset and a feature folder to inspect coverage.</p> : null}
             <button
               type="button"
               className="btn btn-primary science-fit"
@@ -289,7 +296,7 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
           </details>
           <div className="science-savebar">
             <p>
-              Continue with this source, choose whether to include packs, then name and freeze the complete bundle.
+              Save this inspected feature source, choose whether to include packs, then name and freeze the complete bundle.
             </p>
             <button
               type="button"
@@ -297,7 +304,7 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
               disabled={busy || !preview.canFreeze}
               onClick={() => void registerSource()}
             >
-              {busy ? 'Preparing source…' : 'Continue to bundle preparation'} <Icon name="arrow" />
+              {busy ? 'Saving source…' : 'Save source & prepare bundle'} <Icon name="arrow" />
             </button>
           </div>
         </Panel>
@@ -315,18 +322,6 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
             </select>
             <small>Choose an inspected source to prepare its bundle.</small>
           </label>
-          <aside className="pfm-library-list" aria-label="Choose a feature source">
-            <div className="pfm-library-heading"><h2>Feature sources</h2><small>{versions.length} saved</small></div>
-            {versions.map((item) => {
-              const versionDataset = datasets.data?.datasets.find((version) => version.id === item.manifest.datasetId);
-              return <button key={item.id} type="button" className={`pfm-version-card ${selectedId === item.id ? 'is-selected' : ''}`} aria-pressed={selectedId === item.id} onClick={() => selectVersion(item.id)}>
-                <strong>{configurationVersionLabel(item)}</strong>
-                <span>{featureEncoder(item)}</span>
-                <small>{versionDataset ? datasetVersionLabel(versionDataset) : `Dataset · ${item.manifest.datasetId.slice(-8)}`}</small>
-                <small>{(item.manifest.files?.length ?? 0).toLocaleString()} slides · {new Date(item.createdAt).toLocaleDateString()}</small>
-              </button>;
-            })}
-          </aside>
           {configuration ? <div className="pfm-version-detail">
             <Panel title={configurationVersionLabel(configuration)} subtitle="Decide which packs, if any, will be frozen with these features." actions={<button type="button" className="btn btn-secondary btn-small" onClick={() => { setView('add'); focusWorkflow(); }}><Icon name="plus" /> Add feature source</button>}>
               <dl className="pfm-version-facts">
@@ -337,7 +332,13 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
               {configuration.versionLabel?.note ? <p className="pfm-version-note">{configuration.versionLabel.note}</p> : null}
               <FeatureBundlePreparation key={`${configuration.id}:${bundleSeed?.revision ?? 0}`} project={project} configuration={configuration} configurations={versions} onSelectVersion={selectVersion}
                 initialPackIds={bundleSeed?.featureId === configuration.id ? bundleSeed.packIds : []}
-                onFrozen={(bundle) => { setSelectedBundle(bundle.id); setView('bundles'); setMessage(`Bundle “${bundle.versionLabel?.tag || 'Feature bundle'}” frozen. Choose its loading policy in MIL experiments.`); focusWorkflow(); }} />
+                onFrozen={(bundle) => {
+                  setSelectedBundle(bundle.id);
+                  setView('bundles');
+                  setMessage(`Bundle “${bundle.versionLabel?.tag || 'Feature bundle'}” frozen.`);
+                  window.location.hash = preparationLink('experiments', { datasetId: bundle.manifest.datasetId, bundleId: bundle.id, protocolId: bundle.manifest.datasetId === context.datasetId ? context.protocolId : undefined, saved: 'bundle' });
+                  window.scrollTo({ top: 0 });
+                }} />
             </Panel>
             <details className="pfm-version-details" key={configuration.id}>
               <summary>Source details &amp; inspection</summary>

@@ -898,6 +898,7 @@ tbody tr:last-child td {
   text-decoration: underline;
 }
 .label {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -922,6 +923,19 @@ tbody tr:last-child td {
 .field-readonly {
   background: #f8f9fb;
   color: #8d93a2;
+}
+select.field {
+  max-width: 100%;
+  padding-right: 2.25rem;
+  text-overflow: ellipsis;
+}
+.nav-link > span:not(.nav-status) {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.nav-link > svg, .nav-link > .nav-status {
+  flex-shrink: 0;
 }
 .compact-field .field {
   padding: 6px 10px;

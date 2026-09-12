@@ -6,9 +6,19 @@ export type Page =
   | 'cohort'
   | 'features'
   | 'experiments'
+  | 'post-development'
+  | 'source-cv'
+  | 'selection'
+  | 'predictor'
+  | 'test-data'
   | 'evaluation'
+  | 'clinical-utility'
+  | 'interpretation'
+  | 'reports'
+  | 'example-results'
   | 'explorer'
   | 'provenance'
+  | 'cleanup'
   | 'system';
 export interface Patient {
   id: string;
@@ -109,6 +119,7 @@ export interface ProjectSummary {
   description: string;
   storagePath: string;
   mode: 'local' | 'synthetic-demo';
+  lifecycleState?: 'active' | 'archived' | 'trashed';
   createdAt: string;
   updatedAt: string;
   config: InitialConfig;

@@ -571,3 +571,8 @@
     font-size: 27px;
   }
 }
+.start-project-filters { display: flex; gap: 8px; margin: 12px 0 18px; }
+.start-project-filters button { padding: 8px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
+.start-project-filters button.selected { background: #edf5ef; border-color: #a4b9ab; color: #285840; }
+.start-project-filters button span { margin-left: 6px; font-size: 12px; opacity: .75; }
+.start-project-manage { display: flex; justify-content: end; padding: 0 20px 13px; }

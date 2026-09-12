@@ -24,6 +24,7 @@ from histopilot.schemas.version_labels import (
     SetVersionLabelRequest,
     VersionLabelValues,
 )
+from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
     ensure_managed_directory,
@@ -264,6 +265,7 @@ class ScientificStore:
         self.folder = Path(folder).absolute()
         self.project_id = _label(project_id, "project ID", 128)
         self.path = self.folder / DATABASE_FILE
+        self.lifecycle = LifecycleStore(self.folder, self.project_id)
 
     def _checkpoint(self, phase: str) -> None:
         """Failure-injection seam; production publication has no callback actions."""
@@ -358,7 +360,7 @@ class ScientificStore:
     def initialize(self) -> None:
         # Independent browser queries initialize/recover the same folder. Let
         # these short checks serialize instead of surfacing spurious busy errors.
-        with writer_lock(self.folder, timeout=5):
+        with lifecycle_guard(self.folder), writer_lock(self.folder, timeout=5):
             self._initialize_locked()
 
     def _initialize_locked(self) -> None:
@@ -546,8 +548,9 @@ class ScientificStore:
         _label(name, "draft name")
         content = _json(payload).decode("utf-8")
         identity, now = f"draft-{uuid4().hex}", _now()
-        with writer_lock(self.folder):
+        with lifecycle_guard(self.folder), writer_lock(self.folder):
             self._initialize_locked()
+            self.lifecycle.assert_document_usable(payload)
             with self._connection() as connection, self._transaction(connection):
                 connection.execute(
                     "INSERT INTO drafts VALUES (?,?,?,?,?,?,?,?)",
@@ -566,19 +569,30 @@ class ScientificStore:
                     connection.execute("SELECT * FROM drafts WHERE id=?", (identity,)).fetchone()
                 )
 
-    def get_draft(self, identity: str) -> dict:
+    def get_draft(self, identity: str, *, include_inactive: bool = False) -> dict:
         self.initialize()
+        if not include_inactive:
+            self.lifecycle.assert_usable([f"draft:{identity}"])
         with self._connection() as connection:
             return self._draft(
                 connection.execute("SELECT * FROM drafts WHERE id=?", (identity,)).fetchone()
             )
 
-    def list_drafts(self) -> list[dict]:
+    def _visible(self, kind: str, identity: str, lifecycle: dict) -> bool:
+        records = lifecycle["records"]
+        return (
+            records.get(f"project:{self.project_id}", {}).get("state") != "trashed"
+            and records.get(f"{kind}:{identity}", {}).get("state", "active") == "active"
+        )
+
+    def list_drafts(self, *, include_inactive: bool = False) -> list[dict]:
         self.initialize()
+        lifecycle = self.lifecycle.read()
         with self._connection() as connection:
             return [
                 self._draft(row)
                 for row in connection.execute("SELECT * FROM drafts ORDER BY created_at,id")
+                if include_inactive or self._visible("draft", row["id"], lifecycle)
             ]
 
     def update_draft(
@@ -587,8 +601,10 @@ class ScientificStore:
         _revision(expected_revision)
         _label(name, "draft name")
         content = _json(payload).decode("utf-8")
-        with writer_lock(self.folder):
+        with lifecycle_guard(self.folder), writer_lock(self.folder):
             self._initialize_locked()
+            self.lifecycle.assert_usable([f"draft:{identity}"])
+            self.lifecycle.assert_document_usable(payload, exclude_ids=[identity])
             with self._connection() as connection, self._transaction(connection):
                 draft = self._draft(
                     connection.execute("SELECT * FROM drafts WHERE id=?", (identity,)).fetchone()
@@ -676,8 +692,16 @@ class ScientificStore:
         label = self._version_label(connection, resource_type, document["id"], kind)
         return {**document, "versionLabel": label} if label is not None else document
 
-    def get_version_label(self, resource_type: str, resource_id: str) -> dict | None:
+    def get_version_label(
+        self, resource_type: str, resource_id: str, *, include_inactive: bool = False
+    ) -> dict | None:
         self.initialize()
+        if not include_inactive:
+            self.lifecycle.assert_usable(
+                [f"{resource_type}:{resource_id}"]
+                if resource_type in {"dataset", "configuration"}
+                else []
+            )
         with self._connection() as connection:
             kind, _document = self._version_target(connection, resource_type, resource_id)
             return self._version_label(connection, resource_type, resource_id, kind)
@@ -847,8 +871,13 @@ class ScientificStore:
                 "INVALID_VERSION_LABEL",
                 422,
             ) from error
-        with writer_lock(self.folder):
+        with lifecycle_guard(self.folder), writer_lock(self.folder):
             self._initialize_locked()
+            self.lifecycle.assert_usable(
+                [f"{resource_type}:{resource_id}"]
+                if resource_type in {"dataset", "configuration"}
+                else []
+            )
             with self._connection() as connection, self._transaction(connection):
                 kind, _document = self._version_target(connection, resource_type, resource_id)
                 current = self._version_label(connection, resource_type, resource_id, kind)
@@ -891,15 +920,20 @@ class ScientificStore:
                 "The frozen configuration failed its checksum.", "STORAGE_CORRUPT"
             ) from error
 
-    def get_configuration(self, identity: str) -> dict:
+    def get_configuration(self, identity: str, *, include_inactive: bool = False) -> dict:
         self.initialize()
+        if not include_inactive:
+            self.lifecycle.assert_usable([f"configuration:{identity}"])
         with self._connection() as connection:
             return self._with_version_label(
                 connection, "configuration", self._configuration(connection, identity)
             )
 
-    def list_configurations(self, kind: str | None = None) -> list[dict]:
+    def list_configurations(
+        self, kind: str | None = None, *, include_inactive: bool = False
+    ) -> list[dict]:
         self.initialize()
+        lifecycle = self.lifecycle.read()
         with self._connection() as connection:
             documents = [
                 self._with_version_label(
@@ -908,6 +942,7 @@ class ScientificStore:
                 for row in connection.execute(
                     "SELECT id FROM configurations ORDER BY id"
                 ).fetchall()
+                if include_inactive or self._visible("configuration", row[0], lifecycle)
             ]
         return [item for item in documents if kind is None or item["manifest"].get("kind") == kind]
 
@@ -920,13 +955,13 @@ class ScientificStore:
                 "SELECT configuration_id FROM configuration_publications WHERE id=?",
                 (operation_id,),
             ).fetchone()
-            return (
-                self._with_version_label(
+            if operation:
+                self.lifecycle.assert_usable([f"configuration:{operation[0]}"])
+                return self._with_version_label(
                     connection, "configuration", self._configuration(connection, operation[0])
                 )
-                if operation
-                else None
-            )
+            self.lifecycle.assert_usable(())
+            return None
 
     def publish_configuration(
         self,
@@ -948,7 +983,19 @@ class ScientificStore:
         label_values = self._publication_label_values(version_label)
         if draft_id is not None:
             _revision(expected_revision)
-        if manifest.get("kind") not in {"protocol", "feature", "feature-bundle"}:
+        if manifest.get("kind") not in {
+            "protocol",
+            "feature",
+            "feature-bundle",
+            "mil-batch",
+            "evaluation-cohort",
+            "frozen-predictor",
+            "predictor-refit",
+            "model-evaluation",
+            "evaluation-batch",
+            "clinical-analysis",
+            "model-interpretation",
+        }:
             raise _error("Unsupported scientific configuration kind.", "INVALID_CONFIGURATION", 422)
         content = _json(manifest, MAX_CONFIGURATION_BYTES)
         digest = hashlib.sha256(content).hexdigest()
@@ -963,8 +1010,13 @@ class ScientificStore:
                 }
             )
         ).hexdigest()
-        with writer_lock(self.folder):
+        with lifecycle_guard(self.folder), writer_lock(self.folder):
             self._initialize_locked()
+            refs = [f"configuration:{identity}"]
+            if draft_id is not None:
+                refs.append(f"draft:{draft_id}")
+            self.lifecycle.assert_usable(refs)
+            self.lifecycle.assert_document_usable(manifest, exclude_ids=[identity])
             with self._connection() as connection, self._transaction(connection):
                 prior = connection.execute(
                     "SELECT * FROM configuration_publications WHERE id=?", (operation_id,)
@@ -1165,26 +1217,32 @@ class ScientificStore:
         self._verify_directory(self.folder / "datasets" / identity, document, checksums=checksums)
         return document
 
-    def get_dataset(self, identity: str) -> dict:
+    def get_dataset(self, identity: str, *, include_inactive: bool = False) -> dict:
         self.initialize()
+        if not include_inactive:
+            self.lifecycle.assert_usable([f"dataset:{identity}"])
         with self._connection() as connection:
             return self._with_version_label(
                 connection, "dataset", self._get_dataset(connection, identity)
             )
 
-    def list_datasets(self) -> list[dict]:
+    def list_datasets(self, *, include_inactive: bool = False) -> list[dict]:
         self.initialize()
+        lifecycle = self.lifecycle.read()
         with self._connection() as connection:
             return [
                 self._with_version_label(
                     connection, "dataset", self._get_dataset(connection, row["id"])
                 )
                 for row in connection.execute("SELECT id FROM datasets ORDER BY id").fetchall()
+                if include_inactive or self._visible("dataset", row["id"], lifecycle)
             ]
 
-    def read_artifact(self, dataset_id: str, name: str) -> bytes:
+    def read_artifact(self, dataset_id: str, name: str, *, include_inactive: bool = False) -> bytes:
         _artifact_name(name)
         self.initialize()
+        if not include_inactive:
+            self.lifecycle.assert_usable([f"dataset:{dataset_id}"])
         with self._connection() as connection:
             document = self._get_dataset(connection, dataset_id)
         if name not in document["artifacts"]:
@@ -1242,6 +1300,9 @@ class ScientificStore:
             ).fetchone()
             if operation is None or operation["status"] != "published":
                 return None
+            self.lifecycle.assert_usable(
+                [f"dataset:{operation['dataset_id']}", f"draft:{draft_id}"]
+            )
             document = self._get_dataset(connection, operation["dataset_id"])
             request_hash = self._dataset_request_hash(
                 draft_id,
@@ -1287,8 +1348,11 @@ class ScientificStore:
         request_hash = self._dataset_request_hash(
             draft_id, expected_revision, manifest, metadata, label_values
         )
-        with writer_lock(self.folder):
+        with lifecycle_guard(self.folder), writer_lock(self.folder):
             self._initialize_locked()
+            identity = f"dataset-{content_hash}"
+            self.lifecycle.assert_usable([f"draft:{draft_id}", f"dataset:{identity}"])
+            self.lifecycle.assert_document_usable(manifest, exclude_ids=[identity])
             with self._connection() as connection, self._transaction(connection):
                 previous = connection.execute(
                     "SELECT * FROM publications WHERE id=?", (operation_id,)
@@ -1514,6 +1578,17 @@ class ScientificStore:
             ).fetchall()
         for operation in operations:
             document = self._dataset_document(operation["document"])
+            try:
+                self.lifecycle.assert_usable(
+                    [f"draft:{operation['draft_id']}", f"dataset:{document['id']}"]
+                )
+                self.lifecycle.assert_document_usable(document["manifest"])
+            except StorageError as error:
+                if error.code != "RECORD_TRASHED":
+                    raise
+                # Cleanup never destroys staged scientific bytes. Recovery can
+                # continue after the referenced records have been restored.
+                continue
             if operation["dataset_id"] != document["id"] or not _STAGE_NAME.fullmatch(
                 operation["stage_name"]
             ):

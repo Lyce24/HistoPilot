@@ -17,6 +17,7 @@ from histopilot.application.features import FeatureService, _stamp
 from histopilot.schemas.feature_packs import FeaturePackSpec
 from histopilot.schemas.features import FeatureSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
     _reject_symlink_components,
@@ -121,6 +122,10 @@ class FeaturePackService:
             "configurations",
             "extractions",
             "packing",
+            "training",
+            "compute-jobs",
+            "predictor-builds",
+            "evaluation-batches",
             "jobs",
             "drafts",
             ".staging",
@@ -128,6 +133,9 @@ class FeaturePackService:
             ".git",
             ".codex",
             ".histopilot-write.lock",
+            ".histopilot-lifecycle.lock",
+            "histopilot-lifecycle.json",
+            "histopilot-project.json",
             "histopilot-state.sqlite",
             "histopilot-state.sqlite-wal",
             "histopilot-state.sqlite-shm",
@@ -355,7 +363,7 @@ class FeaturePackService:
             if (
                 job["featureSetId"] == spec.featureSetId
                 and job["spec"]["action"] == spec.action
-                and self.get(job["id"])["state"] in ACTIVE
+                and self.get(job["id"], include_inactive=True)["state"] in ACTIVE
             ):
                 finding(
                     "FEATURE_JOB_BUSY",
@@ -421,6 +429,13 @@ class FeaturePackService:
         return None
 
     def submit(self, spec: FeaturePackSpec, preview_hash: str, operation_id: str) -> dict:
+        with lifecycle_guard(self.store.folder, timeout=5):
+            lifecycle = LifecycleStore(self.store.folder, self.store.project_id)
+            lifecycle.assert_document_usable(spec.model_dump(mode="json"))
+            lifecycle.assert_document_usable(self.store.get_configuration(spec.featureSetId))
+            return self._submit(spec, preview_hash, operation_id)
+
+    def _submit(self, spec: FeaturePackSpec, preview_hash: str, operation_id: str) -> dict:
         self.store.initialize()
         existing = self._existing(spec, preview_hash, operation_id)
         if existing:
@@ -437,7 +452,7 @@ class FeaturePackService:
             if any(
                 job["featureSetId"] == spec.featureSetId
                 and job["spec"]["action"] == spec.action
-                and self.get(job["id"])["state"] in ACTIVE
+                and self.get(job["id"], include_inactive=True)["state"] in ACTIVE
                 for job in self._jobs()
             ):
                 raise StorageError(
@@ -569,7 +584,11 @@ class FeaturePackService:
                 )
         return result
 
-    def get(self, identity: str, *, logs=False) -> dict:
+    def get(self, identity: str, *, logs=False, include_inactive=False) -> dict:
+        if not include_inactive:
+            LifecycleStore(self.store.folder, self.store.project_id).assert_usable(
+                [f"packing:{identity}"]
+            )
         job = self._job_record(identity)
         return self._present(job, logs=logs)
 
@@ -619,13 +638,27 @@ class FeaturePackService:
             key: value for key, value in job.items() if key not in {"operationId", "requestHash"}
         }
 
-    def list(self) -> dict:
+    def list(self, *, include_inactive=False) -> dict:
         records = sorted(self._jobs(), key=lambda job: job["createdAt"], reverse=True)
+        states = LifecycleStore(self.store.folder, self.store.project_id).read()["records"]
         jobs, artifacts = [], {}
+        usable_receipts = {}
         for record in records:
             result = self._result(record)
-            jobs.append(self._present(record, result=result))
+            job = self._present(record, result=result)
+            visible = states.get(f"packing:{record['id']}", {}).get("state", "active") == "active"
+            if include_inactive or visible or job["state"] in ACTIVE:
+                jobs.append(job)
             if result and result["state"] == "succeeded" and result.get("artifact"):
+                retained = states.get(f"packing:{record['id']}", {}).get("state") != "trashed"
+                for identity in (record["id"], result["artifact"]["id"]):
+                    usable_receipts[identity] = usable_receipts.get(identity, False) or retained
+            if (
+                (include_inactive or visible)
+                and result
+                and result["state"] == "succeeded"
+                and result.get("artifact")
+            ):
                 artifact = result["artifact"]
                 representation = (
                     artifact["featureSetId"],
@@ -641,7 +674,7 @@ class FeaturePackService:
             feature_id = artifact["featureSetId"]
             if feature_id not in source_findings:
                 source_findings[feature_id] = self._source_findings(
-                    self.store.get_configuration(feature_id)
+                    self.store.get_configuration(feature_id, include_inactive=include_inactive)
                 )
             findings = self._artifact_findings(artifact, source_findings[feature_id])
             fresh_artifacts.append(
@@ -653,7 +686,10 @@ class FeaturePackService:
             _reject_symlink_components(selection_folder)
             for path in selection_folder.glob("*.json"):
                 selection = _read(path)
-                selections[selection["featureSetId"]] = selection.get("artifactId")
+                artifact_id = selection.get("artifactId")
+                if not include_inactive and usable_receipts.get(artifact_id) is False:
+                    artifact_id = None
+                selections[selection["featureSetId"]] = artifact_id
         return {
             "jobs": jobs,
             "artifacts": fresh_artifacts,
@@ -664,19 +700,32 @@ class FeaturePackService:
         }
 
     def cancel(self, identity: str) -> dict:
+        with lifecycle_guard(self.store.folder, timeout=5):
+            return self._cancel(identity)
+
+    def _cancel(self, identity: str) -> dict:
         with writer_lock(self.store.folder):
-            job = self.get(identity)
-            if job["state"] in ACTIVE:
+            job = self.get(identity, include_inactive=True)
+            if (
+                job["state"] in ACTIVE
+                or live_process(self.folder / identity)
+                or self.executor.running(job["sessionName"])
+            ):
                 write_json(self.folder / identity / "cancelled", {"requestedAt": _now()})
         # Cancellation is cooperative at each bounded read/copy chunk, preserving atomic publication.
-        return self.get(identity)
+        return self.get(identity, include_inactive=True)
 
     def validation_for(self, feature_id: str) -> dict | None:
         configuration = self.store.get_configuration(feature_id)
+        states = LifecycleStore(self.store.folder, self.store.project_id).read()["records"]
         successful = [
             job
             for job in sorted(
-                (self.get(record["id"]) for record in self._jobs()),
+                (
+                    self.get(record["id"])
+                    for record in self._jobs()
+                    if states.get(f"packing:{record['id']}", {}).get("state") != "trashed"
+                ),
                 key=lambda item: item["createdAt"],
                 reverse=True,
             )
@@ -826,6 +875,10 @@ class FeaturePackService:
         return result
 
     def select(self, feature_id: str, artifact_id: str | None) -> dict:
+        with lifecycle_guard(self.store.folder, timeout=5):
+            return self._select(feature_id, artifact_id)
+
+    def _select(self, feature_id: str, artifact_id: str | None) -> dict:
         configuration = self.store.get_configuration(feature_id)
         if configuration["manifest"].get("kind") != "feature":
             raise StorageError("Select a saved feature version.", "INVALID_FEATURE_SET", 422)
@@ -852,6 +905,7 @@ class FeaturePackService:
         return self.selection_for(feature_id)
 
     def artifact(self, identity: str) -> dict:
+        trashed = None
         for job in sorted(self._jobs(), key=lambda item: item["createdAt"], reverse=True):
             result = self._result(job)
             if result is None:
@@ -862,5 +916,16 @@ class FeaturePackService:
                 and artifact
                 and identity in {artifact.get("id"), job["id"]}
             ):
+                try:
+                    LifecycleStore(self.store.folder, self.store.project_id).assert_usable(
+                        [f"packing:{job['id']}"]
+                    )
+                except StorageError as error:
+                    if error.code != "RECORD_TRASHED":
+                        raise
+                    trashed = error
+                    continue
                 return artifact
+        if trashed is not None:
+            raise trashed
         raise StorageError("Feature pack not found.", "PACK_NOT_FOUND", 404)

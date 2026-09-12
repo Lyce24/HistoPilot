@@ -17,5 +17,5 @@ export function configurationVersionLabel(configuration: Configuration): string 
     return versionLabelText(configuration, encoder ? `${encoder} features` : 'Features');
   }
   const target = (manifest.spec as ProtocolSpec).target?.field?.trim();
-  return versionLabelText(configuration, target ? `${target} protocol` : 'Cohort / protocol');
+  return versionLabelText(configuration, target ? `${target} protocol` : 'Development protocol');
 }

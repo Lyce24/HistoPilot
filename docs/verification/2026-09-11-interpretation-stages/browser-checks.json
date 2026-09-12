@@ -1,0 +1,225 @@
+[
+  {
+    "name": "Dataset folder is inherited with no folder input",
+    "result": true
+  },
+  {
+    "name": "Search narrows the gallery after selection",
+    "result": true
+  },
+  {
+    "name": "Search and page selection do not launch compute",
+    "result": true
+  },
+  {
+    "name": "Separate computation stage has every selected job",
+    "result": true
+  },
+  {
+    "name": "Every selected job is polled independently of visibility",
+    "result": true
+  },
+  {
+    "name": "Back preserves all selected slides and packed features",
+    "result": true
+  },
+  {
+    "name": "Running attention jobs are reused without duplication",
+    "result": true
+  },
+  {
+    "name": "Partial completion does not open results",
+    "result": true
+  },
+  {
+    "name": "All completed advances to selected-only results",
+    "result": true
+  },
+  {
+    "name": "Reload restores selected results and job references",
+    "result": true
+  },
+  {
+    "name": "Explicit Back stays on selection after jobs completed",
+    "result": true
+  },
+  {
+    "name": "Completed selection skips computing and retains reusable studies",
+    "result": true
+  },
+  {
+    "name": "Focused page contains exactly one selected slide viewer",
+    "result": true
+  },
+  {
+    "name": "Large WSI opens fitted to full patch coverage",
+    "result": true
+  },
+  {
+    "name": "Desktop canvas dominates actual content width",
+    "result": {
+      "canvasHeight": 756,
+      "canvasWidth": 868,
+      "contentWidth": 1130,
+      "fraction": 0.768141592920354
+    }
+  },
+  {
+    "name": "Highest patch crop is visible immediately without an empty panel",
+    "result": true
+  },
+  {
+    "name": "Top 20 exact patch boxes and crop cards",
+    "result": true
+  },
+  {
+    "name": "Clicking a numbered location opens the matching original patch",
+    "result": true
+  },
+  {
+    "name": "Hide patches dedicates the full width to the slide",
+    "result": true
+  },
+  {
+    "name": "Fit slide restores whole WSI geometry",
+    "result": true
+  },
+  {
+    "name": "Ensemble member uses its own global ranking and original crop",
+    "result": true
+  },
+  {
+    "name": "Expand opens an accessible dominant slide workspace",
+    "result": true
+  },
+  {
+    "name": "Escape returns from expanded viewer",
+    "result": true
+  },
+  {
+    "name": "Narrow desktop moves patch rail below a full width slide",
+    "result": true
+  },
+  {
+    "name": "Mobile has no horizontal overflow and readable full width slide",
+    "result": true
+  },
+  {
+    "name": "Mobile card selects matching patch",
+    "result": true
+  },
+  {
+    "name": "Mobile patch location returns focus to the slide",
+    "result": true
+  },
+  {
+    "name": "Focused viewer back returns to selected results only",
+    "result": true
+  },
+  {
+    "name": "Static browser has made no unintended network requests",
+    "result": true
+  },
+  {
+    "name": "Changing predictor clears prior selection and results",
+    "result": true
+  },
+  {
+    "name": "Lost response keeps an exact recoverable request",
+    "result": true
+  },
+  {
+    "name": "Uncertain request locks every model and evidence context field",
+    "result": true
+  },
+  {
+    "name": "Reload retains uncertain request and recovery control",
+    "result": true
+  },
+  {
+    "name": "Retry after reload uses exact operation without duplicate jobs",
+    "result": true
+  },
+  {
+    "name": "Refit opens a single focused viewer with its own ranking",
+    "result": true
+  },
+  {
+    "name": "Refit has no ensemble member choices",
+    "result": true
+  },
+  {
+    "name": "External bundle inherits its own dataset folder",
+    "result": true
+  },
+  {
+    "name": "One failed preparation retains the completed selected slide and gates results",
+    "result": true
+  },
+  {
+    "name": "Retry only failed slides finishes the selected batch",
+    "result": true
+  },
+  {
+    "name": "Browser Back leaves results for selection without unwanted forward jump",
+    "result": true
+  },
+  {
+    "name": "Browser Forward restores the same selected results",
+    "result": true
+  },
+  {
+    "name": "Existing attention deep link opens its saved slide",
+    "result": true
+  },
+  {
+    "name": "Recovery and refit browser checks make no unintended requests",
+    "result": true
+  },
+  {
+    "name": "Original patch crop stays within its compact container without clipping",
+    "result": {
+      "container": [
+        227.21875,
+        154
+      ],
+      "image": [
+        227.21875,
+        154
+      ],
+      "objectFit": "contain"
+    }
+  },
+  {
+    "name": "Ensemble map control has room for its full label",
+    "result": true
+  },
+  {
+    "name": "Mobile original crop also preserves the complete patch",
+    "result": true
+  },
+  {
+    "name": "Delayed coverage metadata does not override a manual view choice",
+    "result": true
+  },
+  {
+    "name": "Failed ranking verification hides stale boxes and original crops",
+    "result": true
+  },
+  {
+    "name": "Ranking recovery restores the verified highest crop and locations",
+    "result": true
+  },
+  {
+    "name": "Saved-study Back restores its exact feature bundle, pack and dataset folder",
+    "result": true
+  },
+  {
+    "name": "Changing model then reloading before Continue preserves selection and URL context",
+    "result": true
+  },
+  {
+    "name": "Final context changes retain exact lost-response retry after reload",
+    "result": true
+  }
+]

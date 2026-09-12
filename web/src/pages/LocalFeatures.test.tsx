@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
@@ -21,6 +21,7 @@ const version = {
     files: [],
   },
 } as unknown as Configuration;
+afterEach(() => vi.unstubAllGlobals());
 
 function render(versions?: Configuration[], frozenBundles: FeatureBundle[] = []) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
@@ -33,6 +34,23 @@ function render(versions?: Configuration[], frozenBundles: FeatureBundle[] = [])
 }
 
 describe('PFM feature sections', () => {
+  it('scopes feature preparation to the saved protocol dataset rather than the newest dataset', () => {
+    vi.stubGlobal('window', { location: { hash: '#features?dataset=older&protocol=protocol-old&saved=protocol' } });
+    const older = { ...version, id: 'older-source', versionLabel: { ...version.versionLabel!, tag: 'Older dataset features' }, manifest: { ...version.manifest, datasetId: 'older', spec: { ...version.manifest.spec, datasetId: 'older' } } } as Configuration;
+    const html = render([version, older]);
+    expect(html).toContain('Older dataset features');
+    expect(html).not.toContain('UNI baseline');
+    expect(html).toContain('Development protocol saved. Prepare or reuse a feature bundle for its dataset.');
+    expect(html).toContain('Show all project features');
+  });
+
+  it('opens acquisition when the linked dataset has no sources instead of using an unrelated source', () => {
+    vi.stubGlobal('window', { location: { hash: '#features?dataset=older&protocol=protocol-old' } });
+    const html = render([version]);
+    expect(html).toMatch(/<section class="pfm-content" aria-label="Add features">/);
+    expect(html).not.toContain('UNI baseline');
+    expect(html).toContain('<option value="older" disabled="" selected="">Selected dataset unavailable');
+  });
   it('starts an empty library at feature acquisition and hides pack management', () => {
     const html = render([]);
     expect(html).toMatch(/<section class="pfm-content" aria-label="Add features">/);
@@ -41,6 +59,9 @@ describe('PFM feature sections', () => {
     expect(html).toContain('Use existing features');
     expect(html).toContain('Extract with a PFM');
     expect(html).not.toContain('Existing pack folder');
+    expect(html).toContain('Prepare slide features');
+    expect(html).toContain('<details class="pfm-source-details"><summary>Advanced file matching and encoder settings');
+    expect(html).not.toContain('aria-label="Module workflow"');
   });
 
   it('opens unbundled sources at packing and bundle preparation without loading choices', () => {
@@ -55,6 +76,9 @@ describe('PFM feature sections', () => {
     expect(html).toContain('Source details &amp; inspection');
     expect(html).not.toContain('Choose how to load');
     expect(html).not.toContain('loading preference');
+    expect(html).toContain('<li aria-current="step" class="is-current"><span>3</span>');
+    expect(html).not.toContain('aria-label="Choose a feature source"');
+    expect(html).toContain('class="label pfm-version-select"');
   });
 
   it('opens existing frozen bundles as immutable library entries', () => {

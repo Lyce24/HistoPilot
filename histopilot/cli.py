@@ -77,7 +77,7 @@ def serve(
         with service_lock(settings.workspace):
             url = f"http://{settings.host}:{settings.port}"
             typer.echo(
-                f"HistoPilot · local control service\nWorkspace  {settings.workspace}\nBrowser    {url}\nCompute    TRIDENT extraction in PFM & features; MIL training not connected"
+                f"HistoPilot · local control service\nWorkspace  {settings.workspace}\nBrowser    {url}\nCompute    TRIDENT extraction; ABMIL k-fold training in Model development"
             )
             if settings.data_roots:
                 typer.echo("Sources    Read-only folders available in the data/slide picker:")
@@ -226,7 +226,7 @@ def _feature_api(url: str, path: str, payload: dict | None = None) -> dict | Non
             message = json.loads(exc.read(65536)).get("detail", str(exc))
         except (ValueError, AttributeError):
             message = str(exc)
-        typer.echo(f"Feature operation failed: {message}", err=True)
+        typer.echo(f"Local operation failed: {message}", err=True)
         raise typer.Exit(1) from exc
     except (URLError, OSError, KeyError, ValueError) as exc:
         typer.echo(f"Cannot contact the local service: {exc}", err=True)
@@ -326,6 +326,41 @@ def verify_feature_pack(
         typer.echo(f"Pack verification failed: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(json.dumps(manifest, indent=2))
+
+
+@app.command("train-batch")
+def train_batch(
+    batch: str = typer.Argument(..., help="Frozen development batch configuration ID."),
+    project: str = typer.Option(..., help="Saved project ID."),
+    resume: bool = typer.Option(False, help="Resume unfinished runs, keeping completed folds."),
+    operation_id: str | None = typer.Option(None, help="Reuse an ID to retry this action safely."),
+    url: str = typer.Option("http://127.0.0.1:8787", help="Running local control service URL."),
+) -> None:
+    """Launch a frozen ABMIL k-fold batch through the same API as the browser."""
+    route = f"/projects/{quote(project, safe='')}/mil-experiments/batches/{quote(batch, safe='')}"
+    result = _feature_api(
+        url,
+        route + ("/resume" if resume else "/launch"),
+        {"operationId": operation_id or f"training:{uuid4()}"},
+    )
+    typer.echo(json.dumps(result, indent=2))
+
+
+@app.command("training-status")
+def training_status(
+    batch: str = typer.Argument(..., help="Frozen development batch configuration ID."),
+    project: str = typer.Option(..., help="Saved project ID."),
+    cancel: bool = typer.Option(False, help="Stop this batch, preserving available checkpoints."),
+    results: bool = typer.Option(False, help="Read completed development OOF results."),
+    url: str = typer.Option("http://127.0.0.1:8787", help="Running local control service URL."),
+) -> None:
+    """Inspect a training batch, read OOF results, or request cancellation."""
+    if cancel and results:
+        raise typer.BadParameter("Choose either --cancel or --results.")
+    route = f"/projects/{quote(project, safe='')}/mil-experiments/batches/{quote(batch, safe='')}"
+    suffix = "/cancel" if cancel else "/results" if results else "/execution"
+    payload = {"operationId": f"cancel:{uuid4()}"} if cancel else None
+    typer.echo(json.dumps(_feature_api(url, route + suffix, payload), indent=2))
 
 
 if __name__ == "__main__":

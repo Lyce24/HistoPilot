@@ -19,6 +19,7 @@ export default function Cohort({ workspace: w }: { workspace: Workspace }) {
     onSuccess: async (cohort) => {
       setSelected(cohort.id);
       await client.invalidateQueries({ queryKey: workspaceKey });
+      window.location.hash = 'overview';
     },
   });
   const matching = w.patients.filter(

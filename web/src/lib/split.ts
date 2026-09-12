@@ -5,7 +5,7 @@ type Pools = NonNullable<Split['pools']>;
 
 export const DEFAULT_VALIDATION_FRACTION = 0.15;
 export const validationFractionDefault = (version: Split['version']) =>
-  version === 3 ? DEFAULT_VALIDATION_FRACTION : 0.2;
+  (version ?? 1) >= 3 ? DEFAULT_VALIDATION_FRACTION : 0.2;
 
 export const validFraction = (value: number) =>
   Number.isFinite(value) && value > 0 && value < 1;
@@ -45,7 +45,7 @@ export function changeSplitStrategy(split: Split, mode: Split['mode']): Partial<
   )
     next.testFraction = 0.2;
   if (
-    split.version === 3 &&
+    (split.version ?? 1) >= 3 &&
     split.pools?.validationSource === 'fixed' &&
     split.validationFraction !== undefined &&
     !validFraction(split.validationFraction)

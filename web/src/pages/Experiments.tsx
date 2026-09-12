@@ -372,7 +372,7 @@ export default function Experiments({ workspace: w }: { workspace: Workspace }) 
         title="Example comparison"
         subtitle="Synthetic metrics to demonstrate the evaluation workflow"
         actions={
-          <a className="btn btn-secondary btn-small" href="#evaluation">
+          <a className="btn btn-secondary btn-small" href="#example-results">
             Compare results →
           </a>
         }
@@ -395,7 +395,7 @@ export default function Experiments({ workspace: w }: { workspace: Workspace }) 
                   <td>
                     <a
                       className="table-link mono"
-                      href="#evaluation"
+                      href="#example-results"
                       onClick={() => setResult(result.id)}
                     >
                       {result.id} <Icon name="arrowUp" size={13} />

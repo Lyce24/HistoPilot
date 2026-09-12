@@ -5,14 +5,16 @@ import { versionLabelText, configurationVersionLabel } from '../lib/versionLabel
 import VersionLabelEditor from './VersionLabelEditor';
 import { Findings } from './ScientificUI';
 import { Badge, EmptyState, Icon, Panel } from './ui';
+import { preparationLink, type PreparationContext } from '../lib/preparationRoute';
 
-export default function FeatureBundleLibrary({ project, items, features, selectedId, onSelect, onPrepare }: {
+export default function FeatureBundleLibrary({ project, items, features, selectedId, onSelect, onPrepare, context = {} }: {
   project: string;
   items: FeatureBundle[];
   features: Configuration[];
   selectedId: string;
   onSelect: (id: string) => void;
   onPrepare: (featureId?: string, packIds?: string[]) => void;
+  context?: PreparationContext;
 }) {
   const [showEvidence, setShowEvidence] = useState(false);
   const bundle = items.find((item) => item.id === selectedId) ?? items[0];
@@ -35,7 +37,7 @@ export default function FeatureBundleLibrary({ project, items, features, selecte
         {bundle.versionLabel?.note ? <p>{bundle.versionLabel.note}</p> : null}
         {bundle.manifest.packs.length ? <div className="stack"><h3>Included packs</h3>{bundle.manifest.packs.map((pack) => <div key={pack.id} className="feature-bundle-pack"><Badge>{pack.outputDtype}</Badge><span className="mono">{pack.outputPath}</span></div>)}</div> : <p>No pack is included in this bundle.</p>}
         <Findings findings={bundle.findings} />
-        <div className="inline-actions"><a className="btn btn-primary" href="#experiments">Open MIL experiments <Icon name="arrow" /></a><button type="button" className="btn btn-secondary" onClick={() => onPrepare(bundle.manifest.spec.featureSetId, bundle.manifest.spec.packArtifactIds)}>Prepare another bundle</button></div>
+        <div className="inline-actions"><a className="btn btn-primary" href={preparationLink('experiments', { datasetId: bundle.manifest.datasetId, bundleId: bundle.id, protocolId: context.datasetId === bundle.manifest.datasetId ? context.protocolId : undefined })}>Open MIL experiments <Icon name="arrow" /></a><button type="button" className="btn btn-secondary" onClick={() => onPrepare(bundle.manifest.spec.featureSetId, bundle.manifest.spec.packArtifactIds)}>Prepare another bundle</button></div>
         <p className="muted">Create another bundle to change the included packs. This bundle remains available to experiments that reference it.</p>
         <details><summary>Edit bundle name &amp; note</summary><VersionLabelEditor project={project} resourceType="configuration" resource={bundle} tagLabel="Bundle version tag" /></details>
         <details onToggle={(event) => setShowEvidence(event.currentTarget.open)}><summary>Frozen bundle evidence</summary>{showEvidence ? <pre className="code-block">{JSON.stringify(bundle.manifest, null, 2)}</pre> : null}</details>

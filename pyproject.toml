@@ -31,6 +31,19 @@ classifiers = [
 [project.scripts]
 histopilot = "histopilot.cli:app"
 
+[project.optional-dependencies]
+imaging = [
+    "pillow>=11,<13",
+    "openslide-python>=1.4,<2",
+    "openslide-bin>=4.0,<5",
+]
+training = [
+    "torch>=2.10,<2.11",
+    "lightning==2.6.1",
+    "torchmetrics==1.8.2",
+    "scikit-learn>=1.5,<2",
+]
+
 [dependency-groups]
 dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1"]
 

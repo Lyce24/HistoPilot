@@ -1,0 +1,11 @@
+.interpretation-wizard { width: 100%; min-width: 0; }
+.interpretation-wizard-viewer { min-width: 0; }
+.interpretation-progress-list { display: grid; gap: .75rem; margin: 1.5rem 0; }
+.interpretation-progress-row { border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.2rem; background: var(--surface, white); }
+.interpretation-progress-row strong, .interpretation-progress-row small { display: block; overflow-wrap: anywhere; }
+.interpretation-progress-row small { color: var(--muted); margin-top: .4rem; }
+.interpretation-progress-row .slide-gallery-error { margin-top: .5rem; }
+.interpretation-history { margin-top: 1.5rem; }
+.interpretation-history > summary { color: var(--muted); }
+.interpretation-wizard .slide-gallery-grid { align-items: start; }
+.interpretation-wizard fieldset.interpretation-sources { padding: 0; margin: 0; border: 0; }

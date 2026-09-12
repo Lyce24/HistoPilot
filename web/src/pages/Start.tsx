@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { InitialConfig, ProjectInput, ProjectSummary } from '../api/types';
+import type { Page, ProjectInput, ProjectSummary } from '../api/types';
+import { lifecycleLabel } from '../api/lifecycle';
+import type { LifecycleState } from '../api/lifecycle';
 import ServerFolderPicker from '../components/ServerFolderPicker';
 import { Badge, ErrorNotice, Icon } from '../components/ui';
 import '../start.css';
@@ -26,7 +28,7 @@ function childPath(parent: string, name: string) {
 function savedDate(project: ProjectSummary) {
   const date = new Date(project.updatedAt ?? project.createdAt);
   return Number.isNaN(date.getTime())
-    ? 'Saved experiment'
+    ? 'Saved project'
     : `Saved ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
 }
 
@@ -69,19 +71,19 @@ function SourcePathField({
   );
 }
 
-export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
+export function savedProjectsByState(projects: ProjectSummary[], state: LifecycleState) {
+  return projects.filter((project) => project.mode !== 'synthetic-demo' && (project.lifecycleState ?? 'active') === state);
+}
+
+export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) => void }) {
   const [view, setView] = useState<StartView>('welcome');
+  const [projectState, setProjectState] = useState<LifecycleState>('active');
   const [name, setName] = useState('');
   const [storageOverride, setStorageOverride] = useState<string | null>(null);
   const [storageParent, setStorageParent] = useState<string | null>(null);
   const [dataPath, setDataPath] = useState('');
   const [slidePath, setSlidePath] = useState('');
   const [featurePath, setFeaturePath] = useState('');
-  const [task, setTask] = useState<NonNullable<InitialConfig['task']> | ''>('');
-  const [targetColumn, setTargetColumn] = useState('');
-  const [positiveLabel, setPositiveLabel] = useState('');
-  const [seed, setSeed] = useState('');
-  const [folds, setFolds] = useState('');
   const [loadPath, setLoadPath] = useState('');
   const [validationError, setValidationError] = useState<Error | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -107,6 +109,7 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
   const savedProjects = (projects.data?.projects ?? []).filter(
     (project) => project.mode !== 'synthetic-demo',
   );
+  const filteredProjects = savedProjectsByState(savedProjects, projectState);
   const busy = create.isPending || open.isPending;
 
   useEffect(() => {
@@ -126,38 +129,15 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
     setValidationError(null);
     create.reset();
     if (!name.trim() || !storagePath.trim()) {
-      setValidationError(new Error('Enter an experiment name and its storage folder.'));
+      setValidationError(new Error('Enter a project name and its storage folder.'));
       return;
     }
-    if (
-      seed.trim() &&
-      (!/^\d+$/.test(seed.trim()) ||
-        !Number.isSafeInteger(Number(seed)) ||
-        Number(seed) > 4294967295)
-    ) {
-      setValidationError(new Error('Choose a whole-number seed between 0 and 4294967295.'));
-      return;
-    }
-    if (folds.trim() && (!/^\d+$/.test(folds.trim()) || Number(folds) < 2 || Number(folds) > 10)) {
-      setValidationError(new Error('Choose a whole-number fold count between 2 and 10.'));
-      return;
-    }
-    const config: InitialConfig = {
-      ...(task ? { task } : {}),
-      ...(targetColumn.trim() ? { targetColumn: targetColumn.trim() } : {}),
-      ...(task === 'binary_classification' && positiveLabel.trim()
-        ? { positiveLabel: positiveLabel.trim() }
-        : {}),
-      ...(seed.trim() ? { seed: Number(seed) } : {}),
-      ...(folds.trim() ? { folds: Number(folds) } : {}),
-    };
     const input: ProjectInput = {
       name: name.trim(),
       storagePath: storagePath.trim(),
       ...(dataPath.trim() ? { dataPath: dataPath.trim() } : {}),
       ...(slidePath.trim() ? { slidePath: slidePath.trim() } : {}),
       ...(featurePath.trim() ? { featurePath: featurePath.trim() } : {}),
-      ...(Object.keys(config).length ? { config } : {}),
     };
     create.mutate(input);
   }
@@ -166,7 +146,7 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
     event.preventDefault();
     setValidationError(null);
     if (!loadPath.trim()) {
-      setValidationError(new Error('Choose the folder containing your saved experiment.'));
+      setValidationError(new Error('Choose the folder containing your saved project.'));
       return;
     }
     open.mutate(loadPath.trim());
@@ -182,16 +162,18 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
               className="start-recent-item"
               onClick={() => {
                 setValidationError(null);
-                open.mutate(project.storagePath);
+                if (project.lifecycleState && project.lifecycleState !== 'active') onOpen(project.id, 'cleanup');
+                else open.mutate(project.storagePath);
               }}
               disabled={busy || project.available === false}
-              aria-label={`Open ${project.name}`}
+              aria-label={`${project.lifecycleState && project.lifecycleState !== 'active' ? 'Manage' : 'Open'} ${project.name}`}
             >
               <span className="start-recent-icon">
                 <Icon name="experiments" size={20} />
               </span>
               <span className="start-recent-copy">
                 <strong>{project.name}</strong>
+                {project.lifecycleState && project.lifecycleState !== 'active' ? <span><Badge>{lifecycleLabel[project.lifecycleState]}</Badge></span> : null}
                 <span className="mono">{project.storagePath}</span>
                 {project.available === false ? (
                   <span className="start-unavailable">
@@ -206,6 +188,7 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
               </span>
               <Icon name="arrow" size={17} />
             </button>
+            <div className="start-project-manage"><button type="button" className="text-link" disabled={busy || project.available === false} onClick={() => onOpen(project.id, 'cleanup')} aria-label={`Manage cleanup for ${project.name}`}>Manage cleanup</button></div>
           </li>
         ))}
       </ul>
@@ -214,10 +197,11 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
 
   const title =
     view === 'new'
-      ? 'Start a new experiment'
+      ? 'Start a new project'
       : view === 'load'
-        ? 'Load an existing experiment'
+        ? 'Load an existing project'
         : 'Your next discovery starts here.';
+  const projectFilters = <div className="start-project-filters" role="group" aria-label="Project state">{(['active', 'archived', 'trashed'] as const).map((state) => <button key={state} type="button" className={state === projectState ? 'selected' : ''} aria-pressed={state === projectState} disabled={busy} onClick={() => setProjectState(state)}>{lifecycleLabel[state]} <span>{savedProjectsByState(savedProjects, state).length}</span></button>)}</div>;
 
   return (
     <div className="start-shell">
@@ -255,7 +239,7 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
         ) : null}
         <div className="start-intro">
           <span className="eyebrow">
-            {view === 'welcome' ? 'WELCOME TO HISTOPILOT' : 'YOUR EXPERIMENT WORKSPACE'}
+            {view === 'welcome' ? 'WELCOME TO HISTOPILOT' : 'YOUR PROJECT WORKSPACE'}
           </span>
           <h1 ref={heading} tabIndex={-1}>
             {title}
@@ -264,7 +248,7 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
             {view === 'welcome'
               ? 'Bring your data, shape your experiment, and keep every step in one place.'
               : view === 'new'
-                ? 'Give your experiment a home. You can add data and choose the details as you go.'
+                ? 'Give your project a home. You can add data and choose the details as you go.'
                 : 'Pick up where you left off, with your data references and settings together.'}
           </p>
         </div>
@@ -298,11 +282,11 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
                   <Icon name="plus" size={26} />
                 </span>
                 <span className="start-action-copy">
-                  <strong>Start a new experiment</strong>
+                  <strong>Start a new project</strong>
                   <span>Choose a location, connect your data, and make it your own.</span>
                 </span>
                 <span className="start-action-link">
-                  Create experiment <Icon name="arrow" size={18} />
+                  Create project <Icon name="arrow" size={18} />
                 </span>
               </button>
               <button
@@ -315,18 +299,18 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
                   <Icon name="folder" size={26} />
                 </span>
                 <span className="start-action-copy">
-                  <strong>Load an existing experiment</strong>
-                  <span>Open a saved experiment and continue from its overview.</span>
+                  <strong>Load an existing project</strong>
+                  <span>Open a saved project and continue from its roadmap.</span>
                 </span>
                 <span className="start-action-link">
-                  Find experiment <Icon name="arrow" size={18} />
+                  Find project <Icon name="arrow" size={18} />
                 </span>
               </button>
             </div>
             <section className="start-recent" aria-labelledby="recent-heading">
               <div className="start-section-heading">
-                <h2 id="recent-heading">Recent experiments</h2>
-                {savedProjects.length > 3 ? (
+                <h2 id="recent-heading">Recent projects</h2>
+                {filteredProjects.length > 3 ? (
                   <button
                     type="button"
                     className="text-link"
@@ -337,15 +321,16 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
                   </button>
                 ) : null}
               </div>
+              {projectFilters}
               {projects.isPending ? (
                 <p className="start-list-note" role="status">
-                  Loading saved experiments…
+                  Loading saved projects…
                 </p>
               ) : null}
-              {savedProjects.length ? (
-                recentList(savedProjects.slice(0, 3))
+              {filteredProjects.length ? (
+                recentList(filteredProjects.slice(0, 3))
               ) : !projects.isPending && !projects.isError ? (
-                <p className="start-list-note">Your saved experiments will appear here.</p>
+                <p className="start-list-note">No {lifecycleLabel[projectState].toLowerCase()} projects. Archived projects and Trash can be restored through Manage cleanup.</p>
               ) : null}
             </section>
           </>
@@ -354,10 +339,10 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
         {view === 'new' ? (
           <form className="start-form card" onSubmit={startExperiment} aria-busy={create.isPending}>
             <fieldset disabled={busy} className="start-form-section start-basics">
-              <legend className="sr-only">Experiment name and storage</legend>
+              <legend className="sr-only">Project name and storage</legend>
               <div className="start-field-group">
                 <label className="label" htmlFor="experiment-name">
-                  Experiment name <span className="start-required">Required</span>
+                  Project name <span className="start-required">Required</span>
                 </label>
                 <input
                   id="experiment-name"
@@ -372,13 +357,13 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
               </div>
               <div className="start-field-group">
                 <label className="label" htmlFor="experiment-storage">
-                  Experiment storage folder <span className="start-required">Required</span>
+                  Project storage folder <span className="start-required">Required</span>
                 </label>
                 <div className="start-path-field">
                   <input
                     id="experiment-storage"
                     className="field mono"
-                      placeholder="/path/to/experiments/my-experiment"
+                      placeholder="/path/to/projects/my-project"
                     value={storagePath}
                     onChange={(event) => setStorageOverride(event.target.value)}
                     required
@@ -387,7 +372,7 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
                     aria-describedby="storage-help"
                   />
                   <ServerFolderPicker
-                    title="Choose where to store experiments"
+                    title="Choose where to store projects"
                     purpose="storage"
                     label="Browse storage location"
                     onSelect={(path) => {
@@ -397,8 +382,8 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
                   />
                 </div>
                 <p id="storage-help" className="start-field-help">
-                  Your experiment will be saved in this exact folder on the server. Browse chooses a
-                  parent folder and adds your experiment name.
+                  Your project will be saved in this exact folder on the server. Browse chooses a
+                  parent folder and adds your project name.
                 </p>
               </div>
             </fieldset>
@@ -440,98 +425,14 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
               </fieldset>
             </details>
 
-            <details className="start-optional">
-              <summary>
-                <span>
-                  <Icon name="experiments" size={19} /> Primary configuration{' '}
-                  <Badge>Optional</Badge>
-                </span>
-                <Icon name="down" size={17} />
-              </summary>
-              <fieldset disabled={busy} className="start-form-section start-optional-body">
-                <legend className="sr-only">Optional primary configuration</legend>
-                <p className="start-section-description">
-                  Save any choices you already know. Every field can be left blank and configured in
-                  the workspace.
-                </p>
-                <div className="start-config-grid">
-                  <label className="label" htmlFor="experiment-task">
-                    Prediction task
-                    <select
-                      id="experiment-task"
-                      className="field"
-                      value={task}
-                      onChange={(event) => setTask(event.target.value as typeof task)}
-                    >
-                      <option value="">Choose later</option>
-                      <option value="binary_classification">Binary classification</option>
-                      <option value="multiclass_classification">Multiclass classification</option>
-                    </select>
-                  </label>
-                  <label className="label" htmlFor="experiment-target">
-                    Target column
-                    <input
-                      id="experiment-target"
-                      className="field"
-                      value={targetColumn}
-                      onChange={(event) => setTargetColumn(event.target.value)}
-                          placeholder="e.g. grade or outcome"
-                      maxLength={128}
-                    />
-                  </label>
-                  {task === 'binary_classification' ? (
-                    <label className="label" htmlFor="experiment-positive">
-                      Positive label
-                      <input
-                        id="experiment-positive"
-                        className="field"
-                        value={positiveLabel}
-                        onChange={(event) => setPositiveLabel(event.target.value)}
-                        placeholder="e.g. high or mutated"
-                        maxLength={128}
-                        aria-describedby="positive-help"
-                      />
-                      <small id="positive-help">For a binary prediction task</small>
-                    </label>
-                  ) : null}
-                  <label className="label" htmlFor="experiment-seed">
-                    Random seed
-                    <input
-                      id="experiment-seed"
-                      className="field"
-                      type="number"
-                      value={seed}
-                      onChange={(event) => setSeed(event.target.value)}
-                      placeholder="Choose later, e.g. 42"
-                      min={0}
-                      max={4294967295}
-                      step={1}
-                    />
-                  </label>
-                  <label className="label" htmlFor="experiment-folds">
-                    Cross-validation folds
-                    <input
-                      id="experiment-folds"
-                      className="field"
-                      type="number"
-                      value={folds}
-                      onChange={(event) => setFolds(event.target.value)}
-                      placeholder="Choose later, e.g. 5"
-                      min={2}
-                      max={10}
-                      step={1}
-                    />
-                  </label>
-                </div>
-              </fieldset>
-            </details>
+            <p className="start-section-description">Define targets and development splits in Stage 2. Configure training recipes and seeds in Experiments; prepare test data separately when ready.</p>
 
             <div className="start-form-footer">
               <p>
-                <Icon name="overview" size={17} /> Continue to your experiment overview
+                <Icon name="overview" size={17} /> Continue to your project roadmap
               </p>
               <button type="submit" className="btn btn-primary" disabled={busy}>
-                {create.isPending ? 'Creating experiment…' : 'Start experiment'}{' '}
+                {create.isPending ? 'Creating project…' : 'Create project'}{' '}
                 <Icon name="arrow" size={17} />
               </button>
             </div>
@@ -542,19 +443,20 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
           <div className="start-load-content">
             <section className="start-saved card" aria-labelledby="saved-heading">
               <div className="start-section-heading">
-                <h2 id="saved-heading">Saved experiments</h2>
-                <Badge>{savedProjects.length} saved</Badge>
+                <h2 id="saved-heading">Saved projects</h2>
+                <Badge>{filteredProjects.length} {lifecycleLabel[projectState].toLowerCase()}</Badge>
               </div>
+              {projectFilters}
               {projects.isPending ? (
                 <p className="start-list-note" role="status">
-                  Loading saved experiments…
+                  Loading saved projects…
                 </p>
               ) : null}
-              {savedProjects.length ? (
-                recentList(savedProjects)
+              {filteredProjects.length ? (
+                recentList(filteredProjects)
               ) : !projects.isPending && !projects.isError ? (
                 <p className="start-list-note">
-                  No saved experiments yet. Open an experiment folder below.
+                  No {lifecycleLabel[projectState].toLowerCase()} projects in this view. You can open a saved project folder below.
                 </p>
               ) : null}
             </section>
@@ -565,12 +467,12 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
             >
               <h2>Open from a folder</h2>
               <p className="start-section-description">
-                Choose the experiment folder you saved previously on the server.
+                Choose the project folder you saved previously on the server.
               </p>
               <fieldset disabled={busy} className="start-load-fields">
-                <legend className="sr-only">Saved experiment folder</legend>
+                <legend className="sr-only">Saved project folder</legend>
                 <label className="label" htmlFor="load-experiment-path">
-                  Experiment folder
+                  Project folder
                 </label>
                 <div className="start-path-field">
                   <input
@@ -578,7 +480,7 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
                     className="field mono"
                     value={loadPath}
                     onChange={(event) => setLoadPath(event.target.value)}
-                    placeholder="/path/to/saved-experiment"
+                    placeholder="/path/to/saved-project"
                     required
                     maxLength={4096}
                     spellCheck={false}
@@ -586,8 +488,8 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
                   <ServerFolderPicker
                     onSelect={setLoadPath}
                     purpose="storage"
-                    title="Choose a saved experiment folder"
-                    label="Browse experiment folders"
+                    title="Choose a saved project folder"
+                    label="Browse project folders"
                   />
                 </div>
                 <button
@@ -595,7 +497,7 @@ export default function Start({ onOpen }: { onOpen: (id: string) => void }) {
                   className="btn btn-primary"
                   disabled={busy || !loadPath.trim()}
                 >
-                  {open.isPending ? 'Opening experiment…' : 'Load experiment'}{' '}
+                  {open.isPending ? 'Opening project…' : 'Load project'}{' '}
                   <Icon name="arrow" size={17} />
                 </button>
               </fieldset>

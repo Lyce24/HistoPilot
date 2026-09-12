@@ -8,7 +8,7 @@ import './FreezeVersionDialog.css';
 
 const kinds = {
   dataset: { name: 'dataset', placeholder: 'e.g. reviewed-slides-v1', saved: 'slide records and column mapping' },
-  protocol: { name: 'cohort / protocol', placeholder: 'e.g. grade-baseline-v1', saved: 'cohort, prediction target and split assignments' },
+  protocol: { name: 'development protocol', placeholder: 'e.g. grade-baseline-v1', saved: 'cohort, prediction target and split assignments' },
   feature: { name: 'feature', placeholder: 'e.g. uni-20x-v1', saved: 'feature configuration and file references' },
   bundle: { name: 'feature bundle', placeholder: 'e.g. uni-20x-training-v1', saved: 'feature source, included packs and their verification evidence' },
 };

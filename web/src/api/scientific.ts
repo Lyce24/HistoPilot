@@ -56,7 +56,7 @@ export interface ScientificDraft<T = ImportSpec | ProtocolSpec> {
   projectId: string;
   kind: 'import' | 'experiment';
   name: string;
-  payload: { type: 'dataset-import' | 'analysis-protocol' | 'mil-experiment'; spec: T };
+  payload: { type: 'dataset-import' | 'analysis-protocol' | 'mil-experiment' | 'development-batch' | 'evaluation-cohort'; experimentId?: string; spec: T };
   revision: number;
   status: 'editable' | 'frozen';
   createdAt: string;
@@ -230,7 +230,7 @@ export interface ProtocolSpec {
   predictors: string[];
   eligibility: Condition[];
   split: {
-    version?: 1 | 2 | 3;
+    version?: 1 | 2 | 3 | 4;
     pools?: {
       source: 'rules' | 'imported';
       trainSelection: 'rules' | 'remaining';
@@ -299,7 +299,8 @@ export interface ProtocolPreview {
     grouping: string;
     algorithm: string;
     strategy?: ProtocolSpec['split']['mode'];
-    splitVersion?: 1 | 2 | 3;
+    splitVersion?: 1 | 2 | 3 | 4;
+    scope?: 'development';
     finalPlanCount?: number;
     poolCounts?: Record<'train' | 'val' | 'test', PartitionCounts>;
     validationSource?: 'training_fraction' | 'fixed';
@@ -320,7 +321,7 @@ export interface ProtocolPreview {
     fold: number | null;
     planId?: string;
     phase?: 'evaluation' | 'inner' | 'outer' | 'final';
-    pool?: 'training' | 'external_test';
+    pool?: 'training' | 'external_test' | 'development';
     excludedValidation?: { groups: number; slides: number; groupIds?: string[] };
     repeat?: number;
     outerFold?: number;
@@ -421,7 +422,7 @@ export const scientific = {
     input: {
       kind: 'import' | 'experiment';
       name: string;
-      payload: { type: 'dataset-import' | 'analysis-protocol' | 'mil-experiment'; spec: T };
+      payload: ScientificDraft<T>['payload'];
     },
     current?: { id: string; revision: number },
   ) =>

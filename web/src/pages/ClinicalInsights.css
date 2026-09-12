@@ -1,0 +1,39 @@
+.clinical-insights { min-width: 0; }
+.evidence-chain-step { display: inline-flex; align-items: center; gap: .8rem; }
+.evidence-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 1.25rem 0; }
+.evidence-chart { border: 1px solid var(--line); padding: 1rem; border-radius: 10px; min-width: 0; background: var(--surface, white); }
+.evidence-chart h3 { margin: 0 0 .5rem; font-size: 1rem; }
+.evidence-chart > p { min-height: 3.1em; font-size: .875rem; }
+.evidence-chart svg { display: block; width: 100%; height: auto; }
+.evidence-chart svg text { fill: var(--muted, #52656e); font-size: 11px; }
+.evidence-grid { stroke: var(--line, #dce6e1); stroke-width: 1; }
+.evidence-axis { stroke: var(--muted, #52656e); stroke-width: 1; fill: none; }
+.evidence-legend { display: flex; flex-wrap: wrap; gap: .5rem 1rem; list-style: none; padding: 0; font-size: .8rem; }
+.evidence-legend li { display: inline-flex; align-items: center; gap: .4rem; }
+.evidence-legend span { display: inline-block; width: 1.5rem; border-top-width: 3px; }
+.evidence-curve-data { max-height: 250px; overflow: auto; }
+.clinical-insights .stat-help { font-size: .75rem; margin-top: .3rem; }
+.clinical-insights .evidence-counts { border-left: 3px solid var(--accent); padding-left: 1rem; }
+.clinical-insights .threshold-fields { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.clinical-insights .report-card { padding: .85rem 0; border-bottom: 1px solid var(--line); }
+.clinical-insights .report-card:last-child { border-bottom: 0; }
+.clinical-insights .report-card small { display: block; margin: .35rem 0; color: var(--muted); }
+.interpretation-slide-input { border: 1px solid var(--line); border-radius: 10px; margin: 1rem 0; padding: 1rem; }
+.interpretation-slide-input legend { padding: 0 .4rem; font-weight: 600; }
+.interpretation-path { display: flex; gap: .5rem; align-items: center; }
+.interpretation-path input { min-width: 0; flex: 1; }
+.interpretation-viewer { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #ece9e2; }
+.interpretation-viewer svg { width: 100%; max-height: 70vh; min-height: 300px; display: block; touch-action: none; cursor: grab; }
+.interpretation-viewer svg:active { cursor: grabbing; }
+.interpretation-viewer svg:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+.interpretation-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin: 1rem 0; }
+.interpretation-toolbar .label { min-width: 130px; flex: 1; }
+.interpretation-attention-scale { display: flex; gap: .6rem; align-items: center; font-size: .85rem; }
+.interpretation-attention-scale i { display: block; width: 140px; height: 12px; background: linear-gradient(to right, hsl(230 85% 50%), hsl(160 85% 50%), hsl(70 85% 50%), hsl(0 85% 50%)); }
+.interpretation-coordinates { font-variant-numeric: tabular-nums; font-size: .85rem; color: var(--muted); }
+.interpretation-image-status { padding: .6rem 1rem; background: var(--surface); }
+.interpretation-member-probabilities { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; }
+.interpretation-job-status { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; }
+.clinical-insights fieldset:disabled { opacity: .7; }
+@media (max-width: 1000px) { .clinical-insights .threshold-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 750px) { .evidence-chart-grid { grid-template-columns: 1fr; } .interpretation-path { flex-wrap: wrap; } .interpretation-path input { flex-basis: 100%; } .clinical-insights .threshold-fields { grid-template-columns: 1fr; } }

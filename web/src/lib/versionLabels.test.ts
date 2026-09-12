@@ -43,6 +43,6 @@ describe('scientific version display names', () => {
     expect(configurationVersionLabel(configuration('protocol', { target: { field: 'Grade' } })))
       .toBe('Grade protocol · 12345678');
     expect(configurationVersionLabel(configuration('protocol', {})))
-      .toBe('Cohort / protocol · 12345678');
+      .toBe('Development protocol · 12345678');
   });
 });

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { preparationLink } from '../lib/preparationRoute';
 import type { Workspace } from '../api/types';
 import type {
   ImportPreview,
@@ -36,6 +37,7 @@ import PatientTableOption from '../components/PatientTableOption';
 import PatientFallbackDialog from '../components/PatientFallbackDialog';
 import VersionLabelEditor from '../components/VersionLabelEditor';
 import FreezeVersionDialog from '../components/FreezeVersionDialog';
+import SetupContext from '../components/SetupContext';
 import { datasetVersionLabel } from '../lib/versionLabels';
 import { scientificReviewInvalidated } from '../lib/scientificReview';
 import { canReuseImportMapping, inspectedAttributes } from '../lib/datasetImport';
@@ -260,15 +262,20 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   return (
     <div className="clinical-workspace dataset-workspace">
       <PageHeader
-        eyebrow="YOUR RESEARCH · DATA"
-        title="Dataset workspace"
-        description="Bring your slide information together, check the details, and save a dataset you can return to."
+        eyebrow="PROJECT INPUTS · DATA"
+        title="Datasets"
+        description="Build the shared dataset that connects your slides, patients and clinical information."
         actions={
           <button type="button" className="btn btn-primary" disabled={busy} onClick={reset}>
             <Icon name="plus" /> New import
           </button>
         }
       />
+      <SetupContext input="Slide table and optional slide images" output="A fixed dataset for targets and features">
+        Recommended: keep development and test rows in one file with a cohort column. Select development rows in Targets and test rows in Evaluate. Separate files are also supported.
+      </SetupContext>
+      <details className="setup-details">
+        <summary>Open a saved dataset or resume an import{versions.data?.datasets.length ? ` · ${versions.data.datasets.length} datasets` : ''}</summary>
       <div className="science-toolbar">
         <DatasetSelect
           versions={versions.data?.datasets ?? []}
@@ -310,25 +317,26 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
           </div> : null}
         </div>
       </div>
+      </details>
       <ErrorNotice error={error ?? versions.error ?? savedDrafts.error} />
       <SavedNotice>{message}</SavedNotice>
       {view === 'dataset' ? (
         version ? (
           <>
             <div className="science-version">
-              <Badge tone="purple">
+              <Badge tone="green">
                 <Icon name="lock" size={12} /> Frozen dataset
               </Badge>
               <strong title={version.id}>{datasetVersionLabel(version)}</strong>
               <small>{new Date(version.createdAt).toLocaleString()}</small>
             </div>
             {version.versionLabel?.note ? <p className="version-tag-note">{version.versionLabel.note}</p> : null}
-            <VersionLabelEditor
+            <details className="setup-details"><summary>Edit version label and note</summary><VersionLabelEditor
               project={project}
               resourceType="dataset"
               resource={version}
               tagLabel="Dataset version tag"
-            />
+            /></details>
             {version.manifest.summary ? (
               <ImportMetrics summary={version.manifest.summary} />
             ) : null}
@@ -403,9 +411,10 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                 </pre>
               </details>
             </Panel>
-            <a className="btn btn-primary" href="#cohort">
-              Configure target & split <Icon name="arrow" />
-            </a>
+            <div className="setup-next-actions" aria-label="Continue with this dataset">
+              <a className="btn btn-primary" href={preparationLink('cohort', { datasetId: version.id })}>Define targets &amp; splits <Icon name="arrow" /></a>
+              <a className="btn btn-secondary" href={preparationLink('features', { datasetId: version.id })}>Prepare features <Icon name="arrow" /></a>
+            </div>
           </>
         ) : (
           <EmptyState
@@ -707,6 +716,9 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                         ) : null}
                       </div>
                     </div>
+                    <details className="setup-details">
+                      <summary>Review retained columns and missing-value rules · {spec.attributes.length} columns</summary>
+                      <p className="muted">The suggested columns are retained below. Open to change their names, types or ownership before reviewing the dataset.</p>
                     <label className="label dataset-missing-values">
                       Treat these values as missing (optional)
                       <input
@@ -739,6 +751,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                       )}
                       onChange={(attributes) => edit({ attributes })}
                     />
+                    </details>
                   </div>
                 ) : (
                   <div className="dataset-read-first">
@@ -755,7 +768,9 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                     </button>
                   </div>
                 )}
-                <div className="science-crosswalk">
+                <details className="setup-details" open={spec.patientSource ? true : undefined}>
+                  <summary>Add a separate patient table (optional){spec.patientSource ? ' · configured' : ''}</summary>
+                  <div className="stack">
                   <PatientTableOption
                     checked={Boolean(spec.patientSource)}
                     onChange={(checked) => {
@@ -902,7 +917,8 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                       />
                     </div>
                   ) : null}
-                </div>
+                  </div>
+                </details>
               </Panel>
             </div>
             <div className="science-savebar" hidden={step !== 2}>
@@ -1017,6 +1033,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
               setPreview(null);
               await refresh();
               setMessage(`Dataset “${version.versionLabel?.tag || versionLabel.tag}” frozen. Its tag and commit note were saved with it.`);
+              window.location.hash = preparationLink('cohort', { datasetId: version.id, saved: 'dataset' });
               window.scrollTo({ top: 0 });
             } catch (reason) {
               if (scientificReviewInvalidated(reason)) {

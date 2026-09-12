@@ -267,6 +267,7 @@ export function CohortSample({
 }
 
 export function PartitionLive({
+  development = false,
   partition,
   label,
   fields,
@@ -274,6 +275,7 @@ export function PartitionLive({
 }: {
   partition: ProtocolPartitionStats;
   label: string;
+  development?: boolean;
   fields: string[];
   total: number;
 }) {
@@ -301,7 +303,9 @@ export function PartitionLive({
       ) : null}
       <p className="muted">
         {partition.selection === 'remaining'
-          ? 'All eligible groups remaining after the test and validation selections.'
+          ? development
+            ? 'All eligible groups outside fixed development validation.'
+            : 'All eligible groups remaining after the test and validation selections.'
           : partition.selection === 'none'
             ? 'No fixed selection for this set.'
             : `${partition.directMatches.totalSlides.toLocaleString()} slides match these conditions directly. The set includes all eligible slides from their groups.`}

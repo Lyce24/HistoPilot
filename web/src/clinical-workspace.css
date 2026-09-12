@@ -83,6 +83,11 @@
   font-weight: 400;
   background-color: white;
 }
+.clinical-workspace select.field {
+  padding-right: 2.25rem;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
 .clinical-workspace .field:hover:not(:disabled) {
   border-color: #a4a3b5;
 }
