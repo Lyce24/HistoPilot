@@ -13,7 +13,13 @@ from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.compute_archive import prepare_compute_archive
 from histopilot.workers.packing_process import output_lock, write_json
 from histopilot.workers.train_batch import _capacity, _check_inputs, _leases, available_device
-from histopilot.workers.training_process import cpu_slots_per_run, now, process_identity, read_json
+from histopilot.workers.training_process import (
+    cpu_slots_per_run,
+    now,
+    process_identity,
+    read_json,
+    stop_owned_processes,
+)
 
 
 def verify_plan_inputs(plan):
@@ -62,12 +68,30 @@ def verify_plan_inputs(plan):
                     "Evaluation inputs differ from the immutable predictor and test cohort."
                 )
             packed = plan["inference"]["loadingPolicy"] == "packed"
+            pack_path = None
+            if packed:
+                # Independent cohorts freeze membership and labels. The saved
+                # evaluation owns its reviewed feature bundle and loading choice,
+                # including overrides of a historical cohort's original pack.
+                binding = manifest["features"]["bundle"]
+                bundle = store.get_configuration(binding["id"])
+                packs = [
+                    item for item in bundle["manifest"].get("packs", [])
+                    if item["id"] == manifest["inference"]["packArtifactId"]
+                ]
+                if (
+                    bundle["contentHash"] != binding["contentHash"]
+                    or bundle["manifest"].get("kind") != "feature-bundle"
+                    or bundle["manifest"]["feature"]["id"] != feature["id"]
+                    or len(packs) != 1
+                    or packs[0]["featureSetId"] != feature["id"]
+                    or packs[0]["sourceContentHash"] != manifest["features"]["sourceContentHash"]
+                ):
+                    raise ValueError("The saved evaluation pack binding changed.")
+                pack_path = packs[0]["outputPath"]
             if (
                 plan["data"].get("loadingPolicy") != ("mmap" if packed else "native")
-                or (
-                    packed
-                    and plan["data"].get("packPath") != cohort["manifest"]["pack"]["outputPath"]
-                )
+                or (packed and plan["data"].get("packPath") != pack_path)
                 or (not packed and (plan["data"].get("packPath") or plan["data"].get("packStamps")))
             ):
                 raise ValueError("The test feature loading contract changed.")
@@ -152,6 +176,7 @@ def execute(path):
                             lease_path,
                             {
                                 "process": state["process"],
+                                "processGroupId": os.getpid(),
                                 "gpu": gpu,
                                 "cpus": cpu_slots_per_run(resources),
                                 "ramGb": resources["ramGbPerRun"],
@@ -214,9 +239,17 @@ def execute(path):
                 result=None,
             )
         finally:
+            cleaned = False
+            try:
+                if state.get("process"):
+                    stop_owned_processes(state["process"], exclude_pid=os.getpid())
+                cleaned = True
+            except Exception as error:
+                traceback.print_exc()
+                state.update(status="failed", error=str(error), result=None)
             state.update(updatedAt=now())
             write_json(folder / "state.json", state)
-            if lease_path:
+            if lease_path and cleaned:
                 with _leases():
                     lease_path.unlink(missing_ok=True)
     return state

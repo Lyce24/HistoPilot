@@ -2,7 +2,8 @@
 
 This module belongs to the optional training runtime. No OceanPath imports or
 split generation are used; its pack format is read through HistoPilot's storage
-contract. Training patch selection depends only on seed, epoch, and exact ID.
+contract. Patch selection depends on seed, epoch, and exact ID; nnMIL also
+carries a presentation ordinal so repeated slides receive fresh training views.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, Sampler
 
+from histopilot.models import catalog
 from histopilot.storage.pack_import import _layout, pack_file_stamps
 from histopilot.storage.packed import PackedFeatureStore, PackedStoreError, _dataset, _source
 
@@ -66,6 +68,13 @@ def validate_memberships(plan: dict) -> dict[str, list[dict]]:
         if slide in seen_slides:
             raise MILDataError(
                 f"Duplicate slide membership: {slide}. Supply exactly one frozen fold."
+            )
+        if (
+            target["unit"] == "patient"
+            and row.get("patientIdSource") == "slide_fallback"
+        ):
+            raise MILDataError(
+                "Patient analysis requires verified patient IDs, not slide fallback."
             )
         seen_slides.add(slide)
         if (
@@ -138,14 +147,22 @@ class _OceanPathMemmap:
 
 
 class SlideDataset(Dataset):
-    """One selected slide per item; evaluation bags are never truncated."""
+    """One selected slide per item with reproducible, explicitly configured views."""
 
     def __init__(self, plan: dict, memberships: list[dict], *, training: bool):
         self.rows = deepcopy(memberships)
         self.training = training
         self.training_seed = plan["trainingSeed"]
         self.epoch = 0
-        self.bag_size = plan["recipe"]["bagSize"]
+        self.recipe = deepcopy(plan["recipe"])
+        self.input_mode = self.recipe.get("inputMode", "image")
+        self.clinical_values = deepcopy(plan.get("clinicalValues", {}))
+        if self.input_mode != "image":
+            from histopilot.clinical_features import clinical_rows
+
+            clinical_rows(self.rows, self.clinical_values, self.recipe.get("clinicalFields", []))
+        self.bag_size = self.recipe["bagSize"]
+        self.eval_bag_size = self.recipe.get("evalBagSize")
         self.dimensions = plan["featureDim"]
         for name, value, minimum in (
             ("trainingSeed", self.training_seed, 0),
@@ -159,11 +176,49 @@ class SlideDataset(Dataset):
             raise MILDataError(
                 "bagSize must be an integer from 1 to 1000000 or null for whole-bag training."
             )
+        if self.eval_bag_size is not None and (
+            type(self.eval_bag_size) is not int or not 1 <= self.eval_bag_size <= 1000000
+        ):
+            raise MILDataError("evalBagSize must be a positive integer or null for full bags.")
+        self.instance_dropout = self.recipe.get("instanceDropout", 0.0)
+        self.feature_noise_std = self.recipe.get("featureNoiseStd", 0.0)
+        if (
+            isinstance(self.instance_dropout, bool)
+            or not isinstance(self.instance_dropout, (int, float))
+            or not np.isfinite(self.instance_dropout)
+            or not 0 <= self.instance_dropout < 1
+        ):
+            raise MILDataError("instanceDropout must be finite and between zero and one.")
+        if (
+            isinstance(self.feature_noise_std, bool)
+            or not isinstance(self.feature_noise_std, (int, float))
+            or not np.isfinite(self.feature_noise_std)
+            or self.feature_noise_std < 0
+        ):
+            raise MILDataError("featureNoiseStd must be finite and nonnegative.")
+        if self.recipe.get("bagCurriculum", False):
+            for name in ("bagCurriculumStart", "bagCurriculumEnd", "bagCurriculumWarmupEpochs"):
+                value = self.recipe.get(
+                    name,
+                    {
+                        "bagCurriculumStart": 512,
+                        "bagCurriculumEnd": 8000,
+                        "bagCurriculumWarmupEpochs": 5,
+                    }[name],
+                )
+                if type(value) is not int or value < 1:
+                    raise MILDataError(f"{name} must be a positive integer.")
+            if self.recipe.get("bagCurriculumStart", 512) > self.recipe.get(
+                "bagCurriculumEnd", 8000
+            ):
+                raise MILDataError("Bag curriculum start cannot exceed its end.")
         self.files = deepcopy(plan.get("featureFiles", {}))
         self.policy = plan.get("loadingPolicy", "native")
         if self.policy not in {"native", "mmap"}:
             raise MILDataError("Resolve feature loading to native or mmap before starting a run.")
         self.pack_path = plan.get("packPath")
+        if self.input_mode == "clinical":
+            self.policy, self.pack_path = "native", None
         if (self.policy == "mmap") != bool(self.pack_path):
             raise MILDataError(
                 "Packed loading requires a pack path; native loading must not bind a pack."
@@ -181,6 +236,8 @@ class SlideDataset(Dataset):
                 raise MILDataError("Pack dimensions differ from the selected model features.")
             self.packed_rows = {row["slideId"]: row for row in self._pack_layout["slides"]}
         for row in self.rows:
+            if self.input_mode == "clinical":
+                continue
             identity = row["slideId"]
             if identity not in self.files:
                 raise MILDataError(
@@ -211,7 +268,13 @@ class SlideDataset(Dataset):
         patients = Counter(row["patientId"] for row in self.rows)
         self.loss_weights = {
             row["slideId"]: len(self.rows) / (len(patients) * patients[row["patientId"]])
-            if training and plan["target"]["unit"] == "patient"
+            if training
+            and plan["target"]["unit"] == "patient"
+            and self.recipe.get("samplingStrategy", "slide_uniform") == "slide_uniform"
+            and not (
+                catalog.owns_options(self.recipe.get("model"), "nnmil")
+                and self.recipe.get("nnmilBatchSampler", "patient_weighted") != "patient_weighted"
+            )
             else 1.0
             for row in self.rows
         }
@@ -224,12 +287,45 @@ class SlideDataset(Dataset):
             raise MILDataError("Epoch must be a nonnegative integer.")
         self.epoch = epoch
 
-    def _selection(self, count, identity, epoch):
-        if not self.training or self.bag_size is None or count <= self.bag_size:
+    def presentation_index(self, epoch, index, ordinal):
+        """Carry draw identity through worker prefetch without mutable RNG state."""
+        if catalog.windowed_sampling(self.recipe.get("model")) and self.training:
+            return epoch, int(index), ordinal
+        return epoch, int(index)
+
+    def _selection(self, count, identity, epoch, ordinal=0):
+        cap = self.bag_size if self.training else self.eval_bag_size
+        if self.training and self.recipe.get("bagCurriculum", False):
+            start = self.recipe.get("bagCurriculumStart", 512)
+            end = self.recipe.get("bagCurriculumEnd", 8000)
+            progress = min(epoch / self.recipe.get("bagCurriculumWarmupEpochs", 5), 1.0)
+            cap = int(start + (end - start) * progress)
+        if cap is None or count <= cap:
             return None
-        rng = np.random.default_rng(stable_seed(self.training_seed, epoch, identity))
+        if self.training and catalog.windowed_sampling(self.recipe.get("model")):
+            identity = json.dumps(["nnmil-patch-view", identity, ordinal], ensure_ascii=False)
+        rng = np.random.default_rng(
+            stable_seed(self.training_seed, epoch if self.training else 0, identity)
+        )
         # Sorted indices satisfy HDF5's indexing contract and preserve source row order.
-        return np.sort(rng.choice(count, size=self.bag_size, replace=False))
+        return np.sort(rng.choice(count, size=cap, replace=False))
+
+    def _augment(self, values, identity, epoch, ordinal=0):
+        if not self.training or not (self.instance_dropout or self.feature_noise_std):
+            return values
+        if catalog.windowed_sampling(self.recipe.get("model")):
+            identity = json.dumps(["nnmil-augmentation", identity, ordinal], ensure_ascii=False)
+        # Local streams preserve model/dropout RNG and exact worker/resume replay.
+        rng = np.random.default_rng(stable_seed(self.training_seed, epoch, f"augment:{identity}"))
+        if self.instance_dropout and len(values) > 1:
+            keep = rng.random(len(values)) >= self.instance_dropout
+            if not keep.any():
+                keep[rng.integers(len(values))] = True
+            values = values[keep]
+        if self.feature_noise_std:
+            noise = rng.standard_normal(values.shape, dtype=np.float32)
+            values = values + noise * self.feature_noise_std
+        return values
 
     def _native(self, entry, selection):
         path = Path(entry["path"])
@@ -237,6 +333,12 @@ class SlideDataset(Dataset):
             if path.suffix.lower() in {".h5", ".hdf5"}:
                 with h5py.File(stream, "r") as handle:
                     source = _dataset(handle, "features")
+                    if len(source.shape) == 1:
+                        # One slide embedding is the single instance of its bag.
+                        # Read it whole and give it a row before any selection.
+                        values = np.asarray(source[:]).reshape(1, -1)
+                        self._header(values.shape, values.dtype, entry)
+                        return values if selection is None else values[selection]
                     self._header(source.shape, source.dtype, entry)
                     return source[:] if selection is None else source[selection]
             if path.suffix.lower() == ".npy":
@@ -254,6 +356,8 @@ class SlideDataset(Dataset):
                 source = source.numpy()
             else:
                 raise MILDataError(f"Unsupported native feature format: {path.suffix}.")
+            if source.ndim == 1:
+                source = source.reshape(1, -1)
             self._header(source.shape, source.dtype, entry)
             # Safe readers own their arrays; keep that storage until the float32
             # conversion instead of copying an entire whole bag a second time.
@@ -288,10 +392,18 @@ class SlideDataset(Dataset):
 
     def __getitem__(self, index):
         # Epoch travels with each sampled index across worker/prefetch boundaries.
-        epoch, position = index if isinstance(index, tuple) else (self.epoch, index)
+        ordinal = 0
+        if isinstance(index, tuple) and len(index) == 3:
+            epoch, position, ordinal = index
+            if type(ordinal) is not int or ordinal < 0:
+                raise MILDataError("Presentation ordinal must be a nonnegative integer.")
+        else:
+            epoch, position = index if isinstance(index, tuple) else (self.epoch, index)
         row = self.rows[position]
+        if self.input_mode == "clinical":
+            return self._example(row, torch.zeros((1, self.dimensions), dtype=torch.float32))
         entry = self.files[row["slideId"]]
-        selection = self._selection(entry["patchCount"], row["slideId"], epoch)
+        selection = self._selection(entry["patchCount"], row["slideId"], epoch, ordinal)
         try:
             values = (
                 self._native(entry, selection)
@@ -312,18 +424,24 @@ class SlideDataset(Dataset):
                 f"{row['slideId']}: features must be nonempty finite [patches, dimensions]."
             )
         values = np.asarray(values, dtype=np.float32, order="C")
+        values = self._augment(values, row["slideId"], epoch, ordinal)
         if not values.flags.writeable:
             values = values.copy()
         if not np.isfinite(values).all():
             raise MILDataError(
                 f"{row['slideId']}: feature values exceed float32 training precision."
             )
+        return self._example(row, torch.from_numpy(values))
+
+    def _example(self, row, features):
         return {
-            "features": torch.from_numpy(values),
+            "features": features,
             "label": row["labelIndex"],
             "slideId": row["slideId"],
             "patientId": row["patientId"],
+            **({"patientIdSource": row["patientIdSource"]} if "patientIdSource" in row else {}),
             "lossWeight": self.loss_weights[row["slideId"]],
+            **({"clinical": self.clinical_values[row["slideId"]]} if self.input_mode != "image" else {}),
         }
 
     def close(self):
@@ -354,8 +472,10 @@ class EpochShuffleSampler(Sampler):
         generator = torch.Generator().manual_seed(
             stable_seed(self.dataset.training_seed, epoch, "training-slide-order")
         )
-        for index in torch.randperm(len(self.dataset), generator=generator).tolist():
-            yield epoch, index
+        for ordinal, index in enumerate(
+            torch.randperm(len(self.dataset), generator=generator).tolist()
+        ):
+            yield self.dataset.presentation_index(epoch, index, ordinal)
 
 
 def collate_mil(batch):
@@ -388,4 +508,7 @@ def collate_mil(batch):
         "lengths": torch.tensor(lengths, dtype=torch.long),
         "slideIds": [item["slideId"] for item in batch],
         "patientIds": [item["patientId"] for item in batch],
+        **({"clinical": [item["clinical"] for item in batch]} if "clinical" in batch[0] else {}),
+        **({"patientIdSources": [item.get("patientIdSource") for item in batch]}
+           if any("patientIdSource" in item for item in batch) else {}),
     }

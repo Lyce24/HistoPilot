@@ -76,8 +76,8 @@ export function ResourceDashboard({ execution, history, error, loading = false, 
     {stale ? <p className="run-resource-notice" role="status">The resource sample is stale. These values may no longer reflect current usage.</p> : null}
     {!latest ? <p className="run-resource-empty" role="status">{loading ? 'Loading recorded resource usage…' : 'Resource usage has not been recorded yet.'}</p> : <>
       <div className="run-resource-grid">
-        <ResourceMetric title="CPU" detail={cpu === null ? 'Not recorded by this worker' : 'Host utilization'} value={cpu === null ? 'Not recorded' : `${cpu.toFixed(0)}%`} tone="brown" suffix={`${latest.host.cpuCount} logical CPUs`} samples={samples} interval={interval} read={(sample) => percent(sample.host.cpuUtilizationPercent)} unit="%" ceiling={100} />
-        <ResourceMetric title="RAM" detail="Host memory used" value={memory(ram)} tone="gold" suffix={`${memory(latest.host.totalRamGb)} total RAM`} samples={samples} interval={interval} read={usedRam} unit="GiB" ceiling={measured(latest.host.totalRamGb) ? latest.host.totalRamGb : undefined} />
+        <ResourceMetric title="CPU" detail={cpu === null ? 'Not recorded by this worker' : 'Host utilization'} value={cpu === null ? 'Not recorded' : `${cpu.toFixed(0)}%`} tone="cpu" suffix={`${latest.host.cpuCount} logical CPUs`} samples={samples} interval={interval} read={(sample) => percent(sample.host.cpuUtilizationPercent)} unit="%" ceiling={100} />
+        <ResourceMetric title="RAM" detail="Host memory used" value={memory(ram)} tone="ram" suffix={`${memory(latest.host.totalRamGb)} total RAM`} samples={samples} interval={interval} read={usedRam} unit="GiB" ceiling={measured(latest.host.totalRamGb) ? latest.host.totalRamGb : undefined} />
         {[...gpus.values()].map((gpu) => {
           const current = findGPU(latest, gpu);
           const utilization = percent(current?.utilizationPercent);
@@ -88,8 +88,8 @@ export function ResourceDashboard({ execution, history, error, loading = false, 
           if (measured(legacyPeak)) peaks.push(legacyPeak);
           const peak = peaks.length ? Math.max(...peaks) : null;
           return <div className="run-resource-gpu" key={gpu.uuid || gpu.index}>
-            <ResourceMetric title={`GPU ${gpu.index}`} detail={gpu.name} value={utilization === null ? 'Utilization unavailable' : `${utilization.toFixed(0)}% utilization`} tone="red" suffix="Device-wide GPU usage" samples={samples} interval={interval} read={(sample) => percent(findGPU(sample, gpu)?.utilizationPercent)} unit="%" ceiling={100} />
-            <ResourceMetric title={`VRAM · GPU ${gpu.index}`} detail="Device memory used" value={memory(current?.usedMemoryGb)} tone="gray" suffix={`${memory(current?.totalMemoryGb)} total VRAM${peak !== null ? ` · Peak ${memory(peak)}` : ''}`} samples={samples} interval={interval} read={(sample) => { const value = findGPU(sample, gpu)?.usedMemoryGb; return measured(value) ? value : null; }} unit="GiB" ceiling={measured(gpu.totalMemoryGb) ? gpu.totalMemoryGb : undefined} />
+            <ResourceMetric title={`GPU ${gpu.index}`} detail={gpu.name} value={utilization === null ? 'Utilization unavailable' : `${utilization.toFixed(0)}% utilization`} tone="gpu" suffix="Device-wide GPU usage" samples={samples} interval={interval} read={(sample) => percent(findGPU(sample, gpu)?.utilizationPercent)} unit="%" ceiling={100} />
+            <ResourceMetric title={`VRAM · GPU ${gpu.index}`} detail="Device memory used" value={memory(current?.usedMemoryGb)} tone="vram" suffix={`${memory(current?.totalMemoryGb)} total VRAM${peak !== null ? ` · Peak ${memory(peak)}` : ''}`} samples={samples} interval={interval} read={(sample) => { const value = findGPU(sample, gpu)?.usedMemoryGb; return measured(value) ? value : null; }} unit="GiB" ceiling={measured(gpu.totalMemoryGb) ? gpu.totalMemoryGb : undefined} />
           </div>;
         })}
       </div>
@@ -119,7 +119,7 @@ export function resourceSegments(points: ResourcePoint[], maxGap: number): { at:
 }
 
 function ResourceMetric({ title, detail, value, suffix, tone, samples, interval, read, unit, ceiling }: {
-  title: string; detail: string; value: string; suffix: string; tone: 'brown' | 'gold' | 'red' | 'gray';
+  title: string; detail: string; value: string; suffix: string; tone: 'cpu' | 'ram' | 'gpu' | 'vram';
   samples: TrainingResourceSample[]; interval: number; read: (sample: TrainingResourceSample) => number | null | undefined;
   unit: '%' | 'GiB'; ceiling?: number;
 }) {

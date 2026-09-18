@@ -1,62 +1,75 @@
-.system-page { --system-accent: var(--brand-brown); }
+.system-page { --system-accent: var(--brand-deep); }
 .system-page .page-actions { flex-wrap: wrap; }
-.system-compute { --system-accent: var(--brand-brown); }
+.system-compute { --system-accent: var(--brand-deep); }
 .system-compute .card { border-color: var(--theme-line); border-radius: 14px; box-shadow: 0 3px 14px rgb(var(--theme-shadow-rgb) / 3%); }
 .system-compute > .grid-2 { gap: 20px; margin-bottom: 20px; }
-.system-compute > .grid-2 > .card { border-top: 3px solid var(--brand-brown); }
-.system-compute > .grid-2 > .card:nth-child(2) { --system-accent: var(--brand-gold); border-top-color: var(--brand-gold); }
+.system-compute > .grid-2 > .card { border-top: 3px solid var(--brand-deep); }
+.system-compute > .grid-2 > .card:nth-child(2) { --system-accent: var(--brand-accent); border-top-color: var(--brand-accent); }
 .system-compute > .card { margin-bottom: 20px; }
-.system-compute > .card:has(.system-gpus) { border-top: 3px solid var(--brand-red); }
+.system-compute > .card:has(.system-gpus) { border-top: 3px solid var(--brand-primary); }
 .system-compute .panel-header { padding: 22px 24px 20px; }
-.system-compute .panel-header h2 { color: var(--brand-brown); font-size: 15px; font-weight: 650; }
+.system-compute .panel-header h2 { color: var(--theme-ink); font-size: 15px; font-weight: 650; }
 .system-compute .panel-header p { font-size: 12px; line-height: 1.6; }
 .system-compute .panel-body { padding: 0 24px 22px; }
 .system-compute .detail-list > div { font-size: 12px; }
 .system-compute .detail-list dd { font-variant-numeric: tabular-nums; font-weight: 550; }
 .system-sample { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 0 0 20px; padding: 14px 18px; border: 1px solid var(--theme-line); border-radius: 12px; background: var(--theme-surface); font-size: 12px; line-height: 1.6; }
 .system-sample > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.system-sample > div:first-child strong { color: var(--brand-brown); font-size: 13px; }
+.system-sample > div:first-child strong { color: var(--theme-ink); font-size: 13px; }
 .system-sample > div:last-child { justify-content: flex-end; }
 .system-sample span:not(.badge) { color: var(--theme-muted); }
 .system-sample .badge { font-size: 11px; }
 .system-usage { min-width: 0; }
 .system-usage-label { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 12px; margin-bottom: 12px; font-size: 12px; color: var(--theme-muted); }
 .system-usage-label strong { font-size: 28px; color: var(--theme-ink); font-weight: 600; letter-spacing: -0.035em; font-variant-numeric: tabular-nums; }
+.system-usage-label .system-usage-note { font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--theme-muted); }
 .system-usage progress { display: block; width: 100%; height: 8px; border: none; border-radius: 5px; overflow: hidden; background: var(--theme-soft-hover); color: var(--system-accent); accent-color: var(--system-accent); }
 .system-usage progress::-webkit-progress-bar { background: var(--theme-soft-hover); border-radius: 5px; }
-.system-usage progress::-webkit-progress-value { background: var(--system-accent); border-radius: 5px; box-shadow: inset 0 0 0 1px rgb(78 54 41 / 55%); }
-.system-usage progress::-moz-progress-bar { background: var(--system-accent); border-radius: 5px; box-shadow: inset 0 0 0 1px rgb(78 54 41 / 55%); }
+.system-usage progress::-webkit-progress-value { background: var(--system-accent); border-radius: 5px; box-shadow: inset 0 0 0 1px rgb(31 44 46 / 55%); }
+.system-usage progress::-moz-progress-bar { background: var(--system-accent); border-radius: 5px; box-shadow: inset 0 0 0 1px rgb(31 44 46 / 55%); }
 .system-usage-unavailable { height: 8px; border-radius: 5px; background: repeating-linear-gradient(135deg, var(--theme-soft), var(--theme-soft) 5px, var(--theme-canvas) 5px, var(--theme-canvas) 10px); }
 .system-compute .system-usage + .detail-list { margin-top: 15px; }
 .system-metric-note { margin: 13px 0 0; font-size: 12px; line-height: 1.65; color: var(--theme-muted); overflow-wrap: anywhere; }
 .system-gpus { display: grid; gap: 24px; }
 .system-gpu + .system-gpu { padding-top: 24px; border-top: 1px solid var(--theme-line); }
 .system-gpu-title { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
-.system-gpu-title h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--brand-brown); }
+.system-gpu-title h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--theme-ink); }
 .system-gpu-title > span { color: var(--theme-muted); font-size: 12px; }
-.system-gpu .system-usage { --system-accent: var(--brand-red); padding: 14px 18px 18px; border: 1px solid var(--theme-line); border-radius: 10px; background: var(--theme-canvas); }
-.system-gpu .system-usage:nth-child(2) { --system-accent: var(--brand-gold); }
+.system-gpu .system-usage { --system-accent: var(--brand-primary); padding: 14px 18px 18px; border: 1px solid var(--theme-line); border-radius: 10px; background: var(--theme-canvas); }
+.system-gpu .system-usage:nth-child(2) { --system-accent: var(--brand-accent); }
 .system-gpu-details { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin: 0; }
 .system-gpu-details dt { color: var(--theme-muted); font-size: 12px; margin-bottom: 6px; }
 .system-gpu-details dd { margin: 0; color: var(--theme-ink); font-size: 13px; font-weight: 550; font-variant-numeric: tabular-nums; }
 .system-empty { margin: 0; font-size: 13px; color: var(--theme-muted); }
 .system-disk-table { overflow-x: auto; }
-.system-disk-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+/* Fixed layout keeps the usage percentage inside its column however long a
+   workspace path is; the path wraps instead of pushing the numbers out. */
+.system-disk-table table { width: 100%; table-layout: fixed; border-collapse: collapse; text-align: left; font-size: 12px; }
+.system-disk-table col.system-disk-location { width: 36%; }
+.system-disk-table col.system-disk-amount { width: 24%; }
+.system-disk-table col.system-disk-free { width: 16%; }
+.system-disk-table col.system-disk-usage { width: 24%; }
 .system-disk-table thead th { padding: 0 14px 14px; font-weight: 500; color: var(--theme-muted); }
 .system-disk-table td, .system-disk-table tbody th { border-top: 1px solid var(--theme-line); padding: 16px 14px; font-weight: 400; }
 .system-disk-table th:first-child { padding-left: 0; }
 .system-disk-table td { white-space: nowrap; }
-.system-disk-table tbody th { width: 40%; min-width: 200px; text-transform: none; background: transparent; color: var(--theme-ink); }
+/* Tables default to nowrap; a filesystem path is the one cell that must wrap. */
+.system-disk-table tbody th { white-space: normal; text-transform: none; background: transparent; color: var(--theme-ink); }
 .system-disk-table tbody th > span, .system-disk-table code, .system-disk-table small { display: block; }
-.system-disk-table code { margin-top: 5px; color: var(--theme-muted); overflow-wrap: anywhere; font-size: 11px; }
-.system-disk-table small { margin-top: 6px; color: var(--brand-brown); }
-.system-disk-table td:last-child { width: 23%; min-width: 145px; padding-right: 0; }
+.system-disk-table code { margin-top: 5px; color: var(--theme-muted); overflow-wrap: anywhere; word-break: break-all; font-size: 11px; line-height: 1.5; }
+.system-disk-table small { margin-top: 6px; color: var(--theme-ink); }
+.system-disk-table td:last-child { padding-right: 0; }
+.system-disk-table td { overflow-wrap: anywhere; }
+/* A row percentage is a table value, not a headline: keep it inside its column. */
+.system-disk-table .system-usage-label { margin-bottom: 8px; }
+.system-disk-table .system-usage-label strong { font-size: 15px; letter-spacing: -0.01em; }
+.system-disk-table .system-usage-label .system-usage-note { font-size: 11.5px; }
 .system-disk-table .system-usage { --system-accent: var(--brand-gray); }
 .system-disk-table .system-usage-label > span { display: none; }
 .system-disk-table .system-usage-label { justify-content: flex-end; margin-bottom: 6px; }
 .system-disk-table .system-usage-label strong { font-size: 12px; letter-spacing: 0; }
 .system-service-details { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--theme-line); }
-.system-service-details > summary { cursor: pointer; margin-bottom: 20px; color: var(--brand-brown); font-size: 14px; font-weight: 600; }
+.system-service-details > summary { cursor: pointer; margin-bottom: 20px; color: var(--theme-ink); font-size: 14px; font-weight: 600; }
 .system-service-details .detail-list strong { text-align: right; }
 .system-service-details .panel-header h2 { font-size: 14px; }
 @media (max-width: 800px) {

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { StagePage, StageSteps } from './StageWorkflow';
+import { StageBackButton, StageContinueButton } from './StageActions';
 import { useQueryClient } from '@tanstack/react-query';
 import { bundles } from '../api/bundles';
 import { ApiError } from '../api/client';
 import type { FeatureBundle, FeatureBundlePreview } from '../api/bundles';
-import type { Configuration, VersionLabelInput } from '../api/scientific';
+import type { Configuration, FeatureSpec, VersionLabelInput } from '../api/scientific';
 import FeaturePacking from './FeaturePacking';
 import FreezeVersionDialog from './FreezeVersionDialog';
 import { Findings } from './ScientificUI';
@@ -29,6 +30,7 @@ export default function FeatureBundlePreparation({ project, configuration, confi
   onFrozen: (bundle: FeatureBundle) => void;
 }) {
   const client = useQueryClient();
+  const slideFeatures = (configuration.manifest.spec as FeatureSpec).featureKind === 'slide';
   const [packIds, setPackIds] = useState(initialPackIds);
   const [review, setReview] = useState<FeatureBundlePreview | null>(null);
   const [naming, setNaming] = useState(false);
@@ -65,7 +67,7 @@ export default function FeatureBundlePreparation({ project, configuration, confi
   }
   return <div className="stack">
     {showSteps ? <StageSteps label="Bundle validation steps" current={activePage} disabled={busy || naming || packingBusy} steps={[
-      { id: 'packing', title: 'Validate & choose packs', description: 'Packing is optional' },
+      { id: 'packing', title: slideFeatures ? 'Validate slide embeddings' : 'Validate & choose packs', description: slideFeatures ? 'No patch packing' : 'Packing is optional' },
       { id: 'review', title: 'Review & freeze', description: 'Save the complete bundle', disabled: !review },
     ]} onChange={(step) => { if (step === 'packing' || step === 'review' && review) goTo(step); }} /> : null}
     <StagePage pageKey={activePage}>
@@ -73,17 +75,17 @@ export default function FeatureBundlePreparation({ project, configuration, confi
     <fieldset className="science-fieldset stack" disabled={busy || naming}>
     <FeaturePacking onBusyChange={setPackingBusy} project={project} configuration={configuration} configurations={configurations} onSelectVersion={onSelectVersion} selectedPackIds={packIds} onSelectedPackIdsChange={changePacks} />
     <section className="feature-bundle-freeze" aria-label="Freeze feature bundle">
-      <div><h3>Continue to bundle review</h3><p>Save the feature source and the packs included with it as one immutable input. A features-only bundle includes no pack.</p></div>
-      <p className="muted">Full feature validation is required. Existing packs must match all feature values and coordinates; newly created packs must finish verification.</p>
+      <div><h3>Continue to bundle review</h3><p>{slideFeatures ? 'Save the verified slide embeddings as one immutable input. Slide embeddings are not packed.' : 'Save the feature source and the packs included with it as one immutable input. A features-only bundle includes no pack.'}</p></div>
+      <p className="muted">{slideFeatures ? 'Full validation checks one nonempty vector per slide and records its source identity.' : 'Full feature validation is required. Existing packs must match all feature values and coordinates; newly created packs must finish verification.'}</p>
       <ErrorNotice error={error} />
-      <button type="button" className="btn btn-primary science-fit" disabled={busy || packingBusy} onClick={() => void preview()}>{busy ? 'Checking bundle…' : 'Review bundle'} <Icon name="arrow" /></button>
+      <StageContinueButton className="science-fit" disabled={busy || packingBusy} onClick={() => void preview()}>{busy ? 'Checking bundle…' : 'Review bundle'}</StageContinueButton>
     </section>
     </fieldset>
     </div>
     {activePage === 'review' && review ? <section className="feature-bundle-review stack" aria-label="Bundle review">
-      <button type="button" className="btn btn-secondary science-fit" disabled={busy || naming} onClick={() => goTo('packing')}>← Back to validation &amp; packs</button>
+      <StageBackButton className="science-fit" disabled={busy || naming} onClick={() => goTo('packing')}>{slideFeatures ? 'Back to validation' : 'Back to validation & packs'}</StageBackButton>
       <div className="feature-pack-section-heading"><h3>{review.summary.packCount ? `Features + ${review.summary.packCount} ${review.summary.packCount === 1 ? 'pack' : 'packs'}` : 'Features only'}</h3><Badge tone={review.canFreeze ? 'green' : 'orange'}>{review.canFreeze ? 'Verified · ready to freeze' : 'Verification required'}</Badge></div>
-      <p>{review.summary.slideCount.toLocaleString()} slides · {review.summary.patchCount.toLocaleString()} patches · {review.summary.dimensions ?? 'Unknown'} dimensions</p>
+      <p>{review.summary.slideCount.toLocaleString()} slides · {review.summary.patchCount.toLocaleString()} {slideFeatures ? 'slide embeddings' : 'patches'} · {review.summary.dimensions ?? 'Unknown'} dimensions</p>
       {review.packs.map((pack) => <div key={pack.id} className="feature-bundle-pack"><Badge>{pack.outputDtype}</Badge><span className="mono">{pack.outputPath}</span></div>)}
       <Findings findings={review.findings} />
       <p className="muted">This saves bundle contents and verification evidence. Choose how to read these inputs in MIL experiments.</p>
@@ -105,7 +107,7 @@ export default function FeatureBundlePreparation({ project, configuration, confi
         throw reason;
       }
     }}>
-      <p>{review.summary.slideCount.toLocaleString()} slides · {review.summary.patchCount.toLocaleString()} patches</p>
+      <p>{review.summary.slideCount.toLocaleString()} slides · {review.summary.patchCount.toLocaleString()} {slideFeatures ? 'slide embeddings' : 'patches'}</p>
       <p>{review.summary.packCount ? `${review.summary.packCount} verified pack(s) included` : 'Features alone; no pack included'}</p>
       <p>Changing the included packs later creates another bundle.</p>
     </FreezeVersionDialog> : null}

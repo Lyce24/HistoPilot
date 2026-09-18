@@ -33,6 +33,16 @@ describe('compute job summary', () => {
     expect(render(value)).not.toContain('Execution unavailable');
   });
 
+  it('names an empty project instead of reporting zero completed fold runs', () => {
+    const value = client();
+    for (const key of ['refit-builds', 'model-evaluations', 'interpretations'] as const) value.setQueryData([key, 'project'], { items: [] });
+    value.setQueryData(['development-batches', 'project'], { items: [], executionImplemented: true, executions: [] });
+    expect(render(value)).toContain('No jobs yet');
+    expect(render(value)).not.toContain('0 fold runs completed');
+    value.setQueryData(['development-batches', 'project'], { items: [], executionImplemented: true, executions: [{ batchId: 'batch', status: 'completed', runCounts: { total: 2, completed: 2 }, runs: [] }] });
+    expect(render(value)).toContain('No active jobs · 2 fold runs completed');
+  });
+
   it('retains known activity with an explicit stale status when a query fails', () => {
     const value = client();
     value.setQueryData(['refit-builds', 'project'], { items: [running] });

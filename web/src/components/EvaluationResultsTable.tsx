@@ -1,3 +1,5 @@
+import PairedPatientComparison from './PairedPatientComparison';
+import { formatStatistic } from '../api/statistics';
 import { Fragment, useState, type ReactNode } from 'react';
 import { computeStatusLabel, predictorMethodLabel, type ModelEvaluation, type FrozenPredictor } from '../api/predictors';
 import type { ModelExperimentSummary } from '../api/experiments';
@@ -8,6 +10,7 @@ import { shortRecordId } from '../lib/recordLabels';
 import { evaluationMetric, evaluationUnit } from '../lib/evaluationComparison';
 import { predictorConfigurationLabel, experimentPredictorLink } from '../lib/predictorGroups';
 import EvaluationMethodComparison from './EvaluationMethodComparison';
+import { StageCreateButton } from './StageActions';
 import { Badge, EmptyState } from './ui';
 import { StageLibraryToolbar, StageRecordManageButton } from './StageWorkflow';
 import './RunWorkspace.css';
@@ -15,10 +18,12 @@ import './RunWorkspace.css';
 export interface EvaluationRecordFilters { search: string; state: string; method: string; cohortId: string; sort: string }
 export const newEvaluationRecordFilters = (): EvaluationRecordFilters => ({ search: '', state: 'active', method: 'all', cohortId: '', sort: 'recent' });
 
-export default function EvaluationResultsTable({ records, predictors, experiments = [], cohorts, loading, onOpen, view = 'all', filters, onFiltersChange, actions }: {
-  records: ModelEvaluation[]; predictors: FrozenPredictor[]; experiments?: ModelExperimentSummary[];
+export default function EvaluationResultsTable({ project, records, predictors, experiments = [], cohorts, loading, onOpen, view = 'all', filters, onFiltersChange, actions, onCreate }: {
+  project?: string; records: ModelEvaluation[]; predictors: FrozenPredictor[]; experiments?: ModelExperimentSummary[];
   cohorts: EvaluationCohort[]; loading: boolean; onOpen: (id: string) => void; view?: 'all' | 'records' | 'comparison';
   filters?: EvaluationRecordFilters; onFiltersChange?: (value: EvaluationRecordFilters) => void; actions?: ReactNode;
+  /** The single next step offered when nothing has been evaluated yet. */
+  onCreate?: () => void;
 }) {
   const [localFilters, setLocalFilters] = useState(newEvaluationRecordFilters);
   const currentFilters = filters ?? localFilters;
@@ -52,11 +57,19 @@ export default function EvaluationResultsTable({ records, predictors, experiment
       <label className="label">Sort<select className="field" aria-label="Sort evaluations" value={sort} onChange={(event) => updateFilters({ sort: event.target.value })}><option value="recent">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name</option></select></label>
     </StageLibraryToolbar>}
     {loading ? <p role="status">Loading evaluations…</p> : null}
+    {view !== 'records' && !loading && project ? <PairedPatientComparison project={project} records={retained} /> : null}
     {view !== 'records' && !loading ? <EvaluationMethodComparison records={retained} predictors={predictors} cohortName={cohortName} batchName={batchName} onOpen={onOpen} /> : null}
     {view !== 'comparison' ? <>
-    {!loading && !visible.length ? <EmptyState title={records.length ? "No matching evaluations" : "No evaluations yet"} description={records.length ? "Try another search or clear the filters." : "Create an evaluation to test your saved models."} /> : visible.length ? <div className="run-table-scroll"><table className="run-table"><thead><tr><th className="run-name">Evaluation</th><th>Experiment</th><th>Method</th><th>Test cohort</th><th>Status</th><th className="run-number">Accuracy</th><th className="run-number">AUROC</th><th>Actions</th></tr></thead><tbody>{groups.map(([id, group]) => <Fragment key={id}>{groups.length > 1 ? <tr className="run-group"><th colSpan={8}>{group.name}</th></tr> : null}{group.items.map((item) => {
+    {!loading && !visible.length ? <EmptyState
+      icon="evaluation"
+      title={records.length ? 'No matching evaluations' : 'No evaluations yet'}
+      description={records.length ? 'Try another search or clear the filters.' : 'Create an evaluation to test your saved models.'}
+      action={records.length
+        ? <button type="button" className="btn btn-secondary" onClick={resetFilters}>Clear filters</button>
+        : onCreate ? <StageCreateButton onClick={onCreate}>Create evaluation</StageCreateButton> : null}
+    /> : visible.length ? <div className="run-table-scroll"><table className="run-table"><thead><tr><th className="run-name">Evaluation</th><th>Experiment</th><th>Method</th><th>Test cohort</th><th>Status</th><th className="run-number">Accuracy</th><th className="run-number">AUROC (95% CI)</th><th className="run-number">AUPRC (95% CI)</th><th>Actions</th></tr></thead><tbody>{groups.map(([id, group]) => <Fragment key={id}>{groups.length > 1 ? <tr className="run-group"><th colSpan={9}>{group.name}</th></tr> : null}{group.items.map((item) => {
       const source = predictorById.get(item.manifest.predictorId)?.manifest;
-      return <tr key={item.id}><td><button type="button" className="text-button stage-record-name" title={`Open ${item.manifest.name} · Predictor: ${source?.name ?? item.manifest.predictorId}`} onClick={() => onOpen(item.id)}>{item.manifest.name}</button></td><td><a href={experimentPredictorLink(item.manifest.experimentId, item.manifest.predictorId)}>{experimentName(item)}</a>{source ? <><small>{batchName(source.experimentId, source.batchId)}</small><small title={source.candidateId}>{predictorConfigurationLabel(source)}</small></> : null}</td><td>{source ? predictorMethodLabel(source.method) : 'Unavailable'}<small>Train {source?.trainingSeed ?? '—'} / split {source?.splitSeed ?? '—'}</small></td><td>{cohortName(item.manifest.cohortId)}<small>{evaluationUnit(item) === 'unavailable' ? 'Scores unavailable' : `${evaluationUnit(item)} scoring`}</small></td><td><Badge>{computeStatusLabel(item.execution)}</Badge>{item.lifecycleState !== 'active' ? <small>{lifecycleLabel[item.lifecycleState]}</small> : null}</td><td>{format(evaluationMetric(item, 'accuracy'))}</td><td>{format(evaluationMetric(item, 'auroc'))}</td><td><StageRecordManageButton type="configuration" id={item.id} name={item.manifest.name} /></td></tr>;
+      return <tr key={item.id}><td><button type="button" className="text-button stage-record-name" title={`Open ${item.manifest.name} · Predictor: ${source?.name ?? item.manifest.predictorId}`} onClick={() => onOpen(item.id)}>{item.manifest.name}</button></td><td><a href={experimentPredictorLink(item.manifest.experimentId, item.manifest.predictorId)}>{experimentName(item)}</a>{source ? <><small>{batchName(source.experimentId, source.batchId)}</small><small title={source.candidateId}>{predictorConfigurationLabel(source)}</small></> : null}</td><td>{source ? predictorMethodLabel(source.method) : 'Unavailable'}<small>Train {source?.trainingSeed ?? '—'} / split {source?.splitSeed ?? '—'}</small></td><td>{cohortName(item.manifest.cohortId)}<small>{evaluationUnit(item) === 'unavailable' ? 'Scores unavailable' : `${evaluationUnit(item)} scoring`}</small></td><td><Badge>{computeStatusLabel(item.execution)}</Badge>{item.lifecycleState !== 'active' ? <small>{lifecycleLabel[item.lifecycleState]}</small> : null}</td><td>{format(evaluationMetric(item, 'accuracy'))}</td>{(['auroc', 'auprc'] as const).map((metric) => <td key={metric}>{formatStatistic(evaluationMetric(item, metric), item.execution?.result?.metrics?.selected.confidenceIntervals?.[metric])}</td>)}<td><StageRecordManageButton type="configuration" id={item.id} name={item.manifest.name} /></td></tr>;
     })}</Fragment>)}</tbody></table></div> : null}
     </> : null}
   </div>;

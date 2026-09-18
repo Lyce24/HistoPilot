@@ -10,7 +10,15 @@ from histopilot.application.development import development_plans
 from histopilot.application.feature_bundles import FeatureBundleService, _hash
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.mil_inputs import MILInputService
+from histopilot.application.protocols import FilterEvaluator, ProtocolService
+from histopilot.domain.features import representation_kind
+from histopilot.models import catalog
 from histopilot.schemas.development import DevelopmentBatchSpec
+from histopilot.schemas.training_controls import (
+    sampling_memberships,
+    validate_selection_metric,
+    validate_training_controls,
+)
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError, ensure_managed_directory, writer_lock
 from histopilot.workers.compute_archive import prepare_compute_archive
@@ -24,11 +32,15 @@ from histopilot.workers.training_process import (
     gpu_snapshot,
     host_snapshot,
     now,
-    process_alive,
+    owned_processes,
     read_json,
     read_progress,
     resource_plan,
     save_state,
+    stop_owned_processes,
+)
+from histopilot.workers.training_process import (
+    confirmed_process_alive as process_alive,
 )
 
 
@@ -40,6 +52,15 @@ def membership_plan_id(row: dict) -> str:
     }
     metadata.setdefault("planId", f"seed:{row.get('seed', 0)}/fold:{row.get('fold')}")
     return _hash(metadata)
+
+
+def run_processes(run: dict) -> list:
+    process = run.get("process")
+    if process_alive(process):
+        return [process]
+    # Fold workers have always launched with start_new_session=True, including
+    # saved runs that predate the explicit processGroupId metadata.
+    return owned_processes(process, process["pid"] if process else None)
 
 
 class TrainingService:
@@ -68,9 +89,28 @@ class TrainingService:
         if not (folder / "state.json").exists():
             return None
         state = read_json(folder / "state.json")
-        if state["status"] in ACTIVE and not self.executor.running(state["sessionName"]):
-            children = [run for run in state["runs"] if process_alive(run.get("process"))]
-            if not process_alive(state.get("process")) and not children:
+        scheduler_alive = process_alive(state.get("process"))
+        children = [run for run in state["runs"] if run_processes(run)]
+        if scheduler_alive or children:
+            # A terminal receipt can precede cleanup, or a scheduler can die
+            # after writing failure while isolated loader descendants survive.
+            if state["status"] not in ACTIVE:
+                state["status"] = "running"
+            if children and not scheduler_alive:
+                state["findings"] = [
+                    *[
+                        item
+                        for item in state.get("findings", [])
+                        if item.get("code") != "ORPHAN_TRAINING_RUN"
+                    ],
+                    {
+                        "severity": "warning",
+                        "code": "ORPHAN_TRAINING_RUN",
+                        "message": "Training workers are still running without their scheduler. Cancel this batch and wait for its workers to stop before resuming.",
+                    },
+                ]
+        elif state["status"] in ACTIVE and not self.executor.running(state["sessionName"]):
+            if not scheduler_alive and not children:
                 # Return a reconciled view. Only the scheduler writes active state.
                 state["status"] = (
                     "cancelled" if (folder / "cancel.json").exists() else "interrupted"
@@ -81,14 +121,6 @@ class TrainingService:
                 from histopilot.workers.training_process import counts
 
                 state["runCounts"] = counts(state["runs"])
-            elif not process_alive(state.get("process")):
-                state["findings"] = [
-                    {
-                        "severity": "warning",
-                        "code": "ORPHAN_TRAINING_RUN",
-                        "message": "A training child is still running. Wait for it to finish before resuming this batch.",
-                    }
-                ]
         state["cancelRequested"] = (folder / "cancel.json").exists()
         if include_progress:
             for run in state["runs"]:
@@ -173,13 +205,16 @@ class TrainingService:
         target = protocol["spec"]["target"]
         if target["task"] not in {"binary_classification", "multiclass_classification"}:
             raise StorageError(
-                "ABMIL currently supports binary and multiclass classification.",
+                "MIL training supports binary and multiclass classification.",
                 "TRAINING_TASK_UNSUPPORTED",
                 422,
             )
-        if any(item["recipe"]["model"].lower() != "abmil" for item in manifest["configurations"]):
+        if any(
+            not catalog.is_supported(item["recipe"]["model"])
+            for item in manifest["configurations"]
+        ):
             raise StorageError(
-                "Only ABMIL is connected to the training worker.", "TRAINING_MODEL_UNSUPPORTED", 422
+                f"Choose one of: {catalog.choices()}.", "TRAINING_MODEL_UNSUPPORTED", 422
             )
         if development_plans(protocol) != manifest["splitPlans"]:
             raise StorageError(
@@ -197,22 +232,58 @@ class TrainingService:
                     "Unexpected final-test or split membership.", "TRAINING_SPLITS_CHANGED"
                 )
             groups[key].append(row)
+        cohort_columns = {
+            item["recipe"].get("cohortColumn", "cohort")
+            for item in manifest["configurations"]
+            if item["recipe"].get("samplingStrategy")
+            in {"cohort_balanced", "cohort_label_balanced"}
+        }
+        cohort_values = {}
+        if cohort_columns:
+            _, _, dataset_rows = ProtocolService(self.store, self.filesystem)._load_dataset(
+                protocol["datasetId"]
+            )
+            required_slides = {row["slideId"] for row in protocol["memberships"]}
+            cohort_values = {
+                column: {
+                    row["slideId"]: FilterEvaluator.field(row, column)
+                    for row in dataset_rows
+                    if row["slideId"] in required_slides
+                }
+                for column in sorted(cohort_columns)
+            }
         for rows in groups.values():
             if set(row["partition"] for row in rows) != {"train", "val", "test"}:
                 raise StorageError(
                     "Every fold requires training, validation, and development assessment rows.",
                     "TRAINING_PARTITION_MISSING",
                 )
-            validation_classes = {row["label"] for row in rows if row["partition"] == "val"}
-            if any(
-                item["recipe"]["checkpointMetric"] == "validation_auroc"
-                for item in manifest["configurations"]
-            ) and validation_classes != set(target["classes"]):
-                raise StorageError(
-                    "Validation AUROC requires every target class in each validation fold. Choose validation loss or revise the protocol.",
-                    "TRAINING_METRIC_UNAVAILABLE",
-                )
+            for item in manifest["configurations"]:
+                try:
+                    selected_rows = sampling_memberships(rows, item["recipe"], cohort_values)
+                    validate_training_controls(item["recipe"], target, selected_rows)
+                    if spec.candidateSelection == "best_validation":
+                        validate_selection_metric(spec.selectionMetric, target, selected_rows)
+                except ValueError as error:
+                    code = (
+                        "TRAINING_METRIC_UNAVAILABLE"
+                        if "Validation AUROC" in str(error)
+                        else "TRAINING_RECIPE_UNAVAILABLE"
+                    )
+                    raise StorageError(str(error), code, 422) from error
         feature = self.store.get_configuration(binding["featureSetId"])
+        feature_kind = representation_kind(feature["manifest"])
+        if any(
+            item["recipe"].get("inputMode", "image") != "clinical"
+            and catalog.feature_kind(item["recipe"].get("model")) != feature_kind
+            for item in manifest["configurations"]
+        ):
+            raise StorageError(
+                f"This bundle holds {feature_kind} features. Choose one of: "
+                f"{catalog.choices(feature_kind)}.",
+                "TRAINING_FEATURE_KIND_MISMATCH",
+                422,
+            )
         bundles = FeatureBundleService(self.store, self.filesystem)
         bundle = bundles.get(spec.inputs.featureBundleId)
         files = {row["slideId"]: row for row in feature["manifest"]["files"]}
@@ -231,6 +302,12 @@ class TrainingService:
             pack = packing.artifact(binding["packArtifactId"])
             pack_path, pack_stamps = pack["outputPath"], pack["packStamps"]
         source_stamps = {row["path"]: row for row in files.values()}
+        from histopilot.application.clinical_inputs import development_clinical_values
+
+        clinical_values = development_clinical_values(
+            self.store, self.filesystem, protocol,
+            [item["recipe"] for item in manifest["configurations"]],
+        )
         data = {
             "featureFiles": files,
             "loadingPolicy": binding["resolvedLoadingPolicy"],
@@ -238,7 +315,24 @@ class TrainingService:
             "packStamps": pack_stamps,
             "sourceStamps": source_stamps,
             "featureDim": next(iter(dimensions)),
+            **({"cohortValues": cohort_values} if cohort_values else {}),
+            **({"clinicalValues": clinical_values} if clinical_values else {}),
         }
+        from histopilot.schemas.nnmil import resolve_nnmil_recipe
+
+        resolutions = []
+        try:
+            for candidate in manifest["configurations"]:
+                for plan_id, rows in groups.items():
+                    _, resolution = resolve_nnmil_recipe(candidate["recipe"], rows, files)
+                    if resolution:
+                        resolutions.append({"candidateId": candidate["id"],
+                                            "splitPlanId": plan_id, **resolution})
+        except ValueError as error:
+            raise StorageError(str(error), "MIL_BAG_PLANNING_INVALID", 422) from error
+        if resolutions != manifest.get("nnmilPlanning", []):
+            raise StorageError("Fitting features differ from the frozen MIL bag preview.",
+                               "TRAINING_INPUTS_STALE", 409)
         plan = {
             "version": 1,
             "batchId": batch["id"],
@@ -252,12 +346,15 @@ class TrainingService:
             ],
             "featureBundleContentHash": bundle["contentHash"],
             "target": target,
+            **({"selectionMetric": spec.selectionMetric} if spec.selectionMetric else {}),
+            **({"candidateSelection": spec.candidateSelection} if spec.candidateSelection else {}),
             "resources": resources,
             "configurations": manifest["configurations"],
             "splitPlans": manifest["splitPlans"],
             "runs": manifest["runs"],
             "memberships": groups,
             "data": data,
+            **({"nnmilPlanning": resolutions} if resolutions else {}),
         }
         return plan, bundles._freshness_guard(feature, bundle["manifest"])
 
@@ -476,7 +573,7 @@ class TrainingService:
                     started = (
                         session_running
                         or current.get("process") is not None
-                        or any(process_alive(run.get("process")) for run in current["runs"])
+                        or any(run_processes(run) for run in current["runs"])
                         or current["status"] not in ACTIVE
                     )
                 except (OSError, RuntimeError, subprocess.SubprocessError) as inspection_error:
@@ -521,7 +618,7 @@ class TrainingService:
             busy = state and (
                 state["status"] in ACTIVE
                 or process_alive(state.get("process"))
-                or any(process_alive(run.get("process")) for run in state["runs"])
+                or any(run_processes(run) for run in state["runs"])
             )
             if not replay and busy:
                 write_json(
@@ -531,13 +628,27 @@ class TrainingService:
                     # A scheduler can disappear while its independently isolated children
                     # survive. Signal only the recorded process groups whose identity still
                     # matches; a cancel marker alone cannot reach an orphaned child.
-                    for run in state["runs"]:
-                        process = run.get("process")
-                        if process_alive(process):
-                            try:
-                                os.killpg(process["pid"], signal.SIGTERM)
-                            except ProcessLookupError:
-                                pass
+                    orphans = [run["process"] for run in state["runs"] if run_processes(run)]
+                    errors = []
+                    # Signal all groups before waiting: a stubborn first group
+                    # must not prevent cancellation from reaching later folds.
+                    for process in orphans:
+                        try:
+                            os.killpg(process["pid"], signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                        except OSError as error:
+                            errors.append(error)
+                    for process in orphans:
+                        try:
+                            stop_owned_processes(process)
+                        except (OSError, ValueError) as error:
+                            errors.append(error)
+                    if errors:
+                        raise StorageError(
+                            "Cancellation was requested for every orphan worker, but some workers could not be confirmed stopped. Their reservations are retained.",
+                            "TRAINING_CLEANUP_FAILED",
+                        ) from errors[0]
             operations[operation_id] = "cancel"
             write_json(path, operations)
         return self.execution(identity, include_inactive=True)

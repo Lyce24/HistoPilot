@@ -11,6 +11,30 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 
 
+def patch_projection(in_dim, embed_dim, num_fc_layers, dropout):
+    """Shared patch encoder; preserve the native ABMIL state-dict layout."""
+    layers = []
+    for layer in range(num_fc_layers):
+        layers.extend([nn.Linear(in_dim if layer == 0 else embed_dim, embed_dim), nn.ReLU()])
+        if layer < num_fc_layers - 1 and dropout > 0:
+            layers.append(nn.Dropout(dropout))
+    return nn.Sequential(*layers)
+
+
+def prepare_bags(features, mask, in_dim):
+    if features.ndim != 3 or features.shape[-1] != in_dim or features.shape[1] == 0:
+        raise ValueError("Features must have shape [bags, nonempty patches, input dimensions].")
+    if mask is None:
+        mask = torch.ones(features.shape[:2], dtype=torch.bool, device=features.device)
+    elif mask.shape != features.shape[:2]:
+        raise ValueError("Attention masks must match the bags and patch dimensions.")
+    else:
+        mask = mask.to(device=features.device, dtype=torch.bool)
+    if not bool(mask.any(dim=1).all()):
+        raise ValueError("Every bag must contain at least one unmasked patch.")
+    return features.masked_fill(~mask.unsqueeze(-1), 0).float(), mask
+
+
 class ABMIL(nn.Module):
     """Patch projection, gated attention pooling, and a multiclass logit head."""
 
@@ -28,26 +52,14 @@ class ABMIL(nn.Module):
         gradient_checkpointing: bool = False,
     ):
         super().__init__()
-        if min(in_dim, embed_dim, attention_dim, num_fc_layers) < 1 or num_classes < 2:
-            raise ValueError("ABMIL requires positive dimensions/layers and at least two classes.")
+        if min(in_dim, embed_dim, attention_dim, num_fc_layers, num_classes) < 1:
+            raise ValueError("ABMIL requires positive dimensions, layers, and output logits.")
         if not 0 <= dropout < 1 or not 0 <= input_dropout < 1:
             raise ValueError("Dropout probabilities must be in [0, 1).")
         self.in_dim = in_dim
         self.gradient_checkpointing = gradient_checkpointing
         self.input_dropout = nn.Dropout(input_dropout)
-        layers = []
-        for layer in range(num_fc_layers):
-            layers.extend(
-                [
-                    nn.Linear(in_dim if layer == 0 else embed_dim, embed_dim),
-                    nn.ReLU(),
-                ]
-            )
-            # Match OceanPath's projection: regularize between FC layers, while
-            # keeping the final projected embedding intact for attention.
-            if layer < num_fc_layers - 1 and dropout > 0:
-                layers.append(nn.Dropout(dropout))
-        self.patch_embed = nn.Sequential(*layers)
+        self.patch_embed = patch_projection(in_dim, embed_dim, num_fc_layers, dropout)
         self.attention_tanh = nn.Sequential(
             nn.Linear(embed_dim, attention_dim), nn.Tanh(), nn.Dropout(dropout)
         )
@@ -70,18 +82,8 @@ class ABMIL(nn.Module):
         return self.attention_score(attention).squeeze(-1)
 
     def forward(self, features, mask=None, *, return_attention=False):
-        if features.ndim != 3 or features.shape[-1] != self.in_dim or features.shape[1] == 0:
-            raise ValueError("Features must have shape [bags, nonempty patches, input dimensions].")
-        if mask is None:
-            mask = torch.ones(features.shape[:2], dtype=torch.bool, device=features.device)
-        elif mask.shape != features.shape[:2]:
-            raise ValueError("Attention masks must match the bags and patch dimensions.")
-        else:
-            mask = mask.to(device=features.device, dtype=torch.bool)
-        if not bool(mask.any(dim=1).all()):
-            raise ValueError("Every bag must contain at least one unmasked patch.")
         # Padding must not affect projections or produce 0*NaN during pooling.
-        features = features.masked_fill(~mask.unsqueeze(-1), 0).float()
+        features, mask = prepare_bags(features, mask, self.in_dim)
         embeddings = self.patch_embed(self.input_dropout(features))
         attention = (
             checkpoint(self._attention_logits, embeddings, use_reentrant=False)

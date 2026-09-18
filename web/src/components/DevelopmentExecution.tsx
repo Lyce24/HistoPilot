@@ -1,7 +1,8 @@
+import { formatStatistic } from '../api/statistics';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { development, trainingActive, latestExecution } from '../api/development';
-import type { DevelopmentResults, FrozenBatch, TrainingExecution, TrainingRuntime } from '../api/development';
+import type { CandidateResult, DevelopmentResults, FrozenBatch, TrainingExecution, TrainingRuntime } from '../api/development';
 import { Badge, ErrorNotice } from './ui';
 import { Findings } from './ScientificUI';
 import { downloadJSON } from '../lib/download';
@@ -80,7 +81,7 @@ export default function DevelopmentExecution({ project, batch, implemented, know
     {implemented && view !== 'results' ? execution ? <ExecutionEvidence project={trackingEnabled ? project : undefined} execution={execution} runtime={canChange ? runtime.data : undefined} showStatus={false} /> : canChange && runtime.data ? <DeviceRuntime runtime={runtime.data} /> : null : null}
     {view === 'results' ? stage === 'running' ? <p className="muted">Results unlock when the experiment finishes.</p> : <>
       {resultsEnabled && results.isError ? <><p className="callout callout-warning" role="status">Results could not refresh.{results.data ? ' Showing the last successfully loaded results.' : ''}</p><button type="button" className="btn btn-secondary btn-small" onClick={() => void results.refetch()}>Retry results</button></> : null}
-      {!results.isError || results.data ? <ResultsTable batch={batch} results={results.data} loading={resultsEnabled && results.isPending} /> : null}
+      {!results.isError || results.data ? <ResultsTable project={trackingEnabled ? project : undefined} batch={batch} results={results.data} loading={resultsEnabled && results.isPending} /> : null}
     </> : null}
   </div>;
 }
@@ -138,24 +139,49 @@ export function ExecutionEvidence({ execution, project, runtime, showStatus = tr
   </section>;
 }
 
-export function ResultsTable({ batch, results, loading }: { batch: FrozenBatch; results?: DevelopmentResults; loading: boolean }) {
+export type ResultScoringUnit = 'selected' | 'patient' | 'slide';
+export function candidateDisplayMetrics(result: CandidateResult, unit: ResultScoringUnit) {
+  if (!result.complete) return null;
+  return unit === 'selected' ? result.metrics : result.metricDetails?.[unit] ?? null;
+}
+
+export function OOFPredictionDownloads({ project, batchId, candidate }: { project: string; batchId: string; candidate: CandidateResult }) {
+  const [pending, setPending] = useState<'slide' | 'patient' | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const inFlight = useRef(false);
+  if (!candidate.complete) return null;
+  async function download(unit: 'slide' | 'patient') {
+    if (inFlight.current) return;
+    inFlight.current = true; setPending(unit); setError(null);
+    try { await development.downloadOOF(project, batchId, candidate.candidateId, candidate.trainingSeed, candidate.splitSeed, unit); }
+    catch (reason) { setError(reason instanceof Error ? reason : new Error('Could not download OOF predictions.')); }
+    finally { inFlight.current = false; setPending(null); }
+  }
+  return <div><ErrorNotice error={error} /><div className="inline-actions">{(['patient', 'slide'] as const).map((unit) => <button key={unit} type="button" className="btn btn-secondary btn-small" disabled={pending !== null} onClick={() => void download(unit)}>{pending === unit ? 'Downloading…' : `Download ${unit} OOF predictions`}</button>)}</div></div>;
+}
+
+export function ResultsTable({ project, batch, results, loading }: { project?: string; batch: FrozenBatch; results?: DevelopmentResults; loading: boolean }) {
+  const [unit, setUnit] = useState<ResultScoringUnit>('selected');
   const numbers = new Map(batch.manifest.configurations.map((item) => [item.id, item.number]));
   const complete = results?.candidates.filter((result) => result.complete).length ?? 0;
   const incomplete = (results?.candidates.length ?? 0) - complete;
   const recipes = new Map(batch.manifest.configurations.map((item) => [item.id, item.recipe]));
   return <>
-    <p>Validation selects each run’s checkpoint. Assessment predictions use its held-out fold. OOF scores combine all completed folds for one configuration and seed pair.</p>
+    <p>Checkpoints follow each configuration’s frozen evaluation policy. Assessment predictions use held-out folds. Out-of-fold (OOF) scores combine all completed folds for one configuration and seed pair.</p>
+    {results?.selection ? <p>{results.selection.ready ? `Selected configuration ${numbers.get(results.selection.selectedCandidateId!) ?? results.selection.selectedCandidateId}` : 'Configuration selection awaits all validation results'} · {results.selection.unit} {results.selection.metric.replaceAll('_', ' ')} · mean across folds and seeds.</p> : null}
     {results?.findings ? <Findings findings={results.findings} /> : null}
     {loading ? <p role="status">Loading experiment results…</p> : !results?.candidates.length ? <p>No complete configuration results are available. Failed or cancelled runs do not produce successful results.</p> : <>
       <div className="experiment-result-summary"><p><strong>{complete}</strong> complete configuration / seed groups</p>{incomplete ? <p><strong>{incomplete}</strong> incomplete groups · scores unavailable</p> : null}</div>
-      <div className="development-table"><table><thead><tr><th>Configuration</th><th>Learning rate</th><th>Weight decay</th><th>Train / split seed</th><th>Coverage</th><th>Scoring unit</th><th>OOF AUROC</th><th>OOF accuracy</th></tr></thead><tbody>{results.candidates.map((result) => {
+      <label className="label">OOF metrics by prediction unit<select className="field" value={unit} onChange={(event) => setUnit(event.target.value as ResultScoringUnit)}><option value="selected">Primary target unit</option><option value="patient">Patient</option><option value="slide">Slide</option></select><small>This changes the displayed assessment metrics. Checkpoint and configuration selection retain their frozen validation metric and unit.</small></label>
+      <div className="development-table"><table><thead><tr><th>Configuration</th><th>Learning rate</th><th>Weight decay</th><th>Train / split seed</th><th>Coverage</th><th>Scoring unit</th><th>Validation selection score</th><th>OOF AUROC (95% CI)</th><th>OOF AUPRC (95% CI)</th><th>OOF accuracy</th></tr></thead><tbody>{results.candidates.map((result) => {
         const recipe = recipes.get(result.candidateId);
-        const measured = result.complete && result.metrics?.available !== false;
-        return <tr key={`${result.candidateId}-${result.trainingSeed}-${result.splitSeed}`}><th scope="row">{numbers.get(result.candidateId) ?? result.candidateId}</th><td>{recipe?.learningRate ?? '—'}</td><td>{recipe?.weightDecay ?? '—'}</td><td>{result.trainingSeed} / {result.splitSeed}</td><td>{result.complete ? 'Complete' : 'Incomplete'} · {result.completedRuns} / {result.totalRuns} runs{!result.complete ? <small> · Waiting for all folds</small> : null}</td><td>{result.metricDetails?.unit ?? 'See details'}</td><td>{measured ? metricValue(result.metrics?.auroc) : '—'}</td><td>{measured ? metricValue(result.metrics?.accuracy) : '—'}</td></tr>;
+        const metrics = candidateDisplayMetrics(result, unit);
+        const measured = metrics && metrics.available !== false;
+        return <tr key={`${result.candidateId}-${result.trainingSeed}-${result.splitSeed}`}><th scope="row">{numbers.get(result.candidateId) ?? result.candidateId}{result.selected ? ' · Selected' : ''}</th><td>{recipe?.learningRate ?? '—'}</td><td>{recipe?.weightDecay ?? '—'}</td><td>{result.trainingSeed} / {result.splitSeed}</td><td>{result.complete ? 'Complete' : 'Incomplete'} · {result.completedRuns} / {result.totalRuns} runs{!result.complete ? <small> · Waiting for all folds</small> : null}</td><td>{unit === 'selected' ? result.metricDetails?.unit ?? 'See details' : unit}</td><td>{metricValue(result.selectionScore)}</td>{(['auroc', 'auprc'] as const).map((metric) => <td key={metric}>{measured ? formatStatistic(metrics[metric], metrics.confidenceIntervals?.[metric]) : '—'}</td>)}<td>{measured ? metricValue(metrics.accuracy) : '—'}</td></tr>;
       })}</tbody></table></div>
-      <p className="muted">— means unavailable. Incomplete groups are excluded from score comparison.</p>
+      <p className="muted">— means unavailable. Incomplete groups are excluded from score comparison. Primary metrics use each configuration's frozen scoring unit. Patient-level intervals require verified patient IDs and resample patients. The results export includes both scoring units and their available evidence.</p>
       <div className="inline-actions"><button type="button" className="btn btn-secondary btn-small" onClick={() => downloadJSON(`${batch.manifest.spec.batchName}-results.json`, results)}>Export results</button></div>
-      <details><summary>Scoring details and prediction files</summary>{results.selectionNote ? <p className="muted">{results.selectionNote}</p> : null}{results.candidates.filter((result) => result.complete).map((result) => <div key={`${result.candidateId}-${result.trainingSeed}-${result.splitSeed}`}><h4>Configuration {numbers.get(result.candidateId) ?? result.candidateId} · Train seed {result.trainingSeed} · Split seed {result.splitSeed}</h4><p>{metricsText(result.metrics)}</p><MetricEvidence details={result.metricDetails} />{result.oofPath ? <p>OOF predictions: <code>{result.oofPath}</code></p> : null}</div>)}</details>
+      <details><summary>Scoring details and prediction files</summary>{results.selectionNote ? <p className="muted">{results.selectionNote}</p> : null}{results.candidates.filter((result) => result.complete).map((result) => <div key={`${result.candidateId}-${result.trainingSeed}-${result.splitSeed}`}><h4>Configuration {numbers.get(result.candidateId) ?? result.candidateId} · Train seed {result.trainingSeed} · Split seed {result.splitSeed}</h4><p>{metricsText(result.metrics)}</p><MetricEvidence details={result.metricDetails} />{project ? <OOFPredictionDownloads project={project} batchId={batch.id} candidate={result} /> : null}{result.oofPath ? <p>OOF predictions: <code>{result.oofPath}</code></p> : null}</div>)}</details>
     </>}
   </>;
 }

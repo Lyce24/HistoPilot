@@ -39,6 +39,12 @@
 .connection-state .btn + .btn {
   margin-left: 10px;
 }
+.settings-fields {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
 @media (max-width: 720px) {
   .workspace-banner {
     flex-wrap: wrap;

@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import typer
 
+from histopilot.archive_cli import register_archive_commands
 from histopilot.config import Settings, load_settings
 from histopilot.contracts.experiment import ExperimentSpec
 from histopilot.doctor import system_report
@@ -21,6 +22,8 @@ from histopilot.service_lock import service_lock
 app = typer.Typer(
     no_args_is_help=True, help="Local-first PFM–MIL workflows for computational pathology."
 )
+
+register_archive_commands(app)
 
 
 def create_dev_app():

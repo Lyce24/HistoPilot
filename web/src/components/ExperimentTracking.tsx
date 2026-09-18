@@ -1,7 +1,8 @@
+import PatientAnalysisResults from './PatientAnalysisResults';
 import { useId, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { queryOptions, useQuery } from '@tanstack/react-query';
 import { development } from '../api/development';
-import type { FrozenBatch, PlannedRun, TrainingExecution, TrainingHistory, TrainingMetricDetails, TrainingMetrics, TrainingRun } from '../api/development';
+import type { FrozenBatch, PlannedRun, TrainingExecution, TrainingHistory, TrainingMetricDetails, TrainingMetrics, TrainingRecipe, TrainingRun } from '../api/development';
 import { finiteNumber } from '../lib/evidenceCharts';
 import { downloadJSON } from '../lib/download';
 import CurveChart from './CurveChart';
@@ -21,7 +22,7 @@ export function metricsText(metrics?: TrainingMetrics | null) {
 
 export function MetricEvidence({ details }: { details?: TrainingMetricDetails }) {
   if (!details) return null;
-  return <details><summary>{details.unit} scoring details</summary><p>Class order: {details.classOrder.join(', ')}{details.positiveClass ? ` · Positive class: ${details.positiveClass}` : ''}</p><p>Slide: {metricsText(details.slide)}</p><p>Patient ({details.patientAggregation.replaceAll('_', ' ')}): {metricsText(details.patient)}</p>{details.selected.missingClasses?.length ? <p>Missing classes: {details.selected.missingClasses.join(', ')}. AUROC may be unavailable.</p> : null}</details>;
+  return <details><summary>{details.unit} scoring details</summary><p>Class order: {details.classOrder.join(', ')}{details.positiveClass ? ` · Positive class: ${details.positiveClass}` : ''}</p><p>Slide: {metricsText(details.slide)}</p><p>Patient ({details.patientAggregation.replaceAll('_', ' ')}): {metricsText(details.patient)}</p><PatientAnalysisResults value={details.patientAnalysis} />{details.selected.missingClasses?.length ? <p>Missing classes: {details.selected.missingClasses.join(', ')}. AUROC may be unavailable.</p> : null}</details>;
 }
 
 function RunDiagnostics({ run, peakRamGb }: { run?: TrainingRun; peakRamGb?: number }) {
@@ -46,16 +47,18 @@ export function runLabel(batch: FrozenBatch, run: PlannedRun | TrainingRun) {
 
 export function EpochProgress({ run }: { run?: TrainingRun }) {
   const progress = run?.progress;
-  if (!progress || !finiteNumber(progress.epoch) || !finiteNumber(progress.maxEpochs) || progress.maxEpochs <= 0) return <span className="muted">No epoch reported</span>;
-  return <div className="experiment-epoch"><span>Epoch {progress.epoch} / {progress.maxEpochs}</span><progress aria-label="Completed epochs" value={Math.min(progress.epoch, progress.maxEpochs)} max={progress.maxEpochs} />{run?.status === 'completed' && progress.epoch < progress.maxEpochs ? <small>Stopped early</small> : null}</div>;
+  const finalEpoch = run?.status === 'completed' && wholeEpoch(run.result?.epochsCompleted) ? run.result.epochsCompleted : null;
+  const epoch = finalEpoch ?? progress?.epoch;
+  if (!finiteNumber(epoch) || !progress || !finiteNumber(progress.maxEpochs) || progress.maxEpochs <= 0) return <span className="muted">{finalEpoch === null ? 'No epoch reported' : `${finalEpoch} completed epochs`}</span>;
+  return <div className="experiment-epoch"><span>Epoch {epoch} / {progress.maxEpochs}</span><progress aria-label="Completed epochs" value={Math.min(epoch, progress.maxEpochs)} max={progress.maxEpochs} />{run?.status === 'completed' && epoch < progress.maxEpochs ? <small>Stopped early</small> : null}</div>;
 }
 
-export function LossHistory({ history, validationMetric = 'loss', finished = false, illustrative = false }: { history?: TrainingHistory; validationMetric?: 'loss' | 'accuracy' | 'auroc'; finished?: boolean; illustrative?: boolean }) {
+export function LossHistory({ history, validationMetric = 'loss', finished = false, illustrative = false, latestCheckpoint = false }: { history?: TrainingHistory; validationMetric?: 'loss' | 'accuracy' | 'auroc'; finished?: boolean; illustrative?: boolean; latestCheckpoint?: boolean }) {
   const rows = history?.rows ?? [];
   if (history?.warning) return <p className="callout callout-warning" role="status">{history.warning}</p>;
   if (!rows.length) return <p className="callout">{finished ? 'No epoch history was recorded for this run.' : 'Loss history appears after the first completed epoch.'}</p>;
   const unit = rows.find((row) => row.checkpointUnit)?.checkpointUnit;
-  const description = `${illustrative ? 'Synthetic example values for each epoch.' : 'Recorded at each completed epoch.'} Validation${unit ? ` uses ${unit} scoring and` : ''} selects checkpoints; it is not held-out assessment.`;
+  const description = `${illustrative ? 'Synthetic example values for each epoch.' : 'Recorded at each completed epoch.'} ${latestCheckpoint ? `Validation${unit ? ` uses ${unit} scoring and` : ''} monitors training. Evaluation uses the latest completed epoch.` : `Validation${unit ? ` uses ${unit} scoring and` : ''} selects checkpoints; it is not held-out assessment.`}`;
   const xRange = [rows[0].epoch, Math.max(rows[0].epoch + 1, rows[rows.length - 1].epoch)] as const;
   const trainingPoints = rows.map((row) => ({ x: row.epoch, y: row.trainingLoss }));
   const validationPoints = rows.map((row) => ({ x: row.epoch, y: row.validation.loss ?? null }));
@@ -64,20 +67,47 @@ export function LossHistory({ history, validationMetric = 'loss', finished = fal
     {history?.truncated ? <p className="muted">Showing the latest {rows.length} of {history.totalRows} completed epochs. The complete history remains in the run output directory.</p> : null}
     <div className="experiment-history-charts">
       {hasLoss ? <CurveChart title="Loss history" description={description} xLabel="Epoch" integerX yLabel="Loss" xRange={xRange} series={[{ label: 'Training loss', points: trainingPoints }, { label: 'Validation loss', points: validationPoints, dashed: true }]} /> : <p className="callout">No loss measurements are available in the recorded history.</p>}
-      {validationMetric !== 'loss' ? <CurveChart title={`Validation ${validationMetric === 'auroc' ? 'AUROC' : 'accuracy'}`} description={`Checkpoint selection metric${unit ? ` · ${unit} scoring` : ''}. Missing values remain gaps.`} xLabel="Epoch" integerX yLabel={validationMetric === 'auroc' ? 'AUROC' : 'Accuracy'} xRange={xRange} yRange={[0, 1]} series={[{ label: `Validation ${validationMetric === 'auroc' ? 'AUROC' : 'accuracy'}`, points: rows.map((row) => ({ x: row.epoch, y: row.validation[validationMetric] ?? null })) }]} /> : null}
+      {validationMetric !== 'loss' ? <CurveChart title={`Validation ${validationMetric === 'auroc' ? 'AUROC' : 'accuracy'}`} description={`${latestCheckpoint ? 'Training monitor' : 'Checkpoint selection metric'}${unit ? ` · ${unit} scoring` : ''}. Missing values remain gaps.`} xLabel="Epoch" integerX yLabel={validationMetric === 'auroc' ? 'AUROC' : 'Accuracy'} xRange={xRange} yRange={[0, 1]} series={[{ label: `Validation ${validationMetric === 'auroc' ? 'AUROC' : 'accuracy'}`, points: rows.map((row) => ({ x: row.epoch, y: row.validation[validationMetric] ?? null })) }]} /> : null}
     </div>
     {history ? <button type="button" className="btn btn-secondary btn-small" onClick={() => downloadJSON(`${illustrative ? 'synthetic-' : ''}${history.runId}-epoch-history.json`, illustrative ? { ...history, synthetic: true, executable: false } : history)}>Export {illustrative ? 'synthetic ' : ''}epoch history</button> : null}
   </>;
 }
 
-function RunHistory({ project, batch, run }: { project: string; batch: FrozenBatch; run: TrainingRun }) {
+export function runHistoryOptions(project: string, batchId: string, run: TrainingRun) {
   const active = ['queued', 'running'].includes(run.status);
   // A terminal transition must read the final epoch even when the poll stopped
   // just before the worker wrote it. The status key also refreshes resumed runs.
-  const history = useQuery({ queryKey: ['training-history', project, batch.id, run.id, run.status], queryFn: () => development.history(project, batch.id, run.id), refetchInterval: active ? 3000 : false });
-  const recipe = batch.manifest.configurations.find((item) => item.id === run.candidateId)?.recipe;
-  const metric = recipe?.checkpointMetric === 'validation_auroc' ? 'auroc' : recipe?.checkpointMetric === 'validation_accuracy' ? 'accuracy' : 'loss';
-  return <><ErrorNotice error={history.error} />{history.isError ? <><p className="muted">History refresh failed. Any curves shown are the last successfully loaded measurements.</p><button className="btn btn-secondary btn-small" type="button" onClick={() => void history.refetch()}>Retry epoch history</button></> : null}{history.isPending ? <p role="status">Loading epoch history…</p> : history.data ? <LossHistory history={history.data} validationMetric={metric} finished={!active} /> : null}</>;
+  return queryOptions({ queryKey: ['training-history', project, batchId, run.id, run.status], queryFn: () => development.history(project, batchId, run.id), refetchInterval: active ? 3000 : false });
+}
+
+const wholeEpoch = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+
+export function runStoppingMetric(run: TrainingRun, recipe?: TrainingRecipe, history?: TrainingHistory) {
+  const validHistory = history?.runId === run.id && !history.warning ? history : undefined;
+  if (run.status === 'completed') {
+    const epoch = wholeEpoch(run.result?.epochsCompleted) ? run.result.epochsCompleted : wholeEpoch(validHistory?.totalRows) ? validHistory.totalRows : null;
+    return { label: 'Stopped epoch', value: epoch === null ? 'Not available' : `Epoch ${epoch}`, detail: epoch === null ? 'The final completed epoch has not been recorded.' : 'Actual completed training epochs' };
+  }
+  if (['failed', 'cancelled', 'interrupted'].includes(run.status)) return { label: 'Patience', value: 'Paused', detail: `Run ${run.status}; no active early-stopping countdown.` };
+  const stopping = validHistory?.stopping;
+  if (recipe?.earlyStopping === false || stopping?.status === 'disabled' || stopping?.enabled === false) {
+    return { label: 'Patience', value: 'Disabled', detail: stopping?.reason ?? 'Training uses its configured epoch budget.' };
+  }
+  if (stopping?.status !== 'tracking' || stopping.enabled !== true || !wholeEpoch(stopping.patience)
+    || !Number.isSafeInteger(stopping.remaining) || stopping.remaining === null || stopping.remaining < 0 || stopping.remaining > stopping.patience) {
+    return { label: 'Patience', value: 'Not available yet', detail: stopping?.reason ?? 'Reported after completed validation epochs.' };
+  }
+  const floorPending = stopping.remaining === 0 && wholeEpoch(stopping.minEpochs) && (stopping.epoch ?? 0) < stopping.minEpochs;
+  return { label: 'Patience', value: `${stopping.remaining} epoch${stopping.remaining === 1 ? '' : 's'} left`,
+    detail: `Of ${stopping.patience} without sufficient validation improvement.${floorPending ? ` Minimum epochs delay stopping until epoch ${stopping.minEpochs}.` : ''}` };
+}
+
+interface RunDetailsProps { batch: FrozenBatch; run?: TrainingRun; peakRamGb?: number; project?: string; history?: TrainingHistory; illustrative?: boolean }
+
+/** A single history request supplies both the patience tile and the epoch charts. */
+function LiveRunDetails(props: RunDetailsProps & { project: string; run: TrainingRun }) {
+  const history = useQuery(runHistoryOptions(props.project, props.batch.id, props.run));
+  return <RunDetailsContent {...props} history={history.data} historyPending={history.isPending} historyError={history.error} onHistoryRetry={() => void history.refetch()} />;
 }
 
 const detailTabs = [
@@ -88,12 +118,19 @@ const detailTabs = [
 ] as const;
 type DetailTab = typeof detailTabs[number]['id'];
 
-export function RunDetails({ batch, run, peakRamGb, project, history, illustrative = false }: { batch: FrozenBatch; run?: TrainingRun; peakRamGb?: number; project?: string; history?: TrainingHistory; illustrative?: boolean }) {
+export function RunDetails(props: RunDetailsProps) {
+  return props.project && props.run && !props.history && !props.illustrative
+    ? <LiveRunDetails {...props} project={props.project} run={props.run} /> : <RunDetailsContent {...props} />;
+}
+
+function RunDetailsContent({ batch, run, peakRamGb, project, history, illustrative = false, historyPending = false, historyError = null, onHistoryRetry }: RunDetailsProps & { historyPending?: boolean; historyError?: Error | null; onHistoryRetry?: () => void }) {
   const [tab, setTab] = useState<DetailTab>('overview');
   const id = useId();
   if (!run) return <p className="muted">This run has not been queued yet.</p>;
   const recipe = batch.manifest.configurations.find((item) => item.id === run.candidateId)?.recipe;
   const validationMetric = recipe?.checkpointMetric === 'validation_auroc' ? 'auroc' : recipe?.checkpointMetric === 'validation_accuracy' ? 'accuracy' : 'loss';
+  const latestCheckpoint = recipe?.model.toLowerCase() === 'nnmil' && recipe.nnmilCheckpointSelection === 'latest';
+  const stopping = runStoppingMetric(run, recipe, historyError ? undefined : history);
   return <section className="experiment-run-detail" aria-label="Selected run details">
     <div className="experiment-tracking-heading"><div><span className="experiment-detail-eyebrow">Selected run</span><h3>{runLabel(batch, run)}</h3></div><Badge tone={run.status === 'failed' || run.status === 'interrupted' ? 'warning' : run.status === 'completed' ? 'success' : 'neutral'}>{run.status}</Badge></div>
     {run.error ? <p className="callout callout-warning" role="status">{run.error}</p> : null}
@@ -101,8 +138,8 @@ export function RunDetails({ batch, run, peakRamGb, project, history, illustrati
     <div className="experiment-run-metrics" aria-label="Latest reported run metrics">
       <div><span>Completed epochs</span><EpochProgress run={run} /></div>
       <div><span>Training loss</span><strong>{metricValue(run.progress?.trainingLoss)}</strong><small>Latest completed epoch</small></div>
-      <div><span>Validation {validationMetric === 'auroc' ? 'AUROC' : validationMetric}</span><strong>{run.progress?.validation?.available === false ? '—' : metricValue(run.progress?.validation?.[validationMetric])}</strong><small>Latest checkpoint selection metric</small></div>
-      <div><span>Checkpoint</span><strong className="experiment-run-text-metric">{illustrative ? 'Illustrative' : run.checkpointPath ? 'Saved' : 'Not recorded'}</strong><small>{illustrative ? 'Reference only; no checkpoint file' : run.checkpointPath ? 'See Checkpoints and Artifacts' : 'Appears when available'}</small></div>
+      <div><span>Validation {validationMetric === 'auroc' ? 'AUROC' : validationMetric}</span><strong>{run.progress?.validation?.available === false ? '—' : metricValue(run.progress?.validation?.[validationMetric])}</strong><small>{latestCheckpoint ? 'Latest training monitor' : 'Latest checkpoint selection metric'}</small></div>
+      <div><span>{stopping.label}</span><strong className="experiment-run-text-metric">{stopping.value}</strong><small>{stopping.detail}</small></div>
     </div>
     <div className="experiment-run-tabs" role="tablist" aria-label="Run details" onKeyDown={(event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -115,16 +152,18 @@ export function RunDetails({ batch, run, peakRamGb, project, history, illustrati
       {detailTabs.map((item) => <button type="button" role="tab" key={item.id} id={`${id}-tab-${item.id}`} aria-controls={`${id}-panel-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => setTab(item.id)}>{item.label}</button>)}
     </div>
     <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-overview`} aria-labelledby={`${id}-tab-overview`} hidden={tab !== 'overview'} tabIndex={0}>
-      {history ? <LossHistory history={history} validationMetric={validationMetric} finished={!['queued', 'running'].includes(run.status)} illustrative={illustrative} /> : project && !illustrative ? <RunHistory key={run.id} project={project} batch={batch} run={run} /> : <p className="muted">{illustrative ? 'No synthetic epoch history is included for this run.' : 'Open this run in its project to load epoch history.'}</p>}
+      <ErrorNotice error={historyError} />
+      {historyError ? <><p className="muted">History refresh failed. Any curves shown are the last successfully loaded measurements.</p><button className="btn btn-secondary btn-small" type="button" onClick={onHistoryRetry}>Retry epoch history</button></> : null}
+      {historyPending ? <p role="status">Loading epoch history…</p> : history ? <LossHistory history={history} validationMetric={validationMetric} finished={!['queued', 'running'].includes(run.status)} illustrative={illustrative} latestCheckpoint={latestCheckpoint} /> : <p className="muted">{illustrative ? 'No synthetic epoch history is included for this run.' : project ? 'No epoch history has been recorded yet.' : 'Open this run in its project to load epoch history.'}</p>}
     </div>
     <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-checkpoints`} aria-labelledby={`${id}-tab-checkpoints`} hidden={tab !== 'checkpoints'} tabIndex={0}>
       <h4>Checkpoint validation and held-out assessment</h4>
-      <p className="muted">Validation selects the checkpoint. Held-out assessment measures the saved checkpoint on the assessment partition.</p>
+      <p className="muted">{latestCheckpoint ? 'The nnMIL protocol selects the latest completed epoch. Validation monitors training.' : 'Validation selects the checkpoint.'} Held-out assessment measures the saved checkpoint on the assessment partition.</p>
       <div className="experiment-checkpoint-grid"><section><h5>Checkpoint validation</h5><p>Checkpoint validation: {metricsText(run.metrics?.validation.selected)}</p><MetricEvidence details={run.metrics?.validation} /></section><section><h5>Held-out assessment</h5><p>Held-out assessment: {metricsText(run.metrics?.assessment.selected)}</p><MetricEvidence details={run.metrics?.assessment} /></section></div>
     </div>
     <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-diagnostics`} aria-labelledby={`${id}-tab-diagnostics`} hidden={tab !== 'diagnostics'} tabIndex={0}><RunDiagnostics run={run} peakRamGb={peakRamGb} /></div>
     <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-artifacts`} aria-labelledby={`${id}-tab-artifacts`} hidden={tab !== 'artifacts'} tabIndex={0}>
-      <h4>Run artifacts</h4><dl className="experiment-run-facts experiment-artifact-paths"><div><dt>Run ID</dt><dd><code>{run.id}</code></dd></div>{run.checkpointPath ? <div><dt>Checkpoint</dt><dd><code>{run.checkpointPath}</code></dd></div> : null}{run.outputPath ? <div><dt>Output</dt><dd><code>{run.outputPath}</code></dd></div> : null}</dl>
+      <h4>Run artifacts</h4>{illustrative && run.checkpointPath ? <p className="muted">Reference only; no checkpoint file</p> : null}<dl className="experiment-run-facts experiment-artifact-paths"><div><dt>Run ID</dt><dd><code>{run.id}</code></dd></div>{run.checkpointPath ? <div><dt>Checkpoint</dt><dd><code>{run.checkpointPath}</code></dd></div> : null}{run.outputPath ? <div><dt>Output</dt><dd><code>{run.outputPath}</code></dd></div> : null}</dl>
       {!run.checkpointPath && !run.outputPath ? <p className="muted">No checkpoint or output path has been recorded for this run.</p> : null}
     </div>
   </section>;

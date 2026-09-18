@@ -34,10 +34,11 @@ from histopilot.workers.training_process import (
     cpu_slots_per_run,
     device_health_failure,
     now,
-    process_alive,
+    owned_processes,
     process_identity,
     read_json,
     save_state,
+    stop_owned_processes,
 )
 
 
@@ -61,7 +62,13 @@ def _leases():
         active = []
         for path in folder.glob("lease-*.json"):
             value = read_json(path)
-            if process_alive(value.get("process")):
+            identity = value.get("process")
+            group = value.get("processGroupId")
+            if group is None and identity:
+                # Both historical lease writers isolated their workers: folds
+                # used start_new_session and generic compute called setsid.
+                group = identity["pid"]
+            if owned_processes(identity, group) or owned_processes(value.get("supervisor")):
                 try:
                     status = Path(f"/proc/{value['process']['pid']}/status").read_text()
                     value["rssGb"] = next(
@@ -104,9 +111,12 @@ def available_device(
 
 
 def _run_plan(batch: dict, run: dict, gpu: int | None) -> dict:
+    from histopilot.schemas.nnmil import resolve_nnmil_plan
+    from histopilot.schemas.training_controls import sampling_memberships
+
     candidate = next(item for item in batch["configurations"] if item["id"] == run["candidateId"])
     split = next(item for item in batch["splitPlans"] if item["id"] == run["splitPlanId"])
-    return {
+    plan = {
         "runId": run["id"],
         "batchId": batch["batchId"],
         "batchContentHash": batch["batchContentHash"],
@@ -119,8 +129,16 @@ def _run_plan(batch: dict, run: dict, gpu: int | None) -> dict:
         "target": batch["target"],
         "resources": batch["resources"],
         "device": "cpu" if gpu is None else "cuda",
-        "data": {**batch["data"], "memberships": batch["memberships"][run["splitPlanId"]]},
+        "data": {
+            **batch["data"],
+            "memberships": sampling_memberships(
+                batch["memberships"][run["splitPlanId"]],
+                candidate["recipe"],
+                batch["data"].get("cohortValues", {}),
+            ),
+        },
     }
+    return resolve_nnmil_plan(plan)
 
 
 def _check_inputs(data):
@@ -140,9 +158,29 @@ def _prediction_records(path, target):
 
 
 def collect_results(batch: dict, state: dict, folder: Path):
+    from histopilot.candidate_selection import validation_selection
+
+    selection = validation_selection(batch, state)
     groups = defaultdict(list)
     splits = {row["id"]: row for row in batch["splitPlans"]}
-    for run in state["runs"]:
+    state_runs = {row["id"]: row for row in state["runs"]}
+    if len(state_runs) != len(state["runs"]):
+        raise ValueError("A training run occurs more than once in the batch state.")
+    runs = state["runs"]
+    if "runs" in batch:
+        planned_runs = {row["id"]: row for row in batch["runs"]}
+        if len(planned_runs) != len(batch["runs"]) or set(state_runs) - set(planned_runs):
+            raise ValueError("Batch state contains runs outside the frozen execution plan.")
+        runs = []
+        for identity, planned in planned_runs.items():
+            actual = state_runs.get(identity)
+            if actual is not None and any(
+                actual.get(key) != planned.get(key)
+                for key in ("candidateId", "trainingSeed", "splitPlanId")
+            ):
+                raise ValueError("A training run's candidate, seed or fold changed.")
+            runs.append(actual if actual is not None else {**planned, "status": "pending"})
+    for run in runs:
         groups[
             (run["candidateId"], run["trainingSeed"], splits[run["splitPlanId"]]["seed"])
         ].append(run)
@@ -162,7 +200,7 @@ def collect_results(batch: dict, state: dict, folder: Path):
         if item["complete"]:
             from histopilot.training.module import classification_metrics
 
-            records, expected = [], {}
+            records, expected, patient_folds = [], {}, {}
             for run in runs:
                 records.extend(
                     _prediction_records(run["result"]["predictions"]["assessment"], batch["target"])
@@ -174,6 +212,10 @@ def collect_results(batch: dict, state: dict, folder: Path):
                                 "An assessment slide appears in multiple folds of one k-fold seed."
                             )
                         expected[row["slideId"]] = row
+                        patient = row.get("patientId")
+                        previous = patient_folds.setdefault(patient, run["splitPlanId"])
+                        if previous != run["splitPlanId"]:
+                            raise ValueError("An assessment patient appears in multiple folds of one k-fold seed.")
             actual = Counter(row["slideId"] for row in records)
             if set(actual) != set(expected) or any(count != 1 for count in actual.values()):
                 raise ValueError(
@@ -191,11 +233,43 @@ def collect_results(batch: dict, state: dict, folder: Path):
                     raise ValueError(
                         "An OOF prediction identity or label differs from frozen memberships."
                     )
-            summary = classification_metrics(records, batch["target"])
+                source = expected_row.get("patientIdSource")
+                if "patientIdSource" in record and record["patientIdSource"] != source:
+                    raise ValueError("An OOF patient identity source differs from frozen membership.")
+                if "patientIdSource" in expected_row:
+                    record["patientIdSource"] = source
+            recipe = next(
+                row["recipe"] for row in batch["configurations"] if row["id"] == candidate
+            )
             key = hashlib.sha256(f"{candidate}/{training_seed}/{split_seed}".encode()).hexdigest()[
                 :24
             ]
             path = folder / f"oof-{key}.json"
+            # Completed groups are collected repeatedly while other groups train.
+            # Reuse analysis only when the actual predictions and scoring policy match.
+            analysis_hash = _hash({"records": records, "target": batch["target"],
+                                   "recipe": recipe, "code": batch.get("code")})
+            cached = None
+            if path.exists():
+                try:
+                    cached = read_json(path)
+                except (OSError, ValueError):
+                    pass
+            summary = cached.get("summary") if (
+                isinstance(cached, dict) and cached.get("analysisInputHash") == analysis_hash
+            ) else None
+            if isinstance(summary, dict):
+                try:
+                    if cached.get("analysisSummaryHash") != _hash(summary):
+                        summary = None
+                except (TypeError, ValueError):
+                    summary = None
+            if not isinstance(summary, dict):
+                summary = classification_metrics(
+                    records, batch["target"], recipe.get("patientAggregation", "mean_probabilities"),
+                    analysis=recipe.get("analysis"),
+                    decision_threshold=recipe.get("decisionThreshold", 0.5),
+                )
             write_json(
                 path,
                 {
@@ -207,6 +281,8 @@ def collect_results(batch: dict, state: dict, folder: Path):
                     "classOrder": batch["target"]["classes"],
                     "records": records,
                     "summary": summary,
+                    "analysisInputHash": analysis_hash,
+                    "analysisSummaryHash": _hash(summary),
                     "purpose": "development_assessment",
                 },
             )
@@ -226,6 +302,11 @@ def collect_results(batch: dict, state: dict, folder: Path):
                 }
             )
         candidates.append(item)
+        if selection:
+            candidate_score = next(row for row in selection["candidates"]
+                                   if row["candidateId"] == candidate)
+            item.update(selectionScore=candidate_score["score"],
+                        selected=selection["selectedCandidateId"] == candidate)
     write_json(
         folder / "results.json",
         {
@@ -233,6 +314,7 @@ def collect_results(batch: dict, state: dict, folder: Path):
             "status": state["status"],
             "candidates": candidates,
             "oof": oof,
+            **({"selection": selection} if selection else {}),
             "selectionNote": "OOF metrics describe development assessment. Comparing hyperparameters on these folds does not provide an independent final-test estimate.",
         },
     )
@@ -364,6 +446,10 @@ def run_batch(plan_path: Path):
                     code = process.poll()
                     if code is None:
                         continue
+                    # A fold leader can exit before its DataLoader descendants.
+                    # Drain its private session before exposing completion or
+                    # making its CPU/RAM/GPU reservation available to another run.
+                    stop_owned_processes(run["process"])
                     stream.close()
                     with _leases():
                         lease_path.unlink(missing_ok=True)
@@ -470,6 +556,7 @@ def run_batch(plan_path: Path):
                             run.update(
                                 status="running",
                                 process=identity,
+                                processGroupId=process.pid,
                                 gpu=gpu,
                                 startedAt=started_at,
                                 logPath=str(run_folder / "run.log"),
@@ -478,6 +565,7 @@ def run_batch(plan_path: Path):
                                 lease_path,
                                 {
                                     "process": identity,
+                                    "processGroupId": process.pid,
                                     "gpu": gpu,
                                     "cpus": cpu_slots_per_run(batch["resources"]),
                                     "ramGb": batch["resources"]["ramGbPerRun"],
@@ -512,9 +600,9 @@ def run_batch(plan_path: Path):
                     {"severity": "error", "code": "TRAINING_WORKER_FAILED", "message": str(error)}
                 ],
             )
-            # Request shutdown for every owned process group and wait for its leader.
-            # Descendant-aware reservation release requires separate reconciliation.
-            for process, stream, lease_path in running.values():
+            # Stop every owned session before releasing its reservation, even
+            # if the direct child already exited and only descendants remain.
+            for run_id, (process, stream, lease_path) in running.items():
                 try:
                     if process.poll() is None:
                         try:
@@ -529,6 +617,9 @@ def run_batch(plan_path: Path):
                             except ProcessLookupError:
                                 pass
                             process.wait(timeout=10)
+                    run = next(item for item in state["runs"] if item["id"] == run_id)
+                    if run.get("process"):
+                        stop_owned_processes(run["process"])
                     with _leases():
                         lease_path.unlink(missing_ok=True)
                 except Exception as cleanup_error:

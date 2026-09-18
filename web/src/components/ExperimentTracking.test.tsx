@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { defaultRecipe, defaultResources } from '../api/development';
+import { defaultRecipe, defaultResources, nnmilRecipe } from '../api/development';
 import type { FrozenBatch, TrainingExecution, TrainingHistory, TrainingRun, TrainingRuntime } from '../api/development';
 import DevelopmentExecution, { ResultsTable, TrainingControls } from './DevelopmentExecution';
-import { EpochProgress, LossHistory, ResourceCards, RunDetails, RunTable, metricValue, runLabel } from './ExperimentTracking';
+import { EpochProgress, LossHistory, ResourceCards, RunDetails, RunTable, metricValue, runLabel, runHistoryOptions, runStoppingMetric } from './ExperimentTracking';
 
 const run: TrainingRun = { id: 'run-one', candidateId: 'configuration-one', splitPlanId: 'split-one', trainingSeed: 42, status: 'running', progress: { epoch: 2, maxEpochs: 10, globalStep: 20, trainingLoss: 0.0, validation: { loss: null } } };
 const batch = { id: 'batch-one', createdAt: '', manifest: {
@@ -28,6 +28,89 @@ const history: TrainingHistory = { runId: run.id, totalRows: 3, truncated: false
 afterEach(() => { vi.useRealTimers(); });
 
 describe('experiment tracking', () => {
+  const stopping: NonNullable<TrainingHistory['stopping']> = { enabled: true, patience: 10, remaining: 7, waitCount: 3, minEpochs: 1, epoch: 12, status: 'tracking', reason: null };
+  it('shows remaining patience from the complete server summary and preserves checkpoint panels', () => {
+    const html = renderToStaticMarkup(<RunDetails batch={batch} run={{ ...run, checkpointPath: '/runs/best.ckpt' }} history={{ ...history, stopping }} />);
+    expect(html).toContain('<span>Patience</span>');
+    expect(html).toContain('7 epochs left');
+    expect(html).toContain('Of 10 without sufficient validation improvement');
+    expect(html).not.toContain('<span>Checkpoint</span>');
+    expect(html).toContain('>Checkpoints</button>');
+    expect(html).toContain('/runs/best.ckpt');
+  });
+  it('uses full-history patience for a truncated chart instead of restarting the countdown at its first visible epoch', () => {
+    const value = { ...history, totalRows: 2100, truncated: true, stopping: { ...stopping, epoch: 2100, remaining: 1, waitCount: 9 } };
+    expect(runStoppingMetric(run, defaultRecipe(), value).value).toBe('1 epoch left');
+    expect(runStoppingMetric(run, defaultRecipe(), { ...value, stopping: undefined }).value).toBe('Not available yet');
+    expect(runStoppingMetric(run, defaultRecipe(), { ...value, warning: 'History invalid' }).value).toBe('Not available yet');
+    expect(runStoppingMetric(run, defaultRecipe(), { ...value, runId: 'different-run' }).value).toBe('Not available yet');
+  });
+  it('explains an exhausted countdown before the minimum epoch floor', () => {
+    const value = runStoppingMetric(run, defaultRecipe(), { ...history, stopping: { ...stopping, remaining: 0, waitCount: 10, epoch: 13, minEpochs: 20 } });
+    expect(value.value).toBe('0 epochs left');
+    expect(value.detail).toContain('Minimum epochs delay stopping until epoch 20');
+  });
+  it('distinguishes disabled early stopping, fixed budgets, and missing history', () => {
+    expect(runStoppingMetric(run, { ...defaultRecipe(), earlyStopping: false }).value).toBe('Disabled');
+    const fixed = runStoppingMetric(run, defaultRecipe(), { ...history, stopping: { ...stopping, enabled: false, status: 'disabled', remaining: null, reason: 'A fixed epoch budget is in use.' } });
+    expect(fixed.value).toBe('Disabled'); expect(fixed.detail).toBe('A fixed epoch budget is in use.');
+    expect(runStoppingMetric(run, defaultRecipe()).value).toBe('Not available yet');
+    expect(runStoppingMetric(run, defaultRecipe(), { ...history, stopping: { ...stopping, status: 'unavailable', enabled: null, remaining: null, reason: 'Validation metric missing.' } }).detail).toBe('Validation metric missing.');
+  });
+  it.each(['failed', 'cancelled', 'interrupted'] as const)('shows a paused countdown for %s without claiming successful completion', (status) => {
+    const value = runStoppingMetric({ ...run, status, result: { epochsCompleted: 48 } }, defaultRecipe(), { ...history, stopping });
+    expect(value.label).toBe('Patience'); expect(value.value).toBe('Paused'); expect(value.detail).toContain(status);
+  });
+  it('reports the completed training epoch rather than the selected or best checkpoint epoch', () => {
+    const completed: TrainingRun = { ...run, status: 'completed', result: { epochsCompleted: 48, bestEpoch: 38, selectedEpoch: 38 }, progress: { ...run.progress!, epoch: 45, maxEpochs: 200 } };
+    const value = runStoppingMetric(completed, defaultRecipe(), { ...history, totalRows: 47 });
+    expect(value).toMatchObject({ label: 'Stopped epoch', value: 'Epoch 48' });
+    const html = renderToStaticMarkup(<RunDetails batch={batch} run={completed} history={{ ...history, totalRows: 47 }} />);
+    expect(html).toContain('<span>Stopped epoch</span>'); expect(html).toContain('>Epoch 48</strong>');
+    expect(html).toContain('Epoch 48 / 200'); expect(html).not.toContain('Epoch 38');
+    expect(renderToStaticMarkup(<EpochProgress run={{ ...completed, progress: undefined }} />)).toContain('48 completed epochs');
+  });
+  it('uses validated full-history counts for older completed runs and never substitutes progress or best epoch', () => {
+    const completed: TrainingRun = { ...run, status: 'completed', result: { bestEpoch: 3, selectedEpoch: 3 } };
+    expect(runStoppingMetric(completed, defaultRecipe(), { ...history, totalRows: 48, truncated: true }).value).toBe('Epoch 48');
+    for (const invalid of [undefined, { ...history, warning: 'Invalid history' }, { ...history, totalRows: 0 }, { ...history, totalRows: NaN }]) {
+      expect(runStoppingMetric(completed, defaultRecipe(), invalid).value).toBe('Not available');
+    }
+  });
+  it('uses one history query for both live patience and charts, and fetches final history when status changes', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const options = runHistoryOptions('project', batch.id, run);
+    client.setQueryData(options.queryKey, { ...history, stopping });
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><RunDetails batch={batch} run={run} project="project" /></QueryClientProvider>);
+      expect(html).toContain('7 epochs left'); expect(html).toContain('Loss history');
+      expect(client.getQueryCache().findAll({ queryKey: ['training-history'] })).toHaveLength(1);
+      expect(options.refetchInterval).toBe(3000);
+      const completed = runHistoryOptions('project', batch.id, { ...run, status: 'completed' });
+      expect(completed.refetchInterval).toBe(false); expect(completed.queryKey).not.toEqual(options.queryKey);
+    } finally { client.clear(); }
+  });
+  it('retains cached charts after a history refresh failure without presenting cached patience as current', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false, staleTime: Infinity } } });
+    const options = runHistoryOptions('project', batch.id, run);
+    client.setQueryData(options.queryKey, { ...history, stopping });
+    client.getQueryCache().find({ queryKey: options.queryKey })!.setState({ status: 'error', error: new Error('History refresh unavailable'), fetchStatus: 'idle' });
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><RunDetails batch={batch} run={run} project="project" /></QueryClientProvider>);
+      expect(html).toContain('Not available yet'); expect(html).not.toContain('7 epochs left');
+      expect(html).toContain('Loss history'); expect(html).toContain('Retry epoch history');
+    } finally { client.clear(); }
+  });
+  it('describes latest nnMIL checkpoint evaluation without claiming validation selects it', () => {
+    const recipe = { ...nnmilRecipe(), nnmilCheckpointSelection: 'latest' as const };
+    const latestBatch = { ...batch, manifest: { ...batch.manifest, configurations: [{ id: run.candidateId, number: 1, recipe }] } };
+    const html = renderToStaticMarkup(<RunDetails batch={latestBatch} run={run} history={history} />);
+    expect(html).toContain('The nnMIL protocol selects the latest completed epoch');
+    expect(html).toContain('Evaluation uses the latest completed epoch');
+    expect(html).toContain('Latest training monitor');
+    expect(html).not.toContain('Validation selects the checkpoint');
+    expect(html).not.toContain('Checkpoint selection metric');
+  });
   it('uses supplied synthetic histories without a live project query or query provider', () => {
     const html = renderToStaticMarkup(<RunTable batch={batch} execution={execution} project="synthetic-demo" histories={{ [run.id]: history }} />);
     expect(html).toContain('Loss history');

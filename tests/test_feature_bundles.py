@@ -19,6 +19,7 @@ from histopilot.schemas.feature_bundles import FeatureBundleSpec
 from histopilot.schemas.feature_packs import FeaturePackSpec
 from histopilot.schemas.features import FeatureSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.packed import build_pack
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.pack_features import run_job
@@ -341,6 +342,27 @@ def test_later_validation_jobs_and_feature_labels_do_not_rewrite_frozen_evidence
     assert current["contentHash"] == bundle["contentHash"]
 
 
+def test_unrelated_corrupt_validation_receipt_cannot_block_a_healthy_bundle(bundle_setup):
+    bundles, packs, feature, _source = bundle_setup
+    verified = verify(packs, feature)
+    manifest = {**feature["manifest"], "selectionNote": "another feature inventory"}
+    other = bundles.store.publish_configuration(manifest=manifest, operation_id="other-inventory")
+    spec = FeaturePackSpec(featureSetId=other["id"], action="validate")
+    review = packs.preview(spec)
+    unrelated = packs.submit(spec, review["previewHash"], "unrelated-validation")
+    (packs.folder / unrelated["id"] / "result.json").write_text(
+        json.dumps({"jobId": "wrong-job", "state": "succeeded"})
+    )
+    current = packs.validation_for(feature["id"])
+    assert current["current"] and current["valid"]
+    assert current["sourceContentHash"] == verified["validation"]["sourceContentHash"]
+    bundle = freeze(bundles, FeatureBundleSpec(featureSetId=feature["id"]))
+    assert bundle["current"]
+    with pytest.raises(StorageError) as error:
+        packs.validation_for(other["id"])
+    assert error.value.code == "PACKING_CORRUPT"
+
+
 def test_changed_pack_invalidates_bundle_without_changing_frozen_membership(bundle_setup):
     bundles, packs, feature, source = bundle_setup
     artifact = make_pack(packs, feature)
@@ -395,3 +417,57 @@ def test_bundle_api_freezes_lists_resolves_and_requires_named_intent(tmp_path):
         assert bundle["current"]
         assert client.get(base).json()["items"] == [bundle]
         assert client.get(base + "/" + bundle["id"]).json() == bundle
+
+
+def test_a_reduced_precision_pack_can_be_frozen_into_a_bundle(bundle_setup):
+    """A float16 pack verifies against the cast source, and that counts as verified."""
+    bundles, packs, feature, _source = bundle_setup
+    verify(packs, feature)
+    artifact = make_pack(packs, feature, dtype="float16")
+    assert artifact["outputDtype"] == "float16"
+    assert artifact["preservesSourcePrecision"] is False
+    spec = FeatureBundleSpec(featureSetId=feature["id"], packArtifactIds=[artifact["id"]])
+    preview = bundles.preview(spec)
+    assert preview["canFreeze"], preview["findings"]
+    assert not any(item["code"] == "PACK_VERIFICATION_REQUIRED" for item in preview["findings"])
+    frozen = freeze(bundles, spec, tag="Half precision")
+    assert frozen["manifest"]["packs"][0]["outputDtype"] == "float16"
+
+
+def test_an_attached_reduced_precision_pack_can_be_frozen_into_a_bundle(bundle_setup, tmp_path):
+    """The attach path verifies against the cast source; a bundle must accept that evidence."""
+    bundles, packs, feature, _source = bundle_setup
+    verify(packs, feature)
+    existing = tmp_path / "existing-half"
+    build_pack(packs.store.get_configuration(feature["id"]), existing, dtype="float16")
+    spec = FeaturePackSpec(featureSetId=feature["id"], action="attach", existingPath=str(existing))
+    preview = packs.preview(spec)
+    assert preview["canRun"] and preview["matchesFeatures"], preview["findings"]
+    job = packs.submit(spec, preview["previewHash"], "attach-half")
+    artifact = run_job(packs.folder / job["id"] / "plan.json")["artifact"]
+    assert artifact["verification"] == "exact-cast-source-values"
+    bundle_spec = FeatureBundleSpec(featureSetId=feature["id"], packArtifactIds=[artifact["id"]])
+    review = bundles.preview(bundle_spec)
+    assert not any(item["code"] == "PACK_VERIFICATION_REQUIRED" for item in review["findings"])
+    assert review["canFreeze"], review["findings"]
+
+
+def test_a_store_scoped_feature_set_freezes_a_bundle_with_no_dataset(bundle_setup, tmp_path):
+    """A bundle inherits its feature set's scope, including having no cohort at all."""
+    bundles, packs, _feature, source = bundle_setup
+    features = FeatureService(packs.store, packs.filesystem)
+    spec = FeatureSpec(path=str(source))
+    store_wide = features.freeze(
+        spec, features.preview(spec)["previewHash"], "store-wide", version_label={"tag": "Store"}
+    )
+    assert store_wide["manifest"]["datasetId"] is None
+    packs_service = FeaturePackService(packs.store, packs.filesystem, FakeExecutor())
+    verify(packs_service, store_wide, operation="validate-store")
+    bundle_spec = FeatureBundleSpec(featureSetId=store_wide["id"])
+    review = bundles.preview(bundle_spec)
+    assert review["canFreeze"], review["findings"]
+    frozen = bundles.freeze(
+        bundle_spec, review["previewHash"], "store-bundle", version_label={"tag": "Store bundle"}
+    )
+    assert frozen["manifest"]["datasetId"] is None
+    assert bundles.get(frozen["id"])["manifest"]["summary"]["slideCount"] == 1

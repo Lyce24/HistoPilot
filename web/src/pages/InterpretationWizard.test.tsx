@@ -26,10 +26,10 @@ function storage(hash: string) {
   vi.stubGlobal('window', { location: { hash }, sessionStorage: { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value) } });
   return values;
 }
-function render(stage: string, value = draft(), records = [record('one'), record('two')]) {
+function render(stage: string, value = draft(), records = [record('one'), record('two')], model = 'abmil') {
   storage(`#interpretation?predictor=predictor&${stage}`); persistWizardDraft('p', value);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); clients.push(client);
-  client.setQueryData(['predictors', 'p'], { items: [{ id: 'predictor', lifecycleState: 'active', manifest: { name: 'Selected refit', method: 'refit', experimentId: 'experiment', recipe: { model: 'abmil' }, inputs: { features: { bundle: { id: 'bundle' }, encoderId: 'uni', dimensions: 1024, dtype: 'float32' }, loading: {} } } }] });
+  client.setQueryData(['predictors', 'p'], { items: [{ id: 'predictor', lifecycleState: 'active', manifest: { name: 'Selected refit', method: 'refit', experimentId: 'experiment', recipe: { model }, inputs: { features: { bundle: { id: 'bundle' }, encoderId: 'uni', dimensions: 1024, dtype: 'float32' }, loading: {} } } }] });
   client.setQueryData(['interpretation-sources', 'p'], { items: [{ id: 'bundle', name: 'Frozen bundle', current: true, findings: [], encoderId: 'uni', dimensions: 1024, dtype: 'float32', slideCount: 2, featureSetId: 'features', packs: [], datasetId: 'data', datasetName: 'Imported slides', slideFolder: '/slides' }] });
   for (const key of ['model-evaluations', 'clinical-analyses']) client.setQueryData([key, 'p'], { items: [] });
   client.setQueryData(['interpretations', 'p'], { items: records });
@@ -38,6 +38,17 @@ function render(stage: string, value = draft(), records = [record('one'), record
 }
 
 describe('interpretation stages and resumable context', () => {
+  it('opens a linked case search without replacing an uncertain visualization operation', () => {
+    storage('#interpretation');
+    const parameters = new URLSearchParams('predictor=predictor&search=Slide+A');
+    expect(initialWizardDraft(parameters).search).toBe('Slide A');
+    const value = draft();
+    persistWizardDraft('p', value);
+    expect(restoreWizardDraft('p', parameters)).toMatchObject({ search: 'Slide A', offset: 0, selected: value.selected });
+    value.batch!.pending = { selection: value.batch!.request!, operationId: 'pending-review' };
+    persistWizardDraft('p', value);
+    expect(restoreWizardDraft('p', parameters)).toMatchObject({ search: 'retained search', offset: 24, batch: { uncertain: true, pending: { operationId: 'pending-review' } } });
+  });
   it('preserves lineage in stage URLs and supports legacy saved-study links', () => {
     const query = new URLSearchParams('experiment=exp&predictor=predictor&evaluation=eval&clinical=report');
     const route = wizardRoute(query, 'viewer', { predictorId: 'predictor', evaluationId: 'eval', clinicalId: 'report' }, 'study 1', 'Slide A');
@@ -110,6 +121,13 @@ describe('interpretation stages and resumable context', () => {
   });
 });
 describe('focused interpretation screens', () => {
+  it('allows a frozen nnMIL predictor to use attention interpretation', () => {
+    const html = render('stage=select', draft(), [], 'nnmil').html;
+    expect(html).toContain('Choose a frozen ABMIL or nnMIL predictor');
+    expect(html).toContain('<option value="predictor" selected="">Selected refit');
+    expect(html).not.toContain('attention unsupported');
+    expect(render('stage=select', draft(), [], 'mean_pool').html).toContain('attention unsupported');
+  });
   it('keeps the results page limited to selected slides and separates the focused viewer from setup', () => {
     const results = render('stage=results', draft(), [record('one'), record('two'), record('unselected')]).html;
     expect(results).toContain('Attention results'); expect(results).toContain('Open attention viewer for one'); expect(results).not.toContain('unselected');

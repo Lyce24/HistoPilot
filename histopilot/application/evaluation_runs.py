@@ -1,6 +1,7 @@
 """Reviewed predictor/cohort plans with durable refit and ensemble inference."""
 
 import hashlib
+import json
 from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
@@ -14,6 +15,8 @@ from histopilot.application.predictors import (
     lifecycle_document,
     reference,
 )
+from histopilot.domain.features import representation_kind
+from histopilot.schemas.analysis import PatientAnalysisSettings
 from histopilot.schemas.development import ResourcePolicy
 from histopilot.schemas.evaluations import EvaluationSpec, InferenceSettings
 from histopilot.schemas.predictors import EvaluationRunSelection
@@ -25,9 +28,9 @@ from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.training_process import read_json
 
 EXECUTION_NOTE = (
-    "Run whole-bag inference with the selected predictor and test cohort. "
-    "Ensembles average class probabilities; refit predictors use their final checkpoint. "
-    "Metrics use labeled test rows only."
+    "Evaluate the selected predictor on its frozen test cohort using the recorded bag, "
+    "aggregation and decision-threshold settings. Patient predictions combine eligible "
+    "slides; metrics use labeled test records."
 )
 
 
@@ -59,6 +62,69 @@ class EvaluationRunService:
             raise StorageError("Evaluation record not found.", "MODEL_EVALUATION_NOT_FOUND", 404)
         return {**lifecycle_document(self.store, document), "execution": self.jobs.status(identity)}
 
+    def patient_evidence(self, identity):
+        """Read checksummed predictions and validate their frozen patient membership."""
+        from histopilot.application.clinical import _patient_records, _validate_records
+
+        document = self.get(identity)
+        manifest = document["manifest"]
+        cohort = self.store.get_configuration(manifest["cohortId"])
+        predictor = self.store.get_configuration(manifest["predictorId"])
+        if (manifest["cohort"] != reference(cohort)
+                or manifest["predictor"] != reference(predictor)
+                or manifest["target"] != predictor["manifest"]["target"]):
+            raise StorageError("Evaluation references or targets changed.", "COMPARISON_EVIDENCE_CHANGED", 409)
+        content = self.artifact(identity, "predictions.json")
+        try:
+            predictions = json.loads(content)
+            classes = manifest["target"]["classes"]
+            if predictions["classOrder"] != classes:
+                raise ValueError("Prediction class order differs from the frozen evaluation.")
+            slides = _validate_records(predictions["records"], classes)
+            memberships = {row["slideId"]: row for row in cohort["manifest"]["memberships"]}
+            observed = {row["slideId"]: (row.get("patientId"), row.get("label")) for row in slides}
+            expected = {key: (row.get("patientId"), row.get("label"))
+                        for key, row in memberships.items()}
+            if observed != expected:
+                raise ValueError("Predictions must cover exactly the frozen cohort membership and labels.")
+            for row in slides:
+                source = memberships[row["slideId"]].get("patientIdSource")
+                if "patientIdSource" in row and row["patientIdSource"] != source:
+                    raise ValueError("Patient identity provenance differs from the frozen cohort.")
+                if not row.get("patientId") or source == "slide_fallback":
+                    raise ValueError("Patient comparisons require verified patient identities.")
+                row["patientIdSource"] = source
+            patients = _patient_records(slides, predictions.get("patientRecords"), classes,
+                                         manifest["inference"]["patientAggregation"])
+        except (ValueError, KeyError, TypeError, OverflowError) as error:
+            raise StorageError(str(error), "COMPARISON_EVIDENCE_INVALID", 409) from error
+        return document, slides, patients, hashlib.sha256(content).hexdigest()
+
+    def compare(self, request):
+        from histopilot.statistics import patient_bootstrap
+
+        left, _left_slides, left_patients, left_hash = self.patient_evidence(request.leftEvaluationId)
+        right, _right_slides, right_patients, right_hash = self.patient_evidence(request.rightEvaluationId)
+        a, b = left["manifest"], right["manifest"]
+        if (a["cohort"] != b["cohort"] or a["target"] != b["target"]
+                or a["inference"]["patientAggregation"] != b["inference"]["patientAggregation"]):
+            raise StorageError("Choose the same frozen cohort, target, and patient aggregation for paired comparison.",
+                               "COMPARISON_CONTEXT_MISMATCH", 409)
+        try:
+            result = patient_bootstrap(left_patients, a["target"], request.analysis.model_dump(),
+                                       other=right_patients)
+        except ValueError as error:
+            raise StorageError(str(error), "COMPARISON_PATIENT_MISMATCH", 409) from error
+        return {
+            "leftEvaluationId": left["id"], "rightEvaluationId": right["id"],
+            "leftName": a.get("name", left["id"]), "rightName": b.get("name", right["id"]),
+            "cohortId": a["cohortId"], "target": a["target"],
+            "patientAggregation": a["inference"]["patientAggregation"],
+            "analysis": request.analysis.model_dump(), "difference": "left_minus_right",
+            "predictionsSha256": {"left": left_hash, "right": right_hash},
+            "statistics": result,
+        }
+
     def _test_bundle(self, selection, model, test, inference):
         """Resolve once at review; execution also checks the reviewed feature references."""
         if selection.featureBundleId:
@@ -85,6 +151,8 @@ class EvaluationRunService:
                     for key in ("dimensions", "dtype", "encoderId")
                 ):
                     continue
+                if representation_kind(contract) != representation_kind(development):
+                    continue
                 # Several bundle revisions may verify the same feature inventory.
                 # They do not make the underlying feature choice ambiguous.
                 previous = candidates.get(feature["id"])
@@ -94,7 +162,7 @@ class EvaluationRunService:
                 continue
         if not candidates:
             raise StorageError(
-                "No current feature bundle covers every selected test slide with this model's encoder, dimensions, and dtype. Extract and verify the missing test features, then select a bundle here.",
+                "No current feature bundle covers every selected test slide with this model's representation, encoder, dimensions, and dtype. Extract and verify the missing test features, then select a bundle here.",
                 "EVALUATION_FEATURE_BUNDLE_REQUIRED",
                 409,
             )
@@ -122,6 +190,19 @@ class EvaluationRunService:
         inference = selection.inference or InferenceSettings.model_validate(
             test["spec"].get("inference", {})
         )
+        if inference.patientAggregation == "predictor" or (
+            selection.inference is None and not test["spec"].get("protocolId")
+        ):
+            inference = inference.model_copy(
+                update={"patientAggregation": model["patientAggregation"]}
+            )
+        frozen_threshold = model.get("recipe", {}).get("decisionThreshold")
+        if inference.decisionThreshold == "predictor" or (
+            frozen_threshold is not None and selection.inference is None
+        ):
+            inference = inference.model_copy(
+                update={"decisionThreshold": frozen_threshold if frozen_threshold is not None else 0.5}
+            )
         bundle_id = self._test_bundle(selection, model, test, inference)
         spec = EvaluationSpec.model_validate(
             {
@@ -194,9 +275,10 @@ class EvaluationRunService:
             or features["dimensions"] != development["dimensions"]
             or features["dtype"] != development["dtype"]
             or features["encoderId"] != development["encoderId"]
+            or representation_kind(features) != representation_kind(development)
         ):
             raise StorageError(
-                "Test features must preserve the verified encoder, dimensions, and dtype used by the predictor.",
+                "Test features must preserve the verified representation, encoder, dimensions, and dtype used by the predictor.",
                 "EVALUATION_FEATURE_CONTRACT_MISMATCH",
                 409,
             )
@@ -224,6 +306,14 @@ class EvaluationRunService:
                     "overlap",
                     "custom_mpp_keys",
                 )
+                if (representation_kind(features) == "slide"
+                        or model.get("recipe", {}).get("analysis") is not None):
+                    keys += ("slide_encoder",)
+                if model.get("recipe", {}).get("analysis") is not None:
+                    keys += (
+                        "reader_type", "segmenter", "seg_conf_thresh", "remove_holes",
+                        "remove_artifacts", "remove_penmarks", "min_tissue_proportion",
+                    )
                 left_options, right_options = left["spec"]["options"], right["spec"]["options"]
                 if any(left_options.get(key) != right_options.get(key) for key in keys):
                     raise StorageError(
@@ -233,11 +323,20 @@ class EvaluationRunService:
                     )
         if test["spec"]["inference"]["patientAggregation"] != model["patientAggregation"]:
             raise StorageError(
-                "Patient aggregation must preserve the frozen predictor's mean-probability rule.",
+                "Patient aggregation must preserve the frozen predictor's scoring rule.",
                 "EVALUATION_AGGREGATION_MISMATCH",
                 409,
             )
+        frozen_threshold = model.get("recipe", {}).get("decisionThreshold")
+        if frozen_threshold is not None and (
+            test["spec"]["inference"]["decisionThreshold"] != frozen_threshold
+        ):
+            raise StorageError(
+                "Use the decision threshold frozen in the training recipe for every external cohort.",
+                "EVALUATION_THRESHOLD_MISMATCH", 409,
+            )
         self.predictors.verify_checkpoints(predictor)
+        clinical_contract = self._clinical_contract(model, test)
         return {
             "kind": "model-evaluation",
             "schemaVersion": 1,
@@ -253,7 +352,12 @@ class EvaluationRunService:
             "cohortId": cohort["id"],
             "cohort": reference(cohort),
             "target": model["target"],
+            **({"clinical": clinical_contract} if clinical_contract else {}),
             "inference": test["spec"]["inference"],
+            "analysis": model.get("recipe", {}).get("analysis")
+            or PatientAnalysisSettings().model_dump(),
+            "bagPolicy": {"evalBagSize": model.get("recipe", {}).get("evalBagSize"),
+                          "trainingSeed": model["trainingSeed"]},
             "features": features,
             "summary": test["summary"],
             "status": "planned",
@@ -270,6 +374,24 @@ class EvaluationRunService:
                 else {}
             ),
         }
+
+    def _clinical_contract(self, model, test):
+        from histopilot.application.clinical_inputs import frozen_clinical_values
+        from histopilot.clinical_features import clinical_fields, clinical_rows
+
+        recipe = model.get("recipe", {})
+        fields = clinical_fields(recipe)
+        if not fields:
+            return None
+        values = frozen_clinical_values(
+            self.store, self.filesystem, test["spec"].get("datasetIds") or [test["datasetId"]],
+            test["memberships"], fields,
+        )
+        try:
+            clinical_rows(test["memberships"], values, fields)
+        except ValueError as error:
+            raise StorageError(str(error), "CLINICAL_VALUES_INVALID", 422) from error
+        return {"inputMode": recipe["inputMode"], "fields": fields, "valuesSha256": _hash(values)}
 
     def preview(self, selection):
         try:
@@ -342,11 +464,27 @@ class EvaluationRunService:
                     "Evaluation inputs changed. Create and review a new evaluation.",
                     "EVALUATION_INPUTS_CHANGED",
                 )
+        if "analysis" in manifest and reviewed["analysis"] != manifest["analysis"]:
+            raise StorageError("The frozen analysis policy changed.", "EVALUATION_INPUTS_CHANGED", 409)
+        if "bagPolicy" in manifest and reviewed["bagPolicy"] != manifest["bagPolicy"]:
+            raise StorageError("The frozen evaluation bag policy changed.", "EVALUATION_INPUTS_CHANGED", 409)
         predictor = self.predictors.get(manifest["predictorId"])
         cohort = self.cohorts.get(manifest["cohortId"])
         feature = self.store.get_configuration(manifest["features"]["feature"]["id"])
         bundle = self.store.get_configuration(manifest["features"]["bundle"]["id"])
         memberships = cohort["manifest"]["memberships"]
+        clinical_values = {}
+        if manifest.get("clinical"):
+            from histopilot.application.clinical_inputs import frozen_clinical_values
+
+            current_clinical = self._clinical_contract(predictor["manifest"], cohort["manifest"])
+            if current_clinical != manifest["clinical"]:
+                raise StorageError("Clinical schema or frozen values changed.", "CLINICAL_INPUTS_CHANGED", 409)
+            clinical_values = frozen_clinical_values(
+                self.store, self.filesystem,
+                cohort["manifest"]["spec"].get("datasetIds") or [cohort["manifest"]["datasetId"]],
+                memberships, manifest["clinical"]["fields"],
+            )
         selected = {row["slideId"] for row in memberships}
         files = {
             row["slideId"]: row
@@ -392,12 +530,22 @@ class EvaluationRunService:
             "kind": "evaluation",
             "runId": identity,
             "method": predictor["manifest"].get("method", "ensemble"),
+            **(
+                {"aggregation": "mean_logit"}
+                if predictor["manifest"].get("aggregation") == "mean_logit"
+                else {}
+            ),
             "target": manifest["target"],
             "inference": inference,
+            **({"analysis": manifest["analysis"]} if manifest.get("analysis") else {}),
+            **({"bagPolicy": manifest["bagPolicy"]} if "bagPolicy" in manifest else {}),
             "resources": resources,
             "checkpoints": predictor["manifest"]["checkpoints"],
             "references": [reference(value) for value in (predictor, cohort, feature, bundle)],
             "data": {
+                **({"clinicalValues": clinical_values,
+                    "inputMode": manifest["clinical"]["inputMode"],
+                    "clinicalFields": manifest["clinical"]["fields"]} if clinical_values else {}),
                 "memberships": memberships,
                 "featureDim": manifest["features"]["dimensions"],
                 "featureFiles": files,
@@ -410,6 +558,9 @@ class EvaluationRunService:
 
     def launch(self, identity, operation_id, *, resume=False):
         with lifecycle_guard(self.store.folder):
+            replay = self.jobs.replay_launch(identity, operation_id, resume=resume, record_kind="model-evaluation")
+            if replay is not None:
+                return replay
             plan = self._execution_plan(identity)
             return self.jobs.launch(identity, plan, operation_id, resume=resume)
 

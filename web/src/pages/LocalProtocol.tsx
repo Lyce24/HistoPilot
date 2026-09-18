@@ -1,8 +1,13 @@
+import { StageBackButton, StageContinueButton, StageCreateButton } from '../components/StageActions';
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import { scientific } from '../api/scientific';
 import { packing } from '../api/packing';
+import { bundles } from '../api/bundles';
+import ConditionEditor from '../components/ConditionEditor';
+export { default as ConditionEditor } from '../components/ConditionEditor';
+import { conditionFields } from '../lib/conditions';
 import { resetImportedForDataset, validationFractionDefault } from '../lib/split';
 import { sameJSON } from '../lib/json';
 import {
@@ -17,11 +22,10 @@ import { StageLibrary, StageLibraryToolbar, StageRecordManageButton, StagePage, 
 import { SplitStrategy, newSplit, strategyNames } from '../components/SplitStrategy';
 import { SplitPools } from '../components/SplitPools';
 import { inferTargetSettings } from '../lib/protocol';
+import { taskLabel, unitLabel } from '../lib/labels';
 import PredictionTargetEditor from '../components/PredictionTargetEditor';
 import type {
   AttributeMapping,
-  Condition,
-  ConditionValue,
   ExecutionPreflight,
   ProtocolPreview,
   ProtocolSpec,
@@ -59,23 +63,24 @@ import {
 import './protocol-workflow.css';
 import { scientificReviewInvalidated } from '../lib/scientificReview';
 import { preparationLink, usePreparationContext, type PreparationContext } from '../lib/preparationRoute';
+import { readEditorRecovery, recoveredStep, useEditorRecoveryBackup, type EditorRecovery } from '../lib/editorRecovery';
+import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import PreparationNotice from '../components/PreparationNotice';
 
-/** Current ABMIL does not consume spreadsheet covariates; retain legacy choices for explicit removal. */
+/** Declare allowed covariates; each recipe chooses image, clinical or combined inputs. */
 export function TabularPredictorSelection({ dictionary, selected, targetField, onChange }: {
   dictionary: AttributeMapping[]; selected: string[]; targetField: string; onChange: (fields: string[]) => void;
 }) {
   const fields = [...new Set([...dictionary.map((item) => item.key), ...selected])];
   return <details className="protocol-extra-inputs" open={selected.length > 0 ? true : undefined}>
-    <summary>Spreadsheet model inputs · unsupported{selected.length ? ` · ${selected.length} selected in this draft` : ''}</summary>
-    <p className="muted">Current ABMIL training uses slide image features only. Spreadsheet columns remain available for prediction targets, cohort filters and clinical analyses; they are not used as model inputs.</p>
-    {selected.length ? <p className="callout callout-warning" role="alert">This draft contains unsupported spreadsheet model inputs. Remove these selections before training. For a frozen protocol, copy it into a new draft first.</p> : null}
+    <summary>Extra spreadsheet inputs{selected.length ? ` · ${selected.length} declared` : ''}</summary>
+    <p className="muted">Declare patient-level variables available at prediction time. Training recipes can use these in a clinical-only baseline or together with image features. The target, identifiers and split columns cannot be predictors. All slides belonging to one patient must agree on these values.</p>
     <div className="science-checkbox-grid">{fields.map((field) => {
       const item = dictionary.find((column) => column.key === field);
       const checked = selected.includes(field);
       return <label className="science-check" key={field}>
-        <input type="checkbox" checked={checked} disabled={!checked} onChange={(event) => { if (!event.target.checked) onChange(selected.filter((value) => value !== field)); }} />
-        <span>{field}<small>{item ? `${item.owner === 'patient' ? 'Patient' : 'Slide / case'} · ${item.type.replaceAll('_', ' ')}` : 'Column unavailable'}{field === targetField ? ' · prediction target' : ''}{checked ? ' · uncheck to remove' : ' · model input unsupported'}</small></span>
+        <input type="checkbox" checked={checked} disabled={!checked && (!item || field === targetField)} onChange={(event) => onChange(event.target.checked ? [...selected, field] : selected.filter((value) => value !== field))} />
+        <span>{field}<small>{item ? `${item.owner === 'patient' ? 'Patient' : 'Slide / case'} · ${item.type.replaceAll('_', ' ')}` : 'Column unavailable'}{field === targetField ? ' · prediction target' : ''}</small></span>
       </label>;
     })}</div>
   </details>;
@@ -97,12 +102,11 @@ const initialSpec = (workspace: Workspace): ProtocolSpec => ({
   eligibility: [],
   split: newSplit([workspace.project.config.seed ?? 42], workspace.project.config.folds ?? 5),
   constraints: { minPatientsPerClass: 1, minPatientsPerPartition: 1 },
-  featureSetId: null,
-  featurePackId: null,
+  featureBundleId: null,
 });
 export default function LocalProtocol({ workspace: w }: { workspace: Workspace }) {
   const context = usePreparationContext();
-  return <ProtocolWorkspace key={context.datasetId ?? ''} workspace={w} context={context} />;
+  return <ProtocolWorkspace key={`${context.datasetId ?? ''}:${context.bundleId ?? ''}`} workspace={w} context={context} />;
 }
 function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; context: PreparationContext }) {
   const project = w.project.id;
@@ -112,30 +116,35 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
   const drafts = useDrafts(project);
   const configurations = useConfigurations(project, 'protocol');
   const features = useConfigurations(project, 'feature');
+  const featureBundles = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project) });
   const refresh = useRefreshScientific(project);
+  // Unsaved target and split input from this tab is retained across a module
+  // change or a reload. The module still opens on its library; Return to current
+  // protocol reopens the work.
+  const [recovered] = useState(() => readEditorRecovery<ProtocolSpec>(project, 'protocol'));
   const [view, setView] = useState<'library' | 'editor'>('library');
   const [libraryFilters, setLibraryFilters] = useState({ search: '', status: 'all', sort: 'recent' });
-  const [resumeAvailable, setResumeAvailable] = useState(false);
-  const [spec, setSpec] = useState<ProtocolSpec>(() => ({ ...initialSpec(w), datasetId: context.datasetId ?? w.dataset.id }));
+  const [resumeAvailable, setResumeAvailable] = useState(Boolean(recovered));
+  const [spec, setSpec] = useState<ProtocolSpec>(() => recovered?.spec ?? { ...initialSpec(w), datasetId: context.datasetId ?? w.dataset.id, featureBundleId: context.bundleId ?? null });
   const featurePacks = useQuery({
     queryKey: ['feature-packs', project],
     queryFn: () => packing.jobs(project),
   });
   const legacyPack = featurePacks.data?.artifacts.find((artifact) => artifact.id === spec.featurePackId);
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>((recoveredStep(recovered?.step, 4) || 1) as 1 | 2 | 3 | 4);
   function showStep(next: 1 | 2 | 3 | 4) {
     setStep(next);
   }
-  const [name, setName] = useState(`${w.project.name} protocol`);
-  const [draft, setDraft] = useState<ScientificDraft<ProtocolSpec> | null>(null);
-  const [seedsText, setSeedsText] = useState(initialSpec(w).split.seeds.join(', '));
+  const [name, setName] = useState(recovered?.name ?? `${w.project.name} protocol`);
+  const [draft, setDraft] = useState<ScientificDraft<ProtocolSpec> | null>(recovered?.draft ?? null);
+  const [seedsText, setSeedsText] = useState((recovered?.spec ?? initialSpec(w)).split.seeds.join(', '));
   const seedsValid = seedsText
     .split(',')
     .every((value) => /^\d+$/.test(value.trim()) && Number(value.trim()) <= 4294967295);
   const [preview, setPreview] = useState<ProtocolPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(recovered ? 'Unsaved protocol input was recovered in this tab. Choose Return to current protocol to continue, or save it as a draft in your project folder.' : '');
   const [preflight, setPreflight] = useState<ExecutionPreflight | null>(null);
   const [showSaved, setShowSaved] = useState<string | null>(null);
   const [freezeReview, setFreezeReview] = useState<{
@@ -147,6 +156,8 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
   });
   const dataset = datasets.data?.datasets.find((item) => item.id === spec.datasetId);
   const linkedDataset = datasets.data?.datasets.find((item) => item.id === context.datasetId);
+  const selectedBundle = featureBundles.data?.items.find((item) => item.id === spec.featureBundleId);
+  const bundleReady = Boolean(selectedBundle?.current && !selectedBundle.findings.some((finding) => finding.severity === 'error'));
   const dictionary = dataset?.manifest.dictionary ?? [];
   const columns = dictionary.map((item) => item.key);
   const fieldContext = { project, datasetId: spec.datasetId, dictionary };
@@ -154,12 +165,15 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
     datasetId: view === 'editor' ? spec.datasetId : '',
     targetField: spec.target.field || undefined,
     eligibility: spec.eligibility,
+    featureBundleId: spec.featureBundleId ?? undefined,
+    featureSetId: spec.featureSetId ?? undefined,
+    featureCoverage: spec.featureCoverage,
     rules: spec.split.pools?.rules ?? spec.split.rules,
     splitMode: spec.split.mode,
     split: spec.split,
   });
   const targetValuesKey = (field: string) => [
-    ...scienceKey(project), 'target-values', spec.datasetId, field,
+    ...scienceKey(project), 'target-values', spec.datasetId, spec.featureBundleId, spec.featureSetId, spec.featureCoverage, field,
     ...(spec.split.version === 4 ? [spec.eligibility, spec.split.pools] : []),
   ];
   async function readTargetValues(field: string) {
@@ -170,6 +184,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
     }
     const result = await scientific.exploreProtocol(project, {
       datasetId: spec.datasetId, targetField: field, eligibility: spec.eligibility,
+      featureBundleId: spec.featureBundleId ?? undefined, featureSetId: spec.featureSetId ?? undefined, featureCoverage: spec.featureCoverage,
       rules: spec.split.pools!.rules, splitMode: spec.split.mode, split: spec.split,
     });
     if (!result.valid) {
@@ -191,25 +206,46 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
     .filter((value): value is string => value !== null && value.trim() !== '');
   const dirty = !draft || draft.name !== name || !sameJSON(draft.payload.spec, spec);
   const frozen = draft?.status === 'frozen';
-  const protocolDrafts = (drafts.data?.drafts ?? []).filter((item) => item.payload.type === 'analysis-protocol');
+  const pristine = { ...initialSpec(w), datasetId: context.datasetId ?? w.dataset.id, featureBundleId: context.bundleId ?? null };
+  // A pristine new protocol is not work worth recovering; a saved draft is, as
+  // soon as it differs from its saved revision.
+  const unsaved = !frozen && (draft
+    ? dirty
+    : name !== `${w.project.name} protocol` || !sameJSON(spec, pristine));
+  const recovery: EditorRecovery<ProtocolSpec> | null = unsaved
+    ? { version: 1, name, spec, draft, step: view === 'editor' ? step : 0 }
+    : null;
+  const backup = useEditorRecoveryBackup(project, 'protocol', recovery);
+  useWorkspaceNavigationGuard(busy
+    ? 'A protocol request is still pending. Leaving now may hide its outcome.'
+    : recovery && backup.error
+      ? 'Unsaved protocol input cannot be recovered in this browser. Save the draft before leaving Targets & splits.'
+      : null);
+  const protocolDrafts = (drafts.data?.drafts ?? []).filter((item) => item.payload.type === 'analysis-protocol' && item.status !== 'frozen');
   const datasetName = (id: string | undefined) => {
     const source = datasets.data?.datasets.find((item) => item.id === id);
     return source ? datasetVersionLabel(source) : id ? versionLabelText({ id }, 'Dataset') : 'Not selected';
+  };
+  const bundleName = (id: string | null | undefined) => {
+    const item = featureBundles.data?.items.find((bundle) => bundle.id === id);
+    return item ? versionLabelText(item, 'Feature bundle') : id ? versionLabelText({ id }, 'Feature bundle') : 'Choose in draft';
   };
   const libraryRows = [
     ...(configurations.data?.configurations ?? []).map((item) => ({
       kind: 'configuration' as const, item, name: configurationVersionLabel(item), status: 'frozen',
       datasetName: datasetName(item.manifest.datasetId),
+      bundleName: bundleName((item.manifest.spec as ProtocolSpec).featureBundleId),
       updatedAt: item.versionLabel?.updatedAt ?? item.createdAt, createdAt: item.createdAt,
       search: [configurationVersionLabel(item), item.id, item.versionLabel?.note, item.manifest.datasetId,
-        datasetName(item.manifest.datasetId), (item.manifest.spec as ProtocolSpec).target?.field].join(' ').toLowerCase(),
+        datasetName(item.manifest.datasetId), bundleName((item.manifest.spec as ProtocolSpec).featureBundleId), (item.manifest.spec as ProtocolSpec).target?.field].join(' ').toLowerCase(),
     })),
     ...protocolDrafts.map((item) => ({
       kind: 'draft' as const, item, name: item.name, status: item.status,
       datasetName: datasetName((item.payload.spec as ProtocolSpec).datasetId),
+      bundleName: bundleName((item.payload.spec as ProtocolSpec).featureBundleId),
       updatedAt: item.updatedAt, createdAt: item.createdAt ?? item.updatedAt,
       search: [item.name, item.id, (item.payload.spec as ProtocolSpec).datasetId,
-        datasetName((item.payload.spec as ProtocolSpec).datasetId), (item.payload.spec as ProtocolSpec).target?.field].join(' ').toLowerCase(),
+        datasetName((item.payload.spec as ProtocolSpec).datasetId), bundleName((item.payload.spec as ProtocolSpec).featureBundleId), (item.payload.spec as ProtocolSpec).target?.field].join(' ').toLowerCase(),
     })),
   ];
   const visibleRows = libraryRows.filter((row) =>
@@ -226,21 +262,23 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
   const savedDataset = datasets.data?.datasets.find(
     (item) => item.id === saved?.manifest.datasetId,
   );
+  const savedBundleId = (saved?.manifest.spec as ProtocolSpec | undefined)?.featureBundleId;
+  const savedBundle = featureBundles.data?.items.find((item) => item.id === savedBundleId);
   const savedFeatureId = (saved?.manifest.spec as ProtocolSpec | undefined)?.featureSetId;
   const savedPackId = (saved?.manifest.spec as ProtocolSpec | undefined)?.featurePackId;
   const savedPack = featurePacks.data?.artifacts.find((artifact) => artifact.id === savedPackId);
   const savedFeature = features.data?.configurations.find((item) => item.id === savedFeatureId);
   function edit(update: Partial<ProtocolSpec>) {
-    if (update.target || update.datasetId !== undefined || update.eligibility || update.split) targetRequest.current += 1;
+    if (update.target || update.datasetId !== undefined || update.featureBundleId !== undefined || update.eligibility || update.split) targetRequest.current += 1;
     setSpec((current) => ({ ...current, ...update }));
     setPreview(null);
     setMessage('');
     setError(null);
     setShowSaved(null);
   }
-  function chooseFeature(featureSetId: string) {
-    if ((spec.featureSetId ?? '') !== featureSetId) {
-      edit({ featureSetId: featureSetId || null, featurePackId: null });
+  function chooseBundle(featureBundleId: string) {
+    if ((spec.featureBundleId ?? '') !== featureBundleId) {
+      edit({ featureBundleId: featureBundleId || null, featureSetId: null, featurePackId: null, featureCoverage: 'restrict' });
     }
   }
   function target(update: Partial<ProtocolSpec['target']>) {
@@ -288,6 +326,10 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
       setBusy(false);
     }
   }
+  /** Never discard entered input to start or open another record: save it first. */
+  async function keepCurrentWork() {
+    if (unsaved) await save();
+  }
   function reset() {
     setView('editor');
     setStep(1);
@@ -295,7 +337,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
     setPreflight(null);
     setFreezeLabel({ tag: '', note: '' });
     targetRequest.current += 1;
-    setSpec({ ...initialSpec(w), datasetId: context.datasetId ?? w.dataset.id });
+    setSpec({ ...initialSpec(w), datasetId: context.datasetId ?? w.dataset.id, featureBundleId: context.bundleId ?? null });
     setSeedsText(initialSpec(w).split.seeds.join(', '));
     setName(`${w.project.name} protocol`);
     setDraft(null);
@@ -379,7 +421,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
         <ConditionEditor
           title={
             role === 'train'
-              ? 'Training set conditions (required)'
+              ? 'Training slide filters'
               : role === 'test'
                 ? 'Test set conditions (required)'
                 : 'Fixed validation conditions (required)'
@@ -391,7 +433,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                 ? 'Reserve these groups for final evaluation.'
                 : 'Select separate groups for early stopping.'
           }
-          emptyMessage="Add a condition to define this set."
+          emptyMessage={role === 'train' ? 'Use all shared slides outside fixed validation. Add a filter to choose specific cohorts or records.' : 'Add a condition to define this set.'}
           columns={columns}
           fieldContext={fieldContext}
           conditions={spec.split.pools!.rules[role]}
@@ -399,6 +441,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
             split({
               pools: {
                 ...spec.split.pools!,
+                ...(role === 'train' ? { trainSelection: conditions.length ? 'rules' as const : 'remaining' as const } : {}),
                 rules: { ...spec.split.pools!.rules, [role]: conditions },
               },
             })
@@ -412,6 +455,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
           <div>
             <dl className="protocol-review-facts" aria-label="Development plan to review">
               <div><dt>Dataset</dt><dd>{dataset ? datasetVersionLabel(dataset) : 'Choose a frozen dataset'}</dd></div>
+              <div><dt>Feature bundle</dt><dd>{selectedBundle ? versionLabelText(selectedBundle, 'Feature bundle') : 'Choose a named feature bundle'}</dd></div>
               <div><dt>Target</dt><dd>{spec.target.field ? `${spec.target.field} · ${spec.target.classes.length} classes · ${spec.target.unit}` : 'Choose a prediction target'}</dd></div>
               <div><dt>Split design</dt><dd>{strategyNames[spec.split.mode] ?? spec.split.mode}{spec.split.mode === 'kfold' ? ` · ${spec.split.folds} folds` : ''}</dd></div>
               <div><dt>Split seeds</dt><dd>{seedsText || 'Enter valid seeds'}</dd></div>
@@ -440,10 +484,9 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
             >
               Save draft
             </button>
-            <button
+            <StageContinueButton
               type="button"
-              className="btn btn-primary"
-              disabled={!spec.datasetId || !spec.target.field || !name.trim() || !seedsValid}
+              disabled={!dataset || !bundleReady || !spec.target.field || !name.trim() || !seedsValid}
               onClick={() =>
                 void run(async () => {
                   setPreview(null);
@@ -454,40 +497,37 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                 })
               }
             >
-              {busy ? 'Validating…' : 'Preview & preflight'} <Icon name="arrow" />
-            </button>
+              {busy ? 'Validating…' : 'Preview & preflight'}
+            </StageContinueButton>
           </div>
     </>
   );
   return (
     <div className="clinical-workspace protocol-workspace">
       <PageHeader
-        eyebrow="STUDY DESIGN · TARGETS"
-        title="Targets & splits"
-        description="Open a protocol or define a prediction target and development splits."
-        actions={
-          <div className="inline-actions">
-            {view !== 'library' ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => { setResumeAvailable(true); setView('library'); }}>Back to protocols</button> : null}
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={reset}>
-              <Icon name="plus" /> New protocol
-            </button>
-          </div>
-        }
+        eyebrow="01 PREPARE"
+        title={view === 'library' ? 'Targets & splits' : saved ? configurationVersionLabel(saved) : draft ? name : 'Create protocol'}
+        description={view === 'library' ? 'Combine a dataset and feature bundle, then define targets and development splits.'
+          : saved ? 'Review this frozen protocol, its target and its split memberships.'
+            : 'Choose a dataset and feature bundle, filter their shared slides, then define the target and splits.'}
+        actions={view === 'library'
+          ? <StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create protocol</StageCreateButton>
+          : <StageBackButton disabled={busy} onClick={() => { setResumeAvailable(true); setView('library'); }}>Back to protocols</StageBackButton>}
       />
       <StagePage pageKey={view === 'library' ? 'library' : showSaved ?? `protocol-${step}${step === 4 && preview ? `-preview-${preview.previewHash}` : ''}`}>
-      {view !== 'library' ? <SetupContext input={saved ? savedDataset ? datasetVersionLabel(savedDataset) : versionLabelText({ id: saved.manifest.datasetId }, 'Dataset') : dataset ? datasetVersionLabel(dataset) : 'Choose a frozen dataset'} output="A fixed target and patient-grouped development splits">
+      {view !== 'library' ? <SetupContext input={saved ? savedDataset ? datasetVersionLabel(savedDataset) : versionLabelText({ id: saved.manifest.datasetId }, 'Dataset') : dataset ? datasetVersionLabel(dataset) : 'Choose a frozen dataset'} output="A dataset, named bundle, target and development splits with recorded identity groups">
         {(saved ? (saved.manifest.spec as ProtocolSpec).split.version : spec.split.version) === 4 ? 'Development data only. Select training records here; prepare test data later in Evaluate.' : 'This saved design retains its original split behavior. Review its assignments before creating a new version.'}
       </SetupContext> : null}
       <PreparationNotice context={context} />
       <ErrorNotice
         error={
-          error ?? datasets.error ?? drafts.error ?? configurations.error ?? (view === 'editor' ? features.error ?? (!saved ? live.error ?? labelValues.error : null) : null)
+          error ?? datasets.error ?? drafts.error ?? configurations.error ?? (view === 'editor' ? featureBundles.error ?? features.error ?? (!saved ? live.error ?? labelValues.error : null) : null)
         }
       />
       <SavedNotice>{message}</SavedNotice>
       {view === 'library' ? (
         <StageLibrary project={project} title="Protocol library">
-          <StageLibraryToolbar search={libraryFilters.search} onSearch={(search) => setLibraryFilters((current) => ({ ...current, search }))} searchLabel="Search protocols" placeholder="Name, ID, dataset, target or note" count={configurations.isPending || drafts.isPending ? undefined : visibleRows.length} total={libraryRows.length}
+          <StageLibraryToolbar search={libraryFilters.search} onSearch={(search) => setLibraryFilters((current) => ({ ...current, search }))} searchLabel="Search protocols" placeholder="Name, dataset, bundle, target or note" count={configurations.isPending || drafts.isPending ? undefined : visibleRows.length} total={libraryRows.length}
             onReset={libraryFilters.search || libraryFilters.status !== 'all' || libraryFilters.sort !== 'recent' ? resetLibraryFilters : undefined}
             actions={<>
               {resumeAvailable ? <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => setView('editor')}>Return to current protocol</button> : null}
@@ -504,31 +544,37 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
           {configurations.isPending || drafts.isPending ? <p role="status">Loading protocols and drafts…</p> : null}
           {visibleRows.length ? (
             <div className="table-wrap"><table className="stage-library-table" aria-label="Saved protocols and drafts">
-              <thead><tr><th>Name</th><th>Status</th><th>Dataset</th><th>Updated</th><th><span className="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th>Name</th><th>Status</th><th>Dataset</th><th>Feature bundle</th><th>Updated</th><th><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>{visibleRows.map((row) => row.kind === 'configuration' ? <tr key={`protocol-${row.item.id}`}>
                 <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open protocol ${row.name}`} onClick={() => { setShowSaved(row.item.id); setView('editor'); setPreflight(null); setError(null); setMessage(''); }}>{row.name}</button>{row.item.versionLabel?.note ? <small>{row.item.versionLabel.note}</small> : null}</td>
                 <td><Badge tone="green">Frozen protocol</Badge></td>
                 <td>{row.datasetName}</td>
+                <td>{row.bundleName}</td>
                 <td>{new Date(row.updatedAt).toLocaleDateString()}</td>
                 <td><StageRecordManageButton type="configuration" id={row.item.id} name={row.name} /></td>
               </tr> : <tr key={`draft-${row.item.id}`}>
-                <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open protocol draft ${row.name}`} onClick={() => { if (draft?.id === row.item.id && resumeAvailable) { setShowSaved(null); setView('editor'); } else void run(() => loadDraft(row.item.id)); }}>{row.name}</button><small>Revision {row.item.revision}</small></td>
-                <td><Badge tone={row.item.status === 'frozen' ? 'green' : 'neutral'}>{row.item.status === 'frozen' ? 'Frozen draft' : 'Draft'}</Badge></td>
+                <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open protocol draft ${row.name}`} onClick={() => { if (draft?.id === row.item.id && resumeAvailable) { setShowSaved(null); setView('editor'); } else void run(async () => { await keepCurrentWork(); await loadDraft(row.item.id); }); }}>{row.name}</button><small>Revision {row.item.revision}</small></td>
+                <td><Badge tone={row.item.status === 'frozen' ? 'frozen' : 'neutral'}>{row.item.status === 'frozen' ? 'Frozen draft' : 'Draft'}</Badge></td>
                 <td>{row.datasetName}</td>
+                <td>{row.bundleName}</td>
                 <td>{new Date(row.updatedAt).toLocaleDateString()}</td>
                 <td><StageRecordManageButton type="draft" id={row.item.id} name={row.name} /></td>
               </tr>)}</tbody>
             </table></div>
           ) : !configurations.isPending && !drafts.isPending && !configurations.error && !drafts.error ? <EmptyState
+            icon="cohort"
             title={libraryRows.length ? 'No matching protocols or drafts' : 'No protocols or drafts yet'}
-            description={libraryRows.length ? 'Try another search or clear the filters.' : 'Create a protocol to choose development records, define a prediction target and design patient-grouped splits.'}
+            description={libraryRows.length ? 'Try another search or clear the filters.' : 'Create a protocol to choose development records, define a prediction target and review the patient or acknowledged slide groups used for splitting.'}
+            action={libraryRows.length
+              ? <button type="button" className="btn btn-secondary" onClick={resetLibraryFilters}>Clear filters</button>
+              : <StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create protocol</StageCreateButton>}
           /> : null}
         </StageLibrary>
       ) : <>
       {!saved && live.data?.findings.some((finding) => finding.severity === 'error') ? <Findings findings={live.data.findings.filter((finding) => finding.severity === 'error')} /> : null}
       {!saved && preview && step !== 4 && !preview.canFreeze ? <div className="callout callout-warning"><strong>The current design has blocking findings.</strong> <button type="button" className="text-button" onClick={() => showStep(4)}>Review findings</button><Findings findings={preview.findings.filter((finding) => finding.severity === 'error')} /></div> : null}
       {!saved ? <StageSteps label="Protocol sections" current={String(step)} onChange={(id) => showStep(Number(id) as 1 | 2 | 3 | 4)} disabled={busy} steps={[
-        { id: '1', title: 'Development data', description: dataset ? datasetVersionLabel(dataset) : 'Choose a dataset and training records', complete: Boolean(dataset) },
+        { id: '1', title: 'Development data', description: dataset && selectedBundle ? `${datasetVersionLabel(dataset)} · ${versionLabelText(selectedBundle, 'Bundle')}` : 'Choose a dataset and feature bundle', complete: Boolean(dataset && bundleReady) },
         { id: '2', title: 'Prediction target', description: spec.target.field || 'Choose the label to predict', complete: Boolean(spec.target.field && spec.target.task && spec.target.classes.length >= 2) },
         { id: '3', title: 'Split design', description: strategyNames[spec.split.mode] || 'Review the saved split strategy', complete: Boolean(preview) },
         { id: '4', title: 'Review & freeze', description: preview ? preview.canFreeze ? 'Ready to freeze' : 'Resolve findings' : 'Check assignments before saving' },
@@ -561,9 +607,10 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
               </strong>
             </li>
             <li>
-              <span>Feature version</span>
-              <strong title={savedFeatureId ?? undefined}>
-                {savedFeature
+              <span>{savedBundleId ? 'Feature bundle' : 'Legacy feature version'}</span>
+              <strong title={savedBundleId ?? savedFeatureId ?? undefined}>
+                {savedBundleId ? savedBundle ? versionLabelText(savedBundle, 'Feature bundle') : versionLabelText({ id: savedBundleId }, 'Feature bundle') :
+                savedFeature
                   ? configurationVersionLabel(savedFeature)
                   : savedFeatureId
                     ? versionLabelText({ id: savedFeatureId }, 'Features')
@@ -572,6 +619,8 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
             </li>
             {savedPackId ? <li><span>Legacy pack binding</span><strong title={savedPack?.outputPath ?? savedPackId}>{savedPack ? `${savedPack.outputDtype} pack · ${savedPack.outputPath}` : `Saved pack · ${savedPackId.slice(-12)}`}</strong></li> : null}
           </ul>
+          <FrozenProtocolSummary spec={saved.manifest.spec as ProtocolSpec} summary={saved.manifest.summary as ProtocolPreview['summary']} dictionary={savedDataset?.manifest.dictionary} />
+          <Findings findings={saved.manifest.findings ?? []} />
           {saved.manifest.partitions ? (
             <>
               <PlanSummary summary={saved.manifest.summary as ProtocolPreview['summary']} />
@@ -609,14 +658,13 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
               >
                 Recheck input preflight
               </button>
-              <a className="btn btn-primary btn-small" href="#experiments">Continue to Experiments <Icon name="arrow" /></a>
+              <StageContinueButton size="small" href={preparationLink('experiments', { protocolId: saved.id, bundleId: savedBundleId ?? undefined })}>Continue to experiments </StageContinueButton>
             </div>
             {preflight?.protocolId === saved.id ? (
               <Findings findings={preflight.findings} />
             ) : null}
             <p className="muted">
-              Rechecks the selected feature files and eligible-slide coverage. Validate full
-              feature contents and freeze a bundle in Features, then select this protocol in Experiments.
+              Rechecks the saved bundle and eligible-slide coverage before training in Experiments.
             </p>
           </div>
           <details>
@@ -632,9 +680,9 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
             title="No imported dataset yet"
             description="Import and freeze a dataset before configuring labels or patient assignments."
           />
-          <a className="btn btn-primary" href="#dataset">
-            Go to Dataset <Icon name="arrow" />
-          </a>
+          <StageContinueButton href="#dataset">
+            Go to Dataset
+          </StageContinueButton>
         </Panel>
       ) : null}
       {frozen ? (
@@ -663,7 +711,8 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
             <PredictionTargetEditor
               target={spec.target}
               fieldContext={fieldContext}
-              unlinkedSlideCount={dataset?.manifest.summary?.unlinkedSlideCount}
+              unlinkedSlideCount={live.data?.cohort?.unlinkedSlideCount ?? dataset?.manifest.summary?.unlinkedSlideCount}
+              fallbackSlideCount={live.data?.cohort?.fallbackSlideCount ?? dataset?.manifest.summary?.fallbackSlideCount}
               labelValues={labelValues}
               rawValues={rawValues}
               dataLabel={spec.split.version === 4 ? 'selected development records' : 'source values across all dataset slides'}
@@ -675,7 +724,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
         <div id="protocol-cohort" className="protocol-section" hidden={step !== 1} tabIndex={-1}>
           <Panel
             title="1. Choose the development data"
-            subtitle="Choose a dataset, then select the records available for training and development validation."
+            subtitle="Development uses slides present in both the dataset and the named feature bundle. Add filters to narrow that shared population."
             actions={<Badge>{spec.split.version === 4 ? 'Development data only' : 'Saved cohort design'}</Badge>}
           >
             <div className="stack">
@@ -699,8 +748,6 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                   onChange={(datasetId) =>
                     edit({
                       datasetId,
-                      featureSetId: null,
-                      featurePackId: null,
                       target: { ...spec.target, field: '', ...inferTargetSettings([]) },
                       predictors: [],
                       eligibility: [],
@@ -716,19 +763,40 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                   }
                 />
               </div>
+              <div className="protocol-bundle-source">
+                <label className="label">
+                  Feature bundle
+                  <select className="field" value={spec.featureBundleId ?? ''} onChange={(event) => chooseBundle(event.target.value)}>
+                    <option value="">{featureBundles.isPending ? 'Loading feature bundles…' : 'Choose a named feature bundle'}</option>
+                    {spec.featureBundleId && !selectedBundle ? <option value={spec.featureBundleId} disabled>Selected bundle unavailable</option> : null}
+                    {(featureBundles.data?.items ?? []).map((item) => {
+                      const available = item.current && !item.findings.some((finding) => finding.severity === 'error');
+                      return <option key={item.id} value={item.id} disabled={!available}>{versionLabelText(item, 'Feature bundle')} · {item.manifest.summary.slideCount.toLocaleString()} slides{available ? '' : ' · needs verification'}</option>;
+                    })}
+                  </select>
+                </label>
+                <p className="muted">Bundles can cover slides from any dataset. The shared Slide IDs define this protocol’s starting population. <a href={preparationLink('features', { datasetId: spec.datasetId || undefined })}>Prepare a feature bundle</a>.</p>
+                {selectedBundle ? <div className="science-metrics" aria-label="Dataset and bundle coverage">
+                  <Metric label="Dataset slides" value={live.data?.dataset.totalSlides ?? dataset?.manifest.summary?.slideCount ?? '—'} />
+                  <Metric label="Bundle slides" value={selectedBundle.manifest.summary.slideCount} />
+                  <Metric label="Shared slides" value={live.data?.matchedSlides ?? '—'} note="Before cohort filters and target exclusions" />
+                </div> : null}
+                {selectedBundle?.findings.length ? <Findings findings={selectedBundle.findings} /> : null}
+                {!spec.featureBundleId && (spec.featureSetId || spec.featurePackId) ? <p className="callout">This older draft uses a feature version{spec.featurePackId ? ` and pack ${legacyPack?.outputPath ?? spec.featurePackId}` : ''}. Choose a named bundle to use this draft for a new protocol.</p> : null}
+              </div>
               {spec.split.version === 4 ? dataSources : null}
               <details className="setup-details" open={spec.split.version !== 4 || spec.eligibility.length > 0 ? true : undefined}>
-                <summary>Additional eligibility filters and record preview{spec.eligibility.length ? ` · ${spec.eligibility.length} conditions` : ' (optional)'}</summary>
+                <summary>{spec.split.version !== 4 || spec.eligibility.length ? 'Additional eligibility filters and record preview' : 'Explore shared slide records'}{spec.eligibility.length ? ` · ${spec.eligibility.length} conditions` : ' (optional)'}</summary>
                 <div className="stack">
-              <ConditionEditor
+              {spec.split.version !== 4 || spec.eligibility.length ? <ConditionEditor
                 title="Which slides should be included?"
-                description="Optional. A slide is included when it matches every condition below."
-                emptyMessage="All dataset slides are included. Add a condition only to narrow the cohort."
+                description="Optional. Combine conditions to narrow the dataset and bundle’s shared slides."
+                emptyMessage="All shared slides are included. Add filters only to narrow the cohort."
                 conditions={spec.eligibility}
                 columns={columns}
                 fieldContext={fieldContext}
                 onChange={(eligibility) => edit({ eligibility })}
-              />
+              /> : null}
               {!spec.datasetId ? (
                 <p className="protocol-live-status">
                   Choose a frozen dataset to see available slides and patients.
@@ -743,9 +811,9 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                 <div className="stack" aria-live="polite">
                   <CohortStats stats={live.data.cohort} total={live.data.dataset.totalSlides} />
                   <p className="muted">
-                    These counts apply eligibility conditions only. Missing labels, label
-                    mappings and final assignment constraints are checked in Preview &
-                    preflight.
+                    {['dataset_and_features', 'dataset_and_bundle'].includes(live.data.populationSource ?? '')
+                      ? `These counts are the eligible slides the selected bundle covers${live.data.featureExclusions ? `, after excluding ${live.data.featureExclusions.toLocaleString()} without features` : ''}. Missing labels, label mappings and final assignment constraints are checked in Preview & preflight.`
+                      : 'These counts apply eligibility conditions only. Missing labels, label mappings and final assignment constraints are checked in Preview & preflight.'}
                   </p>
                   {live.data.target ? (
                     <DistributionBars
@@ -759,7 +827,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                   ) : null}
                   <CohortSample
                     stats={live.data.cohort}
-                    fields={[...spec.eligibility.map((item) => item.field), spec.target.field]}
+                    fields={[...conditionFields(spec.eligibility), spec.target.field]}
                   />
                 </div>
               ) : (
@@ -773,44 +841,6 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                 </div>
               </details>
               <TabularPredictorSelection dictionary={dictionary} selected={spec.predictors} targetField={spec.target.field} onChange={(predictors) => edit({ predictors })} />
-              <details className="setup-details" open={spec.featureSetId || spec.featurePackId ? true : undefined}>
-                <summary>Optional feature reference{spec.featureSetId ? ' · configured' : ''}</summary>
-              <label className="label">
-                Slide image features (optional for saving this protocol)
-                <select
-                  className="field"
-                  value={spec.featureSetId ?? ''}
-                  onChange={(event) => chooseFeature(event.target.value)}
-                >
-                  <option value="">
-                    Choose later — protocol can be saved without features
-                  </option>
-                  {features.data?.configurations
-                    .filter((item) => item.manifest.datasetId === spec.datasetId)
-                    .map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {configurationVersionLabel(item)} ·{' '}
-                        {(item.manifest.spec as { encoderId?: string }).encoderId ??
-                          'Existing HDF5 features'}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <p className="muted">
-                Select image features attached in PFM & features. You can save the protocol and
-                choose these later.
-              </p>
-              <p className="muted">
-                Feature bundles and loading settings are selected in Experiments.
-              </p>
-              {spec.featurePackId ? <div className="callout">
-                <strong>Legacy pack binding</strong>
-                <p>This protocol already records a pack. Its binding is preserved when you save this draft and must be honored in Experiments.</p>
-                <code>{legacyPack?.outputPath ?? spec.featurePackId}</code>
-                {legacyPack?.findings?.length ? <Findings findings={legacyPack.findings} /> : null}
-                <ErrorNotice error={featurePacks.error} />
-              </div> : null}
-              </details>
             </div>
           </Panel>
         </div>
@@ -915,7 +945,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                                       : role
                                 }
                                 fields={[
-                                  ...spec.split.rules[role].map((item) => item.field),
+                                  ...conditionFields(spec.split.rules[role]),
                                   spec.target.field,
                                 ]}
                                 total={live.data.cohort.totalSlides}
@@ -928,7 +958,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                           </div>
                         ))}
                         <p className="muted">
-                          All conditions must match on a slide; its whole group is selected.
+                          Each condition group uses its selected AND/OR rule. A matching slide selects its whole group.
                           Overlapping selections block freezing.
                         </p>
                         {live.data?.unassigned?.totalSlides ? (
@@ -1134,7 +1164,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                                 : 'test'
                           }
                           fields={[
-                            ...spec.split.rules[role].map((item) => item.field),
+                            ...conditionFields(spec.split.rules[role]),
                             spec.target.field,
                           ]}
                           total={live.data.cohort.totalSlides}
@@ -1148,7 +1178,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
                     </div>
                   ))}
                   <p className="muted">
-                    Within a rule group, all conditions must match. A matching eligible slide
+                    Each condition group uses its selected AND/OR rule. A matching eligible slide
                     reserves its whole group. Overlapping test, validation and training
                     selections block freezing. Counts above are before target-label exclusions
                     and final feasibility checks.
@@ -1223,11 +1253,11 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
           {!preview ? reviewControls : null}
         </div>
         <div className="setup-step-actions" aria-label="Protocol step actions" hidden={step === 4 && Boolean(preview)}>
-          {step > 1 ? <button type="button" className="btn btn-secondary" onClick={() => showStep((step - 1) as 1 | 2 | 3)}>Back</button> : null}
-          <p>{step === 1 ? !dataset ? 'Choose a frozen dataset to continue.' : 'Only the selected development records will enter this protocol.' : step === 2 ? !spec.target.field || !spec.target.task || spec.target.classes.length < 2 ? 'Choose a target with at least two mapped classes to continue.' : 'Review the class mapping and positive class before continuing.' : step === 3 ? !seedsValid ? 'Enter valid split seeds before continuing.' : 'The review checks patient overlap, labels and fold sizes before freezing.' : 'Changes to any step invalidate the reviewed assignments. Run the checks again before freezing.'}</p>
+          {step > 1 ? <StageBackButton type="button" onClick={() => showStep((step - 1) as 1 | 2 | 3)}>Back</StageBackButton> : null}
+          <p>{step === 1 ? !dataset ? 'Choose a frozen dataset to continue.' : !bundleReady ? 'Choose a verified feature bundle to continue.' : 'Development uses shared dataset and bundle slides that match your selection.' : step === 2 ? !spec.target.field || !spec.target.task || spec.target.classes.length < 2 ? 'Choose a target with at least two mapped classes to continue.' : 'Review the class mapping and positive class before continuing.' : step === 3 ? !seedsValid ? 'Enter valid split seeds before continuing.' : 'The review checks patient overlap, labels and fold sizes before freezing.' : 'Changes to any step invalidate the reviewed assignments. Run the checks again before freezing.'}</p>
           {step < 4 ? <>
             <button type="button" className="btn btn-secondary" disabled={!name.trim() || !seedsValid} onClick={() => void run(async () => { await save(); setMessage('Protocol draft saved. It remains editable.'); })}>Save draft</button>
-            <button type="button" className="btn btn-primary" disabled={step === 1 ? !dataset : step === 2 ? !spec.target.field || !spec.target.task || spec.target.classes.length < 2 : !seedsValid} onClick={() => showStep((step + 1) as 2 | 3 | 4)}>Continue to {step === 1 ? 'target' : step === 2 ? 'split design' : 'review'} <Icon name="arrow" /></button>
+            <StageContinueButton type="button" disabled={step === 1 ? !dataset || !bundleReady : step === 2 ? !spec.target.field || !spec.target.task || spec.target.classes.length < 2 : !seedsValid} onClick={() => showStep((step + 1) as 2 | 3 | 4)}>Continue to {step === 1 ? 'target' : step === 2 ? 'split design' : 'review'} </StageContinueButton>
           </> : null}
         </div>
       </fieldset>
@@ -1251,7 +1281,9 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
               <Metric
                 label="Included slides"
                 value={preview.summary.includedSlides}
-                note={`${preview.summary.totalSlides} total dataset slides`}
+                note={['dataset_and_features', 'dataset_and_bundle'].includes(preview.summary.populationSource ?? '')
+                  ? `${preview.summary.totalSlides} dataset slides · ${(preview.summary.featureExclusions ?? 0).toLocaleString()} without features`
+                  : `${preview.summary.totalSlides} total dataset slides`}
               />
               <Metric
                 label="Excluded slides"
@@ -1282,7 +1314,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
               </fieldset>
             </details>
             <div className="stage-actions">
-              <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => showStep(3)}>Back to split design</button>
+              <StageBackButton type="button" disabled={busy} onClick={() => showStep(3)}>Back to split design</StageBackButton>
               <p>Next, name this development protocol version. Your required tag, optional note and reviewed design are saved together.</p>
               <button
                 type="button"
@@ -1302,7 +1334,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
       {freezeReview ? (
         <FreezeVersionDialog
           kind="protocol"
-          initialLabel={freezeLabel}
+          initialLabel={{ ...freezeLabel, tag: freezeLabel.tag || freezeReview.name.slice(0, 80) }}
           onLabelChange={setFreezeLabel}
           onClose={() => setFreezeReview(null)}
           onFreeze={async (versionLabel) => {
@@ -1314,7 +1346,7 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
               setShowSaved(result.id);
               setPreview(null);
               setMessage(`Development protocol “${result.versionLabel?.tag || versionLabel.tag}” frozen with its commit note.`);
-              window.location.hash = preparationLink('features', { datasetId: result.manifest.datasetId, protocolId: result.id, saved: 'protocol' });
+              window.location.hash = preparationLink('experiments', { datasetId: result.manifest.datasetId, protocolId: result.id, bundleId: (result.manifest.spec as ProtocolSpec).featureBundleId ?? undefined, saved: 'protocol' });
               window.scrollTo({ top: 0 });
             } catch (reason) {
               if (scientificReviewInvalidated(reason)) {
@@ -1327,163 +1359,10 @@ function ProtocolWorkspace({ workspace: w, context }: { workspace: Workspace; co
           }}
         >
           <p><strong>{freezeReview.name}</strong></p>
-          <p>{freezeReview.preview.summary.includedSlides.toLocaleString()} included slides · {freezeReview.preview.summary.includedPatients.toLocaleString()} included patients</p>
+          <p>{freezeReview.preview.summary.includedSlides.toLocaleString()} included slides · {freezeReview.preview.summary.includedPatients.toLocaleString()} supplied patient IDs · {(freezeReview.preview.summary.includedGroups ?? freezeReview.preview.summary.includedPatients).toLocaleString()} assignment groups</p>
           <p>Cohort, prediction target and split assignments are kept as one version.</p>
         </FreezeVersionDialog>
       ) : null}
-    </div>
-  );
-}
-export function ConditionEditor({
-  title,
-  description,
-  emptyMessage,
-  conditions,
-  columns,
-  fieldContext,
-  onChange,
-}: {
-  title: string;
-  description: string;
-  emptyMessage: string;
-  conditions: Condition[];
-  columns: string[];
-  fieldContext: ProtocolFieldContext;
-  onChange: (conditions: Condition[]) => void;
-}) {
-  const update = (index: number, changed: Partial<Condition>) =>
-    onChange(
-      conditions.map((condition, at) =>
-        at === index ? { ...condition, ...changed } : condition,
-      ),
-    );
-  const fields = ['Slide_ID', 'Patient_ID', ...columns];
-  return (
-    <div className="condition-editor">
-      <div className="science-subheading">
-        <h3>{title}</h3>
-        <button
-          type="button"
-          className="btn btn-secondary btn-small"
-          onClick={() =>
-            onChange([...conditions, { field: columns[0] ?? 'Slide_ID', op: 'eq', value: '' }])
-          }
-        >
-          <Icon name="plus" size={14} /> Add condition
-        </button>
-      </div>
-      <p className="muted">{description}</p>
-      {conditions.length ? (
-        conditions.map((condition, index) => (
-          <div className="protocol-condition" key={index}>
-            <div className="condition-row">
-              <label className="label">
-                Field
-                <select
-                  className="field"
-                  value={condition.field}
-                  onChange={(event) => update(index, { field: event.target.value })}
-                >
-                  {fields.map((field) => (
-                    <option key={field}>{field}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="label">
-                Condition
-                <select
-                  className="field"
-                  value={condition.op}
-                  onChange={(event) => {
-                    const op = event.target.value as Condition['op'];
-                    update(index, {
-                      op,
-                      value: op === 'exists' ? true : ['in', 'not_in'].includes(op) ? [] : '',
-                    });
-                  }}
-                >
-                  {[
-                    ['eq', 'equals'],
-                    ['ne', 'does not equal'],
-                    ['in', 'is one of'],
-                    ['not_in', 'is not one of'],
-                    ['regex', 'matches regex'],
-                    ['lt', 'less than'],
-                    ['lte', 'at most'],
-                    ['gt', 'greater than'],
-                    ['gte', 'at least'],
-                    ['exists', 'is present / missing'],
-                  ].map(([op, label]) => (
-                    <option key={op} value={op}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="label">
-                {['in', 'not_in'].includes(condition.op) ? 'Values, separated by |' : 'Value'}
-                {condition.op === 'exists' ? (
-                  <select
-                    className="field"
-                    value={String(condition.value)}
-                    onChange={(event) =>
-                      update(index, { value: event.target.value === 'true' })
-                    }
-                  >
-                    <option value="true">Is present</option>
-                    <option value="false">Is missing</option>
-                  </select>
-                ) : (
-                  <input
-                    className="field"
-                    value={
-                      Array.isArray(condition.value)
-                        ? condition.value.join(' | ')
-                        : String(condition.value ?? '')
-                    }
-                    placeholder={condition.op === 'regex' ? '^pattern$' : ''}
-                    onChange={(event) => {
-                      const text = event.target.value;
-                      let value: ConditionValue = text;
-                      if (['in', 'not_in'].includes(condition.op))
-                        value = text.split('|').map((item) => item.trim());
-                      else if (['lt', 'lte', 'gt', 'gte'].includes(condition.op))
-                        value = text === '' ? '' : Number(text);
-                      update(index, { value });
-                    }}
-                  />
-                )}
-              </label>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label={`Remove ${title} condition ${index + 1}`}
-                onClick={() => onChange(conditions.filter((_, at) => at !== index))}
-              >
-                <Icon name="close" />
-              </button>
-            </div>
-            <FieldProfile {...fieldContext} field={condition.field} />
-            {condition.op === 'regex' ? (
-              <small className="muted">
-                Regular expression, matched as text. For example, ^2$ matches only 2; ^T matches
-                values beginning with T.
-              </small>
-            ) : ['lt', 'lte', 'gt', 'gte'].includes(condition.op) ? (
-              <small className="muted">
-                Enter a number. Non-numeric source values must be corrected before using this
-                comparison.
-              </small>
-            ) : ['in', 'not_in'].includes(condition.op) ? (
-              <small className="muted">
-                Separate exact values with |, for example low | high.
-              </small>
-            ) : null}
-          </div>
-        ))
-      ) : (
-        <p className="muted">{emptyMessage}</p>
-      )}
     </div>
   );
 }
@@ -1704,6 +1583,33 @@ function MappingEditor({
     </div>
   );
 }
+export function FrozenProtocolSummary({ spec, summary, dictionary = [] }: {
+  spec: ProtocolSpec; summary: ProtocolPreview['summary']; dictionary?: AttributeMapping[];
+}) {
+  const target = spec.target;
+  const source = dictionary.find((field) => field.key === target.field);
+  return <section className="stack" aria-label="Frozen prediction target and identity groups">
+    <h3>Prediction target</h3>
+    <dl className="protocol-review-facts">
+      <div><dt>Reference label field</dt><dd>{target.field}{source && source.sourceColumn !== target.field ? ` · Source column: ${source.sourceColumn}` : ''}</dd></div>
+      <div><dt>Prediction task</dt><dd>{taskLabel(target.task)}</dd></div>
+      <div><dt>Prediction unit</dt><dd>{unitLabel(target.unit)} · One prediction per {target.unit === 'patient' ? 'patient' : 'slide'}</dd></div>
+      <div><dt>Class order</dt><dd>{target.classes.join(' → ')}</dd></div>
+      {target.task === 'binary_classification' ? <div><dt>Positive class</dt><dd>{target.positiveClass || 'Not recorded'}</dd></div> : null}
+      <div><dt>Label mapping</dt><dd>{Object.entries(target.labels).map(([raw, mapped]) => `${raw} → ${mapped}`).join('; ') || 'Not recorded'}</dd></div>
+      <div><dt>Missing reference labels</dt><dd>{target.missing === 'exclude' ? 'Exclude affected slides' : 'Block until resolved'}</dd></div>
+      <div><dt>Unmapped reference labels</dt><dd>{target.unmapped === 'exclude' ? 'Exclude affected slides' : 'Block until resolved'}</dd></div>
+    </dl>
+    <h3>Identity groups used for splitting</h3>
+    <div className="science-metrics protocol-metrics">
+      <Metric label="Supplied patient IDs" value={summary.includedPatients.toLocaleString()} note="Distinct recorded patient identifiers" />
+      <Metric label="Assignment groups" value={(summary.includedGroups ?? summary.includedPatients).toLocaleString()} note="Slides in the same group stay together" />
+      {summary.fallbackSlideCount !== undefined ? <Metric label="Acknowledged slide / case groups" value={summary.fallbackSlideCount.toLocaleString()} note="Slide_ID used where patient identity is unavailable" /> : null}
+    </div>
+    {summary.fallbackSlideCount ? <p className="callout callout-warning">Some groups identify individual slides or cases without supplied patient IDs. Patient independence cannot be verified for those groups.</p> : null}
+  </section>;
+}
+
 function PlanSummary({ summary }: { summary: ProtocolPreview['summary'] }) {
   if ((summary.splitVersion ?? 1) < 2) return null;
   const coverage = summary.oofCoverage;

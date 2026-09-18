@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import traceback
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -77,7 +78,19 @@ def run_plan(path):
         if cancel_path and cancel_path.exists():
             result["state"] = "cancelled"
             return 0
-        with Path(plan["logPath"]).open("a", encoding="utf-8", buffering=1) as log:
+        with ExitStack() as resource_stack, Path(plan["logPath"]).open("a", encoding="utf-8", buffering=1) as log:
+            reservation = None
+            if plan.get("resources"):
+                # New plans use the service interpreter; historical standalone
+                # plans still run without importing the HistoPilot package.
+                sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+                from histopilot.workers.resource_reservation import reserve_preparation
+
+                _write_result(Path(plan["processPath"]), _process_identity(os.getpid()))
+                reservation = resource_stack.enter_context(reserve_preparation(
+                    Path(path).parent, "extraction", plan["resources"],
+                    lambda: interrupted or bool(cancel_path and cancel_path.exists()),
+                ))
             for phase, command in commands:
                 # A cancellation between stages prevents the verifier from starting.
                 if interrupted or (cancel_path and cancel_path.exists()):
@@ -93,6 +106,8 @@ def run_plan(path):
                     start_new_session=True,
                     cwd=plan.get("cwd"),
                 )
+                if reservation is not None:
+                    reservation.attach(process.pid)
                 if plan.get("processPath"):
                     _write_result(
                         Path(plan["processPath"]),
@@ -120,6 +135,8 @@ def run_plan(path):
                         except ProcessLookupError:
                             pass
                         break
+                if reservation is not None:
+                    reservation.finish_child()
                 result["exitCode"] = process.returncode
                 if phase == "TRIDENT":
                     result["tridentExitCode"] = process.returncode
@@ -139,6 +156,8 @@ def run_plan(path):
                     break
     except Exception as error:
         result["error"] = str(error)
+        if interrupted or (cancel_path and cancel_path.exists()):
+            result["state"] = "cancelled"
         traceback.print_exc()
         if process is not None and process.poll() is None:
             stop(signal.SIGTERM, None)

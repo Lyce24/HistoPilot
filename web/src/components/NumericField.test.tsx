@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NumericField, { parseNumericField, reportEditorValidity } from './NumericField';
+import { NumericDraftProvider, NumericDraftScope } from './NumericFieldDrafts';
 
 describe('direct numeric entry', () => {
   it('allows replacement values and treats empty or incomplete text as unfinished input', () => {
@@ -31,6 +32,12 @@ describe('direct numeric entry', () => {
     expect(html).toContain('inputMode="numeric"');
     expect(html).toContain('required=""');
     expect(html).not.toContain('type="number"');
+  });
+  it('restores incomplete text separately for repeated configuration fields', () => {
+    const values = { 'first:Learning rate': { source: 0.001, text: '1e-' }, 'second:Learning rate': { source: 0.001, text: '0.0010' } };
+    const html = renderToStaticMarkup(<NumericDraftProvider values={values} onChange={() => {}}>{['first', 'second'].map((name) => <NumericDraftScope name={name} key={name}><NumericField label="Learning rate" value={0.001} integer={false} onChange={() => {}} /></NumericDraftScope>)}</NumericDraftProvider>);
+    expect(html).toContain('value="1e-"');
+    expect(html).toContain('value="0.0010"');
   });
 
   it('blocks submission at an invalid editor field and opens its details for correction', () => {

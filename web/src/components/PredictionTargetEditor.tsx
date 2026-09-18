@@ -8,6 +8,7 @@ export interface PredictionTargetEditorProps {
   target: ProtocolSpec['target'];
   fieldContext: ProtocolFieldContext;
   unlinkedSlideCount?: number;
+  fallbackSlideCount?: number;
   labelValues: {
     data?: {
       valueCounts: { value: string | null; count: number }[];
@@ -24,7 +25,7 @@ export interface PredictionTargetEditorProps {
 
 /** Keep development and independent test-cohort targets on the same editing workflow. */
 export default function PredictionTargetEditor({
-  target, fieldContext, unlinkedSlideCount, labelValues, rawValues, dataLabel,
+  target, fieldContext, unlinkedSlideCount, fallbackSlideCount, labelValues, rawValues, dataLabel,
   onChooseTarget, onChange,
 }: PredictionTargetEditorProps) {
   const columns = fieldContext.dictionary.map((item) => item.key);
@@ -44,11 +45,12 @@ export default function PredictionTargetEditor({
             {unlinkedSlideCount} slides have unresolved
             Patient_ID.
           </strong>{' '}
-          Revise this dataset to supply a patient mapping or explicitly confirm Slide ID
-          fallback. Fallback creates one group per unresolved slide; it cannot establish
-          which slides belong to the same patient.
+          {target.unit === 'patient'
+            ? 'Patient-level analysis requires verified patient IDs. Supply the patient mapping in the dataset; Slide ID fallback cannot establish patient membership.'
+            : 'Revise this dataset to supply a patient mapping or explicitly confirm Slide ID fallback. Fallback creates one group per unresolved slide; it cannot establish which slides belong to the same patient.'}
         </div>
       ) : null}
+      {target.unit === 'patient' && Boolean(fallbackSlideCount) ? <p className="callout callout-warning">{fallbackSlideCount} slides use Slide ID fallback. Supply verified patient IDs before using patient-level labels, validation or uncertainty estimates.</p> : null}
       <div className="science-grid-two">
         <label className="label">
           Target attribute
@@ -101,6 +103,7 @@ export default function PredictionTargetEditor({
             </option>
             <option value="slide">Slide / case — keep known patients together</option>
           </select>
+          <small>Training uses individual slides. The label unit determines label consistency and primary scoring; known patients stay together in every split, including validation. Patient targets retain slide-level results as a secondary analysis.</small>
         </label>
         <label className="label">
           Class names, separated by |

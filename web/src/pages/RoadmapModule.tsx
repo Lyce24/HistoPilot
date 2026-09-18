@@ -15,18 +15,26 @@ const outputs: Record<string, string[]> = {
   interpretation: ['Slide overlays from real ABMIL attention weights', 'Exact slide, feature, coordinate and predictor provenance', 'Inspectable ensemble member and refit attention maps'],
   reports: ['Performance metrics and uncertainty', 'Clinical analyses and reproducible reports'],
 };
+const phaseEyebrow: Record<Module['phase'], string> = {
+  prepare: '01 PREPARE', develop: '02 DEVELOP', evaluate: '03 EVALUATE', insights: 'OPTIONAL ANALYSIS',
+};
 export default function RoadmapModule({ module, roadmap, workspace }: { module: Module; roadmap: Roadmap; workspace: Workspace }) {
   const prerequisites = module.prerequisites.map((id) => roadmap.modules.find((item) => item.id === id)!);
+  // The blocked module's own next action is the prerequisite that can be opened,
+  // not a return to the roadmap the reader just came from.
+  const entry = prerequisites.find((item) => module.blockers.includes(item.id) && item.unlocked)
+    ?? prerequisites.find((item) => item.unlocked);
+  const expected = outputs[module.id];
   return <div className="clinical-workspace roadmap-module-detail">
-    <PageHeader eyebrow="PROJECT MODULE" title={module.title} description={module.description} />
+    <PageHeader eyebrow={phaseEyebrow[module.phase]} title={module.title} description={module.description} />
     <section className="module-gate">
       <span className="module-gate-icon"><Icon name={module.unlocked ? moduleIcons[module.id] : 'lock'} size={28} /></span>
-      <div><h2>{module.unlocked ? 'Review this workflow' : 'Complete the prerequisites to unlock this module'}</h2><p>{module.id === 'evaluation' ? 'Inference requires a ready predictor from Experiments and a verified test cohort. Test-cohort preparation can proceed while models are still developing.' : 'Your saved work stays available. Complete the required inputs below to continue.'}</p></div>
+      <div><h2>{module.unlocked ? 'Review this workflow' : 'Prepare the required inputs'}</h2><p>{module.id === 'evaluation' ? 'Inference requires a ready predictor from Experiments and a verified test cohort. Test-cohort preparation can proceed while models are still developing.' : module.id === 'interpretation' ? 'Attention requires an ABMIL predictor, compatible features and slide images. Evaluation and clinical reports are optional.' : 'Your saved work stays available. Prepare the required inputs below to continue.'}</p></div>
     </section>
-    {prerequisites.length ? <section className="module-prerequisites"><h2>Required modules</h2>{prerequisites.map((item) => <div key={item.id}><Icon name={moduleIcons[item.id]} /><span><strong>{item.title}</strong><small>{item.evidence}</small></span><ModuleStatus status={item.status} completedLabel={completedModuleLabel(item.id)} />{item.unlocked ? <a className="btn btn-secondary btn-small" href={`#${item.id}`}>Open<Icon name="arrow" size={14} /></a> : <Icon name="lock" size={15} />}</div>)}</section> : null}
+    {prerequisites.length ? <section className="module-prerequisites"><h2>Required modules</h2>{prerequisites.map((item) => <div key={item.id}><Icon name={moduleIcons[item.id]} /><span><strong>{item.title}</strong><small>{item.evidence}</small></span><ModuleStatus status={item.status} completedLabel={completedModuleLabel(item.id)} />{item.unlocked ? <a className={`btn btn-small ${item.id === entry?.id ? 'btn-primary' : 'btn-secondary'}`} href={`#${item.id}`}>Open<Icon name="arrow" size={14} /></a> : <Icon name="lock" size={15} />}</div>)}</section> : null}
     {module.compatibilityIssue ? <div className="callout callout-warning">{module.compatibilityIssue}</div> : null}
-    <section className="module-expected"><h2>{module.id === 'test-data' ? 'What you will need' : 'Module outputs'}</h2><ul>{(outputs[module.id] ?? ['A completed, frozen module output']).map((output) => <li key={output}><Icon name="check" size={16} />{output}</li>)}</ul></section>
-    <div className="callout"><Icon name="info" size={17} /><p>{module.id === 'test-data' ? 'Freeze a development protocol first. Then select test rows and verify features; no completed model or test-data split is needed to prepare this cohort.' : workspace.mode === 'synthetic-demo' ? 'This demonstration contains illustrative results. It does not execute training, freeze a predictor, or evaluate later test data.' : 'Supported ABMIL development batches produce fold checkpoints and OOF predictions. Experiments automatically generate the configured ensemble or refit predictors from completed folds. Evaluate ready predictors on a verified test cohort.'}</p></div>
-    <a className="btn btn-primary" href="#overview">Return to roadmap<Icon name="arrow" size={16} /></a>
+    {expected ? <section className="module-expected"><h2>{module.id === 'test-data' ? 'What you will need' : 'Module outputs'}</h2><ul>{expected.map((output) => <li key={output}><Icon name="check" size={16} />{output}</li>)}</ul></section> : null}
+    <div className="callout"><Icon name="info" size={17} /><p>{module.id === 'test-data' ? 'Import a dataset, select test records and define the prediction target. Model and feature compatibility are checked during evaluation; preparing a test cohort does not require a development protocol.' : workspace.mode === 'synthetic-demo' ? 'This demonstration contains illustrative results. It does not execute training, freeze a predictor, or evaluate later test data.' : 'Supported ABMIL development batches produce fold checkpoints and OOF predictions. Experiments automatically generate the configured ensemble or refit predictors from completed folds. Evaluate ready predictors on a verified test cohort.'}</p></div>
+    <a className={`btn ${entry ? 'btn-secondary' : 'btn-primary'}`} href="#overview">Return to roadmap<Icon name="arrow" size={16} /></a>
   </div>;
 }

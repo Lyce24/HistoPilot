@@ -82,12 +82,21 @@ class InterpretationGalleryService:
         """Reuse the bundle's own frozen dataset folder without guessing across cohorts."""
         metadata = {
             "datasetId": dataset_id,
-            "datasetName": f"Dataset {dataset_id[-8:]}",
+            "datasetName": f"Dataset {dataset_id[-8:]}" if dataset_id else "No dataset",
             "slideFolder": None,
             "slideFolderSource": None,
             "slideFolderFinding": None,
         }
         reason = "The frozen dataset has no unambiguous, accessible slide folder."
+        if dataset_id is None:
+            # A store-scoped bundle names no cohort, so no slide folder can be resolved from it.
+            metadata["slideFolderFinding"] = {
+                "severity": "warning",
+                "code": "DATASET_SLIDE_FOLDER_UNAVAILABLE",
+                "message": "These features are scoped to a slide store, not a frozen dataset. "
+                "Attach them to a dataset to open slides for interpretation.",
+            }
+            return metadata
         try:
             dataset = self.store.get_dataset(dataset_id)
             manifest = dataset["manifest"]
@@ -167,7 +176,7 @@ class InterpretationGalleryService:
             dataset_id = manifest["datasetId"]
             try:
                 feature = self.store.get_configuration(manifest["feature"]["id"])["manifest"]
-                dataset_id = feature["datasetId"]
+                dataset_id = feature["datasetId"] or dataset_id
                 encoder = feature.get("layout", {}).get("encoderId") or feature.get("spec", {}).get(
                     "encoderId"
                 )
@@ -249,11 +258,12 @@ class InterpretationGalleryService:
                         "severity": "error",
                     }
                 )
-            if predictor["manifest"].get("recipe", {}).get("model", "abmil").lower() != "abmil":
+            if (predictor["manifest"].get("recipe", {}).get("model", "abmil").lower() not in {"abmil", "nnmil"}
+                    or predictor["manifest"].get("recipe", {}).get("inputMode") == "clinical"):
                 findings.append(
                     {
                         "code": "INTERPRETATION_MODEL_UNSUPPORTED",
-                        "message": "Attention visualization requires an ABMIL predictor.",
+                        "message": "Attention visualization requires an ABMIL or nnMIL predictor.",
                         "severity": "error",
                     }
                 )

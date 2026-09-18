@@ -3,6 +3,7 @@ import { Icon } from './ui';
 import './ExtractionProgress.css';
 
 export const extractionStateLabel: Record<ExtractionState, string> = {
+  queued: 'Waiting for resources',
   starting: 'Preparing',
   running: 'Running',
   cancelling: 'Stopping',
@@ -68,7 +69,7 @@ function progressDescription(job: ExtractionJob) {
 
 export default function ExtractionProgress({ job }: { job: ExtractionJob }) {
   const progress = job.progress;
-  const working = job.state === 'starting' || job.state === 'running';
+  const working = job.state === 'queued' || job.state === 'starting' || job.state === 'running';
   const successful = job.state === 'succeeded';
   const stopped = !working && !successful;
   const stages = progress?.stages ?? [];

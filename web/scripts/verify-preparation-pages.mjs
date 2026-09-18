@@ -1,7 +1,7 @@
 /** Run with node scripts/verify-preparation-pages.mjs. Uses local Chromium and file://; starts no server. */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,6 +11,8 @@ import react from '@vitejs/plugin-react';
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = await mkdtemp(join(tmpdir(), 'histopilot-preparation-pages-'));
 const fixture = join(output, 'fixture.tsx');
+const artifacts = resolve(web, '../docs/dev-review/2026-09-14-dataset-bundle-workflow');
+await mkdir(artifacts, { recursive: true });
 const source = (path) => JSON.stringify(join(web, 'src', path));
 await writeFile(fixture, `
 import React from ${JSON.stringify(join(web, 'node_modules/react/index.js'))};
@@ -20,6 +22,7 @@ import LocalDataset from ${source('pages/LocalDataset.tsx')};
 import LocalProtocol from ${source('pages/LocalProtocol.tsx')};
 import { scientific } from ${source('api/scientific.ts')};
 import { packing } from ${source('api/packing.ts')};
+import { bundles } from ${source('api/bundles.ts')};
 import { newSplit } from ${source('components/SplitStrategy.tsx')};
 import ${source('styles.css')};
 import ${source('local-workspace.css')};
@@ -28,14 +31,15 @@ import ${source('clinical-workspace.css')};
 import ${source('components/StageWorkflow.css')};
 
 const copy = (value) => structuredClone(value);
-const state = window.workflow = { calls: [], drafts: [], datasets: [], protocols: [], errors: [], revision: 0 };
+const state = window.workflow = { calls: [], drafts: [], datasets: [], protocols: [], bundles: [], errors: [], revision: 0 };
 window.fetch = async (...args) => { state.errors.push('Unexpected network request: ' + args[0]); throw new Error(state.errors.at(-1)); };
-const rows = ['low', 'high', 'low', 'high'].map((grade, index) => ({ slideId: 'slide-' + index, patientId: 'patient-' + index, patientIdSource: 'source', slidePath: '/slides/' + index + '.svs', attributes: { grade } }));
-const dictionary = [{ key: 'grade', sourceColumn: 'grade', owner: 'patient', type: 'categorical' }];
+const rows = ['low', 'high', 'low', 'high'].map((grade, index) => ({ slideId: 'slide-' + index, patientId: 'patient-' + index, patientIdSource: 'source', slidePath: '/slides/' + index + '.svs', attributes: { grade, cohort: ['TCGA', 'SurGen', 'RIH', 'TCGA'][index] } }));
+const dictionary = [{ key: 'grade', sourceColumn: 'grade', owner: 'patient', type: 'categorical' }, { key: 'cohort', sourceColumn: 'cohort', owner: 'patient', type: 'categorical' }];
 const importSpec = { source: { path: '/metadata.csv' }, slideIdColumn: 'Slide_ID', patientIdColumn: 'Patient_ID', patientIdFallback: 'unresolved', slideRoot: '/slides', recursive: true, includeMissingSlides: false, missingValues: [''], attributes: copy(dictionary) };
 const importSummary = { sourceRowCount: 4, slideCount: 4, mappedPatientCount: 4, verifiedPatientCount: 4, unlinkedSlideCount: 0, matchedSlideCount: 4, missingSlideCount: 0, unmatchedFileCount: 0, excludedRowCount: 0, scannedFileCount: 4 };
-const protocolSpec = (datasetId) => ({ datasetId, target: { field: 'grade', task: 'binary_classification', unit: 'patient', classes: ['low', 'high'], labels: { low: 'low', high: 'high' }, positiveClass: 'high', missing: 'block', unmapped: 'block' }, predictors: [], eligibility: [], split: newSplit([42], 2), constraints: { minPatientsPerClass: 1, minPatientsPerPartition: 1 }, featureSetId: null, featurePackId: null });
+const protocolSpec = (datasetId) => ({ datasetId, target: { field: 'grade', task: 'binary_classification', unit: 'patient', classes: ['low', 'high'], labels: { low: 'low', high: 'high' }, positiveClass: 'high', missing: 'block', unmapped: 'block' }, predictors: [], eligibility: [], split: newSplit([42], 2), constraints: { minPatientsPerClass: 1, minPatientsPerPartition: 1 }, featureBundleId: 'bundle-shared' });
 const datasets = ['a', 'b'].map((key, index) => ({ id: 'dataset-' + key, projectId: 'project', createdAt: '2026-09-' + (10 + index) + 'T12:00:00Z', contentHash: key, artifacts: {}, versionLabel: { tag: 'Hospital ' + key.toUpperCase(), note: 'Saved dataset ' + key, revision: 1 }, manifest: { name: key, dictionary: copy(dictionary), summary: copy(importSummary), provenance: { mapping: copy(importSpec) } } }));
+const featureBundles = [{ id: 'bundle-shared', current: true, findings: [], versionLabel: { tag: 'All slides · UNI' }, manifest: { kind: 'feature-bundle', datasetId: 'another-dataset', spec: { featureSetId: 'source', packArtifactIds: [] }, summary: { slideCount: 6, patchCount: 600, dimensions: 1024, dtype: 'float32', packCount: 0 }, feature: { validation: { tensorValidationComplete: true } }, packs: [] } }];
 const protocols = ['a', 'b'].map((key, index) => ({ id: 'protocol-' + key, projectId: 'project', createdAt: '2026-09-' + (10 + index) + 'T12:00:00Z', versionLabel: { tag: 'Protocol ' + key.toUpperCase(), note: 'Saved protocol ' + key, revision: 1 }, manifest: { kind: 'protocol', datasetId: 'dataset-' + key, spec: protocolSpec('dataset-' + key) } }));
 const drafts = [
   { id: 'import-draft', name: 'Existing import draft', kind: 'import', payload: { type: 'dataset-import', spec: { ...copy(importSpec), source: { path: '/saved-import.csv' } } } },
@@ -47,6 +51,7 @@ scientific.datasets = async () => ({ datasets: copy(state.datasets) });
 scientific.drafts = async () => ({ drafts: copy(state.drafts) });
 scientific.configurations = async (_, kind) => ({ configurations: kind === 'protocol' ? copy(state.protocols) : [] });
 packing.jobs = async () => ({ jobs: [], artifacts: [] });
+bundles.list = async () => ({ items: copy(state.bundles) });
 scientific.draft = async (_, id) => { state.calls.push({ method: 'draft', id }); return copy(state.drafts.find((draft) => draft.id === id)); };
 scientific.queryDataset = async (_, id, query) => {
   state.calls.push({ method: 'queryDataset', id });
@@ -54,7 +59,7 @@ scientific.queryDataset = async (_, id, query) => {
 };
 scientific.exploreProtocol = async (_, request) => {
   state.calls.push({ method: 'exploreProtocol', request: copy(request) });
-  return { datasetId: request.datasetId, splitMode: request.splitMode, valid: true, dataset: copy(stats), cohort: copy(stats), partitions: null, unassigned: null,
+  return { datasetId: request.datasetId, splitMode: request.splitMode, valid: true, dataset: copy(stats), cohort: copy(stats), ...(request.featureBundleId ? { populationSource: 'dataset_and_bundle', matchedSlides: 4, bundleSlides: 6 } : {}), partitions: null, unassigned: null,
     target: request.targetField ? { field: request.targetField, values: values(request.targetField).map(({ value, count }) => ({ value, slides: count })), distinctCount: 2 } : null, findings: [] };
 };
 scientific.inspect = async (_, source) => { state.calls.push({ method: 'inspect', source: copy(source) }); return { headers: ['Slide_ID', 'Patient_ID', 'grade'], sheets: [], sheet: null, rows: rows.map((row) => ({ Slide_ID: row.slideId, Patient_ID: row.patientId, grade: row.attributes.grade })), rowCount: 4, fingerprint: source.path, findings: [] }; };
@@ -69,7 +74,7 @@ scientific.protocolPreflight = async (_, protocolId) => { state.calls.push({ met
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 const root = createRoot(document.getElementById('app'));
 window.configure = (page, empty = false, hash = '') => {
-  state.datasets = empty ? [] : copy(datasets); state.protocols = empty ? [] : copy(protocols); state.drafts = empty ? [] : copy(drafts);
+  state.datasets = empty ? [] : copy(datasets); state.protocols = empty ? [] : copy(protocols); state.drafts = empty ? [] : copy(drafts); state.bundles = empty ? [] : copy(featureBundles);
   state.revision += 1; client.clear(); window.history.replaceState({}, '', location.pathname + hash);
   const workspace = { project: { id: 'project', name: 'Preparation study', config: { seed: 42, folds: 2 } }, dataset: { id: 'dataset-a' }, sources: [{ role: 'slides', path: '/slides' }] };
   root.render(<QueryClientProvider client={client}><div className="stage-workspace" key={state.revision}>{page === 'data' ? <LocalDataset workspace={workspace} /> : <LocalProtocol workspace={workspace} />}</div></QueryClientProvider>);
@@ -138,8 +143,13 @@ async function waitFor(expression, description = expression) {
 const button = (text) => '[...document.querySelectorAll("button")].find(el => el.checkVisibility() && el.textContent.trim() === ' + JSON.stringify(text) + ')';
 const field = (text, selector = 'input,select,textarea') => '(() => { const label = [...document.querySelectorAll("label")].find(el => el.checkVisibility() && el.textContent.trim().startsWith(' + JSON.stringify(text) + ')); return label?.control ?? label?.querySelector(' + JSON.stringify(selector) + '); })()';
 async function click(text) {
+  if (text === 'Create dataset' || text === 'Create protocol') await verifyHeader(true);
   await waitFor(button(text) + ' && !' + button(text) + '.matches(":disabled")', 'enabled button ' + text);
   await evaluate(button(text) + '.click()');
+  if (text === 'Back to datasets' || text === 'Back to protocols') {
+    await waitFor('document.querySelector(".stage-library")');
+    await verifyHeader(true);
+  }
 }
 async function fill(text, value, selector = 'input,select,textarea') {
   const element = field(text, selector);
@@ -149,21 +159,34 @@ async function fill(text, value, selector = 'input,select,textarea') {
 async function screenshot(name) {
   await evaluate('Promise.allSettled(document.getAnimations().map(animation => animation.finished))');
   const { data } = await cdp('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
-  await writeFile(join(output, name + '.png'), Buffer.from(data, 'base64'));
+  await writeFile(join(artifacts, 'preparation-' + name + '.png'), Buffer.from(data, 'base64'));
 }
 const visible = (selector) => '[...document.querySelectorAll(' + JSON.stringify(selector) + ')].filter(el => el.checkVisibility()).length';
+async function verifyHeader(library) {
+  const header = await evaluate(`({
+    page: document.querySelector('.dataset-workspace') ? 'dataset' : 'protocol',
+    library: Boolean(document.querySelector('.stage-library')),
+    actions: [...document.querySelectorAll('.page-header [data-stage-action]')].filter(el => el.checkVisibility()).map(el => ({ kind: el.dataset.stageAction, text: el.textContent.trim() }))
+  })`);
+  assert.equal(header.library, library, 'Creation must begin from the library; return there before creating another record');
+  assert.deepEqual(header.actions, [{ kind: library ? 'create' : 'back', text: library ? 'Create ' + header.page : 'Back to ' + (header.page === 'dataset' ? 'datasets' : 'protocols') }], 'Page header must show one consistent Create or Back action');
+}
 async function currentPage(key) {
   await waitFor('document.querySelector("[data-stage-page]")?.dataset.stagePage === ' + JSON.stringify(key));
   await waitFor('document.activeElement?.classList.contains("stage-page")', 'transition focuses the active page');
   assert.ok(await evaluate('window.scrollY < 100'), 'transition returns to the page heading');
+  await verifyHeader(false);
 }
 async function openRecord(label) {
   const selector = '[...document.querySelectorAll("button")].find(el => el.getAttribute("aria-label") === ' + JSON.stringify(label) + ')';
   await waitFor(selector); await evaluate(selector + '.click()');
+  await waitFor('document.querySelector(".page-header [data-stage-action=back]")');
+  await verifyHeader(false);
 }
 async function configure(page, empty = false, hash = '') {
   await evaluate('window.configure(' + [page, empty, hash].map(JSON.stringify).join(', ') + ')');
   await waitFor('document.querySelector(".stage-library") && !document.body.innerText.includes("Loading ")');
+  await verifyHeader(true);
 }
 async function verifyLibraryControls({ emptyTitle, names, draftName, managementKeys }) {
   assert.equal(await evaluate('document.querySelectorAll(".stage-library h2, .stage-library-eyebrow").length'), 0);
@@ -202,8 +225,9 @@ try {
   await waitFor('document.body?.innerText.includes("No datasets or import drafts yet")');
   assert.equal(await evaluate(visible('fieldset')), 0);
   assert.equal(await evaluate(visible('.stage-steps')), 0);
+  await verifyHeader(true);
   await screenshot('00-empty-datasets');
-  await click('New import');
+  await click('Create dataset');
   await currentPage('import-1');
   assert.equal(await evaluate(button('Continue to column mapping') + '.matches(":disabled")'), true);
   assert.equal(await evaluate(visible('.dataset-section')), 1);
@@ -228,7 +252,8 @@ try {
   assert.equal(await evaluate(visible('.dataset-section')), 1);
   await screenshot('01-dataset-review');
   await click('Name & freeze dataset');
-  assert.equal(await evaluate(button('Freeze dataset version') + '.matches(":disabled")'), true);
+  assert.equal(await evaluate(field('Version tag', 'input') + '.value'), 'New mapping with retained edits');
+  assert.equal(await evaluate(button('Freeze dataset version') + '.matches(":disabled")'), false);
   await evaluate('window.dispatchEvent(new Event("histopilot:stage-library"))');
   assert.equal(await evaluate('Boolean(document.querySelector("[role=dialog]"))'), true);
   assert.equal(await evaluate('Boolean(document.querySelector(".stage-library"))'), false);
@@ -263,7 +288,7 @@ try {
   await configure('targets', true);
   assert.ok(await evaluate('document.body.innerText.includes("No protocols or drafts yet")'));
   assert.equal(await evaluate(visible('fieldset')), 0);
-  await click('New protocol');
+  await click('Create protocol');
   await currentPage('protocol-1');
   assert.equal(await evaluate(button('Continue to target') + '.matches(":disabled")'), true);
   await configure('targets', false, '#cohort?dataset=dataset-b&saved=dataset');
@@ -276,11 +301,34 @@ try {
   await waitFor('document.querySelectorAll(".stage-library tbody tr").length === 3');
   await click('Clear filters');
   assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "exploreProtocol").length'), 0);
-  await click('New protocol');
+  await click('Create protocol');
   await currentPage('protocol-1');
   assert.equal(await evaluate(field('Dataset version', 'select') + '.value'), 'dataset-b');
   assert.equal(await evaluate(visible('.protocol-section')), 1);
   await fill('Protocol name', 'Retained development draft');
+  assert.equal(await evaluate(button('Continue to target') + '.matches(":disabled")'), true);
+  await fill('Feature bundle', 'bundle-shared', 'select');
+  await waitFor('document.querySelector(".protocol-bundle-source .science-metrics")?.innerText.includes("Shared slides")');
+  assert.equal(await evaluate(visible('select') + ' >= 1'), true);
+  assert.equal(await evaluate('document.body.innerText.includes("Training set selection")'), false);
+  assert.equal(await evaluate('document.body.innerText.includes("Training slide filters")'), true);
+  await fill('Dataset version', 'dataset-a', 'select');
+  assert.equal(await evaluate(field('Feature bundle', 'select') + '.value'), 'bundle-shared');
+  await fill('Dataset version', 'dataset-b', 'select');
+  await waitFor('window.workflow.calls.some(call => call.method === "exploreProtocol" && call.request.featureBundleId === "bundle-shared" && call.request.datasetId === "dataset-b")');
+  await screenshot('03a-dataset-bundle-selection');
+  await click('Add condition');
+  await waitFor(field('Field', 'select') + '?.value === "cohort"');
+  await waitFor(field('TCGA', 'input'));
+  await evaluate(field('TCGA', 'input') + '.click()');
+  await evaluate(field('SurGen', 'input') + '.click()');
+  await waitFor('window.workflow.calls.some(call => call.method === "exploreProtocol" && call.request.split?.pools?.rules?.train?.[0]?.value?.join(",") === "TCGA,SurGen")');
+  const filtered = await evaluate('window.workflow.calls.filter(call => call.method === "exploreProtocol").at(-1).request');
+  assert.equal(filtered.split.pools.trainSelection, 'rules');
+  assert.deepEqual(filtered.split.pools.rules.train, [{ field: 'cohort', op: 'in', value: ['TCGA', 'SurGen'] }]);
+  await screenshot('03b-cohort-value-filter');
+  await evaluate('[...document.querySelectorAll("button")].find(el => el.getAttribute("aria-label") === "Remove Training slide filters condition 1").click()');
+  await waitFor('document.querySelectorAll("#protocol-cohort .protocol-condition").length === 0');
   await click('Continue to target');
   await currentPage('protocol-2');
   assert.equal(await evaluate(button('Continue to split design') + '.matches(":disabled")'), true);
@@ -317,9 +365,17 @@ try {
   const saved = await evaluate('window.workflow.calls.filter(call => call.method === "saveDraft" && call.input.payload.type === "analysis-protocol").at(-1).input');
   assert.equal(saved.name, 'Retained development draft');
   assert.equal(saved.payload.spec.datasetId, 'dataset-b');
+  assert.equal(saved.payload.spec.featureBundleId, 'bundle-shared');
+  assert.equal(saved.payload.spec.split.pools.trainSelection, 'remaining');
+  assert.deepEqual(saved.payload.spec.split.pools.rules.train, []);
+  assert.ok(await evaluate('window.workflow.calls.some(call => call.method === "exploreProtocol" && call.request.targetField === "grade" && call.request.featureBundleId === "bundle-shared")'));
   assert.deepEqual(saved.payload.spec.split.seeds, [13, 27]);
   assert.equal(saved.payload.spec.target.positiveClass, 'high');
   await screenshot('04-protocol-review');
+  await click('Name & freeze protocol');
+  await waitFor('document.querySelector("[role=dialog]")');
+  assert.equal(await evaluate(field('Version tag', 'input') + '.value'), 'Retained development draft');
+  await click('Back to review');
   await evaluate('[...document.querySelectorAll("summary")].find(el => el.textContent === "Review settings and rerun checks").click()');
   await click('Preview & preflight');
   await waitFor('window.workflow.calls.filter(call => call.method === "protocolPreview").length === 2');
@@ -352,16 +408,19 @@ try {
   await waitFor(field('Protocol name') + '?.value === "Unsaved protocol edit"');
   assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "draft" && call.id === "protocol-draft").length'), 1);
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await waitFor('!document.body.innerText.includes("Updating selection…")');
+  await verifyHeader(false);
   await screenshot('05-mobile-protocol');
+  assert.ok(await evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), 'Protocol editor overflows the mobile viewport');
   assert.deepEqual(await evaluate('window.workflow.errors'), []);
   assert.deepEqual(exceptions, []);
-  await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'Real React components and Chromium DOM; in-memory scientific APIs; no HistoPilot server.', checks: ['empty and saved libraries', 'search and clear', 'combined draft/frozen filtering', 'recent/oldest/name sorting', 'search source dataset and target', 'exact Manage record keys', 'open/back retains search', 'exact dataset and protocol IDs', 'draft reopening', 'create and copy', 'one active substage', 'forward validation gates', 'review and freeze gates', 'back/forward retained form state', 'same-module library event', 'focus and scroll reset', 'mobile snapshot'], calls: await evaluate('window.workflow.calls') }, null, 2));
+  await writeFile(join(artifacts, 'preparation-verification.json'), JSON.stringify({ passed: true, scope: 'Real React components and Chromium DOM; in-memory scientific APIs; no HistoPilot server.', checks: ['one Create action in library headers', 'one Back action and no competing Create in editor/detail headers', 'return to library before creating another record', 'empty and saved libraries', 'search and clear', 'combined draft/frozen filtering', 'recent/oldest/name sorting', 'search source dataset and target', 'exact Manage record keys', 'open/back retains search', 'exact dataset and protocol IDs', 'named cross-dataset bundle selection and shared-slide coverage', 'bundle retained across dataset changes', 'bundle passed to target-value exploration', 'direct training filters without duplicate selection gate', 'TCGA and SurGen selected as inclusive cohort values', 'removing final filter restores all shared slides', 'draft reopening', 'create and copy', 'one active substage', 'forward validation gates', 'review and freeze gates', 'version name reused when freezing', 'back/forward retained form state', 'same-module library event', 'focus and scroll reset', 'mobile snapshot'], calls: await evaluate('window.workflow.calls') }, null, 2));
   console.log('PASS: dataset/protocol libraries, transitions, exact records, validation gates, draft state, and same-module entry.');
-  console.log('Artifacts: ' + output);
+  console.log('Artifacts: ' + artifacts);
 } catch (error) {
-  try { await writeFile(join(output, 'failure.txt'), await evaluate('document.body.innerText')); await screenshot('failure'); } catch { /* Chromium may not have launched. */ }
+  try { await writeFile(join(artifacts, 'preparation-failure.txt'), await evaluate('document.body.innerText')); await screenshot('failure'); } catch { /* Chromium may not have launched. */ }
   if (exceptions.length) console.error(JSON.stringify(exceptions, null, 2));
-  console.error('Artifacts: ' + output);
+  console.error('Artifacts: ' + artifacts);
   throw error;
 } finally {
   browser.kill();

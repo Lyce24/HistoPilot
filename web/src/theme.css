@@ -1,31 +1,88 @@
-/* Shared interface palette, inspired by Brown University's digital colors:
-   https://communications.sph.brown.edu/resources/identity
-   Scientific series, dataset partitions, and attention maps keep their own scales. */
+/* Interface palette. Emerald is the product colour, a hematoxylin charcoal
+   carries the application shell, and pathology's own violet and rose are kept
+   for interpretation and tissue. Brown University's brown and gold are an
+   affiliation mark, not a UI colour: the gold nucleus lives inside the logo's own
+   artwork, and neither value appears in this file — the palette check asserts it.
+
+     Emerald    #006b5f  action — links, buttons, focus, the next step
+     Charcoal   #292833  shell and headings, with a hematoxylin undertone
+     Warm white #f8f8f6  workspace
+     Ink        #202523  typography
+     Steel blue #355e78  frozen and held out — immutable, never emerald
+     Hematoxylin #6e5aa7 modelling and interpretation
+     Eosin      #c86e93  tissue and histology detail
+
+   Token names describe the role, not the hue. Scientific series, dataset
+   partitions and attention maps keep their own scales and are deliberately
+   independent of this palette. */
 :root {
   color-scheme: light;
-  accent-color: var(--brand-red);
-  --brand-brown: #4e3629;
-  --brand-red: #c00404;
-  --brand-red-hover: #9e0303;
-  --brand-gold: #ffc72c;
-  --brand-gray: #98a4ae;
-  --theme-ink: #342720;
-  --theme-muted: #5c6973;
-  --theme-line: #e1e5e8;
-  --theme-line-strong: #bac3ca;
-  --theme-canvas: #f6f7f8;
+  accent-color: var(--brand-primary);
+
+  /* Identity */
+  --brand-deep: #292833;          /* Application shell and headings. */
+  --brand-deepest: #1f1e28;       /* Deepest surfaces: number chips. */
+  --brand-primary: #006b5f;       /* Actions, links and focus. */
+  --brand-primary-hover: #00594f;
+  --brand-accent: #00a58f;        /* Emerald that has to read on the dark shell. */
+  --brand-gray: #848c88;          /* Inactive marks on light surfaces. */
+
+  /* Pathology. Reserved for interpretation, attention and tissue detail. */
+  --brand-hematoxylin: #6e5aa7;
+  --brand-eosin: #c86e93;
+
+  /* Text and structure */
+  --theme-ink: #202523;
+  --theme-muted: #656d6a;
+  --theme-line: #dce1de;
+  --theme-line-strong: #c9d0cc;
+
+  /* Surfaces */
+  --theme-canvas: #f8f8f6;
   --theme-surface: #ffffff;
-  --theme-soft: #f1f3f5;
-  --theme-soft-hover: #e9edf0;
-  --theme-warm-soft: #f7f3ef;
-  --theme-gold-soft: #fff7db;
-  --theme-gold-line: #e8d08a;
-  --theme-accent-soft: #fbefee;
-  --theme-accent-line: #edc7c2;
-  --theme-on-dark: #f5e9de;
-  --theme-nav-soft: #604638;
-  --theme-nav-line: #876e5e;
-  --theme-nav-hover: #705443;
-  --theme-shadow-rgb: 78 54 41;
-  --theme-shadow-card: 0 2px 4px rgb(52 39 32 / 2%), 0 12px 32px rgb(52 39 32 / 4%);
+  --theme-soft: #f1f2ef;
+  --theme-soft-hover: #e9ebe7;
+  --theme-surface-hover: #f7faf8;   /* Table rows and other light hovers. */
+  --theme-settled: #edf3f6;         /* Frozen and held out. */
+  --theme-settled-line: #cbdde6;
+  --theme-settled-ink: #355e78;
+  --theme-next-soft: #e7f4f1;       /* In progress, or the suggested next step. */
+  --theme-next-hover: #daeee9;
+  --theme-next-line: #bfe0d8;
+  --theme-next-ink: #00594f;
+  --theme-accent-soft: #e7f4f1;     /* Primary-tinted surface. */
+  --theme-accent-line: #bfe0d8;
+  --theme-alert-soft: #fcedec;      /* Needs attention before it can be used. */
+  --theme-alert-line: #f0cfcc;
+  --theme-alert-ink: #8f3a34;
+  --theme-alert-mark: #b4433c;
+
+  /* The three phases, as small accents only. Green, violet, blue reads as
+     preparation, modelling, validation. */
+  --theme-phase-prepare: #006b5f;
+  --theme-phase-develop: #6e5aa7;
+  --theme-phase-evaluate: #356580;
+
+  /* Warning is the one semantic colour outside the six: active work is emerald
+     and waiting work is the muted neutral, so neither needs its own hue. */
+  --theme-status-warning: #8a5810;
+  --theme-status-warning-soft: #fff4da;
+  --theme-status-warning-line: #eed9a6;
+
+  /* Dark application shell */
+  --theme-on-dark: #f7f6f4;
+  --theme-on-dark-muted: #bab8c0;
+  --theme-nav-soft: #363541;
+  --theme-nav-line: #45434f;
+  --theme-nav-hover: #363541;
+
+  /* The slide and attention viewer deliberately breaks from the light interface:
+     an H&E field is colourful enough without a tint under it. */
+  --theme-viewer-bg: #111516;
+  --theme-viewer-panel: #1b2021;
+  --theme-viewer-border: #343b3a;
+  --theme-viewer-text: #f1f3f2;
+
+  --theme-shadow-rgb: 24 35 31;
+  --theme-shadow-card: 0 1px 2px rgb(var(--theme-shadow-rgb) / 4%), 0 4px 12px rgb(var(--theme-shadow-rgb) / 3%);
 }

@@ -40,9 +40,9 @@ export default function ExperimentPredictors({ project, record }: { project: str
 
   return <Panel title={stage === 'running' ? 'Predictor creation' : 'Predictors'} subtitle="One predictor per method and complete configuration / training-seed / split-seed group.">
     {execution ? <div className="experiment-predictor-progress">
-      <div className="inline-actions"><Badge tone={execution.status === 'completed' ? 'success' : ['attention', 'interrupted'].includes(execution.status) ? 'warning' : 'neutral'}>{statusLabel[execution.status]}</Badge><strong>{execution.counts.completed.toLocaleString()} / {execution.counts.total.toLocaleString()} created</strong></div>
-      <progress aria-label="Predictors created" value={execution.counts.completed} max={Math.max(1, execution.counts.total)} />
-      <p className="muted">{execution.counts.ensemble} ensembles · {execution.counts.refit} refits · {execution.counts.waiting} waiting · {execution.counts.active} queued or running{execution.counts.failed ? ` · ${execution.counts.failed} failed` : ''}{execution.counts.cancelled ? ` · ${execution.counts.cancelled} cancelled` : ''}</p>
+      <div className="inline-actions"><Badge tone={execution.status === 'completed' ? 'success' : ['attention', 'interrupted'].includes(execution.status) ? 'warning' : 'neutral'}>{statusLabel[execution.status]}</Badge><strong>{execution.counts.completed.toLocaleString()} / {(execution.counts.total - (execution.counts.skipped ?? 0)).toLocaleString()} created</strong></div>
+      <progress aria-label="Predictors created" value={execution.counts.completed} max={Math.max(1, execution.counts.total - (execution.counts.skipped ?? 0))} />
+      <p className="muted">{execution.counts.ensemble} ensembles · {execution.counts.refit} refits · {execution.counts.waiting} waiting · {execution.counts.active} queued or running{execution.counts.skipped ? ` · ${execution.counts.skipped} omitted by validation selection` : ''}{execution.counts.failed ? ` · ${execution.counts.failed} failed` : ''}{execution.counts.cancelled ? ` · ${execution.counts.cancelled} cancelled` : ''}</p>
       {execution.counts.waiting ? <p className="muted">Waiting jobs need their source batch to complete or the next refit slot to become available. Refits run one at a time within this experiment.</p> : null}
       {execution.error ? <p className="callout" role="status">{execution.error.message}</p> : null}
       {stage === 'running' && record.state === 'active' ? <PredictorActions project={project} record={record} execution={execution} /> : null}
@@ -79,7 +79,7 @@ export default function ExperimentPredictors({ project, record }: { project: str
 
 function PredictorDetails({ item }: { item: FrozenPredictor }) {
   const budget = item.manifest.epochBudget;
-  return <div><p className="muted">{item.id}</p><p>{item.manifest.method === 'refit' ? 'One model trained on the complete development cohort.' : 'Mean probabilities from the frozen fold checkpoints.'}</p>{budget ? <p>Best fold epochs: {budget.foldBestEpochs.map((fold) => fold.bestEpoch).join(', ')}. P{budget.percentile}, rounded up: {budget.epochs} epochs.</p> : null}<details><summary>Exact predictor snapshot</summary><pre className="experiment-snapshot">{JSON.stringify(item.manifest, null, 2)}</pre></details></div>;
+  return <div><p className="muted">{item.id}</p><p>{item.manifest.method === 'refit' ? 'One model trained on the complete development cohort.' : item.manifest.aggregation === 'mean_logit' ? 'Mean logits from the frozen fold checkpoints.' : 'Mean probabilities from the frozen fold checkpoints.'}</p>{budget ? <p>Selected fold checkpoint epochs: {budget.foldBestEpochs.map((fold) => fold.bestEpoch).join(', ')}. P{budget.percentile}, rounded up: {budget.epochs} epochs.</p> : null}<details><summary>Exact predictor snapshot</summary><pre className="experiment-snapshot">{JSON.stringify(item.manifest, null, 2)}</pre></details></div>;
 }
 
 function Pagination({ count, page, setPage, label }: { count: number; page: number; setPage: (page: number) => void; label: string }) {

@@ -25,7 +25,7 @@ describe('evaluation execution inputs', () => {
   it('allows reviewing an independent cohort before extraction and leaves automatic resolution to the server', () => {
     const inputs = initialEvaluationInputs(cohort);
     expect(evaluationExecutionSelection(inputs)).not.toHaveProperty('featureBundleId');
-    expect(inputs.inference).toMatchObject({ loadingPolicy: 'per_slide', numWorkers: 0, decisionThreshold: 0.5 });
+    expect(inputs.inference).toMatchObject({ loadingPolicy: 'per_slide', numWorkers: 0, decisionThreshold: 'predictor', patientAggregation: 'predictor' });
     const html = render([]);
     expect(html).toContain('Test features and inference');
     expect(html).toContain('No frozen feature bundles are available');
@@ -45,10 +45,10 @@ describe('evaluation execution inputs', () => {
     expect(evaluationExecutionSelection(inputs)).toMatchObject({ featureBundleId: 'bundle-one', inference: { packArtifactId: 'pack-one' } });
   });
 
-  it('preserves historical cohort loading choices as evaluation defaults without mutating the cohort', () => {
+  it('preserves cohort loading choices while inheriting the selected predictor scoring contract', () => {
     const legacy = { ...cohort, manifest: { ...cohort.manifest, spec: { ...cohort.manifest.spec, featureBundleId: 'legacy-features', inference: { ...cohort.manifest.spec.inference, loadingPolicy: 'packed' as const, packArtifactId: 'legacy-pack', decisionThreshold: 0 } } } };
     const inputs = initialEvaluationInputs(legacy);
-    expect(inputs).toMatchObject({ featureBundleId: 'legacy-features', inference: { loadingPolicy: 'packed', packArtifactId: 'legacy-pack', decisionThreshold: 0 } });
+    expect(inputs).toMatchObject({ featureBundleId: 'legacy-features', inference: { loadingPolicy: 'packed', packArtifactId: 'legacy-pack', decisionThreshold: 'predictor', patientAggregation: 'predictor' } });
     inputs.inference.decisionThreshold = 0.7;
     expect(legacy.manifest.spec.inference.decisionThreshold).toBe(0);
   });

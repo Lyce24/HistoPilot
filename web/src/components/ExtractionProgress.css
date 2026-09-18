@@ -37,24 +37,24 @@
   font-weight: 650;
 }
 .extraction-step-active {
-  color: var(--brand-red);
+  color: var(--brand-primary);
   font-weight: 650;
 }
 .extraction-step-active .extraction-step-number {
   color: #fff;
-  background: var(--brand-red);
-  border-color: var(--brand-red);
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
   box-shadow: 0 0 0 4px var(--theme-accent-soft);
 }
 .extraction-step-complete {
-  color: var(--brand-brown);
+  color: var(--theme-ink);
 }
 .extraction-step-complete .extraction-step-number {
   background: var(--theme-soft);
   border-color: var(--theme-line-strong);
 }
 .extraction-step-stopped {
-  color: var(--brand-brown);
+  color: var(--theme-ink);
 }
 .extraction-step-stopped .extraction-step-number {
   background: var(--theme-soft);
@@ -73,7 +73,7 @@
   height: 48px;
   border-radius: 12px;
   background: var(--theme-accent-soft);
-  color: var(--brand-red);
+  color: var(--brand-primary);
   flex-shrink: 0;
 }
 .extraction-status-heading small {
@@ -106,7 +106,7 @@
   font-size: 12px;
 }
 .extraction-progress-caption strong {
-  color: var(--brand-red);
+  color: var(--brand-primary);
   font-size: 21px;
   font-variant-numeric: tabular-nums;
 }
@@ -121,7 +121,7 @@
   height: 100%;
   width: 0;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--brand-red), var(--brand-red));
+  background: linear-gradient(90deg, var(--brand-primary), var(--brand-primary));
   transition: width 0.4s ease;
 }
 .extraction-progress-track.is-indeterminate > span {
@@ -191,7 +191,7 @@
 .extraction-progress-warnings {
   padding: 12px 14px;
   background: var(--theme-soft);
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   border: 1px solid var(--theme-line-strong);
   border-radius: 7px;
   margin-top: 16px;
@@ -214,13 +214,13 @@
 }
 .extraction-progress-succeeded .extraction-status-icon {
   background: var(--theme-soft);
-  color: var(--brand-brown);
+  color: var(--theme-ink);
 }
 .extraction-success-summary {
   display: flex;
   align-items: center;
   gap: 9px;
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   font-weight: 550;
 }
 .extraction-progress-failed,
@@ -234,7 +234,7 @@
 .extraction-progress-interrupted .extraction-status-icon,
 .extraction-progress-cancelled .extraction-status-icon,
 .extraction-progress-cancelling .extraction-status-icon {
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   background: var(--theme-soft);
 }
 .extraction-progress-failed .extraction-progress-track > span,

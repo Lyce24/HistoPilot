@@ -174,9 +174,9 @@ def test_unstratified_plans_keep_patients_disjoint_across_seed_boundaries(mode):
         # This deterministic unstratified seed gives a validation group one class.
         # Disabling stratification must not disable the minimum-class safeguard.
         assert not result["canFreeze"]
-        assert {
-            item["code"] for item in result["findings"] if item["severity"] == "error"
-        } == {"PARTITION_CLASS_TOO_SMALL"}
+        assert {item["code"] for item in result["findings"] if item["severity"] == "error"} == {
+            "PARTITION_CLASS_TOO_SMALL"
+        }
     else:
         assert result["canFreeze"], result["findings"]
 

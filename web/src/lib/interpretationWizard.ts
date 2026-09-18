@@ -14,7 +14,7 @@ export function wizardStage(parameters: URLSearchParams): InterpretationStage {
   return value === 'select' ? 'select' : parameters.get('interpretation') ? 'viewer' : 'select';
 }
 export function initialWizardDraft(parameters: URLSearchParams): InterpretationWizardDraft {
-  return { version: 1, predictorId: parameters.get('predictor') ?? '', bundleId: null, packChoice: null, evaluationId: parameters.get('evaluation') ?? '', clinicalId: parameters.get('clinical') ?? '', selected: [], search: '', offset: 0, resources: defaultResourceDraft(), batch: null };
+  return { version: 1, predictorId: parameters.get('predictor') ?? '', bundleId: null, packChoice: null, evaluationId: parameters.get('evaluation') ?? '', clinicalId: parameters.get('clinical') ?? '', selected: [], search: (parameters.get('search') ?? '').slice(0, 200), offset: 0, resources: defaultResourceDraft(), batch: null };
 }
 const storageKey = (project: string) => `histopilot:interpretation-wizard:v1:${project}`;
 const objectValue = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -48,6 +48,7 @@ export function restoreWizardDraft(project: string, parameters: URLSearchParams)
       evaluationId: typeof value.evaluationId === 'string' ? value.evaluationId : '', clinicalId: typeof value.clinicalId === 'string' ? value.clinicalId : '' };
     if (restored.batch?.pending) restored.batch.uncertain = true;
     else if ((fallback.predictorId && fallback.predictorId !== restored.predictorId) || (fallback.evaluationId && fallback.evaluationId !== restored.evaluationId) || (fallback.clinicalId && fallback.clinicalId !== restored.clinicalId)) return fallback;
+    else if (parameters.has('search') && fallback.search !== restored.search) return { ...restored, search: fallback.search, offset: 0 };
     return restored;
   } catch { return fallback; }
 }

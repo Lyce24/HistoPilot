@@ -109,11 +109,13 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: pathToFileURL(join(dist, 'index.html')).href });
   await waitFor('document.querySelectorAll(".run-resource-chart").length === 4');
-  assert.equal(await evaluate('document.querySelector(".tone-brown svg").querySelectorAll(".run-resource-line").length'), 2, 'missing CPU measurements must split the curve');
-  await evaluate('document.querySelector(".tone-brown details").open = true');
-  await waitFor('document.querySelector(".tone-brown tbody")');
-  assert.equal(await evaluate('document.querySelector(".tone-brown tbody").innerText.includes("Not recorded")'), true);
-  assert.equal(await evaluate('[...document.querySelectorAll(".tone-brown tbody td")].some(el=>el.textContent === "0.00")'), true, 'true zero CPU usage remains available');
+  // The chart paints its segments after the card mounts; wait for them before counting.
+  await waitFor('document.querySelectorAll(".tone-cpu .run-resource-chart .run-resource-line").length > 0', 'CPU curve segments');
+  assert.equal(await evaluate('document.querySelector(".tone-cpu .run-resource-chart").querySelectorAll(".run-resource-line").length'), 2, 'missing CPU measurements must split the curve');
+  await evaluate('document.querySelector(".tone-cpu details").open = true');
+  await waitFor('document.querySelector(".tone-cpu tbody")');
+  assert.equal(await evaluate('document.querySelector(".tone-cpu tbody").innerText.includes("Not recorded")'), true);
+  assert.equal(await evaluate('[...document.querySelectorAll(".tone-cpu tbody td")].some(el=>el.textContent === "0.00")'), true, 'true zero CPU usage remains available');
   await screenshot('00-resource-desktop');
   await waitFor('window.workflow.calls >= 2', 'active history polling');
   await evaluate('window.workflow.mode = "transient"');

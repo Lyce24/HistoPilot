@@ -38,7 +38,7 @@ from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import TmuxTrainingExecutor, now, read_json
 
 ACTIVE = {"queued", "waiting", "running", "cancelling"}
-TERMINAL = {"completed", "cancelled"}
+TERMINAL = {"completed", "cancelled", "skipped"}
 
 
 def source_items(experiment_id, batches, policy=None, *, policies=None):
@@ -207,6 +207,7 @@ class ExperimentPredictorService:
             "active": sum(row["status"] in {"queued", "running"} for row in items),
             "failed": sum(row["status"] == "failed" for row in items),
             "cancelled": sum(row["status"] == "cancelled" for row in items),
+            "skipped": sum(row["status"] == "skipped" for row in items),
         }
         return {
             "status": state["status"],
@@ -679,6 +680,20 @@ class ExperimentPredictorService:
                             "EXPERIMENT_FOLDS_INCOMPLETE",
                             409,
                         )
+                    batch_record = self.store.get_configuration(item["source"]["batchId"])
+                    if batch_record["manifest"]["spec"].get("candidateSelection") == "best_validation":
+                        from histopilot.candidate_selection import validation_selection
+
+                        training_folder = self.store.folder / "training" / item["source"]["batchId"]
+                        selected = validation_selection(read_json(training_folder / "plan.json"),
+                                                        read_json(training_folder / "state.json"))
+                        if not selected or not selected["ready"]:
+                            raise StorageError("Complete valid validation scores are required for configuration selection.",
+                                               "VALIDATION_SELECTION_UNAVAILABLE", 409)
+                        if selected["selectedCandidateId"] != item["source"]["candidateId"]:
+                            item.update(status="skipped", selectionEvidence=selected,
+                                        error=None)
+                            continue
                     if not item["recordId"]:
                         # _build stores its review in memory; save it even if an
                         # acknowledgement fails after external publication.
@@ -774,7 +789,7 @@ class ExperimentPredictorService:
             statuses = {row["status"] for row in state["items"]}
             state["status"] = (
                 "completed"
-                if statuses <= {"completed"}
+                if statuses <= {"completed", "skipped"}
                 else "cancelled"
                 if statuses <= TERMINAL
                 else "running"

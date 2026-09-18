@@ -153,6 +153,37 @@ def test_arbitrary_slide_review_geometry_identity_idempotency_and_execution(stud
     assert service.cancel(document["id"], "cancel")["cancellationRequested"]
 
 
+def test_accepted_attention_retry_never_reinspects_complete_feature_arrays(study, monkeypatch):
+    service, _, executor = study
+    document, _ = save(study)
+    first = service.launch(document["id"], "launch")
+    monkeypatch.setattr(service, "_execution_plan", lambda *args, **kwargs: pytest.fail(
+        "Accepted attention retry must not rescan feature tensors"))
+    assert service.launch(document["id"], "launch")["planHash"] == first["planHash"]
+    assert len(executor.calls) == 1
+
+
+def test_nnmil_attention_publication_preserves_window_method_and_feature_provenance(study):
+    service, selection, _ = study
+    source = service.predictors.get(selection.predictorId)
+    predictor = service.store.publish_configuration(
+        manifest={**source["manifest"], "recipe": {
+            "model": "nnmil", "attentionDim": 2, "nnmilWindowStrideDivisor": 2,
+            "nnmilWindowAggregation": "mean_logits", "nnmilWindowSeed": 42,
+        }},
+        operation_id="nnmil-predictor",
+    )
+    selected = selection.model_copy(update={"predictorId": predictor["id"]})
+    preview = service.preview(selected)
+    assert preview["canSave"], preview
+    document = service.save(SaveInterpretation(
+        **selected.model_dump(), previewHash=preview["previewHash"], operationId="nnmil-attention"
+    ))
+    assert document["manifest"]["predictorId"] == predictor["id"]
+    assert document["manifest"]["slides"][0]["patchCount"] == 3
+    assert "nnMIL maps average normalized attention" in preview["executionNote"]
+
+
 def test_geometry_and_slide_viewport_are_exact_and_bounded(study):
     service, selection, _ = study
     assert service.inspect_slide(selection.slides[0].slidePath)["width"] == 300

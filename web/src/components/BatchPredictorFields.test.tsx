@@ -15,6 +15,9 @@ describe('predictor choices within a batch', () => {
     expect(html).toContain('225 fold runs');
     expect(html).toContain('P75 · 75th percentile');
     expect(html).toContain('Other batches can use different choices.');
+    expect(html).toContain('45 additional refit training runs');
+    expect(html).toContain('Ensemble + refit');
+    expect(html).toContain('No extra model training');
     expect(html).not.toContain('<button');
     expect(html).not.toContain('Save predictor choices');
   });
@@ -31,6 +34,7 @@ describe('predictor choices within a batch', () => {
     const skipped = render({ method: 'skip', refitPercentile: null }, 1);
     expect(skipped).toContain('0 predictors planned for this batch');
     expect(skipped).not.toContain('Refit epoch budget');
+    expect(skipped).toContain('No predictor is created for test-cohort evaluation');
     const custom = render({ method: 'refit', refitPercentile: 82.5 }, 1);
     expect(custom).toContain('Custom percentile (1–100)');
     expect(custom).toContain('value="82.5"');

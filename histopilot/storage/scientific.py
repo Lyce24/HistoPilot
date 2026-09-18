@@ -38,6 +38,8 @@ APPLICATION_ID = 0x48535054
 DATABASE_FILE = "histopilot-state.sqlite"
 MAX_DOCUMENT_BYTES = 1024 * 1024
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+# Kinds whose scope may be a slide store instead of one frozen cohort.
+STORE_SCOPED_KINDS = frozenset({"feature", "feature-bundle"})
 MAX_PUBLICATION_BYTES = 256 * 1024 * 1024
 MAX_ARTIFACTS = 128
 MAX_CONFIGURATION_BYTES = 16 * 1024 * 1024
@@ -1034,7 +1036,14 @@ class ScientificStore:
                     )
                 if before_publish is not None:
                     before_publish()
-                self._get_dataset(connection, manifest.get("datasetId", ""))
+                # Feature sets and their bundles may be scoped to a slide store rather than
+                # one cohort. Every other kind is defined over a dataset, and a named dataset
+                # must exist and stay usable whatever the kind.
+                if (
+                    manifest.get("datasetId") is not None
+                    or manifest["kind"] not in STORE_SCOPED_KINDS
+                ):
+                    self._get_dataset(connection, manifest.get("datasetId", ""))
                 if draft_id is not None:
                     draft = self._draft(
                         connection.execute(

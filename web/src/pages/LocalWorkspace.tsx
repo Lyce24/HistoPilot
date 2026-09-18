@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { InitialConfig, Page, Source, Workspace } from '../api/types';
 import type { ProtocolSpec } from '../api/scientific';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import { workspaceKey } from '../api/queries';
 import ServerFolderPicker from '../components/ServerFolderPicker';
 import { useConfigurations, useDatasets } from '../components/ScientificUI';
@@ -130,7 +130,9 @@ function Sources({ workspace: w }: { workspace: Workspace }) {
 }
 
 export function Settings({ workspace: w }: { workspace: Workspace }) {
-  const initial = w.project.config;
+  // Keep the baseline from opening/saving the editor, even if a background
+  // workspace refresh observes another tab's changes while this form is dirty.
+  const [initial, setInitial] = useState(w.project.config);
   const [task, setTask] = useState(initial.task ?? '');
   const [target, setTarget] = useState(initial.targetColumn ?? '');
   const [positive, setPositive] = useState(initial.positiveLabel ?? '');
@@ -141,15 +143,34 @@ export function Settings({ workspace: w }: { workspace: Workspace }) {
   const [message, setMessage] = useState('');
   const client = useQueryClient();
   const save = useMutation({
-    mutationFn: (config: InitialConfig) => api.updateProject(w.project.id, { config }),
-    onSuccess: async () => {
-      setMessage('Initial settings saved to your experiment folder.');
+    mutationFn: (config: InitialConfig) => api.updateProject(w.project.id, { config, expectedConfig: initial }),
+    onSuccess: async (project) => {
+      setInitial(project.config);
+      setMessage('Initial settings saved to your project folder.');
       await Promise.all([
         client.invalidateQueries({ queryKey: [...workspaceKey, w.project.id] }),
         client.invalidateQueries({ queryKey: ['projects'] }),
       ]);
     },
   });
+  const reload = useMutation({
+    mutationFn: () => api.projectWorkspace(w.project.id),
+    onSuccess: (workspace) => {
+      const config = workspace.project.config;
+      setInitial(config);
+      setTask(config.task ?? '');
+      setTarget(config.targetColumn ?? '');
+      setPositive(config.positiveLabel ?? '');
+      setSeed(config.seed?.toString() ?? '');
+      setFolds(config.folds?.toString() ?? '');
+      setEncoder(config.encoderId ?? '');
+      setMil(config.milId ?? '');
+      save.reset();
+      setMessage('Saved settings loaded. You can edit them now.');
+      client.setQueryData([...workspaceKey, w.project.id], workspace);
+    },
+  });
+  const conflict = save.error instanceof ApiError && save.error.code === 'PROJECT_CONFIG_CONFLICT';
   return (
     <Panel
       title="Initial experiment settings"
@@ -160,6 +181,7 @@ export function Settings({ workspace: w }: { workspace: Workspace }) {
         onChange={() => setMessage('')}
         onSubmit={(event) => {
           event.preventDefault();
+          if (save.isPending || reload.isPending || conflict) return;
           const config: InitialConfig = {};
           if (task) config.task = task as InitialConfig['task'];
           if (target.trim()) config.targetColumn = target.trim();
@@ -172,7 +194,8 @@ export function Settings({ workspace: w }: { workspace: Workspace }) {
           save.mutate(config);
         }}
       >
-        <div className="grid-2">
+        <fieldset className="grid-2 settings-fields" disabled={save.isPending || reload.isPending}>
+          <legend className="sr-only">Initial experiment settings</legend>
           <label className="label">
             Task
             <select
@@ -263,15 +286,22 @@ export function Settings({ workspace: w }: { workspace: Workspace }) {
               ))}
             </select>
           </label>
-        </div>
+        </fieldset>
         <ErrorNotice error={save.error} />
+        <ErrorNotice error={reload.error} />
+        {conflict ? <div className="callout">
+          <p>Your entries are still in this form. Reloading replaces them with the latest saved settings.</p>
+          <button type="button" className="btn btn-secondary" disabled={reload.isPending} onClick={() => reload.mutate()}>
+            {reload.isPending ? 'Loading saved settings…' : 'Reload saved settings'}
+          </button>
+        </div> : null}
         {message ? (
           <p role="status" className="callout">
             {message}
           </p>
         ) : null}
         <div className="inline-actions">
-          <button className="btn btn-primary" type="submit" disabled={save.isPending}>
+          <button className="btn btn-primary" type="submit" disabled={save.isPending || reload.isPending || conflict}>
             <Icon name="check" />
             {save.isPending ? 'Saving…' : 'Save initial settings'}
           </button>
@@ -421,7 +451,7 @@ export default function LocalWorkspace({
           <Metric
             label="Source folders"
             value={w.sources.length}
-            note="Paths saved with this experiment"
+            note="Paths saved with this project"
           />
           <Metric
             label="Known patients"
@@ -492,7 +522,7 @@ export default function LocalWorkspace({
           </Panel>
           <Panel
             title="Scientific workspace"
-            subtitle="Saved records in this experiment folder"
+            subtitle="Saved records in this project folder"
           >
             <ul className="detail-list">
               <li>
@@ -527,7 +557,7 @@ export default function LocalWorkspace({
         <PageHeader
           eyebrow="01 / WORKSPACE"
           title="Dataset workspace"
-          description="Keep the source folders for this experiment together. Slides and features remain in their original locations."
+          description="Keep the source folders for this project together. Slides and features remain in their original locations."
         />
         <div className="grid-3 metrics">
           <Metric label="Patients" value={0} note="No dataset imported" />
@@ -535,7 +565,7 @@ export default function LocalWorkspace({
           <Metric
             label="Source folders"
             value={w.sources.length}
-            note="Saved to this experiment"
+            note="Saved to this project"
           />
         </div>
         <Sources workspace={w} />
@@ -572,7 +602,7 @@ export default function LocalWorkspace({
         <PageHeader
           eyebrow="TRACEABILITY"
           title="Provenance"
-          description="Trace saved dataset versions, analysis protocols and feature configurations to their experiment folder."
+          description="Trace saved dataset versions, analysis protocols and feature configurations to their project folder."
         />
         <Panel title="Experiment record" subtitle="Saved on the server in your chosen folder">
           <ul className="detail-list">
@@ -619,7 +649,7 @@ export default function LocalWorkspace({
   const copy: Partial<Record<Page, [string, string, string]>> = {
     cohort: [
       'Cohort builder',
-      'Define the population, target, and patient split for this experiment.',
+      'Define the population, target, and patient split for this project.',
       'Import a dataset before defining a cohort.',
     ],
     evaluation: [
@@ -635,7 +665,7 @@ export default function LocalWorkspace({
   };
   const [title, description, empty] = copy[page] ?? [
     'Workspace',
-    'Continue setting up your experiment.',
+    'Continue setting up your project.',
     'No records yet.',
   ];
   return (

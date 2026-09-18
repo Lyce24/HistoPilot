@@ -73,10 +73,20 @@ def test_extraction_evidence_is_frozen_and_later_changes_are_detected(extracted)
     assert any(row["code"] == "FEATURE_SOURCE_CHANGED" for row in service.verify_binding(feature))
 
 
+def test_an_extraction_without_a_dataset_can_still_supply_provenance(extracted):
+    """Either side may name no cohort; the job, encoder and output folder still pin the run."""
+    service, spec, job_dir = extracted
+    job = json.loads((job_dir / "job.json").read_text())
+    job["spec"]["datasetId"] = None
+    (job_dir / "job.json").write_text(json.dumps(job))
+    preview = service.preview(spec)
+    assert preview["sourceExtraction"]["jobId"] == job["id"]
+    assert preview["sourceExtraction"]["spec"]["datasetId"] is None
+
+
 @pytest.mark.parametrize(
     "change",
     [
-        "dataset",
         "folder",
         "failed",
         "incomplete",
@@ -90,9 +100,7 @@ def test_extraction_evidence_is_frozen_and_later_changes_are_detected(extracted)
 def test_unrelated_or_incomplete_extraction_cannot_supply_provenance(extracted, change):
     service, spec, job_dir = extracted
     job = json.loads((job_dir / "job.json").read_text())
-    if change == "dataset":
-        job["spec"]["datasetId"] = "different"
-    elif change == "folder":
+    if change == "folder":
         job["outputLayout"]["featuresDir"] = str(job_dir)
     elif change == "failed":
         (job_dir / "result.json").write_text('{"state":"failed"}')
@@ -139,3 +147,28 @@ def test_inferred_flat_encoder_must_match_the_linked_extraction(extracted):
     with pytest.raises(StorageError) as caught:
         service.preview(spec.model_copy(update={"layout": "flat"}))
     assert caught.value.code == "INVALID_SOURCE_EXTRACTION"
+
+
+def test_completed_extraction_can_supply_a_different_dataset_revision(extracted):
+    service, original, job_dir = extracted
+    draft = service.store.create_draft("import", "Revised cohort", {})
+    revised = service.store.publish_dataset(
+        draft["id"],
+        expected_revision=1,
+        manifest={"kind": "dataset"},
+        artifacts={"records.json": b'[{"slideId":"001.A","patientId":"reviewed-patient"}]'},
+        operation_id="revised-cohort",
+    )
+    selected = original.model_copy(update={"datasetId": revised["id"]})
+    reviewed = service.preview(selected)
+    assert reviewed["canFreeze"], reviewed["findings"]
+    assert [row["slideId"] for row in reviewed["files"]] == ["001.A"]
+    assert reviewed["sourceExtraction"]["spec"]["datasetId"] == original.datasetId
+    frozen = service.freeze(selected, reviewed["previewHash"], "reused-extraction")
+    assert frozen["manifest"]["datasetId"] == revised["id"]
+    assert service.verify_binding(frozen) == []
+    # Cohort selection is independent, while the original run identity stays frozen.
+    job = json.loads((job_dir / "job.json").read_text())
+    job["spec"]["datasetId"] = revised["id"]
+    (job_dir / "job.json").write_text(json.dumps(job))
+    assert any(row["code"] == "FEATURE_SOURCE_CHANGED" for row in service.verify_binding(frozen))

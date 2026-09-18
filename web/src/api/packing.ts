@@ -73,6 +73,9 @@ export interface FeaturePackInspection {
   slideCount: number;
   totalPatches: number;
   dimensions: number;
+  sourceDtype: string | null;
+  /** "reduced" packs hold the source at a lower float precision and verify against the cast source. */
+  precision: 'exact' | 'reduced';
   outputDtype: string;
   featureBytes: number;
   coordinateBytes: number;
@@ -97,7 +100,7 @@ export interface FeaturePackSelection {
   findings: Finding[];
 }
 
-export type FeaturePackState = 'starting' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
+export type FeaturePackState = 'queued' | 'starting' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
 
 export interface FeaturePackJob {
   progressWarning?: string | null;
@@ -156,7 +159,7 @@ export const packing = {
 };
 
 export const featurePackActive = (job: Pick<FeaturePackJob, 'state'> | undefined) =>
-  job?.state === 'starting' || job?.state === 'running' || job?.state === 'cancelling';
+  job?.state === 'queued' || job?.state === 'starting' || job?.state === 'running' || job?.state === 'cancelling';
 
 /** The review identity includes every option that changes the worker's output. */
 export function featurePackSpecKey(spec: FeaturePackSpec): string {

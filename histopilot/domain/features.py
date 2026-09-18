@@ -3,6 +3,15 @@
 from dataclasses import dataclass
 
 
+def representation_kind(manifest: dict) -> str:
+    """Read the representation of a feature inventory or saved input contract.
+
+    Frozen patch records predate the field. Their absence must keep meaning
+    patch without rewriting their serialized identity.
+    """
+    return manifest.get("featureKind", manifest.get("spec", {}).get("featureKind", "patch"))
+
+
 @dataclass(frozen=True, slots=True)
 class FeatureSet:
     id: str

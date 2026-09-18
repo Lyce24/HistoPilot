@@ -16,9 +16,11 @@ from histopilot.application.protocols import (
     ProtocolService,
     _forbidden_name,
     _key,
+    protocol_bundle_findings,
 )
+from histopilot.domain.features import representation_kind
 from histopilot.schemas.evaluations import EvaluationSpec
-from histopilot.schemas.protocols import TargetSpec
+from histopilot.schemas.protocols import TargetSpec, iter_conditions
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.pack_import import _layout
 from histopilot.storage.packed import PackedStoreError
@@ -34,6 +36,7 @@ def _representation(feature):
     manifest = feature["manifest"]
     dimensions = {item["dimensions"] for item in manifest["files"]}
     return {
+        **({"featureKind": "slide"} if representation_kind(manifest) == "slide" else {}),
         "dimensions": next(iter(dimensions)) if len(dimensions) == 1 else None,
         "encoderId": manifest.get("layout", {}).get("encoderId")
         or manifest.get("spec", {}).get("encoderId"),
@@ -77,6 +80,59 @@ def _slide_sources(store, dataset, rows, selected):
                 "The frozen slide-source inventory is malformed.", "STORAGE_CORRUPT", 409
             ) from error
     return sources
+
+
+def _selected_slide_sources(store, datasets, selected):
+    sources = defaultdict(set)
+    for dataset, _dictionary, rows in datasets:
+        for slide, identities in _slide_sources(store, dataset, rows, selected).items():
+            sources[slide].update(identities)
+    return sources
+
+
+def _duplicate_test_sources(sources, finding):
+    slides_by_source = defaultdict(set)
+    for slide, identities in sources.items():
+        for identity in identities:
+            slides_by_source[identity].add(slide)
+    duplicates = sorted(
+        {slide for slides in slides_by_source.values() if len(slides) > 1 for slide in slides}
+    )
+    if duplicates:
+        finding(
+            "DUPLICATE_TEST_SLIDE_SOURCE",
+            f"{len(duplicates)} selected slide IDs refer to shared source files. Keep one record per physical slide to avoid counting the same slide more than once.",
+        )
+    return duplicates
+
+
+def _target_field_findings(datasets, fields, target, finding):
+    if target.field not in fields:
+        finding("UNKNOWN_TARGET_FIELD", "Select an available target label field.")
+    # A shared attribute key may originate from a different source column in each
+    # import. Never validate a merged dictionary against just one import mapping.
+    for dataset, dictionary, _rows in datasets:
+        source = dictionary.get(target.field, {}).get("sourceColumn", target.field)
+        mapping = dataset["manifest"].get("provenance", {}).get("mapping", {})
+        identities = {
+            _key(mapping[key])
+            for key in (
+                "slideIdColumn",
+                "patientIdColumn",
+                "patientSourceSlideIdColumn",
+                "patientSourcePatientIdColumn",
+            )
+            if isinstance(mapping.get(key), str)
+        }
+        if (
+            target.field in CANONICAL
+            or _forbidden_name(source, target=True)
+            or _key(source) in identities
+        ):
+            finding(
+                "IDENTIFIER_TARGET",
+                "Identifiers and partition fields cannot serve as target labels.",
+            )
 
 
 # Finding messages, the freeze verdict and capability flags are presentation, not
@@ -175,37 +231,14 @@ class EvaluationService:
                 findings.append(item)
 
         datasets, fields, rows = self._load_datasets(spec)
-        for condition in spec.eligibility:
+        for condition in iter_conditions(spec.eligibility):
             if condition.field not in fields and condition.field not in CANONICAL:
                 finding(
                     "UNKNOWN_FIELD", f"Filter field '{condition.field}' is not in this dataset."
                 )
         target = spec.target
         if target:
-            if target.field not in fields:
-                finding("UNKNOWN_TARGET_FIELD", "Select an available target label field.")
-            for dataset, dictionary, _records in datasets:
-                source = dictionary.get(target.field, {}).get("sourceColumn", target.field)
-                mapping = dataset["manifest"].get("provenance", {}).get("mapping", {})
-                identities = {
-                    _key(mapping[key])
-                    for key in (
-                        "slideIdColumn",
-                        "patientIdColumn",
-                        "patientSourceSlideIdColumn",
-                        "patientSourcePatientIdColumn",
-                    )
-                    if isinstance(mapping.get(key), str)
-                }
-                if (
-                    target.field in CANONICAL
-                    or _forbidden_name(source, target=True)
-                    or _key(source) in identities
-                ):
-                    finding(
-                        "IDENTIFIER_TARGET",
-                        "Identifiers and partition fields cannot serve as target labels.",
-                    )
+            _target_field_findings(datasets, fields, target, finding)
         evaluator = FilterEvaluator()
         included, excluded = [], 0
         try:
@@ -238,6 +271,9 @@ class EvaluationService:
                 "DUPLICATE_SLIDE_ID",
                 "Selected test slides have duplicate slide identifiers across the selected datasets.",
             )
+        duplicate_sources = _duplicate_test_sources(
+            _selected_slide_sources(self.store, datasets, selected), finding
+        )
         groups = defaultdict(list)
         for row in included:
             groups[row.get("patientId")].append(row)
@@ -285,6 +321,7 @@ class EvaluationService:
                 "patientIds": [],
                 "patientsComparable": False,
                 "deferred": True,
+                **({"duplicateSourceSlideIds": duplicate_sources} if duplicate_sources else {}),
             },
             "bindings": {
                 "dataset": _reference(datasets[0][0]),
@@ -338,12 +375,12 @@ class EvaluationService:
                 "Separate patient identifier namespaces were declared. Patient overlap cannot be verified across these datasets; exact slide IDs are still checked.",
                 "warning",
             )
-        if spec.inference.patientAggregation != "mean":
+        if spec.inference.patientAggregation not in {"mean", "mean_logits"}:
             finding(
                 "PATIENT_AGGREGATION_UNSUPPORTED",
-                "Frozen predictors use mean class probabilities across each patient's slides. Select mean probabilities before freezing this cohort.",
+                "Choose mean probabilities or mean logits to match the frozen predictor's patient scoring rule.",
             )
-        for condition in spec.eligibility:
+        for condition in iter_conditions(spec.eligibility):
             if condition.field not in fields and condition.field not in CANONICAL:
                 finding(
                     "UNKNOWN_FIELD", f"Filter field '{condition.field}' is not in this dataset."
@@ -372,29 +409,7 @@ class EvaluationService:
                         f"{len(remapped)} raw label values map to different classes than in development. Verify this test dataset's label meanings and confirm that its mappings preserve the same class meanings before freezing.",
                         "warning",
                     )
-            if spec.target.field not in fields:
-                finding("UNKNOWN_TARGET_FIELD", "Select an available target label field.")
-            source = fields.get(spec.target.field, {}).get("sourceColumn", spec.target.field)
-            mapping = dataset["manifest"].get("provenance", {}).get("mapping", {})
-            identity_columns = {
-                _key(mapping[key])
-                for key in (
-                    "slideIdColumn",
-                    "patientIdColumn",
-                    "patientSourceSlideIdColumn",
-                    "patientSourcePatientIdColumn",
-                )
-                if isinstance(mapping.get(key), str)
-            }
-            if (
-                spec.target.field in CANONICAL
-                or _forbidden_name(source, target=True)
-                or _key(source) in identity_columns
-            ):
-                finding(
-                    "IDENTIFIER_TARGET",
-                    "Identifiers and partition fields cannot serve as target labels.",
-                )
+            _target_field_findings(datasets, fields, spec.target, finding)
         evaluator = FilterEvaluator()
         included, excluded = [], 0
         try:
@@ -476,12 +491,8 @@ class EvaluationService:
         source_identities = (
             set().union(*development_sources.values()) if development_sources else set()
         )
-        selected_sources = defaultdict(set)
-        for source_dataset, _dictionary, source_rows in datasets:
-            for slide, sources in _slide_sources(
-                self.store, source_dataset, source_rows, selected_ids
-            ).items():
-                selected_sources[slide].update(sources)
+        selected_sources = _selected_slide_sources(self.store, datasets, selected_ids)
+        duplicate_sources = _duplicate_test_sources(selected_sources, finding)
         source_overlap = sorted(
             slide
             for slide, sources in selected_sources.items()
@@ -522,6 +533,8 @@ class EvaluationService:
             representations[name] = _representation(feature)
             feature_dtypes[name] = {item["dtype"] for item in feature["manifest"]["files"]}
             if name == "development":
+                for item in protocol_bundle_findings(protocol_manifest, bundle):
+                    finding(item["code"], item["message"], item["severity"])
                 missing_development = development_slides - set(available)
                 if missing_development:
                     finding(
@@ -546,6 +559,12 @@ class EvaluationService:
                 f"{len(missing_features)} selected test slide IDs have no features in the selected bundle.",
             )
         left, right = representations["development"], representations["evaluation"]
+        if representation_kind(left) != representation_kind(right):
+            finding(
+                "FEATURE_KIND_MISMATCH",
+                "Test features must use the same representation as development: "
+                "patch embeddings or one embedding per slide.",
+            )
         if left["dimensions"] is None or left["dimensions"] != right["dimensions"]:
             finding(
                 "FEATURE_DIMENSION_MISMATCH",
@@ -637,6 +656,7 @@ class EvaluationService:
                 "patientIds": patient_overlap,
                 "patientsComparable": same_dataset or spec.patientIdentifiers == "shared",
                 **({"sourceSlideIds": source_overlap} if source_overlap else {}),
+                **({"duplicateSourceSlideIds": duplicate_sources} if duplicate_sources else {}),
             },
             "bindings": {
                 "protocol": _reference(protocol),

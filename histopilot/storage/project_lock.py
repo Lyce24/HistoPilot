@@ -43,7 +43,7 @@ def fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     except OSError as error:
         raise StorageError(
-            "The experiment filesystem cannot synchronize directory changes.",
+            "The project filesystem cannot synchronize directory changes.",
             "STORAGE_SYNC_FAILED",
         ) from error
     finally:
@@ -116,7 +116,7 @@ def writer_lock(folder: Path, *, timeout: float = 0) -> Iterator[None]:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise StorageError(
-                        "Another operation is writing this experiment. Retry after it finishes.",
+                        "Another operation is writing this project. Retry after it finishes.",
                         "PROJECT_BUSY",
                     ) from error
                 time.sleep(min(0.01, remaining))
@@ -131,7 +131,7 @@ def writer_lock(folder: Path, *, timeout: float = 0) -> Iterator[None]:
             os.close(descriptor)
             descriptor = None
         raise StorageError(
-            "The experiment filesystem cannot acquire a durable project writer lock.",
+            "The project filesystem cannot acquire a durable writer lock.",
             "STORAGE_LOCK_FAILED",
             403,
         ) from error

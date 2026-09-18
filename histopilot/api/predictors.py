@@ -10,6 +10,7 @@ from histopilot.application.refits import RefitService
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection, RunBulkEvaluation
 from histopilot.schemas.predictors import (
     ApplyPredictorBuilds,
+    CompareEvaluations,
     EvaluationRunSelection,
     FreezePredictor,
     LaunchRefit,
@@ -127,6 +128,10 @@ def evaluation_run_router(projects, filesystem):
     @router.get("/evaluation-runs")
     def list_evaluations(identity: str, include_inactive: bool = False):
         return service(identity).list(include_inactive=include_inactive)
+
+    @router.post("/evaluation-runs/compare")
+    def compare(identity: str, payload: CompareEvaluations):
+        return service(identity).compare(payload)
 
     @router.get("/evaluation-runs/{evaluation_id}")
     def get_evaluation(identity: str, evaluation_id: str):

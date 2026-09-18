@@ -130,6 +130,22 @@ def test_full_folder_search_precedes_pagination_and_unicode_casefold(gallery):
     assert service.gallery.sources()["items"][0]["name"] == "All slide patches"
 
 
+def test_nnmil_predictor_can_query_and_visualize_compatible_gallery_slides(gallery):
+    service, source, executor, _ = gallery
+    original = service.predictors.get(source["predictorId"])
+    predictor = service.store.publish_configuration(
+        manifest={**original["manifest"], "recipe": {"model": "nnmil", "attentionDim": 2}},
+        operation_id="gallery-nnmil-predictor",
+    )
+    source = {**source, "predictorId": predictor["id"]}
+    result = service.gallery.query(InterpretationGalleryQuery(**source, limit=1))
+    assert result["items"][0]["available"], result
+    request = visualize_request(source, [Path(source["slideFolder"]) / "001.png"])
+    submitted = service.visualize(request)
+    assert submitted["items"][0]["status"] == "queued", submitted
+    assert len(executor.calls) == 1
+
+
 def test_duplicate_stems_missing_features_and_symlinks_are_visible_and_safe(gallery, tmp_path):
     service, source, _, _ = gallery
     folder = Path(source["slideFolder"])

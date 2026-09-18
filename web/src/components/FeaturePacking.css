@@ -24,7 +24,7 @@
   border: 1px solid var(--theme-line-strong);
   background: var(--theme-soft);
   border-radius: 8px;
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   font-size: 12px;
   line-height: 1.7;
 }
@@ -55,7 +55,7 @@
 .feature-pack-action > span { display: grid; gap: 5px; }
 .feature-pack-action strong { font-size: 13px; }
 .feature-pack-action small { font-size: 12px; color: var(--muted); }
-.feature-pack-action.is-selected { border-color: var(--brand-red); background: var(--theme-accent-soft); box-shadow: 0 0 0 1px var(--brand-red); }
+.feature-pack-action.is-selected { border-color: var(--brand-primary); background: var(--theme-accent-soft); box-shadow: 0 0 0 1px var(--brand-primary); }
 .feature-pack-options { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 9px; }
 .feature-pack-options h4 { margin: 0; font-size: 14px; }
 .feature-pack-options > div > p,
@@ -102,7 +102,7 @@
 .feature-pack-job > span:first-child { display: grid; gap: 5px; }
 .feature-pack-job strong { font-size: 12px; }
 .feature-pack-job small { font-size: 11px; color: var(--muted); }
-.feature-pack-job.is-selected { background: var(--theme-accent-soft); border-color: var(--brand-red); }
+.feature-pack-job.is-selected { background: var(--theme-accent-soft); border-color: var(--brand-primary); }
 .feature-pack-progress { padding: 19px; background: var(--theme-soft); border: 1px solid var(--line); border-radius: 9px; }
 .feature-pack-progress-succeeded { background: var(--theme-canvas); border-color: var(--theme-line-strong); }
 .feature-pack-progress-heading > svg { flex-shrink: 0; margin-top: 1px; color: var(--accent); }

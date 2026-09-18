@@ -7,6 +7,7 @@ import { lifecycleLabel } from '../api/lifecycle';
 import type { LifecycleState } from '../api/lifecycle';
 import ServerFolderPicker from '../components/ServerFolderPicker';
 import { Badge, ErrorNotice, Icon } from '../components/ui';
+import { Brand } from '../components/Brand';
 import '../start.css';
 
 type StartView = 'welcome' | 'new' | 'load';
@@ -216,10 +217,7 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
           disabled={busy}
           aria-label="HistoPilot start page"
         >
-          <img src="/favicon.svg?v=brown-palette-v2" width="38" height="38" alt="" />
-          <span>
-            HistoPilot<small>PATHOLOGY WORKSPACE</small>
-          </span>
+          <Brand size={40} subtitle="PATHOLOGY WORKSPACE" />
         </button>
         <span className="start-server-label">
           <Icon name="system" size={15} /> Local workspace

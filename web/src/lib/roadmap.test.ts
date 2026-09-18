@@ -3,7 +3,7 @@ import type { FeatureBundle } from '../api/bundles';
 import type { Configuration, DatasetVersion, ProtocolSpec, ScientificDraft } from '../api/scientific';
 import type { Workspace } from '../api/types';
 import type { FrozenBatch, TrainingExecution } from '../api/development';
-import { buildRoadmap, protocolBundleCompatible, completedDevelopmentBatches, ROADMAP_CONNECTIONS, ROADMAP_MODULES, type RoadmapEvidence, type RoadmapModuleId } from './roadmap';
+import { buildRoadmap, protocolBundleCompatible, completedDevelopmentBatches, suggestedRoadmapModule, ROADMAP_CONNECTIONS, ROADMAP_MODULES, type RoadmapEvidence, type RoadmapModuleId } from './roadmap';
 
 function workspace(mode: Workspace['mode'] = 'local'): Workspace {
   return {
@@ -19,7 +19,7 @@ function dataset(id = 'dataset'): DatasetVersion {
   return { id, projectId: 'project', contentHash: `hash-${id}`, createdAt: '', manifest: {}, artifacts: {} };
 }
 
-function protocol(datasetId = 'dataset', bindings: Partial<Pick<ProtocolSpec, 'featureSetId' | 'featurePackId'>> = {}): Configuration {
+function protocol(datasetId = 'dataset', bindings: Partial<Pick<ProtocolSpec, 'featureBundleId' | 'featureSetId' | 'featurePackId'>> = {}): Configuration {
   return {
     id: `protocol-${datasetId}`, projectId: 'project', contentHash: 'protocol-hash', createdAt: '',
     manifest: { kind: 'protocol', datasetId, spec: { datasetId, ...bindings }, summary: {} },
@@ -119,27 +119,28 @@ describe('project roadmap progress', () => {
     expect(roadmap.evaluation.unlocked).toBe(true);
   });
 
-  it('links eight modules across four stages through clinical utility and interpretation', () => {
+  it('links eight modules with independent optional clinical utility and interpretation branches', () => {
     expect(ROADMAP_MODULES.map((module) => [module.id, module.phase])).toEqual([
-      ['dataset', 'prepare'], ['cohort', 'prepare'], ['features', 'prepare'],
+      ['dataset', 'prepare'], ['features', 'prepare'], ['cohort', 'prepare'],
       ['experiments', 'develop'],
       ['test-data', 'evaluate'], ['evaluation', 'evaluate'],
       ['clinical-utility', 'insights'], ['interpretation', 'insights'],
     ]);
     expect(ROADMAP_CONNECTIONS).toEqual([
-      { from: 'dataset', to: 'cohort' }, { from: 'dataset', to: 'features' },
+      { from: 'dataset', to: 'cohort' }, { from: 'features', to: 'cohort' },
       { from: 'cohort', to: 'experiments' }, { from: 'features', to: 'experiments' },
       { from: 'experiments', to: 'evaluation' }, { from: 'test-data', to: 'evaluation' },
-      { from: 'evaluation', to: 'clinical-utility' }, { from: 'clinical-utility', to: 'interpretation' },
+      { from: 'evaluation', to: 'clinical-utility' }, { from: 'experiments', to: 'interpretation' },
     ]);
     expect(ROADMAP_MODULES.find((module) => module.id === 'test-data')?.prerequisites).toEqual(['dataset']);
     expect(ROADMAP_MODULES.find((module) => module.id === 'evaluation')?.prerequisites).toEqual(['experiments', 'test-data']);
     expect(ROADMAP_MODULES.find((module) => module.id === 'clinical-utility')?.prerequisites).toEqual(['evaluation']);
-    expect(ROADMAP_MODULES.find((module) => module.id === 'interpretation')?.prerequisites).toEqual(['clinical-utility']);
+    expect(ROADMAP_MODULES.find((module) => module.id === 'interpretation')?.prerequisites).toEqual(['experiments', 'features']);
+    expect(ROADMAP_MODULES.filter((module) => module.optional).map((module) => module.id)).toEqual(['clinical-utility', 'interpretation']);
   });
-  it('opens test-cohort planning independently of development and feature extraction', () => {
+  it('opens slide features and test-cohort planning independently of development', () => {
     const roadmap = buildRoadmap(workspace());
-    expect(roadmap.filter((module) => module.unlocked).map((module) => module.id)).toEqual(['dataset', 'experiments', 'test-data', 'evaluation', 'clinical-utility', 'interpretation']);
+    expect(roadmap.filter((module) => module.unlocked).map((module) => module.id)).toEqual(['dataset', 'features', 'cohort', 'experiments', 'test-data', 'evaluation', 'clinical-utility', 'interpretation']);
     expect(roadmap.every((module) => module.status === 'not-started')).toBe(true);
     expect(modules().evaluation.blockers).toEqual(['experiments', 'test-data']);
     expect(roadmap).toHaveLength(8);
@@ -151,7 +152,7 @@ describe('project roadmap progress', () => {
     const roadmap = modules({ clinicalAnalyses: [clinical], interpretations: [planned] });
     expect(roadmap['clinical-utility'].status).toBe('complete');
     expect(roadmap.interpretation.status).toBe('draft');
-    expect(roadmap.interpretation.blockers).toEqual([]);
+    expect(roadmap.interpretation.blockers).toEqual(['experiments', 'features']);
     expect(modules({ interpretations: [{ ...planned, execution: { status: 'completed' } }] }).interpretation.status).toBe('complete');
     const trashed = modules({ clinicalAnalyses: [{ ...clinical, lifecycleState: 'trashed' }], interpretations: [{ ...planned, lifecycleState: 'trashed', execution: { status: 'completed' } }] });
     expect(trashed['clinical-utility'].status).toBe('not-started');
@@ -166,14 +167,15 @@ describe('project roadmap progress', () => {
     expect(roadmap.experiments.status).toBe('draft');
     expect(roadmap.cohort.unlocked).toBe(true);
     expect(roadmap.experiments.unlocked).toBe(true);
-    expect(roadmap.features.unlocked).toBe(false);
+    expect(roadmap.features.unlocked).toBe(true);
     expect(roadmap['test-data'].unlocked).toBe(true);
   });
 
   it('requires a persisted artifact even when an import draft says frozen', () => {
     const roadmap = modules({ drafts: [draft('dataset-import', 'frozen')] });
     expect(roadmap.dataset.status).toBe('draft');
-    expect(roadmap.cohort.unlocked).toBe(false);
+    expect(roadmap.cohort.unlocked).toBe(true);
+    expect(roadmap.cohort.blockers).toContain('dataset');
   });
 
   it('keeps retained batch results accessible after archiving inputs without claiming they are ready for new work', () => {
@@ -188,7 +190,7 @@ describe('project roadmap progress', () => {
     expect(modules().experiments.unlocked).toBe(true);
   });
 
-  it('unlocks targets and features after a frozen dataset and preserves existing completed work when another draft is saved', () => {
+  it('unlocks targets after a frozen dataset and preserves existing completed work when another draft is saved', () => {
     const roadmap = modules({ datasets: [dataset()], drafts: [draft('dataset-import')] });
     expect(roadmap.dataset.status).toBe('complete');
     expect(roadmap.dataset.evidence).toBe('1 frozen dataset');
@@ -227,13 +229,41 @@ describe('project roadmap progress', () => {
     expect(roadmap.experiments.unlocked).toBe(true);
   });
 
-  it('requires a shared dataset for completed targets and features', () => {
+  it('reuses bundles across datasets and leaves slide coverage to the service', () => {
     const roadmap = modules({ datasets: [dataset('a'), dataset('b')], protocols: [protocol('a')], bundles: [bundle('b')] });
     expect(roadmap.cohort.status).toBe('complete');
     expect(roadmap.features.status).toBe('complete');
     expect(roadmap.experiments.unlocked).toBe(true);
-    expect(roadmap.experiments.compatibilityIssue).toContain('same dataset');
+    expect(roadmap.experiments.compatibilityIssue).toBeUndefined();
     expect(roadmap['test-data'].status).toBe('not-started');
+    // A store-scoped bundle names no cohort; the server checks slide coverage when planning.
+    const store = bundle('b');
+    store.manifest.datasetId = null;
+    const shared = modules({ datasets: [dataset('a')], protocols: [protocol('a')], bundles: [store] });
+    expect(shared.features.status).toBe('complete');
+    expect(shared.experiments.compatibilityIssue).toBeUndefined();
+  });
+
+  it('starts slide features before any dataset exists', () => {
+    const store = bundle('ignored');
+    store.manifest.datasetId = null;
+    const roadmap = modules({ bundles: [store] });
+    expect(roadmap.features.unlocked).toBe(true);
+    expect(roadmap.features.blockers).toEqual([]);
+    expect(roadmap.features.status).toBe('complete');
+    expect(roadmap.dataset.status).toBe('not-started');
+    // Training still needs a cohort, so the dataset remains the next required step.
+    expect(roadmap.cohort.unlocked).toBe(true);
+    expect(roadmap.cohort.blockers).toContain('dataset');
+  });
+
+  it('honors the exact named bundle pinned by a protocol', () => {
+    const required = bundle('other-dataset');
+    const bound = protocol('dataset', { featureBundleId: required.id });
+    expect(protocolBundleCompatible(bound, required)).toBe(true);
+    expect(protocolBundleCompatible(bound, { ...required, id: 'same-features-different-bundle' })).toBe(false);
+    const roadmap = modules({ datasets: [dataset()], protocols: [bound], bundles: [required] });
+    expect(roadmap.experiments.compatibilityIssue).toBeUndefined();
   });
 
   it('honors an existing protocol feature and pack binding before unlocking model development', () => {
@@ -286,5 +316,28 @@ describe('project roadmap progress', () => {
       const cohort = { id: 'test-cohort', current, findings: [] } as unknown as RoadmapEvidence['evaluationCohorts'][number];
       expect(modules({ evaluationCohorts: [cohort] })['test-data'].status).toBe('draft');
     }
+  });
+
+  it.each(['ABMIL', 'nnMIL'])('supports interpretation before evaluation or clinical utility when %s and feature inputs exist', (model) => {
+    const predictor = { id: 'predictor', lifecycleState: 'active', manifest: { recipe: { model } } } as RoadmapEvidence['predictors'][number];
+    const evidence = { datasets: [dataset()], bundles: [bundle()], predictors: [predictor] };
+    expect(modules(evidence).interpretation.blockers).toEqual([]);
+    expect(modules(evidence)['clinical-utility'].blockers).toEqual(['evaluation']);
+    const otherModel = { ...predictor, manifest: { ...predictor.manifest, recipe: { ...predictor.manifest.recipe, model: 'other' } } };
+    expect(modules({ ...evidence, predictors: [otherModel] }).interpretation.blockers).toEqual(['experiments']);
+    expect(modules({ ...evidence, predictors: [{ ...predictor, lifecycleState: 'trashed' }] }).interpretation.blockers).toEqual(['experiments']);
+  });
+
+  it('suggests a reachable input task instead of an open registry with missing prerequisites', () => {
+    const { batch, execution } = completedBatch();
+    const roadmap = buildRoadmap(workspace(), { datasets: [dataset()], protocols: [protocol()], bundles: [bundle()], batches: [batch], executions: [execution] });
+    expect(roadmap.find((module) => module.id === 'evaluation')?.unlocked).toBe(true);
+    expect(suggestedRoadmapModule(roadmap)?.id).toBe('test-data');
+    expect(suggestedRoadmapModule(buildRoadmap(workspace()))?.id).toBe('dataset');
+  });
+
+  it('does not present optional analyses as remaining required work', () => {
+    const roadmap = buildRoadmap(workspace()).map((module) => ({ ...module, unlocked: true, blockers: [], status: module.optional ? 'draft' as const : 'complete' as const }));
+    expect(suggestedRoadmapModule(roadmap)).toBeUndefined();
   });
 });

@@ -12,7 +12,7 @@ from histopilot.application.bulk_evaluations import BulkEvaluationService
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.application.extractions import ExtractionService
 from histopilot.application.feature_packs import FeaturePackService
-from histopilot.application.training import TrainingService
+from histopilot.application.training import TrainingService, run_processes
 from histopilot.schemas.lifecycle import ApplyCleanup, CancelCleanupJob, CleanupSelection
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError
@@ -223,7 +223,7 @@ class CleanupService:
                     # A terminal state can precede final process cleanup. Confirm
                     # that neither scheduler nor any child still owns work.
                     alive = _confirmed_live(execution.get("process")) or any(
-                        _confirmed_live(run.get("process")) for run in execution.get("runs", [])
+                        run_processes(run) for run in execution.get("runs", [])
                     )
                     self._job(
                         items[key],
@@ -242,7 +242,8 @@ class CleanupService:
                     self._job(
                         items[key],
                         execution["status"],
-                        _confirmed_live(execution.get("process")),
+                        bool(execution.get("liveProcesses"))
+                        or _confirmed_live(execution.get("process")),
                         execution.get("cancellationRequested", False),
                     )
                 folder = self.store.folder / "compute-jobs" / record["id"]

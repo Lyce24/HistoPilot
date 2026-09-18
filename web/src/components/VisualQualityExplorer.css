@@ -1,0 +1,26 @@
+.visual-quality-explorer { display: grid; gap: 1.25rem; }
+.morphology-settings { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem; }
+.morphology-settings > .label:first-child { flex: 2 1 20rem; }
+.morphology-settings > .label { flex: 1 1 10rem; }
+.morphology-workspace { display: grid; grid-template-columns: minmax(12rem, .7fr) minmax(0, 2.3fr); gap: 1.25rem; }
+.morphology-slide-list { display: grid; max-height: 32rem; overflow: auto; margin: .75rem 0; border: 1px solid var(--theme-line); border-radius: .6rem; }
+.morphology-slide-button { display: grid; text-align: left; width: 100%; gap: .2rem; padding: .7rem; background: transparent; border: 0; border-bottom: 1px solid var(--theme-line); color: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.morphology-slide-button.is-selected { background: var(--theme-accent-soft); box-shadow: inset 3px 0 var(--brand-primary); }
+.morphology-slide-button small { color: var(--theme-muted); }
+.morphology-image-scroll { overflow: auto; max-height: 42rem; background: var(--theme-canvas); border: 1px solid var(--theme-line); border-radius: .6rem; }
+.morphology-image-scroll svg { display: block; min-height: 16rem; }
+.morphology-image-scroll rect { cursor: pointer; }
+.morphology-projection svg { width: 100%; max-height: 32rem; font-size: 12px; }
+.morphology-projection svg [role=button] { cursor: pointer; outline: none; }
+.morphology-projection svg [role=button]:focus circle { stroke: #111; stroke-width: 4px; }
+.morphology-projection > .label { max-width: 22rem; }
+.morphology-legend { display: flex; flex-wrap: wrap; gap: .5rem 1rem; font-size: .85rem; }
+.morphology-legend span { display: inline-flex; align-items: center; gap: .35rem; }
+.morphology-legend i { width: .65rem; height: .65rem; border-radius: 50%; }
+.morphology-patch img { max-width: min(100%, 24rem); max-height: 24rem; object-fit: contain; }
+.morphology-slide, .morphology-neighbors { min-width: 0; }
+@media (max-width: 850px) {
+  .morphology-workspace { grid-template-columns: 1fr; }
+  .morphology-slide-list { max-height: 13rem; }
+  .morphology-settings > * { width: 100%; }
+}

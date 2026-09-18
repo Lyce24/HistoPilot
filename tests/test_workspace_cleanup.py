@@ -437,8 +437,12 @@ def test_clinical_and_attention_evidence_preserve_the_full_model_chain(context):
     evaluation = configuration(store, source, kind="model-evaluation", predictorId=predictor["id"])
     clinical = configuration(store, source, kind="clinical-analysis", evaluationId=evaluation["id"])
     attention = configuration(
-        store, source, kind="model-interpretation",
-        predictorId=predictor["id"], evaluationId=evaluation["id"], clinicalAnalysisId=clinical["id"],
+        store,
+        source,
+        kind="model-interpretation",
+        predictorId=predictor["id"],
+        evaluationId=evaluation["id"],
+        clinicalAnalysisId=clinical["id"],
     )
     catalog = {row["key"]: row for row in service.catalog()["items"]}
     assert key(clinical) in catalog[key(attention)]["dependsOn"]
@@ -462,18 +466,25 @@ def test_folder_attention_preserves_its_external_bundle_and_shared_pack(context)
     pack_id = "pack-" + "d" * 64
     packing_id = "packing-" + "e" * 32
     service.packs.add(
-        packing_id, {"featureSetId": features["id"], "spec": {"action": "pack"}},
+        packing_id,
+        {"featureSetId": features["id"], "spec": {"action": "pack"}},
         result={"artifact": {"id": pack_id, "jobId": packing_id}},
     )
     bundle = configuration(
-        store, external_data, "feature-bundle",
+        store,
+        external_data,
+        "feature-bundle",
         spec={"featureSetId": features["id"], "packArtifactIds": [pack_id]},
         feature={"validation": {"jobId": packing_id}},
     )
     predictor = configuration(store, training_data, "frozen-predictor")
     study = configuration(
-        store, training_data, "model-interpretation", predictorId=predictor["id"],
-        featureBundleId=bundle["id"], packArtifactId=pack_id,
+        store,
+        training_data,
+        "model-interpretation",
+        predictorId=predictor["id"],
+        featureBundleId=bundle["id"],
+        packArtifactId=pack_id,
     )
     for resource in (key(bundle), f"packing:{packing_id}", key(external_data, "dataset")):
         review = service.preview(selection("trash", resource))

@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StrictInt, field_validator
 
+from histopilot.schemas.analysis import PatientAnalysisSettings
 from histopilot.schemas.development import ResourcePolicy
 from histopilot.schemas.evaluations import ConfigurationId, InferenceSettings
 from histopilot.schemas.workspace import RequestModel
@@ -96,3 +97,9 @@ class EvaluationRunSelection(RequestModel):
 class SaveEvaluationRun(EvaluationRunSelection):
     previewHash: str = Field(pattern=r"^[a-f0-9]{64}$")
     operationId: str = Field(min_length=1, max_length=128)
+
+
+class CompareEvaluations(RequestModel):
+    leftEvaluationId: ConfigurationId
+    rightEvaluationId: ConfigurationId
+    analysis: PatientAnalysisSettings = Field(default_factory=PatientAnalysisSettings)

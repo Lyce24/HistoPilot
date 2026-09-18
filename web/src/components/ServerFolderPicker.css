@@ -34,7 +34,7 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   padding: 12px 0;
   font-size: 12px;
 }

@@ -53,7 +53,8 @@ def registry(tmp_path):
     return predictor, cohort
 
 
-def candidate(service, name="Trial", *, legacy=False, refit_ready=False):
+def candidate(service, name="Trial", *, legacy=False, refit_ready=False, checkpoint_metric=None,
+              model="abmil", feature_bundle_id=None):
     store = service.store
     protocol = next(
         item
@@ -66,11 +67,14 @@ def candidate(service, name="Trial", *, legacy=False, refit_ready=False):
         for row in manifest["memberships"]:
             row["label"] = labels[int(row["slideId"].removeprefix("s")) % len(labels)]
         protocol = store.publish_configuration(manifest=manifest, operation_id=uuid4().hex)
-    bundle = store.list_configurations("feature-bundle")[0]
+    bundle = (store.get_configuration(feature_bundle_id) if feature_bundle_id
+              else store.list_configurations("feature-bundle")[0])
     feature = store.get_configuration(bundle["manifest"]["feature"]["id"])
     experiment = store.create_draft("experiment", name, {"type": "model-experiment"})
     inputs = {"protocolId": protocol["id"], "featureBundleId": bundle["id"]}
-    recipe = TrainingRecipe().model_dump()
+    recipe = TrainingRecipe(model=model).model_dump()
+    if checkpoint_metric is not None:
+        recipe["checkpointMetric"] = checkpoint_metric
     candidate_id = "candidate-" + _hash(recipe)
     splits = development_plans(protocol["manifest"])
     runs = [

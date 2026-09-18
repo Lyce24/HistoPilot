@@ -1,3 +1,4 @@
+import { StageBackButton, StageContinueButton, StageCreateButton } from '../components/StageActions';
 import { useRef, useState } from 'react';
 import { preparationLink } from '../lib/preparationRoute';
 import type { Workspace } from '../api/types';
@@ -30,6 +31,7 @@ import {
   useRefreshScientific,
 } from '../components/ScientificUI';
 import DatasetExplorer from '../components/DatasetExplorer';
+import VisualQualityExplorer from '../components/VisualQualityExplorer';
 import ServerFolderPicker from '../components/ServerFolderPicker';
 import PatientTableOption from '../components/PatientTableOption';
 import PatientFallbackDialog from '../components/PatientFallbackDialog';
@@ -40,14 +42,16 @@ import { StageLibrary, StageLibraryToolbar, StageRecordManageButton, StagePage, 
 import { datasetVersionLabel } from '../lib/versionLabels';
 import { scientificReviewInvalidated } from '../lib/scientificReview';
 import { canReuseImportMapping, inspectedAttributes } from '../lib/datasetImport';
+import { readEditorRecovery, useEditorRecoveryBackup, type EditorRecovery } from '../lib/editorRecovery';
+import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import './dataset-workflow.css';
 
-const newSpec = (workspace: Workspace): ImportSpec => ({
+export const newDatasetImportSpec = (workspace: Workspace): ImportSpec => ({
   source: { path: '' },
   slideIdColumn: '',
   slideRoot: workspace.sources.find((source) => source.role === 'slides')?.path,
   recursive: true,
-  includeMissingSlides: false,
+  includeMissingSlides: true,
   missingValues: [''],
   attributes: [],
   patientIdFallback: 'unresolved',
@@ -57,28 +61,32 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   const versions = useDatasets(project);
   const savedDrafts = useDrafts(project);
   const refresh = useRefreshScientific(project);
+  // Unsaved import input from this tab is retained across a module change or a
+  // reload. The module still opens on its library; Return to current import
+  // reopens the work. The project folder owns every saved record.
+  const [recovered] = useState(() => readEditorRecovery<ImportSpec>(project, 'dataset'));
   const [view, setView] = useState<'library' | 'import' | 'dataset'>('library');
   const [libraryFilters, setLibraryFilters] = useState({ search: '', status: 'all', sort: 'recent' });
-  const [resumeView, setResumeView] = useState<'import' | 'dataset' | null>(null);
+  const [resumeView, setResumeView] = useState<'import' | 'dataset' | null>(recovered ? 'import' : null);
   const [versionId, setVersionId] = useState(w.dataset.id);
   const [freezeReview, setFreezeReview] = useState<{
     draftId: string; revision: number; preview: ImportPreview; name: string; operationId: string;
   } | null>(null);
   const [freezeLabel, setFreezeLabel] = useState<VersionLabelInput>({ tag: '', note: '' });
-  const [name, setName] = useState(`${w.project.name} dataset`);
-  const [spec, setSpec] = useState<ImportSpec>(() => newSpec(w));
-  const [draft, setDraft] = useState<ScientificDraft<ImportSpec> | null>(null);
+  const [name, setName] = useState(recovered?.name ?? `${w.project.name} dataset`);
+  const [spec, setSpec] = useState<ImportSpec>(() => recovered?.spec ?? newDatasetImportSpec(w));
+  const [draft, setDraft] = useState<ScientificDraft<ImportSpec> | null>(recovered?.draft ?? null);
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [patientInspection, setPatientInspection] = useState<Inspection | null>(null);
   const mappedMainSource = useRef<{ source: ImportSpec['source']; fingerprint: string } | null>(null);
   const mappedPatientSource = useRef<{ source: ImportSpec['source']; fingerprint: string } | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [busy, setBusy] = useState(false);
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1); // Column mapping needs a new file read; recovery reopens step 1.
   const [fallbackCount, setFallbackCount] = useState<number | null>(null);
   const [readingSource, setReadingSource] = useState<'main' | 'patient' | null>(null);
   const [error, setError] = useState<Error | null>(null);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(recovered ? 'Unsaved import input was recovered in this tab. Choose Return to current import to continue, or save it as a draft in your project folder.' : '');
   useStageLibrary(() => {
     if (!busy && !freezeReview && fallbackCount === null && view !== 'library') { setResumeView(view); setView('library'); }
   });
@@ -86,13 +94,27 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   const version = versions.data?.datasets.find((item) => item.id === datasetId);
   const dirty = !draft || draft.name !== name || !sameJSON(draft.payload.spec, spec);
   const frozen = draft?.status === 'frozen';
+  // A pristine new import is not work worth recovering; a saved draft is, as soon
+  // as it differs from its saved revision.
+  const unsaved = !frozen && (draft
+    ? dirty
+    : name !== `${w.project.name} dataset` || !sameJSON(spec, newDatasetImportSpec(w)));
+  const recovery: EditorRecovery<ImportSpec> | null = unsaved
+    ? { version: 1, name, spec, draft, step: view === 'import' ? step : 0 }
+    : null;
+  const backup = useEditorRecoveryBackup(project, 'dataset', recovery);
+  useWorkspaceNavigationGuard(busy
+    ? 'A dataset request is still pending. Leaving now may hide its outcome.'
+    : recovery && backup.error
+      ? 'Unsaved import input cannot be recovered in this browser. Save the draft before leaving Datasets.'
+      : null);
   const sourceReady =
     Boolean(inspection?.headers.length) &&
     !inspection?.findings.some((finding) => finding.severity === 'error');
   function showStep(next: 1 | 2 | 3) {
     setStep(next);
   }
-  const importDrafts = (savedDrafts.data?.drafts ?? []).filter((item) => item.payload.type === 'dataset-import');
+  const importDrafts = (savedDrafts.data?.drafts ?? []).filter((item) => item.payload.type === 'dataset-import' && item.status !== 'frozen');
   const libraryRows = [
     ...(versions.data?.datasets ?? []).map((item) => ({
       kind: 'dataset' as const, item, name: datasetVersionLabel(item), status: 'frozen',
@@ -120,6 +142,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
       [
         spec.slideIdColumn,
         spec.patientIdColumn,
+        spec.slidePathColumn,
         ...spec.attributes.map((item) => item.sourceColumn),
       ].filter((v): v is string => Boolean(v)),
     ),
@@ -142,6 +165,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
       'patientSourceKind',
       'patientSourceSlideIdColumn',
       'patientSourcePatientIdColumn',
+      'slidePathColumn',
       'slideRoot',
       'recursive',
       'includeMissingSlides',
@@ -177,11 +201,15 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
       setReadingSource(null);
     }
   }
+  /** Never discard entered input to start or open another record: save it first. */
+  async function keepCurrentWork() {
+    if (unsaved) await save();
+  }
   function reset() {
     setFreezeLabel({ tag: '', note: '' });
     setFreezeReview(null);
     setDraft(null);
-    setSpec(newSpec(w));
+    setSpec(newDatasetImportSpec(w));
     setName(`${w.project.name} dataset`);
     setInspection(null);
     setPatientInspection(null);
@@ -200,7 +228,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
     setDraft(loaded);
     if (!reloading) setFreezeLabel({ tag: '', note: '' });
     setSpec({
-      ...newSpec(w),
+      ...newDatasetImportSpec(w),
       ...loaded.payload.spec,
       attributes: loaded.payload.spec.attributes ?? [],
     });
@@ -261,10 +289,16 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
         : next.headers.includes('Patient_ID')
           ? 'Patient_ID'
           : undefined;
-    const attributes = inspectedAttributes(next.headers, spec.attributes, [slide, patient], preserve, 'slide');
+    const slidePath = preserve
+      ? spec.slidePathColumn
+      : [spec.slidePathColumn, 'Slide_Path', 'slidePath', 'wsi'].find(
+          (column) => column && column !== slide && next.headers.includes(column),
+        );
+    const attributes = inspectedAttributes(next.headers, spec.attributes, [slide, patient, slidePath], preserve, 'slide');
     edit({
       slideIdColumn: slide,
       patientIdColumn: patient,
+      slidePathColumn: slidePath,
       attributes,
       ...(prior && prior.source === spec.source && prior.fingerprint !== next.fingerprint
         ? { patientIdFallback: 'unresolved' as const }
@@ -274,20 +308,17 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   return (
     <div className="clinical-workspace dataset-workspace">
       <PageHeader
-        eyebrow="PROJECT INPUTS · DATA"
-        title="Datasets"
-        description="Open a dataset or import slide and patient records."
-        actions={
-          <div className="inline-actions">
-            {view !== 'library' ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => { setResumeView(view); setView('library'); }}>Back to datasets</button> : null}
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={reset}>
-              <Icon name="plus" /> New import
-            </button>
-          </div>
-        }
+        eyebrow="01 PREPARE"
+        title={view === 'library' ? 'Datasets' : view === 'dataset' ? version ? datasetVersionLabel(version) : 'Saved dataset' : draft ? name : 'Create dataset'}
+        description={view === 'library' ? 'Open a dataset or import slide and patient records.'
+          : view === 'dataset' ? 'Review this frozen dataset, its mapping evidence and saved records.'
+            : 'Choose your metadata table, map identifiers and attributes, then save a fixed version. Slide images are optional.'}
+        actions={view === 'library'
+          ? <StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create dataset</StageCreateButton>
+          : <StageBackButton disabled={busy} onClick={() => { setResumeView(view); setView('library'); }}>Back to datasets</StageBackButton>}
       />
       <StagePage pageKey={`${view}-${view === 'import' ? step : versionId}`}>
-      {view !== 'library' ? <SetupContext input="Slide table and optional slide images" output="A fixed dataset for targets and features">
+      {view !== 'library' ? <SetupContext input="Slide table and optional slide images" output="A reusable metadata dataset for targets, filters and splits">
         Recommended: keep development and test rows in one file with a cohort column. Select development rows in Targets and test rows in Evaluate. Separate files are also supported.
       </SetupContext> : null}
       <ErrorNotice error={error ?? versions.error ?? savedDrafts.error} />
@@ -318,16 +349,20 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                 <td>{new Date(row.updatedAt).toLocaleDateString()}</td>
                 <td><StageRecordManageButton type="dataset" id={row.item.id} name={row.name} /></td>
               </tr> : <tr key={`draft-${row.item.id}`}>
-                <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open import ${row.name}`} onClick={() => { if (draft?.id === row.item.id) setView('import'); else void run(() => loadDraft(row.item.id)); }}>{row.name}</button><small>Revision {row.item.revision}</small></td>
-                <td><Badge tone={row.item.status === 'frozen' ? 'green' : 'neutral'}>{row.item.status === 'frozen' ? 'Frozen import' : 'Draft'}</Badge></td>
+                <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open import ${row.name}`} onClick={() => { if (draft?.id === row.item.id) setView('import'); else void run(async () => { await keepCurrentWork(); await loadDraft(row.item.id); }); }}>{row.name}</button><small>Revision {row.item.revision}</small></td>
+                <td><Badge tone={row.item.status === 'frozen' ? 'frozen' : 'neutral'}>{row.item.status === 'frozen' ? 'Frozen import' : 'Draft'}</Badge></td>
                 <td>Import mapping</td>
                 <td>{new Date(row.updatedAt).toLocaleDateString()}</td>
                 <td><StageRecordManageButton type="draft" id={row.item.id} name={row.name} /></td>
               </tr>)}</tbody>
             </table></div>
           ) : !versions.isPending && !savedDrafts.isPending && !versions.error && !savedDrafts.error ? <EmptyState
+            icon="dataset"
             title={libraryRows.length ? 'No matching datasets or imports' : 'No datasets or import drafts yet'}
             description={libraryRows.length ? 'Try another search or clear the filters.' : 'Start a new import to connect your metadata, patient IDs and slide files.'}
+            action={libraryRows.length
+              ? <button type="button" className="btn btn-secondary" onClick={resetLibraryFilters}>Clear filters</button>
+              : <StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create dataset</StageCreateButton>}
           /> : null}
         </StageLibrary>
       ) : view === 'dataset' ? (
@@ -361,6 +396,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                 dictionary={version.manifest.dictionary ?? []}
               />
             </Panel>
+            <VisualQualityExplorer key={datasetId} project={project} datasetId={datasetId} />
             <Panel
               title="Saved dataset details"
               subtitle="The source files and column mapping are recorded with this version."
@@ -374,7 +410,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                     { mapping?: ImportSpec } | undefined;
                   const mapping = provenance?.mapping;
                   setSpec({
-                    ...newSpec(w),
+                    ...newDatasetImportSpec(w),
                     ...mapping,
                     patientIdFallback: 'unresolved',
                     parentId: version.id,
@@ -422,8 +458,8 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
               </details>
             </Panel>
             <div className="setup-next-actions" aria-label="Continue with this dataset">
-              <a className="btn btn-primary" href={preparationLink('cohort', { datasetId: version.id })}>Define targets &amp; splits <Icon name="arrow" /></a>
-              <a className="btn btn-secondary" href={preparationLink('features', { datasetId: version.id })}>Prepare features <Icon name="arrow" /></a>
+              <StageContinueButton href={preparationLink('cohort', { datasetId: version.id })}>Define targets &amp; splits </StageContinueButton>
+              <StageContinueButton tone="secondary" href={preparationLink('features', { datasetId: version.id })}>Select dataset slides for features </StageContinueButton>
             </div>
           </>
         ) : (
@@ -550,10 +586,39 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                           />
                         </div>
                       </div>
+                      <label className="label">
+                        Slide file column (optional)
+                        <select
+                          className="field"
+                          value={spec.slidePathColumn ?? ''}
+                          disabled={!columns.length}
+                          onChange={(event) =>
+                            edit({
+                              slidePathColumn: event.target.value || undefined,
+                              attributes: spec.attributes.filter(
+                                (item) => item.sourceColumn !== event.target.value,
+                              ),
+                            })
+                          }
+                        >
+                          <option value="">Find files by Slide_ID and extension</option>
+                          {columns
+                            .filter((column) => column !== spec.slideIdColumn)
+                            .map((column) => (
+                              <option key={column}>{column}</option>
+                            ))}
+                        </select>
+                        <small>
+                          {columns.length
+                            ? 'A column naming each file, relative to the slide folder \u2014 for example rih/SL-145.svs.'
+                            : 'Read your metadata file above to choose a column.'}
+                        </small>
+                      </label>
                       <label className="science-check">
                         <input
                           type="checkbox"
                           checked={spec.recursive}
+                          disabled={Boolean(spec.slidePathColumn)}
                           onChange={(event) => edit({ recursive: event.target.checked })}
                         />{' '}
                         Include subfolders in the slide scan
@@ -570,8 +635,11 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                         features)
                       </label>
                       <p className="dataset-field-note">
-                        Files are matched by Slide_ID and file extension. Without the option
-                        above, rows with no matching file are excluded from the dataset.
+                        {spec.slidePathColumn
+                          ? `Each slide file is read from ${spec.slidePathColumn}, so no folder is scanned and superseded copies elsewhere in the tree are never matched. Slide_ID must still be the file name without its extension.`
+                          : 'Files are matched by Slide_ID and file extension. A stem that appears in more than one subfolder is ambiguous and links no file; name the files in a column instead.'}
+                        {' '}Without the option above, rows with no matching file are excluded from
+                        the dataset.
                       </p>
                     </section>
                   </div>
@@ -594,17 +662,16 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                     >
                       Save draft
                     </button>
-                    <button
+                    <StageContinueButton
                       type="button"
-                      className="btn btn-primary"
                       disabled={
                         !inspection ||
                         inspection.findings.some((finding) => finding.severity === 'error')
                       }
                       onClick={() => showStep(2)}
                     >
-                      Continue to column mapping <Icon name="arrow" size={16} />
-                    </button>
+                      Continue to column mapping
+                    </StageContinueButton>
                   </div>
                 </div>
               </Panel>
@@ -736,13 +803,12 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                       title="Your column mapping will appear here"
                       description="Choose a metadata file in step 1 and click Read file & show columns. Then choose the ID columns and review the suggested attributes."
                     />
-                    <button
+                    <StageBackButton
                       type="button"
-                      className="btn btn-secondary"
                       onClick={() => showStep(1)}
                     >
                       Back to choose a file
-                    </button>
+                    </StageBackButton>
                   </div>
                 )}
                 <details className="setup-details" open={spec.patientSource ? true : undefined}>
@@ -910,9 +976,9 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                 </p>
               </div>
               <div className="inline-actions">
-                <button type="button" className="btn btn-secondary" onClick={() => showStep(1)}>
+                <StageBackButton type="button" onClick={() => showStep(1)}>
                   Back to files
-                </button>
+                </StageBackButton>
                 <button
                   type="button"
                   className="btn btn-secondary"
@@ -928,14 +994,13 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                 >
                   Save draft
                 </button>
-                <button
+                <StageContinueButton
                   type="button"
-                  className="btn btn-primary"
                   disabled={!name.trim() || !spec.slideIdColumn}
                   onClick={() => void run(() => previewDataset())}
                 >
-                  {busy ? 'Working…' : 'Preview dataset'} <Icon name="arrow" />
-                </button>
+                  {busy ? 'Working…' : 'Preview dataset'}
+                </StageContinueButton>
               </div>
             </div>
           </fieldset>
@@ -950,14 +1015,14 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                 subtitle="Check the counts and explore your data. Resolve any blocking findings before saving this version."
                 actions={
                   <div className="inline-actions">
-                    <button
+                    <StageBackButton
                       type="button"
-                      className="btn btn-secondary btn-small"
+                      size="small"
                       disabled={busy}
                       onClick={() => showStep(2)}
                     >
                       Back to mapping
-                    </button>
+                    </StageBackButton>
                     <Badge tone={preview.canFreeze ? 'green' : 'orange'}>
                       {preview.canFreeze ? 'Ready to freeze' : 'Resolve blocking findings'}
                     </Badge>
@@ -997,7 +1062,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
       {freezeReview ? (
         <FreezeVersionDialog
           kind="dataset"
-          initialLabel={freezeLabel}
+          initialLabel={{ ...freezeLabel, tag: freezeLabel.tag || freezeReview.name.slice(0, 80) }}
           onLabelChange={setFreezeLabel}
           onClose={() => setFreezeReview(null)}
           onFreeze={async (versionLabel) => {

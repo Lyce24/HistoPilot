@@ -188,7 +188,7 @@
   padding: 20px;
   box-shadow: none;
 }
-.science-metrics .metric-value {
+.science-metrics .metric-value:not(.metric-value-text) {
   font-size: 28px;
 }
 .science-metrics .metric-note {
@@ -289,7 +289,7 @@
   justify-content: space-between;
 }
 .science-success {
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -311,12 +311,12 @@
 .finding-error {
   background: var(--theme-accent-soft);
   border-color: var(--theme-accent-line);
-  color: var(--brand-red);
+  color: var(--brand-primary);
 }
 .finding-warning {
   background: var(--theme-soft);
   border-color: var(--theme-line-strong);
-  color: var(--brand-brown);
+  color: var(--theme-ink);
 }
 .finding > div {
   flex: 1;
@@ -410,7 +410,7 @@
   display: block;
   height: 100%;
   min-width: 2px;
-  background: var(--brand-brown);
+  background: var(--brand-deep);
   border-radius: 3px;
 }
 .histogram-bin:disabled {
@@ -429,7 +429,7 @@ table caption {
   color: var(--ink);
 }
 .cross-tab td {
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   font-weight: 650;
   background: var(--theme-soft);
   text-align: center;
@@ -537,7 +537,7 @@ table caption {
   .science-metrics .metric-card {
     padding: 15px;
   }
-  .science-metrics .metric-value {
+  .science-metrics .metric-value:not(.metric-value-text) {
     font-size: 24px;
   }
   .science-bar {

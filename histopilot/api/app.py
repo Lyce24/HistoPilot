@@ -114,7 +114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/v1/projects/{identity}")
     def update_project(identity: str, payload: ProjectUpdateRequest):
-        return projects.update_config(identity, payload.config)
+        return projects.update_config(identity, payload.config, payload.expectedConfig)
 
     @app.post("/api/v1/projects/{identity}/sources", status_code=201)
     def project_source(identity: str, payload: ProjectSourceRequest):
@@ -288,7 +288,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if extraction_ready
                     else "TRIDENT extraction requires runtime setup or tmux. "
                 )
-                + "ABMIL training, refitting, evaluation and attention are implemented; "
+                + "ABMIL and nnMIL training, refitting, evaluation and attention are implemented; "
                 "check runtime readiness in their modules.",
                 "trident": trident,
             },
@@ -318,12 +318,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(scientific_router(projects, filesystem))
     app.include_router(lifecycle_router(projects, filesystem))
+    from histopilot.api.case_review import case_review_router
     from histopilot.api.clinical import clinical_router
     from histopilot.api.evaluations import evaluation_router
     from histopilot.api.interpretation import interpretation_router
     from histopilot.api.mil import mil_router
     from histopilot.api.model_experiments import model_experiments_router
+    from histopilot.api.morphology import morphology_router
+    from histopilot.api.operations import operations_router
     from histopilot.api.predictors import evaluation_run_router, predictor_router
+    from histopilot.api.slide_reviews import slide_review_router
 
     app.include_router(mil_router(projects, filesystem))
     app.include_router(evaluation_router(projects, filesystem))
@@ -332,6 +336,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(evaluation_run_router(projects, filesystem))
     app.include_router(clinical_router(projects, filesystem))
     app.include_router(interpretation_router(projects, filesystem))
+    app.include_router(slide_review_router(projects, filesystem))
+    app.include_router(morphology_router(projects, filesystem))
+    app.include_router(case_review_router(projects, filesystem))
+    app.include_router(operations_router(projects, filesystem))
 
     @app.get("/{path:path}")
     def frontend(path: str):

@@ -30,7 +30,7 @@ describe('evaluation result comparison', () => {
     expect(html).toContain('patient scoring'); expect(html).toContain('slide scoring');
     expect(html).toContain('0.700'); expect(html).toContain('0.800');
     expect(html).toContain('Unmatched results are excluded from method means');
-    expect(html).toContain('confirm it on independent data');
+    expect(html).toContain('Freeze the strategy using development evidence before external evaluation');
     expect(html).not.toContain('Highest AUROC'); expect(html).not.toContain('winner');
   });
 });

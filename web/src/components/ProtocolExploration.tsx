@@ -36,30 +36,48 @@ export function useProtocolExploration(project: string, request: ProtocolExplore
 export interface ProtocolFieldContext {
   project: string;
   datasetId: string;
+  datasetIds?: string[];
   dictionary: AttributeMapping[];
 }
 
-export function FieldProfile({
+export function useFieldProfile({
   project,
   datasetId,
+  datasetIds,
   dictionary,
   field,
 }: ProtocolFieldContext & { field: string }) {
   const attribute = dictionary.find((item) => item.key === field);
   const identity = field === 'Slide_ID' || field === 'Patient_ID';
+  const ids = datasetIds?.length ? datasetIds : [datasetId];
   const query = useQuery({
-    queryKey: [...scienceKey(project), 'field-profile', datasetId, field],
-    queryFn: () =>
-      scientific.queryDataset(project, datasetId, {
+    queryKey: [...scienceKey(project), 'field-profile', ids.length > 1 ? ids : datasetId, field],
+    queryFn: async () => {
+      const results = await Promise.all(ids.map((id) => scientific.queryDataset(project, id, {
         ...(attribute ? { field } : {}),
         search: '',
         filters: [],
         offset: 0,
         limit: 5,
-      }),
+      })));
+      if (results.length === 1) return results[0];
+      const values = new Map<string | null, number>();
+      for (const result of results) {
+        for (const item of result.valueCounts) values.set(item.value, (values.get(item.value) ?? 0) + item.count);
+      }
+      return { ...results[0], records: results.flatMap((result) => result.records),
+        valueCounts: [...values].map(([value, count]) => ({ value, count })),
+        valuesTruncated: results.some((result) => result.valuesTruncated) };
+    },
     enabled: Boolean(datasetId && field && (attribute || identity)),
     staleTime: 60_000,
   });
+  return { attribute, identity, query };
+}
+
+export function FieldProfile(context: ProtocolFieldContext & { field: string }) {
+  const { field } = context;
+  const { attribute, identity, query } = useFieldProfile(context);
   if (!field) return null;
   if (!attribute && !identity)
     return (

@@ -67,7 +67,7 @@ function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, init
 function PredictorEvidence({ manifest }: { manifest: FrozenPredictor['manifest'] | RefitBuild['manifest'] }) {
   const checkpoints = manifest.sourceCheckpoints ?? manifest.checkpoints;
   return <><p>{checkpoints.length} verified fold checkpoints. Inputs retain the experiment, batch, settings, target, features and checkpoint checksums.</p>
-    {manifest.epochBudget ? <div className="callout"><strong>Refit budget: {manifest.epochBudget.epochs} epochs</strong><p>P{manifest.epochBudget.percentile} of best epochs [{manifest.epochBudget.foldBestEpochs.map((fold) => fold.bestEpoch).join(', ')}], rounded up. {manifest.trainingSlideCount} development slides{manifest.trainingPatientCount !== undefined ? ` from ${manifest.trainingPatientCount} patients` : ''}.</p></div> : null}
+    {manifest.epochBudget ? <div className="callout"><strong>Refit budget: {manifest.epochBudget.epochs} epochs</strong><p>P{manifest.epochBudget.percentile} of selected fold checkpoint epochs [{manifest.epochBudget.foldBestEpochs.map((fold) => fold.bestEpoch).join(', ')}], rounded up. {manifest.trainingSlideCount} development slides{manifest.trainingPatientCount !== undefined ? ` from ${manifest.trainingPatientCount} patients` : ''}.</p></div> : null}
     <details><summary>Checkpoint evidence</summary><ul className="chain-evidence">{checkpoints.map((checkpoint) => <li key={checkpoint.runId}><strong>{checkpoint.runId}</strong><code>{checkpoint.path}</code><small>SHA256: {checkpoint.sha256}</small></li>)}</ul></details></>;
 }
 export function RefitTraining({ project, build, existing, refresh }: { project: string; build: RefitBuild; existing?: FrozenPredictor; refresh: () => Promise<void> }) {

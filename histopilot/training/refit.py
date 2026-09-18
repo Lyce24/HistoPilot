@@ -1,4 +1,4 @@
-"""Train a fresh ABMIL model on all development slides for a reviewed epoch budget."""
+"""Train a fresh MIL model on all development slides for a reviewed epoch budget."""
 
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ import torch
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
 
-from histopilot.datasets.datamodule import MILDataModule
-from histopilot.datasets.mil import EpochShuffleSampler, MILDataError, SlideDataset
+from histopilot.datasets.datamodule import MILDataModule, training_objective
+from histopilot.datasets.mil import MILDataError, SlideDataset
 from histopilot.schemas.development import TrainingRecipe
+from histopilot.schemas.nnmil import resolve_nnmil_plan
 from histopilot.training.fold import _HistoryWriter, _write_json
 from histopilot.training.module import MILTrainModule
 
@@ -41,6 +42,11 @@ class RefitDataModule(MILDataModule):
                 raise MILDataError("Refit accepts only frozen development training memberships.")
             if (
                 target["unit"] == "patient"
+                and row.get("patientIdSource") == "slide_fallback"
+            ):
+                raise MILDataError("Patient refitting requires verified patient IDs, not slide fallback.")
+            if (
+                target["unit"] == "patient"
                 and row["patientId"] in patient_labels
                 and patient_labels[row["patientId"]] != row["label"]
             ):
@@ -50,7 +56,10 @@ class RefitDataModule(MILDataModule):
         if {row["label"] for row in rows} != set(classes):
             raise MILDataError("Every frozen target class must appear in refit training.")
         self.memberships = {"train": sorted(rows, key=lambda row: row["slideId"])}
+        self._fit_clinical()
         self.batch_size = self.plan["recipe"]["batchSize"]
+        self.trainingObjective = training_objective(self.plan["target"], self.plan["recipe"])
+        self.eval_batch_size = self.plan["recipe"].get("evalBatchSize") or self.batch_size
         self.num_workers = self.plan["resources"].get("dataLoaderWorkers", 0)
         if type(self.num_workers) is not int or not 0 <= self.num_workers <= 64:
             raise MILDataError("Invalid refit data loader worker count.")
@@ -64,7 +73,7 @@ class RefitDataModule(MILDataModule):
             raise MILDataError("A refit does not use validation or test data.")
         if self.train_dataset is None:
             self.train_dataset = SlideDataset(self.plan, self.memberships["train"], training=True)
-            self.train_sampler = EpochShuffleSampler(self.train_dataset)
+            self._setup_training_sampler()
         self.set_epoch(self.epoch)
 
     def val_dataloader(self):
@@ -98,7 +107,10 @@ class _RefitHistory(_HistoryWriter):
 
 def train_refit(plan, output_dir, *, checkpoint_path=None):
     """Fixed-epoch fitting from fresh weights; resume replays incomplete epochs."""
-    recipe = TrainingRecipe.model_validate(plan["recipe"], context={"legacy": True}).model_dump()
+    plan = resolve_nnmil_plan(plan)
+    recipe = TrainingRecipe.model_validate(
+        plan.get("effectiveRecipe", plan["recipe"]), context={"legacy": True}
+    ).model_dump()
     epochs = plan["epochBudget"]["epochs"]
     if recipe["maxEpochs"] != epochs or recipe["minEpochs"] != epochs or recipe["earlyStopping"]:
         raise ValueError("Refit must use its reviewed fixed epoch budget with no early stopping.")
@@ -121,7 +133,18 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
     torch.set_num_threads(plan["resources"].get("cpuThreadsPerRun", 2))
     L.seed_everything(plan["trainingSeed"], workers=True)
     datamodule = RefitDataModule({**plan, "recipe": recipe})
-    model = MILTrainModule(plan["data"]["featureDim"], plan["target"], recipe)
+    if recipe["lrScheduler"] == "plateau":
+        raise ValueError(
+            "A refit requires its reviewed schedule without validation-dependent plateau stopping."
+        )
+    model = MILTrainModule(
+        plan["data"]["featureDim"],
+        plan["target"],
+        recipe,
+        class_weights=datamodule.training_class_weights(),
+        class_weight_unit=datamodule.training_class_weight_unit(),
+        clinical_preprocessor=datamodule.clinical_preprocessor,
+    )
     checkpoint = ModelCheckpoint(
         dirpath=output_dir,
         save_top_k=0,
@@ -171,13 +194,18 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
             "trainingPatientCount": len(
                 {row["patientId"] for row in datamodule.memberships["train"]}
             ),
-            "trainingObjective": "patient_balanced_slide_cross_entropy"
-            if plan["target"]["unit"] == "patient"
-            else "slide_cross_entropy",
+            "trainingObjective": datamodule.trainingObjective,
+            **({"clinicalPreprocessing": model.clinical_preprocessor}
+               if model.clinical_preprocessor else {}),
+            "resolvedClassWeights": datamodule.training_class_weights(),
+            "classWeightingUnit": datamodule.training_class_weight_unit(),
+            "patientAggregation": recipe.get("patientAggregation", "mean_probabilities"),
             "resumedFrom": str(checkpoint_path) if checkpoint_path else None,
             "resumePolicy": "replay_interrupted_epoch_from_last_completed_epoch",
             "validationUsed": False,
             "testDataUsed": False,
+            **({key: plan[key] for key in ("effectiveRecipe", "nnmilPlanning")}
+               if "nnmilPlanning" in plan else {}),
         }
         _write_json(output_dir / "result.json", result)
         return result

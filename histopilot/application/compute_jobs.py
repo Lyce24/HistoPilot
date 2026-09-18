@@ -9,7 +9,6 @@ import re
 import shlex
 import signal
 import subprocess
-from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.feature_bundles import _hash
@@ -26,44 +25,20 @@ from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import (
     TmuxTrainingExecutor,
     compute_snapshot,
+    confirmed_process_alive,
     cpu_slots_per_run,
     host_snapshot,
     now,
-    process_identity,
+    owned_processes,
     read_json,
     read_progress,
+    stop_owned_processes,
 )
 
 
 def job_processes(state):
     """Track an isolated worker group even if its parent died before its loaders."""
-    from histopilot.application.lifecycle import _confirmed_live
-
-    process = state.get("process")
-    result = [process] if _confirmed_live(process) else []
-    group = state.get("processGroupId")
-    if not process or group != process.get("pid"):
-        return result
-    if process["bootId"] != Path("/proc/sys/kernel/random/boot_id").read_text().strip():
-        return result
-    for path in Path("/proc").iterdir():
-        if not path.name.isdecimal() or int(path.name) == process["pid"]:
-            continue
-        try:
-            if path.stat().st_uid != os.getuid():
-                continue
-            fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
-            if fields[0] != "Z" and int(fields[2]) == group and int(fields[3]) == group:
-                identity = process_identity(int(path.name))
-                if identity["startTicks"] >= process["startTicks"]:
-                    result.append(identity)
-        except (FileNotFoundError, ProcessLookupError):
-            continue
-        except (OSError, ValueError, IndexError) as error:
-            raise StorageError(
-                "Cannot confirm whether compute worker children stopped.", "COMPUTE_PROCESS_UNKNOWN"
-            ) from error
-    return result
+    return owned_processes(state.get("process"), state.get("processGroupId"), descendants=True)
 
 
 class TmuxComputeExecutor(TmuxTrainingExecutor):
@@ -170,6 +145,65 @@ class ComputeJobService:
             "cancellationRequested": cancellation_requested,
         }
 
+    def replay_launch(self, identity, operation_id, *, resume=False, resources=None, record_kind=None):
+        """Return an accepted launch without rebuilding or revalidating its inputs.
+
+        This performs no new execution. The immutable owning record, saved plan,
+        lifecycle and requested action still have to match. New launches and
+        resumes fall through to the caller's full scientific preparation.
+        """
+        with lifecycle_guard(self.store.folder):
+            record = self._record(identity)
+            if record_kind is not None and record["manifest"].get("kind") != record_kind:
+                raise StorageError("Compute record type does not match this operation.", "COMPUTE_NOT_FOUND", 404)
+            self.store.lifecycle.assert_document_usable(record)
+            folder = self.folder(identity)
+            if not (folder / "state.json").exists():
+                return None
+            with writer_lock(folder):
+                prior = read_json(folder / "state.json")
+                operations = prior.get("operations", {})
+                if operation_id not in operations:
+                    return None
+                frozen = read_json(folder / "plan.json")
+                if (
+                    _hash(frozen) != prior.get("planHash")
+                    or frozen.get("recordId") != identity
+                    or frozen.get("recordContentHash") != record["contentHash"]
+                    or frozen.get("projectId") != self.store.project_id
+                    or frozen.get("projectFolder") != str(self.store.folder)
+                ):
+                    raise StorageError("The saved execution plan changed.", "COMPUTE_PLAN_CHANGED")
+                if resources is not None and ResourcePolicy.model_validate(resources).model_dump() != frozen["resources"]:
+                    raise StorageError("This operation belongs to another compute request.", "OPERATION_CONFLICT")
+                actions = prior.get("operationActions", {})
+                if operation_id in actions:
+                    if type(actions[operation_id]) is not bool or actions[operation_id] != resume:
+                        raise StorageError("This operation belongs to another compute request.", "OPERATION_CONFLICT")
+                else:
+                    # Historical receipts hash the unnormalized request plan.
+                    # Reconstruct only its known envelope/resource representations;
+                    # never edit the saved plan or reinterpret an unknown receipt.
+                    base = {key: value for key, value in frozen.items() if key not in {
+                        "recordId", "recordContentHash", "projectId", "projectFolder", "runtime", "code",
+                    }}
+                    defaults = ResourcePolicy().model_dump()
+                    resource_versions = [frozen["resources"], {
+                        key: defaults[key] if key in defaults and value == defaults[key] else value
+                        for key, value in frozen["resources"].items()
+                    }]
+                    candidates = [{**base, "resources": values, **envelope}
+                                  for values in resource_versions
+                                  for envelope in ({}, {"recordId": identity,
+                                                        "recordContentHash": record["contentHash"]})]
+                    if not any(_hash({"plan": plan, "resume": resume}) == operations[operation_id]
+                               for plan in candidates):
+                        if any(_hash({"plan": plan, "resume": not resume}) == operations[operation_id]
+                               for plan in candidates):
+                            raise StorageError("This operation belongs to another compute request.", "OPERATION_CONFLICT")
+                        return None  # Preserve full validation for other historical shapes.
+                return self.status(identity)
+
     def launch(self, identity, plan, operation_id, *, resume=False):
         with lifecycle_guard(self.store.folder):
             record = self._record(identity)
@@ -252,6 +286,7 @@ class ComputeJobService:
                 if not prior:
                     write_json(folder / "plan.json", frozen)
                 operations[operation_id] = request_hash
+                actions = {**(prior.get("operationActions", {}) if prior else {}), operation_id: resume}
                 session = f"hp-{plan['kind']}-{identity.removeprefix('configuration-')[:16]}"
                 state = {
                     "status": "queued",
@@ -263,6 +298,7 @@ class ComputeJobService:
                     "createdAt": prior["createdAt"] if prior else now(),
                     "updatedAt": now(),
                     "operations": operations,
+                    "operationActions": actions,
                     "result": None,
                     "error": None,
                     "attempt": prior.get("attempt", 1) + 1 if prior else 1,
@@ -319,11 +355,16 @@ class ComputeJobService:
                     receipt, {"at": now(), "operationId": operation_id, "attempt": state["attempt"]}
                 )
             for process in state.get("liveProcesses", []):
-                from histopilot.application.lifecycle import _confirmed_live
-
-                if _confirmed_live(process):
+                if confirmed_process_alive(process):
                     try:
                         os.kill(process["pid"], signal.SIGTERM)
                     except ProcessLookupError:
                         pass
+            process = state.get("process")
+            if (
+                process
+                and state.get("processGroupId") == process["pid"]
+                and not confirmed_process_alive(process)
+            ):
+                stop_owned_processes(process)
             return self.status(identity, include_inactive=True)

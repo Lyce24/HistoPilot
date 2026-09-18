@@ -28,6 +28,7 @@ from histopilot.workers.packing_process import (
     registry_lock,
     write_json,
 )
+from histopilot.workers.resource_reservation import preparation_resources, reserve_preparation
 
 
 def _now() -> str:
@@ -119,7 +120,11 @@ def _run_job(plan_path: Path) -> dict:
             redirect_stdout(log),
             redirect_stderr(log),
         ):
+            reservation_stack = ExitStack()
             try:
+                reservation_stack.enter_context(reserve_preparation(
+                    folder, "packing", preparation_resources("packing"), cancelled,
+                ))
                 from histopilot.storage.pack_import import pack_file_stamps, verify_existing_pack
                 from histopilot.storage.packed import (
                     PackingCancelled,
@@ -198,6 +203,7 @@ def _run_job(plan_path: Path) -> dict:
                 result["error"] = str(error)
                 traceback.print_exc()
             finally:
+                reservation_stack.close()
                 result["finishedAt"] = _now()
                 write_json(result_path, result)
                 print(f"Final state: {result['state']}", flush=True)

@@ -63,6 +63,29 @@ def test_evaluation_launch_uses_exact_saved_memberships_and_predictor_checkpoint
     assert len(executor.calls) == 1
 
 
+def test_accepted_evaluation_retry_never_rebuilds_expensive_plan(evaluation, monkeypatch):
+    service, document, _, _, executor = evaluation
+    first = service.launch(document["id"], "launch")
+    monkeypatch.setattr(service, "_execution_plan", lambda *_: pytest.fail(
+        "Accepted evaluation retry must not hold the project lock while rehashing source inputs"))
+    assert service.launch(document["id"], "launch")["planHash"] == first["planHash"]
+    assert len(executor.calls) == 1
+    with pytest.raises(StorageError) as caught:
+        service.launch(document["id"], "launch", resume=True)
+    assert caught.value.code == "OPERATION_CONFLICT"
+
+
+def test_retry_is_acknowledgement_but_new_resume_still_revalidates_sources(evaluation):
+    service, document, predictor, _, executor = evaluation
+    service.launch(document["id"], "launch")
+    Path(predictor["manifest"]["checkpoints"][0]["path"]).write_bytes(b"changed")
+    assert service.launch(document["id"], "launch")["status"] == "queued"
+    executor.sessions.clear()
+    with pytest.raises(StorageError, match="checkpoint changed"):
+        service.launch(document["id"], "resume", resume=True)
+    assert len(executor.calls) == 1
+
+
 def test_changed_predictor_checkpoint_blocks_launch_before_worker_creation(evaluation):
     service, document, predictor, _, executor = evaluation
     Path(predictor["manifest"]["checkpoints"][0]["path"]).write_bytes(b"changed")

@@ -18,8 +18,10 @@ function countsFor(groups: number, foldRuns: number, policy: ExperimentPredictor
 
 export function plannedBatchPredictorCount(spec: DevelopmentBatchSpec, protocol?: ProtocolSpec, fallback?: ExperimentPredictorPolicy | null) {
   if (!protocol || protocol.split.mode !== 'kfold') return null;
-  const groups = plannedConfigurationCount(spec) * new Set(spec.trainingSeeds).size * new Set(protocol.split.seeds).size;
-  return countsFor(groups, groups * protocol.split.folds, batchPredictorPolicy(spec, fallback));
+  const seedGroups = new Set(spec.trainingSeeds).size * new Set(protocol.split.seeds).size;
+  const configurations = plannedConfigurationCount(spec);
+  const groups = (spec.candidateSelection === 'best_validation' ? 1 : configurations) * seedGroups;
+  return countsFor(groups, configurations * seedGroups * protocol.split.folds, batchPredictorPolicy(spec, fallback));
 }
 
 /** The service deduplicates scientific configurations, including repeated explicit rows. */
@@ -45,7 +47,8 @@ export function experimentPredictorCount(record: ModelExperiment, fallback?: Exp
     const summary = batch.manifest.summary;
     const splitSeeds = new Set(batch.manifest.splitPlans.map((plan) => plan.seed ?? 0)).size;
     const policy = record.predictorPolicies?.[batch.id] ?? batchPredictorPolicy(batch.manifest.spec, fallback ?? record.predictorPolicy);
-    add(countsFor(summary.configurationCount * summary.trainingSeedCount * splitSeeds, summary.runCount, policy));
+    const configurations = batch.manifest.spec?.candidateSelection === 'best_validation' ? 1 : summary.configurationCount;
+    add(countsFor(configurations * summary.trainingSeedCount * splitSeeds, summary.runCount, policy));
   }
   // Submitted records retain their planning recipes as history: never count them twice.
   if (!record.configurationLocked && !record.submission && (record.batchPlans?.length ?? 0) > 0) {

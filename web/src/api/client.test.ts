@@ -8,6 +8,18 @@ const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
 describe('control service client', () => {
+  it('sends the editor baseline and preserves project-setting conflicts without retrying', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' }))
+      .mockResolvedValueOnce(json({ detail: 'Reload saved settings.', code: 'PROJECT_CONFIG_CONFLICT' }, 409));
+    vi.stubGlobal('fetch', fetcher);
+    const { api } = await import('./client');
+    await expect(api.updateProject('project/one', { config: { seed: 13 }, expectedConfig: { seed: 7 } }))
+      .rejects.toMatchObject({ code: 'PROJECT_CONFIG_CONFLICT', status: 409 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/projects/project%2Fone');
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ config: { seed: 13 }, expectedConfig: { seed: 7 } });
+  });
+
   it('reads compute telemetry through the authenticated service with query cancellation', async () => {
     const sample = { sampledAt: '2026-09-12T17:00:00Z' };
     const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' })).mockResolvedValueOnce(json(sample));

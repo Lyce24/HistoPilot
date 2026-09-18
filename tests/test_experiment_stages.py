@@ -190,6 +190,31 @@ def test_lost_reply_after_worker_acceptance_reuses_durable_operation(experiment,
     assert len(training.launches) == len(set(training.launches)) == 2
 
 
+def test_completed_runs_keep_incomplete_submission_recoverable(experiment, monkeypatch):
+    service, _, record, training = experiment
+    original = training.launch
+
+    def finish_before_reply(identity, operation):
+        result = original(identity, operation)
+        if len(training.launches) == 2:
+            for execution in training.states.values():
+                execution["status"] = "completed"
+            raise OSError("Final launch was accepted, but its response was lost")
+        return result
+
+    monkeypatch.setattr(training, "launch", finish_before_reply)
+    partial = submit(service, record)
+    assert partial["submission"]["status"] == "attention"
+    assert partial["stage"] == "running"
+    assert partial["status"] == "failed"
+    assert partial["submission"]["retryable"]
+    recovered = submit(service, record)
+    assert recovered["submission"]["status"] == "submitted"
+    assert recovered["stage"] == "finished"
+    assert not recovered["submission"]["retryable"]
+    assert len(training.launches) == len(set(training.launches)) == 2
+
+
 def test_partial_publication_retry_uses_saved_owner_after_metadata_edit(experiment, monkeypatch):
     service, _, record, training = experiment
     original = service.store.publish_configuration
@@ -434,6 +459,72 @@ def test_copy_merges_equivalent_saved_frozen_and_legacy_draft_recipes(experiment
     assert service.create(command)["id"] == copied["id"]
     assert service.store.get_configuration(frozen["id"])["manifest"] == frozen["manifest"]
     assert training.launches == []
+
+
+@pytest.mark.parametrize("recover_existing_receipt", [False, True])
+def test_submission_reuses_an_identical_frozen_batch_and_its_existing_label(
+    experiment, monkeypatch, recover_existing_receipt
+):
+    service, development, record, training = experiment
+    spec = DevelopmentBatchSpec.model_validate(record["batchPlans"][0]["spec"])
+    preview = development.preview(spec)
+    existing = development.freeze(
+        spec, preview["previewHash"], "already-frozen", {"tag": "Reviewed baseline"}
+    )
+    if recover_existing_receipt:
+        # Reproduce the old publication failure after its irreversible receipt
+        # was already saved, then recover using the original submission identity.
+        with monkeypatch.context() as old_behavior:
+            old_behavior.setattr(
+                "histopilot.application.model_experiments.matching_published_batch",
+                lambda *_: None,
+            )
+            partial = submit(service, record)
+        assert partial["submission"]["status"] == "attention"
+        assert partial["submission"]["error"]["code"] == "VERSION_LABEL_MISMATCH"
+        assert partial["configurationLocked"] and not training.launches
+        service.update(
+            record["id"],
+            UpdateModelExperiment(
+                name="Annotated while recovering", expectedRevision=partial["revision"]
+            ),
+        )
+    submitted = submit(service, record)
+    assert submitted["submission"]["status"] == "submitted", submitted["submission"]
+    assert set(submitted["submission"]["batchIds"]) == set(training.launches)
+    assert len(training.launches) == len(set(training.launches)) == 2
+    assert existing["id"] in training.launches
+    assert (
+        service.store.get_configuration(existing["id"])["versionLabel"] == existing["versionLabel"]
+    )
+    assert submit(service, record)["submission"]["status"] == "submitted"
+    assert len(training.launches) == 2
+
+
+@pytest.mark.parametrize("state", ["archived", "trashed"])
+def test_identical_inactive_batch_blocks_before_submission_locks(experiment, state):
+    service, development, record, training = experiment
+    spec = DevelopmentBatchSpec.model_validate(record["batchPlans"][0]["spec"])
+    preview = development.preview(spec)
+    existing = development.freeze(
+        spec, preview["previewHash"], "inactive-batch", {"tag": "Earlier batch"}
+    )
+    lifecycle = service.store.lifecycle
+    lifecycle.apply(
+        {f"configuration:{existing['id']}": state},
+        operation_id="hide-batch",
+        request_hash="d" * 64,
+        expected_revision=lifecycle.read()["revision"],
+    )
+    with pytest.raises(StorageError) as error:
+        submit(service, record)
+    assert error.value.code == "EXPERIMENT_BATCH_INACTIVE"
+    assert "First" in str(error.value) and state in str(error.value)
+    current = service.get(record["id"])
+    assert current["stage"] == "planning"
+    assert current["submission"] is None
+    assert current["revision"] == record["revision"]
+    assert not training.launches
 
 
 def test_batch_predictor_policy_freezes_with_submission_and_copy_reopens_it(experiment):

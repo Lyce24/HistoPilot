@@ -2,12 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
-import LocalExperiments, { ExperimentDetail, ExperimentSubmissionControl, LoadingOptions, suggestedExperimentInputs, experimentRoute, availableExperimentTab } from './LocalExperiments';
+import LocalExperiments, { ExperimentDetail, ExperimentSubmissionControl, LoadingOptions, suggestedExperimentInputs, experimentRoute, availableExperimentTab, isInputDraft } from './LocalExperiments';
 import type { Configuration } from '../api/scientific';
 import type { FeatureBundle } from '../api/bundles';
 import type { ModelExperiment } from '../api/experiments';
 
 describe('MIL experiment loading ownership', () => {
+  it('validates recovered input drafts with their baseline before rendering', () => {
+    const spec = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'auto', packArtifactId: null };
+    expect(isInputDraft({ spec, baseInputs: null })).toBe(true);
+    expect(isInputDraft({ spec, baseInputs: spec })).toBe(true);
+    expect(isInputDraft({ spec })).toBe(false);
+    expect(isInputDraft({ spec: { ...spec, loadingPolicy: 'cuda' }, baseInputs: null })).toBe(false);
+    expect(isInputDraft({ spec, baseInputs: { protocolId: 'other' } })).toBe(false);
+  });
+
   it('keeps pack access optional and does not offer unimplemented memory residency', () => {
     const html = renderToStaticMarkup(<LoadingOptions value="auto" hasPacks={false} onChange={() => {}} />);
     expect(html).toContain('Original files');
@@ -25,8 +34,9 @@ describe('MIL experiment loading ownership', () => {
       const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalExperiments workspace={workspace} /></QueryClientProvider>);
       expect(html).toContain('Create experiment');
       expect(html).toContain('Create your first experiment');
-      expect(html).toContain('All records');
-      expect(html).toContain('Trash');
+      // State and stage filters return with the first saved experiment.
+      expect(html).not.toContain('All records');
+      expect(html).not.toContain('Trash');
       expect(html).not.toContain('Development protocol');
       expect(html).not.toContain('Configure a training batch');
       expect(html).not.toContain('Launch batch');
@@ -78,15 +88,16 @@ describe('MIL experiment loading ownership', () => {
       expect(review).toContain('data-stage-page="review"');
       expect(review).toMatch(/<button[^>]*disabled=""[^>]*>Freeze &amp; submit experiment/);
       const running = render({ stage: 'running', configurationLocked: true, status: 'running' });
-      expect(running).toMatch(/id="development-tab-runs"[^>]*aria-current="step"/);
+      expect(running).toMatch(/id="development-tab-runs"[^>]*aria-current="page"/);
       expect(running).toContain('Submitted plan');
-      expect(running).toMatch(/id="development-tab-runs"[^>]*><span[^>]*>4<\/span>/);
+      expect(running).toContain('aria-label="Experiment views"');
+      expect(running).not.toContain('aria-label="Experiment setup"');
       expect(running).toMatch(/id="development-tab-results"[^>]*disabled=""/);
       expect(running).toMatch(/<fieldset class="mil-plan-fields" disabled=""/);
       expect(running).toContain('retained-protocol');
       expect(running).not.toContain('Check &amp; continue');
       const finished = render({ stage: 'finished', configurationLocked: true, status: 'completed' });
-      expect(finished).toMatch(/id="development-tab-results"[^>]*aria-current="step"/);
+      expect(finished).toMatch(/id="development-tab-results"[^>]*aria-current="page"/);
       expect(finished).not.toMatch(/id="development-tab-results"[^>]*disabled=""/);
       expect(finished).toContain('Inputs, batches and runs are read-only');
       expect(finished).not.toContain('Review &amp; submit');
@@ -124,6 +135,8 @@ describe('MIL experiment loading ownership', () => {
     expect(suggestedExperimentInputs([protocol], [feature, { ...feature, id: 'other' }]).protocolId).toBe('');
     expect(suggestedExperimentInputs([protocol], [{ ...feature, current: false }]).featureBundleId).toBe('');
     expect(suggestedExperimentInputs([protocol], [{ ...feature, findings: [{ severity: 'error', code: 'STALE', message: 'Stale features' }] }]).featureBundleId).toBe('');
+    const named = { ...protocol, manifest: { ...protocol.manifest, spec: { featureBundleId: 'features' } } } as Configuration;
+    expect(suggestedExperimentInputs([named], [{ ...feature, manifest: { ...feature.manifest, datasetId: 'another-dataset' } }, { ...feature, id: 'other' }])).toMatchObject({ protocolId: 'protocol', featureBundleId: 'features' });
     const pinned = { ...protocol, manifest: { ...protocol.manifest, spec: { featurePackId: 'required-pack' } } } as Configuration;
     expect(suggestedExperimentInputs([pinned], [feature]).protocolId).toBe('');
     const context = { datasetId: 'data', protocolId: 'protocol', bundleId: 'features' };

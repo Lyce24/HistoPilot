@@ -46,6 +46,9 @@ def test_approved_dev_origin_can_preflight_put_without_bypassing_session(tmp_pat
         assert response.headers["access-control-allow-origin"] == origin
         assert "PUT" in response.headers["access-control-allow-methods"].split(", ")
         assert development.put(path, headers={"Origin": origin}, json={}).status_code == 401
-        assert development.options(
-            path, headers={**headers, "Origin": "https://evil.example"}
-        ).status_code == 403
+        assert (
+            development.options(
+                path, headers={**headers, "Origin": "https://evil.example"}
+            ).status_code
+            == 403
+        )

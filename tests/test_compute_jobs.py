@@ -5,12 +5,15 @@ import hashlib
 import sys
 
 import pytest
+from test_worker_process_ownership import isolated_worker_tree as _worker_tree
 
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json
+
+isolated_worker_tree = _worker_tree
 
 
 class Executor:
@@ -80,6 +83,71 @@ def test_compute_launch_pins_code_and_retry_does_not_relaunch(job):
         service.launch(identity, changed, "launch")
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("owned_envelope", [False, True])
+def test_accepted_launch_replay_is_read_only_and_preserves_legacy_request_hashes(job, monkeypatch, legacy, owned_envelope):
+    service, identity, plan, executor = job
+    if owned_envelope:
+        plan.update(recordId=identity, recordContentHash=service.store.get_configuration(identity)["contentHash"])
+    service.launch(identity, plan, "launch")
+    folder = service.folder(identity)
+    if legacy:
+        state = read_json(folder / "state.json")
+        state.pop("operationActions")
+        write_json(folder / "state.json", state)
+    before = (folder / "state.json").read_bytes(), (folder / "plan.json").read_bytes()
+    monkeypatch.setattr(service, "runtime", lambda: pytest.fail("Accepted replay must not inspect runtime"))
+    assert service.replay_launch(identity, "launch")["status"] == "queued"
+    assert service.replay_launch(identity, "unknown") is None
+    assert before == ((folder / "state.json").read_bytes(), (folder / "plan.json").read_bytes())
+    assert len(executor.calls) == 1
+    with pytest.raises(StorageError) as caught:
+        service.replay_launch(identity, "launch", resume=True)
+    assert caught.value.code == "OPERATION_CONFLICT"
+
+
+def test_replay_keeps_numeric_default_compatibility_for_legacy_plans(job):
+    service, identity, plan, _ = job
+    from histopilot.schemas.development import ResourcePolicy
+
+    plan["resources"] = ResourcePolicy(gpuIds=[]).model_dump()
+    service.launch(identity, plan, "launch")
+    path = service.folder(identity) / "state.json"
+    state = read_json(path)
+    state.pop("operationActions")
+    write_json(path, state)
+    assert service.replay_launch(identity, "launch")["status"] == "queued"
+
+
+def test_replay_rejects_changed_resources_wrong_kind_and_altered_saved_plan(job):
+    service, identity, plan, _ = job
+    service.launch(identity, plan, "launch")
+    with pytest.raises(StorageError) as caught:
+        service.replay_launch(identity, "launch", resources={**plan["resources"], "ramGbPerRun": 1})
+    assert caught.value.code == "OPERATION_CONFLICT"
+    with pytest.raises(StorageError) as caught:
+        service.replay_launch(identity, "launch", record_kind="model-interpretation")
+    assert caught.value.code == "COMPUTE_NOT_FOUND"
+    path = service.folder(identity) / "plan.json"
+    changed = read_json(path)
+    changed["data"]["changed"] = True
+    write_json(path, changed)
+    with pytest.raises(StorageError) as caught:
+        service.replay_launch(identity, "launch")
+    assert caught.value.code == "COMPUTE_PLAN_CHANGED"
+
+
+def test_replay_still_checks_dependency_lifecycle(job):
+    service, identity, plan, _ = job
+    service.launch(identity, plan, "launch")
+    record = service.store.get_configuration(identity)
+    service.store.lifecycle.apply(
+        {f"dataset:{record['manifest']['datasetId']}": "trashed"}, operation_id="trash-source",
+        request_hash=hashlib.sha256(b"trash-source").hexdigest(), expected_revision=0)
+    with pytest.raises(StorageError):
+        service.replay_launch(identity, "launch")
+
+
 def test_interrupted_job_resumes_same_plan_and_preserves_audit(job):
     service, identity, plan, executor = job
     service.launch(identity, plan, "launch")
@@ -90,6 +158,25 @@ def test_interrupted_job_resumes_same_plan_and_preserves_audit(job):
     result = service.launch(identity, plan, "resume", resume=True)
     assert result["attempt"] == 2 and len(result["operations"]) == 2
     assert len(executor.calls) == 2
+
+
+def test_orphan_compute_loader_blocks_resume_until_cancelled(job, isolated_worker_tree):
+    from histopilot.workers.training_process import confirmed_process_alive
+
+    service, identity, plan, executor = job
+    state = service.launch(identity, plan, "launch")
+    leader, process, child = isolated_worker_tree()
+    leader.kill()
+    leader.wait(timeout=5)
+    state.update(status="failed", process=process, processGroupId=process["pid"])
+    write_json(service.folder(identity) / "state.json", state)
+    executor.sessions.clear()
+    assert service.status(identity)["status"] == "running"
+    with pytest.raises(StorageError, match="active"):
+        service.launch(identity, plan, "resume-orphan", resume=True)
+    assert service.cancel(identity, "cancel")["status"] == "failed"
+    assert not confirmed_process_alive(child)
+    assert len(executor.calls) == 1
 
 
 def test_changed_plan_and_archive_block_resume(job):

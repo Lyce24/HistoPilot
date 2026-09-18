@@ -13,7 +13,7 @@
   gap: 8px 16px;
   padding: 16px 18px !important;
   list-style: none;
-  color: var(--brand-red);
+  color: var(--brand-primary);
   cursor: pointer;
 }
 .version-label-editor > summary::-webkit-details-marker { display: none; }
@@ -65,7 +65,7 @@
 .version-label-conflict {
   border: 1px solid var(--theme-line-strong);
   background: var(--theme-soft);
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   border-radius: 8px;
   padding: 15px;
   font-size: 12px;
@@ -73,6 +73,6 @@
 .version-label-conflict p { margin: 8px 0; }
 .version-label-conflict .inline-actions { margin: 12px 0 0; }
 .version-label-latest-note { white-space: pre-wrap; overflow-wrap: anywhere; }
-.version-label-saved { display: flex; align-items: center; gap: 8px; color: var(--brand-brown); font-size: 12px; }
+.version-label-saved { display: flex; align-items: center; gap: 8px; color: var(--theme-ink); font-size: 12px; }
 .version-tag-note { margin-top: 5px; color: var(--muted); font-size: 11px; white-space: pre-line; }
 .version-canonical-id { display: block; margin-top: 5px; font-size: 10px; color: var(--muted); }

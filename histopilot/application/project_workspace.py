@@ -1,4 +1,4 @@
-"""Folder-backed experiment setup and a central recent-project registry.
+"""Folder-backed project setup and a central recent-project registry.
 
 The selected folder owns its descriptor; SQLite is only a discovery index.
 Registering a source path does not import a dataset or authorize execution.
@@ -110,32 +110,32 @@ class ProjectWorkspace:
         descriptor = path / DESCRIPTOR
         try:
             if descriptor.is_symlink():
-                raise WorkspaceError("The experiment descriptor must not be a symbolic link.", 403)
+                raise WorkspaceError("The project descriptor must not be a symbolic link.", 403)
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
             descriptor_fd = os.open(descriptor, flags)
             try:
                 metadata = os.fstat(descriptor_fd)
                 if not stat.S_ISREG(metadata.st_mode):
-                    raise WorkspaceError("The experiment descriptor must be a regular file.")
+                    raise WorkspaceError("The project descriptor must be a regular file.")
                 if metadata.st_size > DESCRIPTOR_LIMIT:
-                    raise WorkspaceError("The experiment descriptor exceeds the supported size.")
+                    raise WorkspaceError("The project descriptor exceeds the supported size.")
                 with os.fdopen(descriptor_fd, "rb", closefd=False) as handle:
                     content = handle.read(DESCRIPTOR_LIMIT + 1)
                 if len(content) > DESCRIPTOR_LIMIT:
-                    raise WorkspaceError("The experiment descriptor exceeds the supported size.")
+                    raise WorkspaceError("The project descriptor exceeds the supported size.")
             finally:
                 os.close(descriptor_fd)
             document = ProjectDocument.model_validate_json(content)
             return document.model_dump(mode="json", exclude_none=True)
         except FileNotFoundError:
             raise WorkspaceError(
-                f"This folder has no {DESCRIPTOR}. Select an existing HistoPilot experiment.", 404
+                f"This folder has no {DESCRIPTOR}. Select an existing HistoPilot project.", 404
             ) from None
         except (OSError, RuntimeError):
-            raise WorkspaceError("The experiment descriptor cannot be read.", 403) from None
+            raise WorkspaceError("The project descriptor cannot be read.", 403) from None
         except ValidationError:
             raise WorkspaceError(
-                "The experiment descriptor is invalid or uses an unsupported format."
+                "The project descriptor is invalid or uses an unsupported format."
             ) from None
 
     @staticmethod
@@ -144,7 +144,7 @@ class ProjectWorkspace:
         temporary: str | None = None
         content = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
         if len(content.encode("utf-8")) > DESCRIPTOR_LIMIT:
-            raise WorkspaceError("The experiment descriptor exceeds the supported size.")
+            raise WorkspaceError("The project descriptor exceeds the supported size.")
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w",
@@ -166,11 +166,11 @@ class ProjectWorkspace:
             fsync_directory(path)
         except FileExistsError:
             raise WorkspaceError(
-                "An experiment already exists in this folder. Load it instead.", 409
+                "A project already exists in this folder. Load it instead.", 409
             ) from None
         except OSError:
             raise WorkspaceError(
-                "The experiment folder cannot be written. Choose a writable location.", 403
+                "The project folder cannot be written. Choose a writable location.", 403
             ) from None
         finally:
             if temporary is not None:
@@ -197,7 +197,7 @@ class ProjectWorkspace:
                 path = self.storage.directory(summary["storagePath"])
                 document = self._read(path)
                 if document["id"] != summary["id"]:
-                    raise WorkspaceError("The folder now belongs to a different experiment.", 409)
+                    raise WorkspaceError("The folder now belongs to a different project.", 409)
                 projects.append(self._summary(document, path))
             except (FilesystemError, WorkspaceError, StorageError) as error:
                 projects.append({**summary, "available": False, "unavailableReason": str(error)})
@@ -243,7 +243,7 @@ class ProjectWorkspace:
         candidate = Path(request.storagePath)
         if not candidate.is_absolute() or "\x00" in request.storagePath:
             raise FilesystemError(
-                "Select an absolute experiment folder within permitted storage roots."
+                "Select an absolute project folder within permitted storage roots."
             )
         # Requiring an existing parent avoids implicitly creating an arbitrary tree.
         if candidate.exists() or candidate.is_symlink():
@@ -259,7 +259,7 @@ class ProjectWorkspace:
                     if next(path.iterdir(), None) is not None:
                         raise WorkspaceError(
                             "The selected folder is not empty. Choose a new or empty folder, "
-                            "or load its existing experiment.",
+                            "or load its existing project.",
                             409,
                         )
                 else:
@@ -285,7 +285,7 @@ class ProjectWorkspace:
                 self._write(path, document, create=True)
             except OSError:
                 raise WorkspaceError(
-                    "The experiment folder cannot be created or inspected.", 403
+                    "The project folder cannot be created or inspected.", 403
                 ) from None
             finally:
                 if created and not (path / DESCRIPTOR).exists():
@@ -310,7 +310,7 @@ class ProjectWorkspace:
                     previous = Path(record.payload["storagePath"])
                     if previous != path and previous.exists():
                         raise WorkspaceError(
-                            "This experiment ID is already registered at another folder.", 409
+                            "This project ID is already registered at another folder.", 409
                         )
             ScientificStore(path, document["id"]).initialize()
             summary = self._summary(document, path)
@@ -323,11 +323,11 @@ class ProjectWorkspace:
         with self.database.sessions.begin() as session:
             record = session.get(Record, ("project", identity))
             if record is None:
-                raise WorkspaceError("The experiment does not exist. Load its folder first.", 404)
+                raise WorkspaceError("The project does not exist. Load its folder first.", 404)
             path = self.storage.directory(record.payload["storagePath"])
         document = self._read(path)
         if document["id"] != identity:
-            raise WorkspaceError("The folder now belongs to a different experiment.", 409)
+            raise WorkspaceError("The folder now belongs to a different project.", 409)
         return document, path
 
     def scientific_store(self, identity: str) -> ScientificStore:
@@ -405,7 +405,12 @@ class ProjectWorkspace:
             },
         }
 
-    def update_config(self, identity: str, config: ProjectConfig) -> dict:
+    def update_config(
+        self,
+        identity: str,
+        config: ProjectConfig,
+        expected_config: ProjectConfig | None = None,
+    ) -> dict:
         choices = self._validate_config(config)
         with self.lock:
             _, path = self._load(identity)
@@ -413,7 +418,22 @@ class ProjectWorkspace:
                 LifecycleStore(path, identity).assert_usable([f"project:{identity}"])
                 document = self._read(path)
                 if document["id"] != identity:
-                    raise WorkspaceError("The folder now belongs to a different experiment.", 409)
+                    raise WorkspaceError("The folder now belongs to a different project.", 409)
+                if (
+                    expected_config is not None
+                    and document["config"] != expected_config.model_dump(exclude_none=True)
+                    and document["config"] != choices
+                ):
+                    raise StorageError(
+                        "Project settings changed in another tab. Your edits have not been saved. "
+                        "Reload the saved settings before making further changes.",
+                        "PROJECT_CONFIG_CONFLICT",
+                        409,
+                    )
+                # Retrying a save whose response was lost is a no-op. Source
+                # additions do not invalidate the independent settings baseline.
+                if document["config"] == choices:
+                    return self._summary(document, path)
                 document["config"] = choices
                 document["updatedAt"] = _timestamp()
                 self._write(path, document)
@@ -428,14 +448,14 @@ class ProjectWorkspace:
                 LifecycleStore(path, identity).assert_usable([f"project:{identity}"])
                 document = self._read(path)
                 if document["id"] != identity:
-                    raise WorkspaceError("The folder now belongs to a different experiment.", 409)
+                    raise WorkspaceError("The folder now belongs to a different project.", 409)
                 source = self._source(identity, value, role)
                 for existing in document["sources"]:
                     if existing["id"] == source["id"]:
                         return existing
                 if len(document["sources"]) >= 1000:
                     raise WorkspaceError(
-                        "The experiment has reached the maximum of 1000 source folders."
+                        "The project has reached the maximum of 1000 source folders."
                     )
                 document["sources"].append(source)
                 document["updatedAt"] = _timestamp()

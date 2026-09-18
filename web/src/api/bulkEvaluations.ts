@@ -12,6 +12,12 @@ export interface EvaluationBatch {
   id: string; status: string; cohortId: string; name?: string; createdAt?: string; lifecycleState?: string; cancelRequested?: boolean;
   items: { predictorId: string; predictorName?: string; method?: PredictorMethod; status: string; evaluationId?: string; execution?: ComputeExecution; findings?: Finding[]; error?: string }[];
 }
+/** A batch is active while any submitted item is still queued or running. */
+export const bulkEvaluationActive = (batch: EvaluationBatch) =>
+  ['queued', 'running', 'scheduled', 'cancelling'].includes(batch.status)
+  || batch.items.some((item) => ['queued', 'running', 'scheduled'].includes(item.status));
+export const bulkEvaluationPollInterval = (data?: { items: EvaluationBatch[] }) =>
+  data?.items.some(bulkEvaluationActive) ? 5000 : 30000;
 const base = (project: string) => `/projects/${encodeURIComponent(project)}/evaluation-runs/bulk`;
 const post = (value: unknown) => ({ method: 'POST', body: JSON.stringify(value) });
 export const bulkEvaluations = {

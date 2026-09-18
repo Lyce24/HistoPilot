@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { EvaluationSelection, PredictorSelection } from './predictors';
+import { computePollInterval } from './predictors';
+import type { ComputeExecution, EvaluationSelection, PredictorSelection } from './predictors';
 
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 const selected: PredictorSelection = { experimentId: 'draft-experiment', batchId: 'configuration-batch', candidateId: 'candidate-model', trainingSeed: 11, splitSeed: 42, name: 'Baseline predictor' };
@@ -8,6 +9,14 @@ const evaluation: EvaluationSelection = { predictorId: 'configuration-predictor'
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
 describe('experiment predictor and evaluation API contracts', () => {
+  it('compares fixed evaluation identities with an authenticated read-only computation', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' })).mockResolvedValueOnce(response({ statistics: { available: true } }));
+    vi.stubGlobal('fetch', fetcher);
+    const { modelEvaluations } = await import('./predictors');
+    await modelEvaluations.compare('project/one', 'left', 'right');
+    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/projects/project%2Fone/evaluation-runs/compare');
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ leftEvaluationId: 'left', rightEvaluationId: 'right' });
+  });
   it('loads all registry states while asking the server for scoped complete-fold choices', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' }))
       .mockResolvedValueOnce(response({ items: [], executionEnabled: false }))
@@ -114,4 +123,16 @@ it('keeps refit planning, training, cancellation and publication as separate aut
   ]);
   expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ ...selection, previewHash: 'review', operationId: 'save' });
   expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ operationId: 'launch' });
+});
+
+describe('compute job polling', () => {
+  it('refreshes quickly only while a list has a running or queued job', () => {
+    expect(computePollInterval(undefined)).toBe(30000);
+    expect(computePollInterval([])).toBe(30000);
+    expect(computePollInterval([{ execution: { status: 'completed' } as ComputeExecution }])).toBe(30000);
+    expect(computePollInterval([{ execution: { status: 'not_started' } as ComputeExecution }])).toBe(30000);
+    for (const status of ['queued', 'running'] as const) {
+      expect(computePollInterval([{ execution: { status } as ComputeExecution }])).toBe(5000);
+    }
+  });
 });

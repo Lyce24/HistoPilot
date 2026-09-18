@@ -8,6 +8,7 @@ import os
 import platform
 import shlex
 import shutil
+import signal
 import subprocess
 import time
 from collections import Counter
@@ -272,6 +273,12 @@ def device_health_failure(provenance: dict, observation: dict, gpu_ids: list[int
 def compute_snapshot() -> dict:
     root = Path(__file__).resolve().parents[1]
     paths = [
+        root / "scoring.py",
+        root / "statistics.py",
+        root / "clinical_features.py",
+        root / "domain" / "features.py",
+        root / "application" / "clinical_inputs.py",
+        root / "candidate_selection.py",
         *(root / "models").glob("*.py"),
         *(root / "datasets").glob("*.py"),
         *(root / "training").glob("*.py"),
@@ -287,6 +294,9 @@ def compute_snapshot() -> dict:
         root / "application" / "refits.py",
         root / "schemas" / "model_experiments.py",
         root / "schemas" / "development.py",
+        root / "schemas" / "analysis.py",
+        root / "schemas" / "training_controls.py",
+        root / "schemas" / "nnmil.py",
         root / "schemas" / "predictor_policy.py",
         root / "schemas" / "predictors.py",
         root / "storage" / "attention_inputs.py",
@@ -442,6 +452,122 @@ def process_alive(value: dict | None) -> bool:
         return fields[0] != "Z" and process_identity(value["pid"]) == value
     except (OSError, ValueError, IndexError):
         return False
+
+
+def confirmed_process_alive(value: dict | None) -> bool:
+    """Distinguish a stopped worker from unreadable process ownership evidence."""
+    if value is None:
+        return False
+    if (
+        not isinstance(value, dict)
+        or type(value.get("pid")) is not int
+        or value["pid"] <= 1
+        or type(value.get("startTicks")) is not int
+        or not isinstance(value.get("bootId"), str)
+    ):
+        raise StorageError("Worker process identity is invalid.", "TRAINING_PROCESS_UNKNOWN")
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError as error:
+        raise StorageError(
+            "Cannot verify the workstation boot identity.", "TRAINING_PROCESS_UNKNOWN"
+        ) from error
+    if value["bootId"] != boot:
+        return False
+    try:
+        fields = Path(f"/proc/{value['pid']}/stat").read_text().rsplit(")", 1)[1].split()
+        return fields[0] not in {"Z", "X"} and int(fields[19]) == value["startTicks"]
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    except (OSError, ValueError, IndexError) as error:
+        raise StorageError(
+            "Cannot confirm whether a worker stopped.", "TRAINING_PROCESS_UNKNOWN"
+        ) from error
+
+
+def owned_processes(value: dict | None, group: int | None = None, *, descendants=False) -> list:
+    """Identify live members of an owned, private Linux process session.
+
+    A group's numeric ID remains reserved while any member survives its leader.
+    Boot ID, leader start time, session, group, and UID prevent attaching to a
+    recycled PID. A successful leader probe is sufficient for status/leases;
+    cleanup explicitly asks to enumerate descendants as well.
+    """
+    alive = confirmed_process_alive(value)
+    result = [value] if alive else []
+    if value is None or group != value["pid"] or (alive and not descendants):
+        return result
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        if value["bootId"] != boot:
+            return result
+        try:
+            leader = Path(f"/proc/{group}/stat").read_text().rsplit(")", 1)[1].split()
+        except (FileNotFoundError, ProcessLookupError):
+            leader = None
+        if leader is not None and (
+            int(leader[19]) != value["startTicks"]
+            or int(leader[2]) != group
+            or int(leader[3]) != group
+        ):
+            return result
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            return result  # Avoid scanning /proc for every old completed fold.
+        for path in Path("/proc").iterdir():
+            if not path.name.isdecimal() or int(path.name) == group:
+                continue
+            try:
+                if path.stat().st_uid != os.getuid():
+                    continue
+                fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
+                if (
+                    fields[0] not in {"Z", "X"}
+                    and int(fields[2]) == group
+                    and int(fields[3]) == group
+                    and int(fields[19]) >= value["startTicks"]
+                ):
+                    result.append(
+                        {"pid": int(path.name), "startTicks": int(fields[19]), "bootId": boot}
+                    )
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+        return result
+    except (OSError, ValueError, IndexError) as error:
+        raise StorageError(
+            "Cannot confirm whether worker descendants stopped.", "TRAINING_PROCESS_UNKNOWN"
+        ) from error
+
+
+def stop_owned_processes(value: dict, *, exclude_pid=None, grace_seconds=5) -> None:
+    """Drain a private worker session, including children of an exited leader."""
+    started = time.monotonic()
+    signalled = set()
+    while True:
+        members = [
+            item
+            for item in owned_processes(value, value["pid"], descendants=True)
+            if item["pid"] != exclude_pid
+        ]
+        if not members:
+            return
+        elapsed = time.monotonic() - started
+        if elapsed > grace_seconds + 5:
+            raise StorageError(
+                "Worker descendants have not stopped; their reservation is retained.",
+                "TRAINING_CLEANUP_FAILED",
+            )
+        signum = signal.SIGKILL if elapsed >= grace_seconds else signal.SIGTERM
+        for member in members:
+            key = (member["pid"], member["startTicks"], signum)
+            if key not in signalled and confirmed_process_alive(member):
+                try:
+                    os.kill(member["pid"], signum)
+                except ProcessLookupError:
+                    pass
+                signalled.add(key)
+        time.sleep(0.05)
 
 
 def counts(runs: list[dict]) -> dict:

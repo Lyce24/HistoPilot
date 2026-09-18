@@ -1,3 +1,4 @@
+import { StageBackButton } from './StageActions';
 import { useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -80,7 +81,7 @@ export default function FreezeVersionDialog({
               <ErrorNotice error={error} />
               {error instanceof ApiError && error.status === 409 ? <p className="freeze-version-conflict">Your tag and note are still here. If this content is already saved, open its existing version; creating a different version requires changes to the data or settings.</p> : null}
               <div className="freeze-version-actions">
-                <button type="button" className="btn btn-secondary" onClick={onClose}>Back to review</button>
+                <StageBackButton type="button" onClick={onClose}>Back to review</StageBackButton>
                 <button type="submit" className="btn btn-primary" disabled={!tag.trim()}><Icon name="lock" size={17} />{busy ? 'Freezing version…' : `Freeze ${copy.name} version`}</button>
               </div>
             </fieldset>

@@ -34,14 +34,18 @@ def test_predictor_and_evaluation_routes_are_scoped_authenticated_and_honest(tmp
         assert client.post(base + "/predictors/freeze", json={}).status_code == 401
         assert client.post(base + "/predictors/builds", json={}).status_code == 401
         assert client.post(base + "/evaluation-runs", json={}).status_code == 401
+        assert client.post(base + "/evaluation-runs/compare", json={}).status_code == 401
         assert client.post(base + "/evaluation-runs/bulk", json={}).status_code == 401
-        assert client.post(base + "/evaluation-runs/bulk/missing/cancel", json={}).status_code == 401
+        assert (
+            client.post(base + "/evaluation-runs/bulk/missing/cancel", json={}).status_code == 401
+        )
         client.headers["X-HistoPilot-Token"] = token
         assert client.post(base + "/predictors/freeze", json={}).status_code == 422
         assert client.post(base + "/predictors/builds/preview", json={}).status_code == 422
         assert client.post(base + "/predictors/builds", json={}).status_code == 422
         assert client.get(base + "/predictors/builds/unknown-operation").status_code == 404
         assert client.post(base + "/evaluation-runs", json={}).status_code == 422
+        assert client.post(base + "/evaluation-runs/compare", json={}).status_code == 422
         assert client.post(base + "/evaluation-runs/bulk/preview", json={}).status_code == 422
         assert client.post(base + "/evaluation-runs/bulk", json={}).status_code == 422
         assert client.get("/api/v1/projects/unknown/predictors").status_code == 404

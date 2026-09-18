@@ -38,9 +38,11 @@ from histopilot.viewer.slide_images import allowed_file, inspect_slide, render_s
 from histopilot.workers.packing_process import write_json
 
 EXECUTION_NOTE = (
-    "ABMIL pooling attention is class-independent and describes relative patch weighting within a slide. "
+    "Pooling attention is class-independent and describes relative patch weighting within a slide. "
     "It does not establish a class-specific explanation, causality, or diagnostic correctness. "
-    "Ensembles average normalized attention and probabilities across every frozen member. "
+    "nnMIL maps average normalized attention across deterministic feature windows. "
+    "Ensembles average normalized attention across every frozen member and combine predictions "
+    "using the frozen aggregation rule. "
     "Feature vectors and coordinates must describe the same patches in the same row order."
 )
 MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
@@ -400,9 +402,12 @@ class InterpretationService:
     def _prepare(self, selection, *, gallery_context=None, check_resources=True):
         predictor = self.predictors.get(selection.predictorId)
         model = predictor["manifest"]
-        if model.get("recipe", {}).get("model", "abmil").lower() != "abmil":
+        if model.get("recipe", {}).get("inputMode") == "clinical":
+            raise StorageError("Clinical-only predictors have no image attention.",
+                               "INTERPRETATION_MODEL_UNSUPPORTED", 422)
+        if model.get("recipe", {}).get("model", "abmil").lower() not in {"abmil", "nnmil"}:
             raise StorageError(
-                "Select a native ABMIL predictor for attention overlay.",
+                "Select a native ABMIL or nnMIL predictor for attention overlay.",
                 "INTERPRETATION_MODEL_UNSUPPORTED",
                 422,
             )
@@ -435,6 +440,32 @@ class InterpretationService:
         else:
             requests = [request.model_dump() for request in selection.slides]
             slide_folder = None
+        if model.get("recipe", {}).get("inputMode") == "multimodal":
+            from histopilot.application.clinical_inputs import frozen_clinical_values
+            from histopilot.application.protocols import ProtocolService
+            from histopilot.clinical_features import clinical_fields, clinical_rows
+
+            dataset_id = model["datasetId"]
+            if selection.featureBundleId:
+                bundle = self.store.get_configuration(selection.featureBundleId)
+                feature = self.store.get_configuration(bundle["manifest"]["spec"]["featureSetId"])
+                dataset_id = feature["manifest"].get("datasetId") or bundle["manifest"].get("datasetId")
+            if not dataset_id:
+                raise StorageError("Combined attention needs a frozen dataset with clinical covariates.",
+                                   "INTERPRETATION_CLINICAL_DATA_REQUIRED", 422)
+            dataset, _fields, records = ProtocolService(self.store, self.filesystem)._load_dataset(dataset_id)
+            selected = {row["slideId"] for row in requests}
+            memberships = [row for row in records if row["slideId"] in selected]
+            if {row["slideId"] for row in memberships} != selected:
+                raise StorageError("Selected slides lack frozen clinical records.", "CLINICAL_COVERAGE_MISSING", 422)
+            fields = clinical_fields(model["recipe"])
+            values = frozen_clinical_values(self.store, self.filesystem, [dataset_id], memberships, fields)
+            try:
+                clinical_rows(memberships, values, fields)
+            except ValueError as error:
+                raise StorageError(str(error), "CLINICAL_VALUES_INVALID", 422) from error
+            requests = [{**row, "clinical": values[row["slideId"]]} for row in requests]
+            references.append(reference(dataset))
         slides = []
         deadline = (
             min(time.monotonic() + 45, gallery_context[3])
@@ -614,6 +645,7 @@ class InterpretationService:
             "kind": "interpretation",
             "runId": identity,
             "method": manifest["method"],
+            **({"aggregation": "mean_logit"} if predictor["manifest"].get("aggregation") == "mean_logit" else {}),
             "target": manifest["target"],
             "resources": manifest["resources"],
             "checkpoints": predictor["manifest"]["checkpoints"],
@@ -630,6 +662,9 @@ class InterpretationService:
         }
 
     def launch(self, identity, operation_id, *, resume=False, gallery_context=None):
+        replay = self.jobs.replay_launch(identity, operation_id, resume=resume, record_kind="model-interpretation")
+        if replay is not None:
+            return replay
         plan = self._execution_plan(identity, gallery_context=gallery_context)
         with lifecycle_guard(self.store.folder):
             try:

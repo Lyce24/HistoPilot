@@ -18,8 +18,8 @@ export function initialEvaluationInputs(cohort?: EvaluationCohort): EvaluationEx
     featureBundleId: cohort?.manifest.spec.featureBundleId ?? '',
     patientIdentifiers: cohort?.manifest.spec.patientIdentifiers ?? 'shared',
     inference: { loadingPolicy: 'per_slide', packArtifactId: null, batchSize: 1, numWorkers: 0,
-      device: 'auto', precision: 'float32', patientAggregation: 'mean', decisionThreshold: 0.5,
-      ...cohort?.manifest.spec.inference },
+      device: 'auto', precision: 'float32',
+      ...cohort?.manifest.spec.inference, patientAggregation: 'predictor', decisionThreshold: 'predictor' },
   };
 }
 
@@ -47,10 +47,12 @@ export function EvaluationInferenceFields({ value, target, onChange }: {
     <label className="label">Device<select className="field" value={value.device} onChange={(event) => onChange({ device: event.target.value as EvaluationInference['device'] })}><option value="auto">Auto</option><option value="cpu">CPU</option><option value="cuda">CUDA GPU</option></select></label>
     <label className="label">Inference precision<select className="field" value={value.precision} onChange={(event) => onChange({ precision: event.target.value as EvaluationInference['precision'] })}><option value="float32">Float32</option><option value="float16">Float16</option><option value="bfloat16">BFloat16</option></select></label>
     {target?.unit === 'patient' || value.patientAggregation !== 'mean' ? <label className="label">Combine slides for each patient<select className="field" value={value.patientAggregation} onChange={(event) => onChange({ patientAggregation: event.target.value as EvaluationInference['patientAggregation'] })}>
-      {value.patientAggregation !== 'mean' ? <option value={value.patientAggregation} disabled>Maximum probabilities · unsupported; choose mean</option> : null}
+      {value.patientAggregation === 'max' ? <option value="max" disabled>Maximum probabilities · unsupported; choose mean</option> : null}
+      <option value="predictor">Use the predictor's patient scoring rule</option>
       <option value="mean">Mean probabilities</option>
-    </select><small>Mean probabilities match the patient aggregation used by frozen predictors.</small></label> : null}
-    {target?.task === 'binary_classification' ? <div><NumericField label="Decision threshold" integer={false} min={0} max={1} value={value.decisionThreshold} onChange={(decisionThreshold) => onChange({ decisionThreshold })} /><small>Set from development evidence before reviewing test outcomes.</small></div> : null}
+      <option value="mean_logits">Mean logits</option>
+    </select><small>Match the patient scoring rule saved with the predictor.</small></label> : null}
+    {target?.task === 'binary_classification' ? <div><label className="label">Threshold policy<select className="field" value={value.decisionThreshold === 'predictor' ? 'predictor' : 'explicit'} onChange={(event) => onChange({ decisionThreshold: event.target.value === 'predictor' ? 'predictor' : 0.5 })}><option value="predictor">Use frozen predictor threshold</option><option value="explicit">Explicit threshold</option></select></label>{value.decisionThreshold !== 'predictor' ? <NumericField label="Decision threshold" integer={false} min={0} minExclusive max={1} maxExclusive value={value.decisionThreshold} onChange={(decisionThreshold) => onChange({ decisionThreshold })} /> : null}<small>New predictors require the threshold frozen during development. Historical predictors without a saved threshold default to 0.5.</small></div> : null}
   </div></details>;
 }
 

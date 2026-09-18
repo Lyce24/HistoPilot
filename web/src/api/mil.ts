@@ -16,6 +16,8 @@ export interface MILExperimentPreview {
   resolvedLoadingPolicy: 'native' | 'mmap' | null;
   packArtifactId: string | null;
   featureSetId: string | null;
+  /** Which extraction output this bundle holds, so only readers of it are offered. */
+  featureKind: 'patch' | 'slide';
   bundleId: string;
   executionImplemented: false;
 }

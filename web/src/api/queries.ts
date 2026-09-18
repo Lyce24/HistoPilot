@@ -21,6 +21,3 @@ export function useSystemCompute(live = true) {
     retry: (attempt, error) => !(error instanceof ApiError && error.status === 404) && attempt < 1,
   });
 }
-export function useJobs() {
-  return useQuery({ queryKey: ['jobs'], queryFn: api.jobs, refetchInterval: 15000 });
-}

@@ -655,3 +655,74 @@ def test_preflight_reports_content_scope_and_only_unverified_provenance(
         assert warning in codes
     else:
         assert not codes
+
+
+def test_reduced_precision_pack_verifies_against_the_cast_source(packing, tmp_path):
+    """A float16 pack of float32 sources is a faithful copy at its own declared precision."""
+    service, spec, executor, _source = packing
+    path = tmp_path / "half"
+    configuration = service.store.get_configuration(spec.featureSetId)
+    build_pack({**configuration, "id": "another-feature-version"}, path, dtype="float16")
+    attach = spec.model_copy(update={"action": "attach", "existingPath": str(path)})
+    preview = service.preview(attach)
+    assert preview["canRun"] and preview["matchesFeatures"], preview["findings"]
+    inspection = preview["packInspection"]
+    assert (inspection["sourceDtype"], inspection["outputDtype"]) == ("float32", "float16")
+    assert inspection["precision"] == "reduced"
+    result = complete(service, executor, submit(service, attach))
+    assert result["state"] == "succeeded", result.get("error")
+    artifact = result["artifact"]
+    assert artifact["verification"] == "exact-cast-source-values"
+    assert artifact["preservesSourcePrecision"] is False
+    assert artifact["dtypePolicy"] == "float16"
+
+
+def test_a_reduced_pack_whose_values_are_not_the_cast_source_is_rejected(packing, tmp_path):
+    service, spec, _executor, _source = packing
+    path = tmp_path / "half"
+    configuration = service.store.get_configuration(spec.featureSetId)
+    build_pack({**configuration, "id": "another-feature-version"}, path, dtype="float16")
+    from histopilot.storage.pack_import import verify_existing_pack
+    from histopilot.storage.packed import PackedStoreError
+
+    assert verify_existing_pack(configuration, path)["verification"] == "exact-cast-source-values"
+    features = path / "features.bin"
+    payload = bytearray(features.read_bytes())
+    payload[0] ^= 0xFF  # One altered value must not survive verification.
+    features.write_bytes(bytes(payload))
+    with pytest.raises(PackedStoreError, match="differ from the selected source"):
+        verify_existing_pack(configuration, path)
+
+
+def test_only_a_lower_float_precision_counts_as_a_faithful_pack():
+    from histopilot.storage.pack_import import _reduces
+
+    assert _reduces("float32", "float16")
+    assert _reduces("float64", "float32")
+    # Upcasting invents precision the source never had, and integers are not packs of floats.
+    assert not _reduces("float16", "float32")
+    assert not _reduces("float32", "float32")
+    assert not _reduces("int32", "float16")
+    assert not _reduces("float32", "nonsense")
+
+
+def test_values_that_cannot_survive_the_declared_precision_are_refused(packing, tmp_path):
+    """A source value with no float16 representation cannot be packed or verified at float16."""
+    service, spec, _executor, _source = packing
+    source = tmp_path / "wide-range"
+    source.mkdir()
+    with h5py.File(source / "001.A.h5", "w") as handle:
+        values = np.arange(12, dtype="float32").reshape(3, 4)
+        values[0, 0] = 1e30  # Finite in float32, infinite in float16.
+        handle.create_dataset("features", data=values)
+        handle.create_dataset("coords", data=np.arange(6, dtype="int64").reshape(3, 2))
+    features = FeatureService(service.store, service.filesystem)
+    wide = FeatureSpec(path=str(source))
+    preview = features.preview(wide)
+    frozen = features.freeze(wide, preview["previewHash"], "wide-range")
+    from histopilot.storage.packed import PackedStoreError, validate_features
+
+    configuration = service.store.get_configuration(frozen["id"])
+    assert validate_features(configuration)["totalPatches"] == 3
+    with pytest.raises(PackedStoreError, match="overflow float16"):
+        validate_features(configuration, cast_dtype="float16")

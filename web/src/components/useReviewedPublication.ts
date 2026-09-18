@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ApiError } from '../api/client';
 
 /** Retain the exact reviewed request when a publication response is uncertain. */
@@ -13,30 +13,35 @@ export function useReviewedPublication<S, P extends { previewHash: string | null
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [saved, setSaved] = useState<R | null>(null);
-  function reset() { setReview(null); setAcknowledged(false); setError(null); setSaved(null); }
+  const inFlight = useRef(false);
+  const unresolved = useRef(false);
+  function reset() {
+    if (inFlight.current || unresolved.current) return;
+    setReview(null); setAcknowledged(false); setError(null); setSaved(null);
+  }
   async function preview(selection: S) {
-    if (busy || review?.uncertain) return;
-    reset(); setBusy(true);
+    if (inFlight.current || unresolved.current) return;
+    reset(); inFlight.current = true; setBusy(true);
     try { setReview({ selection: structuredClone(selection), preview: await previewRequest(selection), operationId: crypto.randomUUID(), uncertain: false }); }
     catch (reason) { setError(reason instanceof Error ? reason : new Error('Review failed.')); }
-    finally { setBusy(false); }
+    finally { inFlight.current = false; setBusy(false); }
   }
   async function publish() {
-    if (busy || !review || !review.preview.previewHash || !allowed(review.preview) || (!acknowledged && !review.uncertain)) return;
-    setBusy(true); setError(null);
+    if (inFlight.current || !review || !review.preview.previewHash || !allowed(review.preview) || (!acknowledged && !review.uncertain)) return;
+    inFlight.current = true; unresolved.current = true; setBusy(true); setError(null);
     let result: R;
     try { result = await publishRequest(review.selection, review.preview.previewHash, review.operationId); }
     catch (reason) {
       setError(reason instanceof Error ? reason : new Error('The save response was lost.'));
-      if (reason instanceof ApiError) { setReview(null); setAcknowledged(false); }
+      if (reason instanceof ApiError && reason.status >= 400 && reason.status < 500 && reason.status !== 408) { unresolved.current = false; setReview(null); setAcknowledged(false); }
       else setReview({ ...review, uncertain: true });
-      setBusy(false); return;
+      inFlight.current = false; setBusy(false); return;
     }
-    setSaved(result); setReview(null); setAcknowledged(false);
+    unresolved.current = false; setSaved(result); setReview(null); setAcknowledged(false);
     // A refresh failure is not a failed publication and must never repeat it.
     try { await onSaved(result); }
     catch { setError(new Error('Saved successfully. Refresh the list to see the latest records.')); }
-    finally { setBusy(false); }
+    finally { inFlight.current = false; setBusy(false); }
   }
   return { review, acknowledged, setAcknowledged, busy, error, saved, reset, preview, publish, locked: busy || Boolean(review?.uncertain) };
 }

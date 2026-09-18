@@ -37,7 +37,10 @@ function metricValue(value: number | null, unit = ''): string {
 function UsageMeter({ label, value, pending = false }: { label: string; value: number | null; pending?: boolean }) {
   const measured = validNumber(value);
   return <div className="system-usage">
-    <div className="system-usage-label"><span>{label}</span><strong>{measured ? percentage(value) : pending ? 'Collecting sample' : unavailable}</strong></div>
+    <div className="system-usage-label"><span>{label}</span>
+      {/* Only a real measurement reads as a value; waiting and unavailable are notes. */}
+      <strong className={measured ? 'system-usage-value' : 'system-usage-note'}>{measured ? percentage(value) : pending ? 'Collecting sample…' : unavailable}</strong>
+    </div>
     {measured ? <progress max={100} value={Math.min(100, value)} aria-label={label}>{percentage(value)}</progress> : <div className="system-usage-unavailable" aria-hidden="true" />}
   </div>;
 }
@@ -88,7 +91,9 @@ export function ComputeDashboard({ data, stale = false, live = true }: { data: S
       {gpu.message ? <p className="system-metric-note">{gpu.message}</p> : null}
     </Panel>
     <Panel title="Disk capacity" subtitle="Workspace and allowed data folders; folders on the same filesystem share this capacity.">
-      {disks.length > 0 ? <div className="system-disk-table"><table><thead><tr><th scope="col">Location</th><th scope="col">Used / total</th><th scope="col">Free</th><th scope="col">Usage</th></tr></thead><tbody>
+      {disks.length > 0 ? <div className="system-disk-table"><table>
+        <colgroup><col className="system-disk-location" /><col className="system-disk-amount" /><col className="system-disk-free" /><col className="system-disk-usage" /></colgroup>
+        <thead><tr><th scope="col">Location</th><th scope="col">Used / total</th><th scope="col">Free</th><th scope="col">Usage</th></tr></thead><tbody>
         {disks.map((disk) => <tr key={`${disk.role}:${disk.path}`}><th scope="row"><span>{disk.role === 'workspace' ? 'Workspace' : 'Data'}</span><code>{disk.path}</code>{disk.message ? <small>{disk.message}</small> : null}</th><td>{formatComputeBytes(disk.usedBytes)} / {formatComputeBytes(disk.totalBytes)}</td><td>{formatComputeBytes(disk.freeBytes)}</td><td><UsageMeter label={`${disk.path} disk utilization`} value={disk.utilizationPercent} /></td></tr>)}
       </tbody></table></div> : <p className="system-empty">No storage locations were reported.</p>}
     </Panel>

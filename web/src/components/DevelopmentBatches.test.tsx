@@ -71,7 +71,7 @@ describe('development execution controls', () => {
       { candidateId: 'candidate', trainingSeed: 43, splitSeed: 7, complete: false, metrics: { auroc: 0.1234 }, oofPath: '/tmp/incomplete-oof.csv', completedRuns: 1, totalRuns: 3 },
     ] };
     const html = renderToStaticMarkup(<ResultsTable batch={batch} results={results} loading={false} />);
-    expect(html).toContain('Validation selects each run');
+    expect(html).toContain('Checkpoints follow each configuration’s frozen evaluation policy');
     expect(html).toContain('Assessment predictions');
     expect(html).toContain('auroc: 0.9000');
     expect(html).toContain('/tmp/complete-oof.csv');

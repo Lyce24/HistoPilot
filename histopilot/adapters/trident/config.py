@@ -184,7 +184,7 @@ class TridentOptions(BaseModel):
         group="slides",
         min_length=1,
         max_length=4096,
-        description="Optional TRIDENT CSV with wsi and optional mpp columns; restricted to the selected dataset.",
+        description="CSV selecting slides: a wsi column of paths relative to the slide folder, plus an optional mpp column giving every listed slide a source pixel size.",
     )
     reader_type: Literal["openslide", "image", "cucim", "sdpc", "omezarr", "czi"] | None = option(
         None, group="slides", description="Force a reader, or leave blank for automatic detection."
@@ -192,7 +192,7 @@ class TridentOptions(BaseModel):
     search_nested: bool = option(
         False,
         group="slides",
-        description="Allow nested slide folders. The frozen dataset still defines the slide list.",
+        description="Allow nested slide paths. The slide folder or list defines the selection; a dataset can optionally narrow it.",
     )
     segmenter: Literal["hest", "grandqc", "otsu"] = option(
         "hest",

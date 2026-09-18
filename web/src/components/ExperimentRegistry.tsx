@@ -1,5 +1,7 @@
+import { StageBackButton, StageCreateButton } from './StageActions';
 import { shortRecordId } from '../lib/recordLabels';
-import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { flushSync } from 'react-dom';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
 import { experiments, experimentPollInterval, experimentStage, experimentStageLabel, experimentStatusLabel } from '../api/experiments';
@@ -7,10 +9,13 @@ import type { CreateExperimentInput, ModelExperiment } from '../api/experiments'
 import type { LifecycleState } from '../api/lifecycle';
 import { lifecycleLabel } from '../api/lifecycle';
 import { sameJSON } from '../lib/json';
-import { Badge, ErrorNotice, PageHeader, Panel } from './ui';
+import { Badge, EmptyState, ErrorNotice, PageHeader, Panel } from './ui';
 import { RecordManageButton } from './RecordManagement';
 import { StageLibrary, StageLibraryToolbar, StagePage, StageSteps, useStageLibrary } from './StageWorkflow';
 import './ExperimentRegistry.css';
+import { readSessionDraft, sessionDraftKey, useSessionDraftBackup, writeSessionDraft } from '../lib/sessionDraft';
+import { confirmWorkspaceNavigation, useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
+import { isCreateExperimentDraft, isExperimentMetadataDraft, type CreateExperimentDraft, type ExperimentMetadataBaseline, type ExperimentMetadataDraft } from '../lib/experimentEditorDraft';
 
 export function filterExperiments<T extends Pick<ModelExperiment, 'id' | 'name' | 'notes' | 'tags' | 'state' | 'status' | 'createdAt' | 'updatedAt' | 'stage' | 'configurationLocked'>>(items: T[], state: LifecycleState | 'all', status: string, search: string, sort: string) {
   const query = search.trim().toLocaleLowerCase();
@@ -92,15 +97,22 @@ export function CreateExperiment({ project, copy, templates = [], onCreated, onC
   onCreated: (item: ModelExperiment) => void; onClose: () => void;
 }) {
   const sources = templates.filter((item) => item.state !== 'trashed');
-  const [sourceId, setSourceId] = useState(copy?.id ?? '');
-  const [name, setName] = useState(copy ? `${copy.name.slice(0, 100)} copy` : '');
-  const [notes, setNotes] = useState(copy?.notes ?? '');
-  const [tags, setTags] = useState(copy?.tags.join(', ') ?? '');
+  const recoveryKey = sessionDraftKey(project, copy?.id ?? 'new', 'create');
+  const [recovered] = useState(() => readSessionDraft(recoveryKey, isCreateExperimentDraft));
+  const [sourceId, setSourceId] = useState(recovered?.sourceId ?? copy?.id ?? '');
+  const [name, setName] = useState(recovered?.name ?? (copy ? `${copy.name.slice(0, 100)} copy` : ''));
+  const [notes, setNotes] = useState(recovered?.notes ?? copy?.notes ?? '');
+  const [tags, setTags] = useState(recovered?.tags ?? copy?.tags.join(', ') ?? '');
   const [busy, setBusy] = useState(false);
+  const [complete, setComplete] = useState(false);
   const creating = useRef(false);
   const [error, setError] = useState<Error | null>(null);
-  const [pending, setPending] = useState<CreateExperimentInput | null>(null);
-  useStageLibrary(() => { if (!busy && !pending) onClose(); });
+  const [pending, setPending] = useState<CreateExperimentInput | null>(recovered?.pending ?? null);
+  const draft: CreateExperimentDraft | null = !complete && (name || notes || tags || sourceId || pending) ? { version: 1, sourceId, name, notes, tags, pending } : null;
+  const backup = useSessionDraftBackup(recoveryKey, draft, isCreateExperimentDraft);
+  useWorkspaceNavigationGuard(busy ? 'An experiment creation request is in progress. Its response may arrive after you leave.' : draft && backup.error ? 'Unsaved experiment details cannot be recovered in this browser.' : null);
+  function close() { if (!creating.current && confirmWorkspaceNavigation()) onClose(); }
+  useStageLibrary(close);
   const source = sources.find((item) => item.id === sourceId) ?? (copy?.id === sourceId ? copy : undefined);
   function selectSource(id: string) {
     setSourceId(id);
@@ -112,59 +124,113 @@ export function CreateExperiment({ project, copy, templates = [], onCreated, onC
     }
   }
   async function create() {
-    if (creating.current || !name.trim()) return;
+    if (creating.current || complete || !name.trim()) return;
     creating.current = true;
     setBusy(true); setError(null);
     const input = pending ?? { name: name.trim(), notes: notes.trim(), tags: [...new Set(tags.split(',').map((value) => value.trim()).filter(Boolean))], ...(sourceId ? { sourceExperimentId: sourceId } : {}), operationId: crypto.randomUUID() };
-    try { const result = await experiments.create(project, input); setPending(null); onCreated(result); }
-    catch (reason) { setPending(reason instanceof ApiError ? null : input); setError(reason instanceof Error ? reason : new Error('The experiment could not be created.')); }
+    // Persist the exact operation before starting I/O so a reload can retry the
+    // accepted request rather than creating a second experiment.
+    setPending(input);
+    writeSessionDraft(recoveryKey, { version: 1, sourceId, name, notes, tags, pending: input } satisfies CreateExperimentDraft);
+    try {
+      const result = await experiments.create(project, input);
+      writeSessionDraft(recoveryKey, null);
+      // The acknowledged result deliberately navigates to its new record. Commit
+      // guard removal first, so that handoff is not mistaken for leaving a request.
+      flushSync(() => { setComplete(true); setPending(null); setBusy(false); });
+      onCreated(result);
+    }
+    catch (reason) {
+      // Server/proxy failures can follow acceptance, just like a lost connection.
+      const rejected = reason instanceof ApiError && reason.status < 500 && reason.status !== 408;
+      setPending(rejected ? null : input);
+      setError(reason instanceof Error ? reason : new Error('The experiment could not be created.'));
+    }
     finally { creating.current = false; setBusy(false); }
   }
-  return <Panel title="Create experiment" subtitle="Name your experiment, then adjust its inputs and batches. Everything stays editable until you submit it.">
+  return <><PageHeader eyebrow="02 DEVELOP" title="Create experiment" description="Name your experiment or reuse a saved template, then continue to its inputs." actions={<StageBackButton disabled={busy} onClick={close}>Back to experiments</StageBackButton>} />
+    <StageSteps label="New experiment steps" current="details" steps={[{ id: 'details', title: 'Experiment details', description: 'Name and optional template' }, { id: 'inputs', title: 'Inputs', description: 'Continue after creating the record', disabled: true }]} onChange={() => {}} />
+    <Panel title="Experiment details" subtitle="Name your experiment, then adjust its inputs and batches. Everything stays editable until you submit it.">
+    {recovered ? <p className="callout" role="status">Recovered this tab’s unfinished experiment details. {pending ? 'Retry creation to recover the original request.' : 'Review them before creating the experiment.'}</p> : null}
+    {draft && backup.error ? <p className="callout callout-warning" role="alert">{backup.error}</p> : null}
     <form onSubmit={(event) => { event.preventDefault(); void create(); }}><fieldset disabled={busy || Boolean(pending)} className="experiment-create-fields"><legend className="sr-only">Experiment details</legend>
       <label className="label experiment-template-field">Start from template<select className="field" value={sourceId} onChange={(event) => selectSource(event.target.value)}>
         <option value="">Blank experiment</option>
+        {sourceId && !source ? <option value={sourceId} disabled>Selected template unavailable</option> : null}
         {copy && !sources.some((item) => item.id === copy.id) ? <option value={copy.id}>{copy.name} · {shortRecordId(copy.id)}</option> : null}
         {sources.map((item) => <option value={item.id} key={item.id}>{item.name} · {experimentStageLabel[experimentStage(item)]} · {shortRecordId(item.id)}</option>)}
       </select><small>{source ? `Copies the saved inputs and batch recipes from “${source.name}” into an editable plan. Runs and results stay with the source experiment.` : 'Use an existing experiment as a template to reuse its inputs and batch recipes.'}</small></label>
       <label className="label">Experiment name<input autoFocus required className="field" value={name} maxLength={120} onChange={(event) => setName(event.target.value)} /></label>
-      <label className="label">Tags<input className="field" value={tags} onChange={(event) => setTags(event.target.value)} placeholder="baseline, abmil, comparison" /><small>Comma-separated labels for filtering and organization.</small></label>
+      <label className="label">Tags<input className="field" value={tags} maxLength={20000} onChange={(event) => setTags(event.target.value)} placeholder="baseline, abmil, comparison" /><small>Comma-separated labels for filtering and organization.</small></label>
       <label className="label">Notes<textarea className="field" value={notes} maxLength={10000} onChange={(event) => setNotes(event.target.value)} placeholder="What are you testing in this experiment?" /></label>
     </fieldset>
-    <ErrorNotice error={error} />{pending ? <p className="callout" role="status">The response was lost. Retry sends the same creation request and cannot create a second record.</p> : null}
-    <div className="stage-actions"><button className="btn btn-secondary" type="button" disabled={busy || Boolean(pending)} onClick={onClose}>Back to experiments</button><button className="btn btn-primary" disabled={busy || !name.trim()} type="submit">{busy ? 'Creating…' : pending ? 'Retry creation' : 'Create & open inputs'}</button></div></form>
-  </Panel>;
+    <ErrorNotice error={error} />{pending && !busy ? <p className="callout" role="status">The creation response is not confirmed. Retry sends the same creation request and cannot create a second record.</p> : null}
+    <div className="stage-actions"><StageBackButton type="button" disabled={busy} onClick={close}>Back to experiments</StageBackButton><StageCreateButton disabled={busy || !name.trim()} type="submit">{busy ? 'Creating…' : pending ? 'Retry creation' : 'Create & open inputs'}</StageCreateButton></div></form>
+  </Panel></>;
 }
 
 export function ExperimentMetadata({ project, record }: { project: string; record: ModelExperiment }) {
   const client = useQueryClient();
-  const [name, setName] = useState(record.name);
-  const [notes, setNotes] = useState(record.notes);
-  const [tags, setTags] = useState(record.tags.join(', '));
-  const [revision, setRevision] = useState(record.revision);
+  const recoveryKey = sessionDraftKey(project, record.id, 'metadata');
+  const [recovered] = useState(() => readSessionDraft(recoveryKey, isExperimentMetadataDraft));
+  const [name, setName] = useState(recovered?.name ?? record.name);
+  const [notes, setNotes] = useState(recovered?.notes ?? record.notes);
+  const [tags, setTags] = useState(recovered?.tags ?? record.tags.join(', '));
+  const [baseline, setBaseline] = useState<ExperimentMetadataBaseline>(recovered?.baseline ?? record);
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   const [error, setError] = useState<Error | null>(null);
-  const [notice, setNotice] = useState('');
-  const stale = revision !== record.revision;
+  const [notice, setNotice] = useState(recovered ? 'Recovered unsaved experiment details in this tab.' : '');
+  const dirty = name !== baseline.name || notes !== baseline.notes || tags !== baseline.tags.join(', ');
+  const stale = baseline.revision !== record.revision;
+  const readOnly = record.legacy || record.state !== 'active';
+  const draft: ExperimentMetadataDraft | null = dirty ? { version: 1, name, notes, tags, baseline: { revision: baseline.revision, name: baseline.name, notes: baseline.notes, tags: baseline.tags } } : null;
+  const backup = useSessionDraftBackup(recoveryKey, draft, isExperimentMetadataDraft);
+  useWorkspaceNavigationGuard(busy ? 'Experiment details are being saved or reloaded. Wait for the response before leaving.' : dirty && backup.error ? 'Unsaved experiment details cannot be recovered in this browser.' : null);
+  function adopt(saved: ModelExperiment) {
+    setName(saved.name); setNotes(saved.notes); setTags(saved.tags.join(', ')); setBaseline(saved);
+    client.setQueryData(['model-experiment', project, record.id], saved);
+  }
+  useEffect(() => {
+    if (busy || !stale) return;
+    // A batch/run update can advance the experiment revision without changing
+    // metadata. Such updates do not require discarding independent text edits.
+    const unchanged = name === record.name && notes === record.notes && tags === record.tags.join(', ');
+    const sameMetadata = baseline.name === record.name && baseline.notes === record.notes && sameJSON(baseline.tags, record.tags);
+    if (!dirty || unchanged) { setName(record.name); setNotes(record.notes); setTags(record.tags.join(', ')); setBaseline(record); }
+    else if (sameMetadata) setBaseline(record);
+  }, [record, busy, stale, dirty, baseline, name, notes, tags]);
   async function save() {
-    setBusy(true); setError(null); setNotice('');
+    if (inFlight.current || stale || readOnly || !name.trim() || !dirty) return;
+    inFlight.current = true; setBusy(true); setError(null); setNotice('');
     try {
-      const saved = await experiments.update(project, record.id, { name: name.trim(), notes, tags: [...new Set(tags.split(',').map((value) => value.trim()).filter(Boolean))], expectedRevision: revision });
-      setRevision(saved.revision); client.setQueryData(['model-experiment', project, record.id], saved);
+      const saved = await experiments.update(project, record.id, { name: name.trim(), notes, tags: [...new Set(tags.split(',').map((value) => value.trim()).filter(Boolean))], expectedRevision: baseline.revision });
+      writeSessionDraft(recoveryKey, null); adopt(saved);
       await client.invalidateQueries({ queryKey: ['model-experiments', project] });
       setNotice('Experiment details saved. Frozen batches retain their original snapshots.');
-    } catch (reason) { setError(reason instanceof Error ? reason : new Error('Experiment details could not be saved.')); }
-    finally { setBusy(false); }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason : new Error('Experiment details could not be saved.'));
+      if (reason instanceof ApiError && reason.status === 409) void client.invalidateQueries({ queryKey: ['model-experiment', project, record.id] });
+    } finally { inFlight.current = false; setBusy(false); }
   }
-  return <form className="stack" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-    {stale ? <p className="callout">The saved experiment changed. <button type="button" className="text-button" onClick={() => { setName(record.name); setNotes(record.notes); setTags(record.tags.join(', ')); setRevision(record.revision); setError(null); }}>Reload saved details</button></p> : null}
-    <fieldset className="experiment-create-fields" disabled={busy || stale || record.legacy || record.state !== 'active'}><legend className="sr-only">Edit experiment details</legend>
+  async function reload() {
+    if (inFlight.current || dirty && !window.confirm('Replace your unsaved experiment details with the latest saved details?')) return;
+    inFlight.current = true; setBusy(true); setError(null);
+    try { const saved = await experiments.get(project, record.id); writeSessionDraft(recoveryKey, null); adopt(saved); setNotice('Latest saved experiment details loaded.'); }
+    catch (reason) { setError(reason instanceof Error ? reason : new Error('Saved experiment details could not be loaded.')); }
+    finally { inFlight.current = false; setBusy(false); }
+  }
+  return <form className="stack" onChange={() => setNotice('')} onSubmit={(event) => { event.preventDefault(); void save(); }}>
+    {stale ? <p className="callout" role="status">The saved experiment details changed. Your edits are retained. <button type="button" className="text-button" disabled={busy} onClick={() => void reload()}>Reload saved details</button> replaces them with the latest saved values.</p> : null}
+    {dirty && backup.error ? <p className="callout callout-warning" role="alert">{backup.error}</p> : null}
+    <fieldset className="experiment-create-fields" disabled={busy || stale || readOnly}><legend className="sr-only">Edit experiment details</legend>
       <label className="label">Experiment name<input required className="field" value={name} maxLength={120} onChange={(event) => setName(event.target.value)} /></label>
-      <label className="label">Tags<input className="field" value={tags} onChange={(event) => setTags(event.target.value)} /><small>Comma-separated labels.</small></label>
+      <label className="label">Tags<input className="field" value={tags} maxLength={20000} onChange={(event) => setTags(event.target.value)} /><small>Comma-separated labels.</small></label>
       <label className="label">Notes<textarea className="field" value={notes} maxLength={10000} onChange={(event) => setNotes(event.target.value)} /></label>
     </fieldset>
     <ErrorNotice error={error} />{notice ? <p role="status" className="muted">{notice}</p> : null}
-    <button className="btn btn-secondary" disabled={busy || stale || record.legacy || record.state !== 'active' || !name.trim()} type="submit">Save experiment details</button>
+    <button className="btn btn-secondary" disabled={busy || stale || readOnly || !name.trim() || !dirty} type="submit">{busy ? 'Working…' : 'Save experiment details'}</button>
+    {dirty && !backup.error ? <p className="muted">Unsaved details are kept in this tab. Save to update the experiment.</p> : null}
   </form>;
 }
 
@@ -195,13 +261,13 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
   const comparisonQueries = useQueries({ queries: selected.map((id) => ({ queryKey: ['model-experiment', project, id], queryFn: () => experiments.get(project, id), refetchInterval: 15000 })) });
   const compared = comparisonQueries.flatMap((value) => value.data ? [value.data] : []);
   return <div className="clinical-workspace experiment-registry">
-    <PageHeader eyebrow="02 DEVELOP" title={creating ? 'Create experiment' : comparing ? 'Compare experiments' : 'Experiments'} description={creating ? 'Name your experiment or reuse a saved template, then continue to its inputs.' : comparing ? 'Compare saved inputs and training settings.' : 'Open an experiment to continue work or review results.'} actions={!creating ? comparing ? <button className="btn btn-secondary" onClick={() => { setComparing(false); }}>Back to experiments</button> : <button className="btn btn-primary" onClick={() => setCreating(true)}>Create experiment</button> : undefined} />
+    {!creating ? <PageHeader eyebrow="02 DEVELOP" title={comparing ? 'Compare experiments' : 'Experiments'} description={comparing ? 'Compare saved inputs and training settings.' : 'Open an experiment to continue work or review results.'} actions={comparing ? <StageBackButton onClick={() => setComparing(false)}>Back to experiments</StageBackButton> : <StageCreateButton onClick={() => setCreating(true)}>Create experiment</StageCreateButton>} /> : null}
 
     <StagePage pageKey={creating ? 'create' : comparing ? 'comparison' : 'library'}>
-    {creating ? <><StageSteps label="New experiment steps" current="details" steps={[{ id: 'details', title: 'Experiment details', description: 'Name and optional template' }, { id: 'inputs', title: 'Inputs', description: 'Continue after creating the record', disabled: true }]} onChange={() => {}} /><CreateExperiment project={project} templates={items} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); onOpen(item.id); }} /></> : comparing ? <>
+    {creating ? <CreateExperiment project={project} templates={items} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); onOpen(item.id); }} /> : comparing ? <>
       <ErrorNotice error={comparisonQueries.find((value) => value.error)?.error ?? null} />
       {compared.length !== selected.length ? <p role="status">Loading selected experiment snapshots…</p> : compared.length >= 2 ? <ExperimentComparison items={compared} /> : <p>Select at least two experiments from the library to compare.</p>}
-      <div className="stage-actions"><button type="button" className="btn btn-secondary" onClick={() => setComparing(false)}>Back to experiment selection</button></div>
+      <div className="stage-actions"><StageBackButton type="button" onClick={() => setComparing(false)}>Back to experiment selection</StageBackButton></div>
     </> : <>
     <ErrorNotice error={query.error} />
     <StageLibrary project={project} title="Experiments">
@@ -221,7 +287,14 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
 
         <td><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString()}</time></td>
         <td><RecordManageButton recordKey={item.key} name={item.name} /></td>
-      </tr>)}</tbody></table></div> : <div className="experiment-empty"><h3>{items.length ? 'No experiments match this view' : 'Create your first experiment'}</h3><p>{items.length ? 'Adjust the stage, search or archive filters to find earlier work.' : 'Start with a name and a question. Add prepared targets, features and training batches after creating the record.'}</p></div>}
+      </tr>)}</tbody></table></div> : <EmptyState
+      icon="experiments"
+      title={items.length ? 'No experiments match this view' : 'Create your first experiment'}
+      description={items.length ? 'Adjust the stage, search or archive filters to find earlier work.' : 'Start with a name and a question. Add prepared targets, features and training batches after creating the record.'}
+      action={items.length
+        ? <button type="button" className="btn btn-secondary" onClick={() => setFilters(newExperimentLibraryFilters())}>Clear filters</button>
+        : <StageCreateButton onClick={() => setCreating(true)}>Create experiment</StageCreateButton>}
+    />}
     </StageLibrary>
     </>}
     </StagePage>

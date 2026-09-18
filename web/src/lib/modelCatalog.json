@@ -1,0 +1,68 @@
+[
+  {
+    "name": "abmil",
+    "label": "ABMIL",
+    "summary": "Gated attention over patch embeddings.",
+    "featureKind": "patch",
+    "supportsAttention": true,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": null
+  },
+  {
+    "name": "nnmil",
+    "label": "nnMIL",
+    "summary": "Full-dimensional pooling with windowed feature sampling.",
+    "featureKind": "patch",
+    "supportsAttention": true,
+    "structuredOutput": true,
+    "honorsCheckpointSelection": true,
+    "windowedSampling": true,
+    "optionPrefix": "nnmil"
+  },
+  {
+    "name": "mean_pool",
+    "label": "Mean pooling MIL",
+    "summary": "Mean of patch embeddings with a classifier head.",
+    "featureKind": "patch",
+    "supportsAttention": false,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": null
+  },
+  {
+    "name": "max_pool",
+    "label": "Max pooling MIL",
+    "summary": "Element-wise maximum of patch embeddings with a classifier head.",
+    "featureKind": "patch",
+    "supportsAttention": false,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": null
+  },
+  {
+    "name": "slide_linear",
+    "label": "Slide-embedding linear probe",
+    "summary": "Linear read-out of one slide encoder embedding per slide.",
+    "featureKind": "slide",
+    "supportsAttention": false,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": null
+  },
+  {
+    "name": "slide_mlp",
+    "label": "Slide-embedding MLP probe",
+    "summary": "One hidden layer over a slide encoder embedding.",
+    "featureKind": "slide",
+    "supportsAttention": false,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": null
+  }
+]

@@ -20,7 +20,7 @@ table.run-table { width: 100%; min-width: 880px; table-layout: fixed; white-spac
 .run-table .run-group th { padding: 9px 12px; background: var(--theme-soft); font-size: 12px; letter-spacing: normal; text-transform: none; }
 .run-methods { display: flex; flex-wrap: wrap; gap: 6px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--theme-soft); }
 .run-methods label { flex: 1; display: flex; align-items: center; gap: 8px; padding: 12px 15px; border-radius: 5px; cursor: pointer; }
-.run-methods label.selected { background: white; box-shadow: 0 1px 4px #4e362920; font-weight: 600; }
+.run-methods label.selected { background: white; box-shadow: 0 1px 4px rgb(var(--theme-shadow-rgb) / 13%); font-weight: 600; }
 .run-methods input { flex: 0 0 auto; }
 .run-kpis { display: flex; flex-wrap: wrap; gap: 24px; margin: 15px 0; color: var(--muted); }
 .run-kpis strong { color: var(--text); margin-right: 6px; }

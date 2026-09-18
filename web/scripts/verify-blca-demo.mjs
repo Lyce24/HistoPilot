@@ -107,7 +107,10 @@ async function fill(selector, value) {
   await evaluate(`(() => {const input=document.querySelector(${JSON.stringify(selector)});const proto=input instanceof HTMLSelectElement?HTMLSelectElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event(input instanceof HTMLSelectElement?'change':'input',{bubbles:true}));})()`);
 }
 async function step(title) {
-  await evaluate(`([...document.querySelectorAll('.stage-steps button')].find(button=>button.querySelector('strong').textContent===${JSON.stringify(title)})).click()`);
+  // Opening a record replaces the page, so wait for its step navigation to mount.
+  const control = `[...document.querySelectorAll('.stage-steps button')].find(button=>button.querySelector('strong')?.textContent===${JSON.stringify(title)})`;
+  await waitFor(control, 'step control ' + title);
+  await evaluate(`(${control}).click()`);
   await waitFor(`document.querySelector('.blca-demo-step>h2')?.textContent===${JSON.stringify(title)}`);
   assert.equal(await evaluate('document.querySelectorAll(".blca-demo-step").length'),1,'Each substage must replace the previous page');
 }

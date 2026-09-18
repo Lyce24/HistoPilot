@@ -127,12 +127,51 @@ def test_partial_histopilot_evidence_cannot_be_downgraded_to_legacy(tmp_path, mi
         verify_existing_pack(source, path)
 
 
-def test_dtype_mismatch_warns_without_claiming_equivalence(tmp_path):
+def test_a_reduced_precision_pack_is_verified_against_the_cast_source(tmp_path):
+    """Float16 storage of float32 features is a faithful pack at its own declared precision."""
     source = configuration(tmp_path / "source")
-    build_pack(source, tmp_path / "pack", dtype="float16")
-    result = inspect_existing_pack(source, tmp_path / "pack")
+    path = tmp_path / "pack"
+    build_pack(source, path, dtype="float16")
+    result = inspect_existing_pack(source, path)
+    assert result["matchesFeatures"], result["findings"]
+    assert result["summary"]["precision"] == "reduced"
+    assert (result["summary"]["sourceDtype"], result["summary"]["outputDtype"]) == (
+        "float32",
+        "float16",
+    )
+    artifact = verify_existing_pack(source, path)
+    assert artifact["verification"] == "exact-cast-source-values"
+    assert artifact["preservesSourcePrecision"] is False
+
+
+def test_a_reduced_pack_still_fails_on_any_value_that_is_not_the_cast_source(tmp_path):
+    source = configuration(tmp_path / "source")
+    path = tmp_path / "pack"
+    build_pack(source, path, dtype="float16")
+    with (path / "features.bin").open("r+b") as stream:
+        stream.write(np.array([123], dtype="<f2").tobytes())
+    with pytest.raises(PackedStoreError, match="differ from the selected source"):
+        verify_existing_pack(source, path)
+
+
+def test_a_pack_claiming_higher_precision_than_its_source_is_refused(tmp_path):
+    """Upcasting asserts detail the source never had, even when every value round-trips."""
+    source = configuration(tmp_path / "source", dtype="float16")
+    path = tmp_path / "pack"
+    build_pack(source, path)
+    meta = json.loads((path / "meta.json").read_text())
+    assert meta["feat_dtype"] == "float16"
+    # Widen the payload so its declared length stays consistent: a genuine float32 pack of
+    # float16 sources, losing nothing, and still not a faithful representation of them.
+    values = np.frombuffer((path / "features.bin").read_bytes(), dtype="<f2")
+    (path / "features.bin").write_bytes(values.astype("<f4").tobytes())
+    (path / "meta.json").write_text(json.dumps({**meta, "feat_dtype": "float32"}))
+    (path / "manifest.json").unlink()
+    (path / "checksums.json").unlink()
+    result = inspect_existing_pack(source, path)
     assert not result["matchesFeatures"]
     assert any(item["code"] == "PACK_DTYPE_MISMATCH" for item in result["findings"])
+    assert result["summary"]["precision"] == "exact"
 
 
 def test_changed_pack_since_preview_is_rejected(tmp_path):

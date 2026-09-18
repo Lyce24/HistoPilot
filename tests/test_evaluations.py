@@ -89,16 +89,18 @@ def bundle(
     encoder="uni_v1",
     pack=False,
     dtype="float32",
+    feature_kind="patch",
 ):
     source = root / name
     source.mkdir()
     for identity in ids:
         with h5py.File(source / f"{identity}.h5", "w") as handle:
-            handle.create_dataset("features", data=np.ones((3, dimension), dtype=dtype))
-            handle.create_dataset("coords", data=np.ones((3, 2), dtype="int64"))
+            handle.create_dataset("features", data=np.ones((1 if feature_kind == "slide" else 3, dimension), dtype=dtype))
+            if feature_kind == "patch":
+                handle.create_dataset("coords", data=np.ones((3, 2), dtype="int64"))
     filesystem = LocalFilesystem((root,))
     features = FeatureService(store, filesystem)
-    spec = FeatureSpec(datasetId=data["id"], path=str(source), encoderId=encoder)
+    spec = FeatureSpec(datasetId=data["id"], path=str(source), encoderId=encoder, featureKind=feature_kind)
     frozen = features.freeze(spec, features.preview(spec)["previewHash"], name)
     packs = FeaturePackService(store, filesystem, FakeExecutor())
     packing = FeaturePackSpec(featureSetId=frozen["id"], action="pack" if pack else "validate")
@@ -165,6 +167,30 @@ def preview(service, spec):
 
 def codes(result):
     return {item["code"] for item in result["findings"] if item["severity"] == "error"}
+
+
+@pytest.mark.parametrize("changed", ["identity", "content"])
+def test_development_bundle_must_match_protocol_binding(evaluation, monkeypatch, changed):
+    service, spec, _source = evaluation
+    get_configuration = service.store.get_configuration
+
+    def protocol_with_binding(identity):
+        document = get_configuration(identity)
+        if identity == spec["protocolId"]:
+            document = copy.deepcopy(document)
+            document["manifest"]["spec"]["featureBundleId"] = (
+                "configuration-" + "d" * 64
+                if changed == "identity"
+                else spec["developmentFeatureBundleId"]
+            )
+            if changed == "content":
+                document["manifest"]["featureBundle"] = {"contentHash": "0" * 64}
+        return document
+
+    monkeypatch.setattr(service.store, "get_configuration", protocol_with_binding)
+    result = preview(service, spec)
+    assert not result["canFreeze"]
+    assert ("PROTOCOL_BUNDLE_MISMATCH" if changed == "identity" else "PROTOCOL_BUNDLE_CHANGED") in codes(result)
 
 
 def test_combined_file_filter_freeze_reopen_and_exact_idempotency(evaluation):
@@ -660,3 +686,107 @@ def test_cohort_freshness_still_rejects_scientific_changes(evaluation, monkeypat
 
         monkeypatch.setattr(service, "_prepare", changed)
     assert not service._resolve(document)["current"]
+
+
+@pytest.mark.parametrize("independent", [False, True])
+@pytest.mark.parametrize("source_kind", ["same_path", "hardlink", "distinct"])
+def test_combined_cohorts_reject_duplicate_wsi_sources_across_imports(
+    evaluation, tmp_path, independent, source_kind
+):
+    service, spec, _source = evaluation
+    imported = []
+    for index, slide in enumerate(("s2", "s3")):
+        source = str(tmp_path / ("same.svs" if source_kind == "same_path" else f"{slide}.svs"))
+        data, _rows = dataset(
+            service.store,
+            f"source-import-{index}",
+            [
+                {
+                    "slideId": slide,
+                    "patientId": f"external-patient-{index}",
+                    "slidePath": source,
+                    "attributes": {"label": str(index), "cohort": "test"},
+                }
+            ],
+            inventory=[
+                {
+                    "path": source,
+                    "device": 1,
+                    "inode": 100 + index if source_kind == "distinct" else 100,
+                    "sizeBytes": 200,
+                    "mtimeNs": 300,
+                }
+            ],
+        )
+        imported.append(data["id"])
+    spec.update(datasetId=imported[0], datasetIds=imported)
+    if independent:
+        for key in ("protocolId", "developmentFeatureBundleId", "featureBundleId"):
+            spec.pop(key)
+    item = draft(service, spec)
+    result = service.preview(item["id"], 1)
+    if source_kind == "distinct":
+        assert result["canFreeze"], result["findings"]
+        assert "duplicateSourceSlideIds" not in result["overlap"]
+    else:
+        assert not result["canFreeze"]
+        assert "DUPLICATE_TEST_SLIDE_SOURCE" in codes(result)
+        assert result["overlap"]["duplicateSourceSlideIds"] == ["s2", "s3"]
+        with pytest.raises(StorageError) as error:
+            service.freeze(item["id"], 1, result["previewHash"], "duplicate-source-freeze")
+        assert error.value.code == "EVALUATION_PREFLIGHT_BLOCKED"
+        # Filtering out an alias should make the retained physical slide usable.
+        spec["eligibility"].append({"field": "slideId", "op": "eq", "value": "s2"})
+        filtered = preview(service, spec)
+        assert filtered["canFreeze"], filtered["findings"]
+        assert filtered["coverage"]["selectedSlideIds"] == ["s2"]
+
+
+@pytest.mark.parametrize("independent", [False, True])
+@pytest.mark.parametrize("identity_dataset_index", [0, 1])
+def test_combined_cohort_target_checks_each_imports_own_dictionary_and_identity_mapping(
+    evaluation, independent, identity_dataset_index
+):
+    service, spec, _source = evaluation
+    datasets = []
+    for index in (0, 1):
+        source = "subject_code" if index == identity_dataset_index else "outcome"
+        item = service.store.create_draft("import", f"import-{index}", {})
+        datasets.append(
+            service.store.publish_dataset(
+                item["id"],
+                expected_revision=1,
+                operation_id=f"target-import-{index}",
+                manifest={
+                    "kind": "dataset",
+                    "dictionary": [
+                        {"key": "label", "sourceColumn": source, "owner": "slide", "type": "text"}
+                    ],
+                    "provenance": {
+                        "mapping": {
+                            "patientIdColumn": "subject_code"
+                            if index == identity_dataset_index
+                            else "participant_code"
+                        }
+                    },
+                },
+                artifacts={
+                    "records.json": json.dumps(
+                        [
+                            {
+                                "slideId": f"s{index + 2}",
+                                "patientId": str(index),
+                                "attributes": {"label": str(index)},
+                            }
+                        ]
+                    ).encode()
+                },
+            )["id"]
+        )
+    spec.update(datasetId=datasets[0], datasetIds=datasets, eligibility=[])
+    if independent:
+        for key in ("protocolId", "developmentFeatureBundleId", "featureBundleId"):
+            spec.pop(key)
+    result = preview(service, spec)
+    assert not result["canFreeze"]
+    assert "IDENTIFIER_TARGET" in codes(result)

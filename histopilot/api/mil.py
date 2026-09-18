@@ -1,12 +1,16 @@
-"""MIL input planning and explicit execution of frozen ABMIL development batches."""
+"""MIL input planning and explicit execution of frozen development batches."""
 
-from fastapi import APIRouter
+from typing import Literal
+
+from fastapi import APIRouter, Response
 
 from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.development import DevelopmentService
 from histopilot.application.mil_inputs import MILInputService
 from histopilot.application.project_workspace import ProjectWorkspace
+from histopilot.application.runtime_recommendations import runtime_recommendation
 from histopilot.application.training import TrainingService
+from histopilot.application.training_exports import training_oof_csv
 from histopilot.application.training_history import training_history
 from histopilot.application.training_resources import training_resources
 from histopilot.schemas.development import (
@@ -47,6 +51,15 @@ def mil_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -> APIRo
     def results(identity: str, batch_id: str):
         return TrainingService(projects.scientific_store(identity), filesystem).results(batch_id)
 
+    @router.get("/batches/{batch_id}/oof/{candidate_id}/{training_seed}/{split_seed}/{unit}.csv")
+    def oof_predictions(identity: str, batch_id: str, candidate_id: str,
+                        training_seed: int, split_seed: int, unit: Literal["slide", "patient"]):
+        content = training_oof_csv(projects.scientific_store(identity), batch_id,
+                                   candidate_id, training_seed, split_seed, unit)
+        filename = f"oof-{unit}-training-{training_seed}-split-{split_seed}.csv"
+        return Response(content=content, media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
     @router.get("/batches/{batch_id}/runs/{run_id}/history")
     def run_history(identity: str, batch_id: str, run_id: str):
         return training_history(projects.scientific_store(identity), batch_id, run_id)
@@ -76,6 +89,10 @@ def mil_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -> APIRo
     @router.post("/batches/preview")
     def preview_batch(identity: str, payload: DevelopmentBatchSpec):
         return DevelopmentService(projects.scientific_store(identity), filesystem).preview(payload)
+
+    @router.post("/batches/runtime-recommendation")
+    def recommend_resources(identity: str, payload: DevelopmentBatchSpec):
+        return runtime_recommendation(projects.scientific_store(identity), filesystem, payload)
 
     @router.post("/batches/freeze", status_code=201)
     def freeze_batch(identity: str, payload: FreezeDevelopmentBatch):

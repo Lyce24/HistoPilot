@@ -13,11 +13,12 @@ const output = await mkdtemp(join(tmpdir(), 'histopilot-experiment-pages-'));
 const fixture = join(output, 'fixture.tsx');
 const source = (path) => JSON.stringify(join(web, 'src', path));
 await writeFile(fixture, `
-import React from ${JSON.stringify(join(web, 'node_modules/react/index.js'))};
+import React, {useState, useEffect} from ${JSON.stringify(join(web, 'node_modules/react/index.js'))};
 import { createRoot } from ${JSON.stringify(join(web, 'node_modules/react-dom/client.js'))};
 import { QueryClient, QueryClientProvider } from ${JSON.stringify(join(web, 'node_modules/@tanstack/react-query/build/modern/index.js'))};
 import LocalExperiments from ${source('pages/LocalExperiments.tsx')};
 import { experiments } from ${source('api/experiments.ts')};
+import { ApiError } from ${source('api/client.ts')};
 import { scientific } from ${source('api/scientific.ts')};
 import { bundles } from ${source('api/bundles.ts')};
 import { mil } from ${source('api/mil.ts')};
@@ -30,7 +31,7 @@ import ${source('scientific.css')};
 import ${source('clinical-workspace.css')};
 import ${source('components/StageWorkflow.css')};
 const copy = value => structuredClone(value);
-const state = window.workflow = { calls: [], errors: [], records: [], execution: null, resourceCalls: 0, resourceFailure: false };
+const state = window.workflow = { calls: [], errors: [], records: JSON.parse(sessionStorage.getItem('__fixture_records') ?? '[]'), execution: null, resourceCalls: 0, resourceFailure: false };
 lifecycle.inventory = async project => ({ projectId: project, revision: 1, projectState: 'active', items: state.records.map(record => ({ key: record.key, id: record.id, type: 'draft', kind: 'model-experiment', name: record.name, state: record.state, createdAt: record.createdAt, dependsOn: [], usedBy: [] })), audit: [], note: '' });
 window.fetch = async (...args) => { state.errors.push('Unexpected request: ' + args[0]); throw new Error(state.errors.at(-1)); };
 const protocol = { id: 'protocol', versionLabel: { tag: 'Development protocol' }, manifest: { kind: 'protocol', datasetId: 'dataset', spec: { datasetId: 'dataset', target: { task: 'classification', field: 'grade', unit: 'slide', labels: { low: 'low', high: 'high' }, classOrder: ['low', 'high'] }, split: { mode: 'kfold', folds: 2, seeds: [21] } } } };
@@ -43,7 +44,7 @@ experiments.summaries = async () => ({ items: copy(state.records) });
 experiments.get = async (_, id) => copy(state.records.find(item => item.id === id));
 experiments.create = async (_, input) => { state.calls.push({ method: 'create', input: copy(input) }); const result = record(input); state.records.push(result); return copy(result); };
 experiments.update = async (_, id, input) => { state.calls.push({ method: 'update', input: copy(input) }); const original = state.records.find(item => item.id === id); if (input.expectedRevision !== original.revision) throw new Error('Revision mismatch'); const result = { ...original, ...copy(input), revision: original.revision + 1 }; state.records = [result]; return copy(result); };
-experiments.submit = async (_, id, input) => { state.calls.push({ method: 'submit', input: copy(input) }); const original = state.records.find(item => item.id === id); if (original.revision !== input.expectedRevision || !original.batchPlans.length || !original.inputs) throw new Error('Invalid submit'); const batch = { id: 'batch', key: 'configuration:batch', name: original.batchPlans[0].spec.batchName, state: 'active', status: 'running', createdAt: '2026-09-12T00:00:00Z', manifest: manifest(original.batchPlans[0].spec) }; state.execution = { batchId: 'batch', status: 'running', sessionName: 'fixture-only', logPath: '/fixture/logs', outputPath: '/fixture/output', findings: [], runCounts: { total: batch.manifest.runs.length, queued: batch.manifest.runs.length - 1, running: 1, completed: 0, failed: 0, cancelled: 0 }, runs: batch.manifest.runs.map((run, index) => ({ ...run, status: index ? 'queued' : 'running' })), createdAt: '2026-09-12T00:00:00Z', updatedAt: '2026-09-12T00:00:01Z' }; state.resourceRows = resourceRows(); state.execution.telemetry = {path:'/fixture/telemetry.jsonl',intervalSeconds:15,latest:state.resourceRows.at(-1),peak:{hostUsedRamGb:25,gpuUsedMemoryGb:{'0':5},runRssGb:{'run-42-split-0':2}}}; state.execution.runs[0].progress = {epoch:9,maxEpochs:40,globalStep:90,trainingLoss:0.021,validation:{loss:0.041},learningRate:0.0003,cudaPeakAllocatedBytes:1073741824,cudaPeakReservedBytes:2147483648}; state.execution.runs[0].checkpointPath = '/fixture/run/best.ckpt'; state.execution.runs[0].outputPath = '/fixture/run'; batch.execution = copy(state.execution); const result = { ...original, revision: original.revision + 1, stage: 'running', status: 'running', configurationLocked: true, batches: [batch], predictorPolicies: { batch: original.batchPlans[0].spec.predictorPolicy }, submission: { ...input, status: 'submitted', batchIds: ['batch'], submittedAt: '2026-09-12T00:00:01Z', error: null, retryable: false } }; state.records = [result]; return copy(result); };
+experiments.submit = async (_, id, input) => { state.calls.push({ method: 'submit', input: copy(input) }); if(state.acceptedSubmission) { if(state.acceptedSubmission.submission.operationId !== input.operationId) throw new Error('Changed submission identity'); state.records = [state.acceptedSubmission]; return copy(state.acceptedSubmission); } const original = state.records.find(item => item.id === id); if (original.revision !== input.expectedRevision || !original.batchPlans.length || !original.inputs) throw new Error('Invalid submit'); const batch = { id: 'batch', key: 'configuration:batch', name: original.batchPlans[0].spec.batchName, state: 'active', status: 'running', createdAt: '2026-09-12T00:00:00Z', manifest: manifest(original.batchPlans[0].spec) }; state.execution = { batchId: 'batch', status: 'running', sessionName: 'fixture-only', logPath: '/fixture/logs', outputPath: '/fixture/output', findings: [], runCounts: { total: batch.manifest.runs.length, queued: batch.manifest.runs.length - 1, running: 1, completed: 0, failed: 0, cancelled: 0 }, runs: batch.manifest.runs.map((run, index) => ({ ...run, status: index ? 'queued' : 'running' })), createdAt: '2026-09-12T00:00:00Z', updatedAt: '2026-09-12T00:00:01Z' }; state.resourceRows = resourceRows(); state.execution.telemetry = {path:'/fixture/telemetry.jsonl',intervalSeconds:15,latest:state.resourceRows.at(-1),peak:{hostUsedRamGb:25,gpuUsedMemoryGb:{'0':5},runRssGb:{'run-42-split-0':2}}}; state.execution.runs[0].progress = {epoch:9,maxEpochs:40,globalStep:90,trainingLoss:0.021,validation:{loss:0.041},learningRate:0.0003,cudaPeakAllocatedBytes:1073741824,cudaPeakReservedBytes:2147483648}; state.execution.runs[0].checkpointPath = '/fixture/run/best.ckpt'; state.execution.runs[0].outputPath = '/fixture/run'; batch.execution = copy(state.execution); const result = { ...original, revision: original.revision + 1, stage: 'running', status: 'running', configurationLocked: true, batches: [batch], predictorPolicies: { batch: original.batchPlans[0].spec.predictorPolicy }, submission: { ...input, status: 'submitted', batchIds: ['batch'], submittedAt: '2026-09-12T00:00:01Z', error: null, retryable: false } }; if(state.loseNextSubmissionResponse) { state.acceptedSubmission = result; state.loseNextSubmissionResponse = false; throw new ApiError('Fixture gateway timeout after acceptance', 503, 'GATEWAY_TIMEOUT'); } state.records = [result]; return copy(result); };
 scientific.configurations = async () => ({ configurations: [protocol] });
 bundles.list = async () => ({ items: [bundle] });
 mil.preview = async (_, spec) => { state.calls.push({ method: 'inputPreview', spec: copy(spec) }); return resolvedInputs; };
@@ -57,7 +58,12 @@ predictors.list = async () => ({ items: [] });
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 window.refreshExperimentFixture = () => client.invalidateQueries();
 window.finishExperiment = async () => { state.execution.status = 'completed'; state.execution.updatedAt = '2026-09-12T00:00:03Z'; state.execution.runCounts = { ...state.execution.runCounts, completed: state.execution.runCounts.total, running: 0, queued: 0 }; state.execution.runs.forEach(run => run.status = 'completed'); state.records[0].stage = 'finished'; state.records[0].status = 'completed'; state.records[0].batches[0].status = 'completed'; state.records[0].batches[0].execution = copy(state.execution); await client.invalidateQueries(); };
-createRoot(document.getElementById('app')).render(<QueryClientProvider client={client}><main className="stage-workspace"><LocalExperiments workspace={{ project: { id: 'project', name: 'Bladder study', config: {} } }} /></main></QueryClientProvider>);
+function Fixture() {
+  const [hash, setHash] = useState(window.location.hash);
+  useEffect(() => { const update = () => setHash(window.location.hash); window.addEventListener('hashchange', update); window.addEventListener('popstate', update); return () => { window.removeEventListener('hashchange', update); window.removeEventListener('popstate', update); }; }, []);
+  return <QueryClientProvider client={client}><main className="stage-workspace">{hash.startsWith('#features') ? <div><h1>Features fixture</h1><a href="#experiments?experiment=experiment&tab=batches">Return to experiment</a></div> : <LocalExperiments workspace={{ project: { id: 'project', name: 'Bladder study', config: {} } }} />}</main></QueryClientProvider>;
+}
+createRoot(document.getElementById('app')).render(<Fixture />);
 `);
 await build({ configFile: false, root: web, logLevel: 'error', plugins: [react()],
   define: { 'process.env.NODE_ENV': JSON.stringify('production') },
@@ -82,6 +88,7 @@ const requests = new Map();
 let nextId = 0, buffer = '', sessionId;
 const exceptions = [];
 const dialogs = [];
+let acceptDialogs = true;
 const rejectPending = (error) => { for (const { reject } of requests.values()) reject(error); requests.clear(); };
 browser.on('error', rejectPending);
 browser.on('exit', (code) => rejectPending(new Error('Chromium exited (' + code + '): ' + stderr)));
@@ -95,7 +102,7 @@ browser.stdio[4].on('data', (data) => {
     if (message.id) {
       const pending = requests.get(message.id); requests.delete(message.id);
       if (message.error) pending?.reject(new Error(JSON.stringify(message.error))); else pending?.resolve(message.result);
-    } else if (message.method === 'Page.javascriptDialogOpening') { dialogs.push(message.params.message); void cdp('Page.handleJavaScriptDialog', { accept: true }); }
+    } else if (message.method === 'Page.javascriptDialogOpening') { dialogs.push(message.params.message); void cdp('Page.handleJavaScriptDialog', { accept: acceptDialogs }); }
     else if (message.method === 'Runtime.exceptionThrown') exceptions.push(message.params.exceptionDetails);
     else if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') exceptions.push(message.params.args);
   }
@@ -108,7 +115,7 @@ function cdp(method, params = {}, session = sessionId) {
   });
 }
 async function evaluate(expression) {
-  const response = await cdp('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+  const response = await cdp('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, userGesture: true });
   if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
   return response.result.value;
 }
@@ -130,6 +137,10 @@ async function fill(text, value, selector = 'input,select,textarea') {
   await waitFor(element, 'field ' + text);
   await evaluate('(() => { const el = ' + element + '; const prototype = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, "value").set.call(el, ' + JSON.stringify(value) + '); el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true })); })()');
 }
+async function waitForDialog(count) {
+  for (let attempt = 0; attempt < 100 && dialogs.length < count; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(dialogs.length, count, JSON.stringify(dialogs));
+}
 async function screenshot(name) {
   await new Promise(resolve => setTimeout(resolve, 220));
   const { data } = await cdp('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
@@ -137,7 +148,7 @@ async function screenshot(name) {
 }
 async function step(label, title) {
   const element = '[...document.querySelectorAll("nav")].find(el => !el.closest("[hidden]") && el.getAttribute("aria-label") === ' + JSON.stringify(label) + ')';
-  const match = '[...' + element + '.querySelectorAll("button")].find(el => el.querySelector("strong")?.textContent === ' + JSON.stringify(title) + ')';
+  const match = '[...' + element + '.querySelectorAll("button")].find(el => (el.querySelector("strong")?.textContent ?? el.textContent) === ' + JSON.stringify(title) + ')';
   await waitFor(match + ' && !' + match + '.matches(":disabled")');
   await evaluate(match + '.click()');
 }
@@ -150,7 +161,9 @@ try {
   await waitFor('document.body?.innerText.includes("Create your first experiment")');
   assert.equal(await evaluate('document.querySelector(".experiment-create-fields") === null'), true);
   assert.equal(await evaluate('document.querySelector(".stage-library h2") === null'), true, 'The library must not repeat the page heading');
-  assert.equal(await evaluate('document.querySelectorAll(".stage-library-toolbar input[type=search]").length'), 1);
+  // An empty library shows its next step, not controls for filtering nothing.
+  assert.equal(await evaluate('document.querySelectorAll(".stage-library-toolbar input[type=search]").length'), 0);
+  assert.equal(await evaluate('document.querySelectorAll(".stage-library [data-stage-action=create]").length'), 1, 'The empty library offers the create action');
   assert.equal(await evaluate('document.body.innerText.includes("Your experiments")'), false);
   await screenshot('00-library');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -158,6 +171,10 @@ try {
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true, 'Library overflows mobile viewport');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false });
   await click('Create experiment');
+  await waitFor('document.querySelector(".page-header [data-stage-action=back]")');
+  assert.equal(await evaluate('document.querySelectorAll(".page-header").length'), 1, 'Creation has one page header');
+  assert.equal(await evaluate('document.querySelector(".page-header [data-stage-action=back]").textContent'), 'Back to experiments');
+  assert.equal(await evaluate('document.querySelectorAll(".stage-steps").length'), 1);
   await waitFor('document.querySelector(".experiment-create-fields") !== null');
   assert.equal(await evaluate('document.querySelector(".stage-library") === null'), true);
   await fill('Experiment name', 'Unified experiment');
@@ -166,6 +183,21 @@ try {
   await click('Create & open inputs');
   await waitFor('document.body.innerText.includes("Verify inputs")');
   assert.equal(await evaluate('document.querySelector("#development-tab-batches").disabled'), true);
+  await evaluate('document.querySelector(".setup-details:has(input[name=mil-loading-policy])").open = true; document.querySelector("input[name=mil-loading-policy][value=native]").click()');
+  await waitFor('document.body.innerText.includes("Input edits kept in this browser tab")');
+  await evaluate('window.location.hash = "features"');
+  await waitFor('document.body.innerText.includes("Features fixture")');
+  await evaluate('document.querySelector("a").click()');
+  await waitFor('document.body.innerText.includes("Recovered input edits")');
+  assert.equal(await evaluate('document.querySelector("input[name=mil-loading-policy][value=native]").checked'), true);
+  assert.equal(await evaluate('window.workflow.records[0].inputs'), null, 'Recovery must not save experimental inputs');
+  await evaluate('sessionStorage.setItem("__fixture_records", JSON.stringify(window.workflow.records))');
+  await evaluate('window.__beforeReload = true');
+  await cdp('Page.reload');
+  await waitFor('window.__beforeReload === undefined && document.readyState === "complete"');
+  await waitFor('document.body.innerText.includes("Recovered input edits")');
+  assert.equal(await evaluate('document.querySelector("input[name=mil-loading-policy][value=native]").checked'), true, 'Input draft lost on browser reload');
+  await screenshot('00-recovered-inputs');
   await click('Check & continue to batches');
   await waitFor('document.body.innerText.includes("Batch name")');
   assert.equal(await evaluate('document.body.innerText.includes("Verify inputs")'), false);
@@ -178,6 +210,55 @@ try {
   await click('Continue to compute & predictors');
   await waitFor('document.body.innerText.includes("Maximum epochs must be at least 1")');
   assert.equal(await evaluate('[...document.querySelectorAll("[data-batch-step]")].find(el => el.dataset.batchStep === "2").hidden'), false, 'Invalid epoch value allowed next page');
+  await evaluate('window.location.hash = "features"');
+  await waitFor('document.body.innerText.includes("Features fixture")');
+  await evaluate('document.querySelector("a").click()');
+  await waitFor('document.body.innerText.includes("Recovered unsaved batch edits")');
+  assert.equal(await evaluate(field('Maximum epochs') + '.value'), '0', 'Invalid numeric draft was replaced by last valid number');
+  await evaluate('sessionStorage.setItem("__fixture_records", JSON.stringify(window.workflow.records))');
+  await evaluate('window.__beforeReload = true');
+  await cdp('Page.reload');
+  await waitFor('window.__beforeReload === undefined && document.readyState === "complete"');
+  await waitFor('document.body.innerText.includes("Recovered unsaved batch edits")');
+  assert.equal(await evaluate(field('Maximum epochs') + '.value'), '0', 'Numeric editing text lost on reload');
+  await click('Continue to compute & predictors');
+  await waitFor('document.body.innerText.includes("Maximum epochs must be at least 1")');
+  await screenshot('01-recovered-invalid-number');
+  await evaluate('window.workflow.records[0].revision += 1; window.workflow.records[0].notes = "Edited in another tab"; window.refreshExperimentFixture()');
+  await waitFor('document.body.innerText.includes("The experiment changed after these edits began")');
+  await screenshot('01-stale-batch-recovery');
+  await click('Keep settings as a new batch');
+  await waitFor('document.body.innerText.includes("Training seeds")');
+  assert.equal(await evaluate(field('Batch name') + '.value'), 'Two-seed baseline');
+  assert.equal(await evaluate(field('Training seeds') + '.value'), '42, 43');
+  await evaluate('window.__originalSetItem = Storage.prototype.setItem; Storage.prototype.setItem = function(key,value) { if(key.startsWith("histopilot:experiment-draft")) throw new Error("Fixture quota exhausted"); return window.__originalSetItem.call(this,key,value); }');
+  await fill('Batch name', 'Two-seed baseline ');
+  await waitFor('document.body.innerText.includes("Browser draft recovery is unavailable")');
+  acceptDialogs = false;
+  // Ensure Back targets another module in this document, independent of browser reload/BFCache history.
+  await evaluate('const activeUrl = window.location.href; history.replaceState({}, "", "#features"); history.pushState({}, "", activeUrl)');
+  await step('Experiment setup', 'Inputs');
+  const guardedInputUrl = await evaluate('window.location.href');
+  assert.deepEqual(dialogs, [], 'Successful creation and recoverable navigation must not ask to leave');
+  await evaluate('window.history.back()');
+  await waitForDialog(1);
+  await waitFor('window.location.href === ' + JSON.stringify(guardedInputUrl));
+  assert.equal(await evaluate('document.getElementById("development-tab-setup").getAttribute("aria-current")'), 'step', 'Cancelled browser Back changed the active view');
+  assert.match(dialogs.at(-1), /Unsaved batch edits/);
+  dialogs.length = 0;
+  await step('Experiment setup', 'Batches');
+  const guardedUrl = await evaluate('window.location.href');
+  await evaluate('window.location.hash = "features"');
+  await waitForDialog(1);
+  await waitFor('window.location.href === ' + JSON.stringify(guardedUrl));
+  assert.equal(await evaluate('document.body.innerText.includes("Batch name")'), true, 'Declined navigation unmounted unsaved form');
+  assert.equal(dialogs.length, 1, JSON.stringify(dialogs)); assert.match(dialogs[0], /Unsaved batch edits/);
+  dialogs.length = 0; acceptDialogs = true;
+  await evaluate('Storage.prototype.setItem = window.__originalSetItem');
+  await fill('Batch name', 'Two-seed baseline');
+  await waitFor('!document.body.innerText.includes("Browser draft recovery is unavailable")');
+  await click('Continue to training settings');
+  assert.equal(await evaluate(field('Maximum epochs') + '.value'), '0', 'Stale recovery changed raw invalid text');
   await fill('Maximum epochs', '17');
   await click('Back');
   await waitFor('document.body.innerText.includes("Training seeds")');
@@ -199,21 +280,31 @@ try {
   await screenshot('01-batch-review');
   await click('Add batch to plan');
   await waitFor('document.body.innerText.includes("Batch plans (1)")');
+  assert.equal(await evaluate('sessionStorage.getItem("histopilot:experiment-draft:v1:project:experiment:batch-editor")'), null, 'Saved batch draft was not cleared');
   assert.equal(await evaluate('document.body.innerText.includes("Maximum epochs")'), false);
   await click('Continue to review & submit');
   await waitFor('document.body.innerText.includes("Freeze & submit experiment")');
   assert.equal(await evaluate('document.body.innerText.includes("Add a training batch")'), false);
   await screenshot('02-submit-review');
+  await evaluate('window.workflow.loseNextSubmissionResponse = true');
   await click('Freeze & submit experiment');
-  await waitFor('document.body.innerText.includes("Inputs, batches and predictor choices are locked.")');
+  await waitFor('document.body.innerText.includes("Retry submission")');
+  assert.equal(await evaluate('document.body.innerText.includes("Freeze & submit experiment")'), false, 'An uncertain request should present one retry action');
+  const submissionRecovery = await evaluate('JSON.parse(sessionStorage.getItem("histopilot:experiment-draft:v1:project:experiment:submission")).value');
+  await click('Retry submission');
+  await waitFor('window.workflow.calls.filter(call => call.method === "submit").length === 2');
+  const submitCalls = await evaluate('window.workflow.calls.filter(call => call.method === "submit")');
+  assert.equal(submitCalls[0].input.operationId, submitCalls[1].input.operationId);
+  assert.equal(submitCalls[1].input.operationId, submissionRecovery.operationId);
+  await waitFor('document.body.innerText.includes("Training and predictor progress is in Runs.")');
   assert.equal(await evaluate('document.querySelector("#development-tab-results").disabled'), true);
   assert.equal(await evaluate('document.body.innerText.includes("Freeze & submit experiment")'), false);
-  await step('Experiment steps', 'Inputs');
+  await step('Experiment views', 'Inputs');
   assert.equal(await evaluate('document.querySelector(".mil-plan-fields").disabled'), true);
-  await step('Experiment steps', 'Batches');
+  await step('Experiment views', 'Batches');
   assert.equal(await evaluate('document.body.innerText.includes("Add training batch")'), false);
   assert.equal(await evaluate('document.body.innerText.includes("Locked")'), true);
-  await step('Experiment steps', 'Runs');
+  await step('Experiment views', 'Runs');
   await waitFor('document.querySelector(".run-resource-metric") || document.querySelector(".run-resource-grid")');
   const order = await evaluate(`(() => { const h2=[...document.querySelectorAll('h2')].filter(el=>el.checkVisibility()); const runs=h2.find(el=>el.textContent==='Runs'), predictors=h2.find(el=>el.textContent==='Predictor creation'); const list=document.querySelector('.experiment-run-tracker'), resources=document.querySelector('.experiment-execution-resources');return {runsFirst:Boolean(runs.compareDocumentPosition(predictors)&4),resourcesAfter:Boolean(list.compareDocumentPosition(resources)&4)}; })()`);
   assert.equal(order.runsFirst, true, 'Runs must precede predictor creation');
@@ -251,7 +342,7 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:1080,deviceScaleFactor:1,mobile:false});
   await evaluate('window.finishExperiment()');
   await waitFor('document.querySelector("#development-tab-results").disabled === false');
-  await step('Experiment steps', 'Results');
+  await step('Experiment views', 'Results');
   await waitFor('document.body.innerText.includes("OOF AUROC")');
   assert.equal(await evaluate('document.body.innerText.includes("2 complete configuration / seed groups")'), true);
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -262,7 +353,7 @@ try {
   await screenshot('05-saved-library-mobile');
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true, 'Saved library overflows mobile viewport');
   await click('Unified experiment');
-  await waitFor('document.body.innerText.includes("This experiment is finished.")');
+  await waitFor('document.body.innerText.includes("Inputs, batches and runs are read-only.")');
   await evaluate("window.dispatchEvent(new Event('histopilot:stage-library'))");
   await waitFor('document.querySelector(".stage-library")?.textContent.includes("Unified experiment")');
   assert.deepEqual(dialogs, [], 'Sidebar return from a finished experiment must not prompt to discard edits');
@@ -297,7 +388,7 @@ try {
   await fill('Search', 'Unified');
   await waitFor('document.querySelectorAll(".experiment-record-table tbody tr").length === 1');
   await click('Unified experiment');
-  await waitFor('document.body.innerText.includes("This experiment is finished.")');
+  await waitFor('document.body.innerText.includes("Inputs, batches and runs are read-only.")');
   await click('Back to experiments');
   await waitFor('document.querySelector(".stage-library") !== null');
   assert.equal(await evaluate(field('Search') + '.value'), 'Unified', 'Opening a record must retain the library search');
@@ -328,7 +419,7 @@ try {
   assert.deepEqual(exceptions, []);
   assert.deepEqual(dialogs, [], 'Saved submitted experiments should not prompt to discard edits');
   await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'React and Chromium with mocked experiment/development APIs, no HistoPilot server or training jobs.', calls: await evaluate('window.workflow.calls') }, null, 2));
-  console.log('PASS: experiment library/create, input validation, four batch pages, numeric guards, preserved settings, submission, running locks, run/resource/predictor order, run search/filter/selection, keyboard detail tabs, resource charts, finished results, manage/compare pages, sidebar return, and mobile overflow.');
+  console.log('PASS: experiment library/create, input recovery, module navigation, browser reload, invalid numeric recovery, stale revision copy, quota-failure navigation guard, four batch pages, numeric guards, preserved settings, submission retry after ambiguous HTTP503, running locks, run/resource/predictor order, run search/filter/selection, keyboard detail tabs, resource charts, finished results, manage/compare pages, sidebar return, and mobile overflow.');
   console.log('Artifacts: ' + output);
 } catch (error) {
   try { await writeFile(join(output, 'failure.txt'), await evaluate('document.body.innerText')); await screenshot('failure'); } catch { /* Browser may not have launched. */ }

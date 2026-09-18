@@ -15,7 +15,8 @@ export interface BundleValidation {
 export interface BundleFeature {
   id: string;
   contentHash: string;
-  datasetId: string;
+  /** Null when the feature set covers a slide store rather than one frozen cohort. */
+  datasetId: string | null;
   sourceContentHash: string;
   validation: BundleValidation;
 }
@@ -53,7 +54,7 @@ export interface FeatureBundle {
   versionLabel?: VersionLabel | null;
   manifest: {
     kind: 'feature-bundle';
-    datasetId: string;
+    datasetId: string | null;
     spec: FeatureBundleSpec;
     summary: BundleSummary;
     feature: BundleFeature;

@@ -1,5 +1,5 @@
 import { request, requestScientificSave } from './client';
-import type { Condition, Finding, ProtocolSpec, ScientificDraft, VersionLabel, VersionLabelInput } from './scientific';
+import type { Condition, DataRecord, Finding, ProtocolSpec, ScientificDraft, VersionLabel, VersionLabelInput } from './scientific';
 
 export interface EvaluationInference {
   loadingPolicy: 'per_slide' | 'packed';
@@ -8,8 +8,8 @@ export interface EvaluationInference {
   numWorkers: number;
   device: 'auto' | 'cpu' | 'cuda';
   precision: 'float32' | 'float16' | 'bfloat16';
-  patientAggregation: 'mean' | 'max';
-  decisionThreshold: number;
+  patientAggregation: 'mean' | 'mean_logits' | 'predictor' | 'max';
+  decisionThreshold: number | 'predictor';
 }
 
 export interface EvaluationSpec {
@@ -55,6 +55,8 @@ export interface EvaluationPreview {
     evaluation: { dimensions: number | null; encoderId: string | null };
   };
   findings: Finding[];
+  /** Frozen selected-record identity provenance; absent on some legacy responses. */
+  memberships?: Array<Pick<DataRecord, 'slideId' | 'patientId' | 'patientIdSource'> & { label?: string | null }>;
   canFreeze: boolean;
   executionEnabled: false;
   previewHash: string;
@@ -77,6 +79,7 @@ export interface EvaluationCohort {
     summary: EvaluationSummary;
     coverage?: Pick<EvaluationPreview['coverage'], 'selectedSlideIds'>;
     findings: Finding[];
+    memberships?: EvaluationPreview['memberships'];
   };
 }
 

@@ -22,8 +22,8 @@ class InferenceSettings(RequestModel):
     numWorkers: Annotated[StrictInt, Field(ge=0, le=64)] = 0
     device: Literal["auto", "cpu", "cuda"] = "auto"
     precision: Literal["float32", "float16", "bfloat16"] = "float32"
-    patientAggregation: Literal["mean", "max"] = "mean"
-    decisionThreshold: float = Field(default=0.5, gt=0, lt=1, allow_inf_nan=False)
+    patientAggregation: Literal["mean", "mean_logits", "predictor", "max"] = "mean"
+    decisionThreshold: Annotated[float, Field(gt=0, lt=1, allow_inf_nan=False)] | Literal["predictor"] = 0.5
 
     @model_validator(mode="after")
     def loading_contract(self):

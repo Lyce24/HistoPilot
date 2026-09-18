@@ -24,9 +24,8 @@ describe('clinical utility evidence selection', () => {
   it('opens with the saved analysis library and keeps settings behind create', () => {
     const html = render('clinical');
     expect(html).not.toContain('Stage 0 · Saved records');
-    expect(html).toContain('Search clinical analyses');
-    expect(html).toContain('Clinical analysis state');
-    expect(html).toContain('Sort clinical analyses');
+    // An empty library shows what to do next, not controls for filtering nothing.
+    expect(html).not.toContain('Search clinical analyses');
     expect(html).toContain('Create clinical analysis');
     expect(html).toContain('No clinical analyses yet');
     expect(html).not.toContain('Choose evaluation evidence');
@@ -46,7 +45,7 @@ describe('clinical utility evidence selection', () => {
     const html = render('clinical', { hash: '#clinical-utility?evaluation=incomplete', evaluations: [record('incomplete', 'running', 'active'), record('deleted', 'completed', 'trashed')] });
     expect(html).toContain('Linked evaluation is unavailable or incomplete');
     expect(html).not.toContain('<option value="deleted"');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Analyze clinical utility/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*><span>Analyze clinical utility/);
     expect(html).not.toContain('Mean squared probability error');
   });
   it('shows clinical unavailable values without rendering Infinity or invented confidence', () => {

@@ -1,9 +1,11 @@
 """Explicit target and patient-split intents; no executable commands or inferred labels."""
 
+from __future__ import annotations
+
 import math
 from typing import Annotated, Literal
 
-from pydantic import Field, JsonValue, StrictInt, field_validator, model_validator
+from pydantic import AfterValidator, Field, JsonValue, StrictInt, field_validator, model_validator
 
 from histopilot.schemas.version_labels import FreezeVersionLabel
 from histopilot.schemas.workspace import RequestModel, Seed
@@ -49,7 +51,44 @@ class Condition(RequestModel):
         return self
 
 
-Conditions = Annotated[list[Condition], Field(max_length=30)]
+class ConditionGroup(RequestModel):
+    """Explicit AND/OR composition, while existing flat lists keep their AND meaning."""
+
+    op: Literal["all", "any"]
+    conditions: list[Condition | ConditionGroup] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def bounded_composition(self):
+        def depth(condition):
+            return (
+                1 + max(depth(child) for child in condition.conditions)
+                if isinstance(condition, ConditionGroup)
+                else 0
+            )
+
+        if depth(self) > 4:
+            raise ValueError("Filter groups support at most four nested levels.")
+        return self
+
+
+def iter_conditions(conditions):
+    """Yield every scalar rule for shared field and expression validation."""
+    for condition in conditions:
+        if isinstance(condition, ConditionGroup):
+            yield from iter_conditions(condition.conditions)
+        else:
+            yield condition
+
+
+def _bounded_conditions(conditions):
+    if sum(1 for _ in iter_conditions(conditions)) > 30:
+        raise ValueError("A filter composition supports at most 30 conditions.")
+    return conditions
+
+
+Conditions = Annotated[
+    list[Condition | ConditionGroup], Field(max_length=30), AfterValidator(_bounded_conditions)
+]
 
 
 class TargetSpec(RequestModel):
@@ -295,12 +334,21 @@ class ProtocolSpec(RequestModel):
     split: SplitSpec = Field(default_factory=SplitSpec)
     constraints: Constraints = Field(default_factory=Constraints)
     featureSetId: str | None = Field(default=None, max_length=128)
+    featureBundleId: str | None = Field(default=None, max_length=128)
     featurePackId: str | None = Field(default=None, pattern=r"^pack-[a-f0-9]{64}$")
+    # "require" keeps the feature set a check on the population this protocol already
+    # defines. "restrict" makes it part of the definition: the development data becomes
+    # the dataset's eligible slides intersected with the slides that have features.
+    featureCoverage: Literal["require", "restrict"] = "require"
 
     @model_validator(mode="after")
     def pack_requires_features(self):
+        if self.featureBundleId and (self.featureSetId or self.featurePackId):
+            raise ValueError("Choose a feature bundle as the protocol's feature source.")
         if self.featurePackId and not self.featureSetId:
             raise ValueError("Select a feature version before selecting its pack.")
+        if self.featureCoverage == "restrict" and not (self.featureSetId or self.featureBundleId):
+            raise ValueError("Select a feature bundle to restrict the population to.")
         return self
 
     @field_validator("predictors")
@@ -319,6 +367,11 @@ class ProtocolExploreRequest(RequestModel):
     datasetId: str = Field(pattern=r"^dataset-[a-f0-9]{64}$")
     targetField: str | None = Field(default=None, min_length=1, max_length=128)
     eligibility: Conditions = Field(default_factory=list)
+    # Live counts answer "how big is my development set", so they apply the same feature
+    # restriction the frozen protocol will apply.
+    featureSetId: str | None = Field(default=None, max_length=128)
+    featureBundleId: str | None = Field(default=None, max_length=128)
+    featureCoverage: Literal["require", "restrict"] = "require"
     rules: FixedRules = Field(default_factory=FixedRules)
     splitMode: Literal[
         "rules",
@@ -333,6 +386,12 @@ class ProtocolExploreRequest(RequestModel):
     # Live cohort counts remain available while strategy controls are incomplete.
     # Authoritative preview validates the full SplitSpec before assigning rows.
     split: dict[str, JsonValue] | None = Field(default=None, max_length=30)
+
+    @model_validator(mode="after")
+    def one_feature_source(self):
+        if self.featureBundleId and self.featureSetId:
+            raise ValueError("Choose a feature bundle as the protocol's feature source.")
+        return self
 
 
 class ProtocolPreviewRequest(RequestModel):

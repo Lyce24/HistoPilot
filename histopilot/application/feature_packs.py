@@ -34,7 +34,7 @@ from histopilot.workers.packing_process import (
     write_json,
 )
 
-ACTIVE = {"starting", "running", "cancelling"}
+ACTIVE = {"queued", "starting", "running", "cancelling"}
 JOB_ID = re.compile(r"^packing-[a-f0-9]{32}$")
 MAX_JSON = 64 * 1024 * 1024
 _UNREAD = object()
@@ -240,6 +240,14 @@ class FeaturePackService:
         def finding(code, message, severity="error"):
             findings.append({"severity": severity, "code": code, "message": message})
 
+        if (
+            manifest.get("spec", {}).get("featureKind", "patch") == "slide"
+            and spec.action != "validate"
+        ):
+            finding(
+                "SLIDE_PACKING_UNSUPPORTED",
+                "Slide embeddings are read directly. Validate their contents without creating or attaching a patch pack.",
+            )
         dimensions = {item["dimensions"] for item in files}
         dtypes = {item["dtype"] for item in files}
         if not files or len(dimensions) != 1 or len(dtypes) != 1:
@@ -644,6 +652,13 @@ class FeaturePackService:
                 job["error"] = f"Cannot inspect worker status: {error}"
         from histopilot.workers.training_process import read_progress
 
+        if job["state"] in {"starting", "running"} and (folder / "resources.json").exists():
+            reservation = json.loads(ScientificStore._read_file(folder / "resources.json", 65536))
+            job["resourceReservation"] = reservation
+            if reservation.get("status") == "queued":
+                job["state"] = "queued"
+                job["waitingReason"] = reservation.get("waitingReason")
+
         job["progress"], warning = read_progress(folder / "progress.json")
         if warning:
             job["progressWarning"] = warning
@@ -744,13 +759,13 @@ class FeaturePackService:
                 (
                     self.get(record["id"])
                     for record in self._jobs()
-                    if states.get(f"packing:{record['id']}", {}).get("state") != "trashed"
+                    if record.get("featureSetId") == feature_id
+                    and states.get(f"packing:{record['id']}", {}).get("state") != "trashed"
                 ),
                 key=lambda item: item["createdAt"],
                 reverse=True,
             )
-            if job["featureSetId"] == feature_id
-            and job["state"] == "succeeded"
+            if job["state"] == "succeeded"
             and job.get("result", {}).get("validation", {}).get("tensorValidationComplete")
         ]
         if not successful:

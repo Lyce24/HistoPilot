@@ -12,6 +12,7 @@ import type {
   TableSource,
 } from '../api/scientific';
 import { Badge, ErrorNotice, Icon } from './ui';
+import { StageContinueButton } from './StageActions';
 import ServerFolderPicker from './ServerFolderPicker';
 import { datasetVersionLabel } from '../lib/versionLabels';
 import { readTableUpload, UploadReadState } from '../lib/datasetImport';
@@ -90,16 +91,20 @@ export function DatasetSelect({
   onChange,
   disabled = false,
   allowEmpty = false,
+  emptyLabel,
+  label = 'Dataset version',
 }: {
   versions: DatasetVersion[];
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
   allowEmpty?: boolean;
+  emptyLabel?: string;
+  label?: string;
 }) {
   return (
     <label className="label">
-      Dataset version
+      {label}
       <select
         className="field"
         value={value}
@@ -109,7 +114,7 @@ export function DatasetSelect({
         {value && !versions.some((version) => version.id === value) ? <option value={value} disabled>Selected dataset unavailable — choose a frozen dataset</option> : null}
         {allowEmpty || !value ? (
           <option value="">
-            {versions.length ? 'Choose a frozen dataset' : 'No frozen datasets yet'}
+            {emptyLabel ?? (versions.length ? 'Choose a frozen dataset' : 'No frozen datasets yet')}
           </option>
         ) : null}
         {versions.map((version) => (
@@ -312,14 +317,14 @@ export function SourceFields({
           </div>
           {ready ? (
             onContinue ? (
-              <button
-                type="button"
-                className="btn btn-secondary btn-small"
+              <StageContinueButton
+                tone="secondary"
+                size="small"
                 disabled={busy}
                 onClick={onContinue}
               >
-                Continue to column mapping <Icon name="arrow" size={15} />
-              </button>
+                Continue to column mapping
+              </StageContinueButton>
             ) : (
               <p>Ready for column mapping.</p>
             )

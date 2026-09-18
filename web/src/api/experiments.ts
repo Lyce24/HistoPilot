@@ -19,14 +19,14 @@ export interface ExperimentPredictorItem {
   source: { experimentId: string; batchId: string; candidateId: string; trainingSeed: number; splitSeed: number };
   method: PredictorMethod; configurationNumber: number; foldCount: number; runIds: string[];
   refitPercentile?: number | null;
-  status: 'waiting' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'waiting' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped';
   recordId: string | null; predictorId: string | null;
   epochBudget: PredictorManifest['epochBudget'] | null; execution: ComputeExecution | null;
   error: { code: string; message: string } | null;
 }
 export interface ExperimentPredictorExecution {
   status: 'queued' | 'waiting' | 'running' | 'cancelling' | 'completed' | 'cancelled' | 'attention' | 'interrupted';
-  counts: { total: number; ensemble: number; refit: number; completed: number; waiting: number; active: number; failed: number; cancelled: number };
+  counts: { total: number; ensemble: number; refit: number; completed: number; waiting: number; active: number; failed: number; cancelled: number; skipped?: number };
   items?: ExperimentPredictorItem[];
   error: { code: string; message: string } | null; updatedAt: string | null; sessionName: string | null; logPath: string | null;
   retryable: boolean; cancellable: boolean;

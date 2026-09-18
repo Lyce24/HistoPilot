@@ -1,5 +1,6 @@
 import { request } from './client';
 import type { Finding } from './scientific';
+import type { SlideListSource } from './slideLists';
 
 export interface TridentOption {
   name: string;
@@ -40,7 +41,11 @@ export interface TridentCatalog {
   runtime?: TridentRuntime;
 }
 export interface ExtractionSpec {
-  datasetId: string;
+  /** Null runs against a slide folder alone; a dataset narrows whatever the source selected. */
+  datasetId: string | null;
+  slideRoot?: string | null;
+  slideList?: SlideListSource | null;
+  recursive?: boolean;
   outputPath: string;
   options: Record<string, unknown>;
 }
@@ -56,17 +61,34 @@ export interface TridentOutputLayout {
   featurePattern: string;
   featureKind: 'patch' | 'slide';
 }
+export interface SlideListSummary {
+  source: 'list' | 'folder' | 'dataset';
+  listPath: string | null;
+  filename?: string;
+  sha256: string | null;
+  root: string;
+  initialCount: number;
+  selectedCount: number;
+  declaresMpp: boolean;
+  datasetFiltered: boolean;
+  outsideCount: number;
+  outsideExamples: string[];
+  unlistedCount: number;
+  unlistedExamples: string[];
+}
 export interface ExtractionPreview {
   spec: ExtractionSpec;
   previewHash: string;
   canRun: boolean;
   findings: Finding[];
   slideCount: number;
+  slideList?: SlideListSummary | null;
   outputLayout: TridentOutputLayout;
   runtime: TridentRuntime;
   command: string[] | string;
 }
 export type ExtractionState =
+  | 'queued'
   | 'starting'
   | 'running'
   | 'cancelling'
@@ -161,4 +183,4 @@ export function normalizeTridentOptions(
 }
 
 export const extractionActive = (job: ExtractionJob | undefined) =>
-  job?.state === 'starting' || job?.state === 'running' || job?.state === 'cancelling';
+  job?.state === 'queued' || job?.state === 'starting' || job?.state === 'running' || job?.state === 'cancelling';

@@ -21,10 +21,10 @@
 }
 .protocol-workspace .protocol-route-card:hover {
   background: var(--theme-canvas);
-  border-color: var(--brand-red);
+  border-color: var(--brand-primary);
 }
-.protocol-workspace .protocol-route-card[aria-current='step'] { background: var(--theme-accent-soft); border-color: var(--brand-red); box-shadow: inset 0 -3px var(--brand-red); }
-.protocol-workspace .protocol-route-card[aria-current='step'] .protocol-route-number { background: var(--brand-red); color: #fff; }
+.protocol-workspace .protocol-route-card[aria-current='step'] { background: var(--theme-accent-soft); border-color: var(--brand-primary); box-shadow: inset 0 -3px var(--brand-primary); }
+.protocol-workspace .protocol-route-card[aria-current='step'] .protocol-route-number { background: var(--brand-primary); color: #fff; }
 .protocol-workspace .protocol-route-card:disabled { opacity: .6; cursor: wait; }
 .protocol-workspace .protocol-section[hidden] { display: none; }
 .protocol-review-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 24px; margin: 0 0 20px; }
@@ -33,7 +33,7 @@
 @media (max-width: 560px) { .protocol-review-facts { grid-template-columns: minmax(0, 1fr); } }
 .protocol-workspace .protocol-route-card:focus-visible,
 .protocol-workspace .protocol-section:focus-visible {
-  outline: 2px solid var(--brand-red);
+  outline: 2px solid var(--brand-primary);
   outline-offset: 4px;
 }
 .protocol-workspace .protocol-route-number {
@@ -42,7 +42,7 @@
   flex: 0 0 30px;
   height: 30px;
   background: var(--theme-accent-soft);
-  color: var(--brand-red);
+  color: var(--brand-primary);
   border-radius: 9px;
   font-size: 11px;
   font-weight: 700;
@@ -66,7 +66,7 @@
 .protocol-workspace .protocol-route-card > svg {
   flex-shrink: 0;
   margin: 5px 0 0 auto;
-  color: var(--brand-red);
+  color: var(--brand-primary);
 }
 .protocol-workspace .protocol-section {
   min-width: 0;
@@ -101,7 +101,7 @@
 }
 .protocol-workspace .protocol-constraints-heading > svg {
   margin-top: 4px;
-  color: var(--brand-brown);
+  color: var(--theme-ink);
 }
 .protocol-workspace .protocol-constraints-heading h3 {
   margin: 0;
@@ -189,3 +189,8 @@
     flex-direction: column;
   }
 }
+
+.protocol-bundle-source { display: grid; gap: 12px; min-width: 0; }
+.protocol-bundle-source > p { margin: 0; }
+.protocol-bundle-source .science-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 560px) { .protocol-bundle-source .science-metrics { grid-template-columns: minmax(0, 1fr); } }

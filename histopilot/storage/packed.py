@@ -254,20 +254,32 @@ def _dataset(handle, key):
     return dataset
 
 
-def _configuration(configuration):
+def _configuration(configuration, *, allow_slide=False):
     try:
         manifest = configuration["manifest"]
         entries = manifest["files"]
         if manifest.get("kind") != "feature" or not entries:
             raise PackedStoreError("Select a saved feature version with at least one slide.")
-        if manifest.get("featureKind", "patch") != "patch":
-            raise PackedStoreError("Packing v1 supports patch features only, not pooled slides.")
+        # Generic validation also accepts slide vectors. Materialization remains
+        # patch-only; its coordinate-bearing format cannot represent slide vectors.
+        kind = manifest.get("spec", {}).get("featureKind", "patch")
+        if kind not in {"patch", "slide"} or manifest.get("featureKind", kind) != kind:
+            raise PackedStoreError("The saved feature inventory has inconsistent feature kinds.")
+        if kind != "patch" and not allow_slide:
+            raise PackedStoreError(
+                "Packing v1 supports patch features only. A slide encoder writes one "
+                "embedding per slide, which is already small enough to read directly."
+            )
         ids = [entry["slideId"] for entry in entries]
         if any(not isinstance(item, str) or not item for item in ids) or len(ids) != len(set(ids)):
             raise PackedStoreError("The saved feature inventory has empty or duplicate slide IDs.")
         for entry in entries:
             if not Path(entry["path"]).is_absolute():
                 raise PackedStoreError("Saved feature paths must be absolute.")
+            if entry.get("featureKind", kind) != kind:
+                raise PackedStoreError(
+                    "The saved feature inventory has inconsistent feature kinds."
+                )
         return manifest, sorted(entries, key=lambda item: item["slideId"])
     except (KeyError, TypeError) as error:
         raise PackedStoreError("The saved feature configuration is incomplete.") from error
@@ -295,10 +307,17 @@ def _scan(
     *,
     dtype=None,
     outputs=None,
+    cast_dtype=None,
     progress=None,
     cancelled=None,
     chunk_bytes=CHUNK_BYTES,
 ):
+    """``cast_dtype`` additionally digests each source tensor at that precision.
+
+    An existing pack may store a faithful reduced-precision copy of float32 sources. Comparing
+    it needs the digest the source would have had at the pack's precision; the native digest
+    stays authoritative for same-precision packs and for source identity.
+    """
     if not isinstance(chunk_bytes, int) or chunk_bytes <= 0:
         raise PackedStoreError("chunk_bytes must be a positive integer.")
     manifest, entries = _configuration(configuration)
@@ -384,6 +403,7 @@ def _scan(
             ):
                 raise PackedStoreError("Packing v1 supports patch features only.")
             feature_hash, coord_hash = hashlib.sha256(), hashlib.sha256()
+            cast_hash = hashlib.sha256() if cast_dtype is not None else None
             rows = max(1, chunk_bytes // max(dim * features.dtype.itemsize * 4 + 64, 1))
             for start in range(0, count, rows):
                 _cancel(cancelled)
@@ -400,6 +420,11 @@ def _scan(
                 feature_hash.update(
                     np.ascontiguousarray(block, dtype=features.dtype.newbyteorder("<")).tobytes()
                 )
+                if cast_hash is not None:
+                    reduced = np.dtype(cast_dtype).newbyteorder("<")
+                    if np.any(np.abs(block) > np.finfo(reduced).max):
+                        raise PackedStoreError(f"{slide}: feature values overflow {cast_dtype}.")
+                    cast_hash.update(np.ascontiguousarray(block, dtype=reduced).tobytes())
                 coord_hash.update(np.ascontiguousarray(coordinates, dtype="<u8").tobytes())
                 if outputs is not None:
                     target = np.dtype(output_dtype).newbyteorder("<")
@@ -449,6 +474,11 @@ def _scan(
                 "attributes": attrs,
                 "featureTensorSha256": feature_hash.hexdigest(),
                 "coordinateTensorSha256": coord_hash.hexdigest(),
+                **(
+                    {"featureTensorCastSha256": cast_hash.hexdigest()}
+                    if cast_hash is not None
+                    else {}
+                ),
             }
             reports.append(report)
             semantic_slides.append(
@@ -537,14 +567,200 @@ def _check_sources(report):
             raise PackedStoreError(f"Feature source changed during validation: {path}") from error
 
 
+def _scan_slide_features(configuration, *, progress=None, cancelled=None, chunk_bytes=CHUNK_BYTES):
+    """Validate one vector per slide without inventing coordinates or packing it.
+
+    Both accepted container shapes identify the same tensor. Read columns in
+    bounded chunks, and hash complete pinned containers separately from tensor
+    identity, just as patch validation does.
+    """
+    if not isinstance(chunk_bytes, int) or chunk_bytes <= 0:
+        raise PackedStoreError("chunk_bytes must be a positive integer.")
+    manifest, entries = _configuration(configuration, allow_slide=True)
+    reports, semantic_slides, provenance, observed = [], [], [], {}
+    seen_inodes, source_stamps = set(), {}
+    dimensions, source_dtype = None, None
+    encoder = manifest.get("layout", {}).get("encoderId")
+    if encoder:
+        _conflicts({"features": {"encoder": encoder}}, observed)
+    for index, entry in enumerate(entries):
+        _cancel(cancelled)
+        slide, path = entry["slideId"], Path(entry["path"])
+        if entry.get("coordinatePath") or entry.get("coordinateFile"):
+            raise PackedStoreError(f"{slide}: slide embeddings cannot declare patch coordinates.")
+        with _source(path, entry) as (stream, stamp):
+            identity = stamp["deviceId"], stamp["inode"]
+            if identity in seen_inodes:
+                raise PackedStoreError("Different slide IDs reference the same feature file.")
+            seen_inodes.add(identity)
+            with _h5py().File(stream, "r") as handle:
+                features = _dataset(handle, "features")
+                shape = features.shape
+                if (
+                    len(shape) not in {1, 2}
+                    or not all(shape)
+                    or (len(shape) == 2 and shape[0] != 1)
+                    or features.dtype.kind != "f"
+                ):
+                    raise PackedStoreError(
+                        f"{slide}: a slide embedding must be one nonempty floating-point vector."
+                    )
+                dim, current_dtype = shape[-1], features.dtype.name
+                if (
+                    entry["patchCount"] != 1
+                    or dim != entry["dimensions"]
+                    or np.dtype(entry["dtype"]) != features.dtype
+                ):
+                    raise PackedStoreError(f"{slide}: feature header changed since it was saved.")
+                if dimensions is not None and (dim != dimensions or current_dtype != source_dtype):
+                    raise PackedStoreError(
+                        "Selected features have inconsistent dimensions or dtypes."
+                    )
+                dimensions, source_dtype = dim, current_dtype
+                attrs = {
+                    "file": _attributes(handle),
+                    "features": _attributes(features),
+                    "coords": {},
+                }
+                if "attributes" in entry and entry["attributes"] != attrs:
+                    raise PackedStoreError(
+                        f"{slide}: feature attributes changed since being saved."
+                    )
+                if attrs["features"].get("name", slide) != slide:
+                    raise PackedStoreError(f"{slide}: stored slide name does not match its ID.")
+                for category in ("file", "features"):
+                    for key in ("feature_kind", "featureKind"):
+                        if attrs[category].get(key, "slide") != "slide":
+                            raise PackedStoreError(
+                                f"{slide}: feature metadata is not a slide embedding."
+                            )
+                _conflicts(attrs, observed)
+                feature_hash = hashlib.sha256()
+                columns = max(1, chunk_bytes // max(features.dtype.itemsize * 4, 1))
+                for start in range(0, dim, columns):
+                    _cancel(cancelled)
+                    end = min(dim, start + columns)
+                    block = features[start:end] if len(shape) == 1 else features[0, start:end]
+                    if not np.isfinite(block).all():
+                        raise PackedStoreError(f"{slide}: features contain NaN or infinity.")
+                    feature_hash.update(
+                        np.ascontiguousarray(
+                            block, dtype=features.dtype.newbyteorder("<")
+                        ).tobytes()
+                    )
+                _progress(progress, "validating", index + 1, len(entries), slide, unit="slides")
+            _progress(progress, "checksumming", index + 1, len(entries), slide, unit="slides")
+            checksum = _stream_hash(stream, cancelled, chunk_bytes)
+            source_stamps[str(path)] = stamp
+            semantic = {
+                "slideId": slide,
+                "patchCount": 1,
+                "dimensions": dim,
+                "dtype": current_dtype,
+                "attributes": {key: _semantic(value) for key, value in attrs.items()},
+                "coordinateSpace": "slide",
+                "featureTensorSha256": feature_hash.hexdigest(),
+            }
+            semantic_slides.append(semantic)
+            reports.append(
+                {
+                    **semantic,
+                    "attributes": attrs,
+                    "path": str(path),
+                    **stamp,
+                    "sha256": checksum,
+                    "featureKind": "slide",
+                }
+            )
+    for item in manifest.get("provenance", []):
+        _cancel(cancelled)
+        path = Path(item["path"])
+        with _source(path, item) as (stream, stamp):
+            if stamp["sizeBytes"] > MAX_METADATA_BYTES:
+                raise PackedStoreError("Source provenance exceeds the metadata limit.")
+            raw = stream.read(MAX_METADATA_BYTES + 1)
+            checksum = hashlib.sha256(raw).hexdigest()
+            if checksum != item.get("sha256"):
+                raise PackedStoreError(f"Recorded source provenance changed: {path}")
+            data = json.loads(raw)
+            if "configuration" in item and data != item["configuration"]:
+                raise PackedStoreError(f"Recorded source provenance changed: {path}")
+            provenance.append(
+                {"path": str(path), **stamp, "sha256": checksum, "configuration": data}
+            )
+            source_stamps[str(path)] = stamp
+    semantic = {
+        "schemaVersion": 1,
+        "featureKind": "slide",
+        "slides": semantic_slides,
+        "encoderId": encoder,
+        "provenance": sorted(
+            (_semantic(item["configuration"]) for item in provenance), key=_json_bytes
+        ),
+    }
+    report = {
+        "schemaVersion": 1,
+        "valid": True,
+        "featureSetId": configuration.get("id"),
+        "sourceBindingHash": configuration.get("contentHash"),
+        "sourceContentHash": _digest(semantic),
+        "semanticIdentity": semantic,
+        "featureKind": "slide",
+        "tensorValidationComplete": True,
+        "provenanceComplete": False,
+        "provenanceStatus": "Recorded metadata; encoder checkpoint is not authenticated.",
+        "files": reports,
+        "provenance": provenance,
+        "slideCount": len(reports),
+        "totalPatches": len(reports),
+        "dimensions": dimensions,
+        "sourceDtype": source_dtype,
+        "coordinateDtypes": [],
+        "coordinateValidation": "not-applicable",
+        "validationScope": [
+            "exact-membership",
+            "full-source-checksums",
+            "finite-features",
+            "single-slide-vector",
+            "frozen-source-unchanged",
+        ],
+        "sourceStamps": source_stamps,
+    }
+    if manifest.get("sourceExtraction") is not None:
+        report["sourceExtraction"] = manifest["sourceExtraction"]
+    return report
+
+
 def validate_features(
-    configuration: dict, *, progress=None, cancelled=None, chunk_bytes=CHUNK_BYTES
+    configuration: dict,
+    *,
+    cast_dtype=None,
+    progress=None,
+    cancelled=None,
+    chunk_bytes=CHUNK_BYTES,
 ) -> dict:
     """Validate every selected row and checksum every source, without writing tensors."""
-    report, _, _ = _scan(
-        configuration, progress=progress, cancelled=cancelled, chunk_bytes=chunk_bytes
+    if configuration.get("manifest", {}).get("spec", {}).get("featureKind", "patch") == "slide":
+        if cast_dtype is not None:
+            raise PackedStoreError("Slide embeddings are validated at their native precision.")
+        report = _scan_slide_features(
+            configuration, progress=progress, cancelled=cancelled, chunk_bytes=chunk_bytes
+        )
+    else:
+        report, _, _ = _scan(
+            configuration,
+            cast_dtype=cast_dtype,
+            progress=progress,
+            cancelled=cancelled,
+            chunk_bytes=chunk_bytes,
+        )
+    _progress(
+        progress,
+        "complete",
+        report["totalPatches"],
+        report["totalPatches"],
+        unit="slides" if report["featureKind"] == "slide" else "patches",
     )
-    _progress(progress, "complete", report["totalPatches"], report["totalPatches"])
     _check_sources(report)
     _cancel(cancelled)
     return report

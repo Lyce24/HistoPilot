@@ -82,3 +82,5 @@ class ProjectSourceRequest(SourceRequest):
 
 class ProjectUpdateRequest(RequestModel):
     config: ProjectConfig
+    # Older API clients may omit this; the UI always sends its editor baseline.
+    expectedConfig: ProjectConfig | None = None

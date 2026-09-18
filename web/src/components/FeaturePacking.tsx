@@ -1,3 +1,4 @@
+import { StageBackButton, StageContinueButton } from './StageActions';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Configuration, FeaturePreview, FeatureSpec } from '../api/scientific';
@@ -13,6 +14,7 @@ import { StagePage, StageSteps } from './StageWorkflow';
 import './FeaturePacking.css';
 
 const stateLabel: Record<FeaturePackState, string> = {
+  queued: 'Waiting for resources',
   starting: 'Preparing', running: 'Running', cancelling: 'Stopping', succeeded: 'Complete',
   failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted',
 };
@@ -37,18 +39,18 @@ export function formatPackBytes(bytes: number | null | undefined): string {
   return `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${units[index]}`;
 }
 
-export function FeaturePackCoverage({ summary }: { summary: FeaturePreview['summary'] }) {
+export function FeaturePackCoverage({ summary, slideFeatures = false }: { summary: FeaturePreview['summary']; slideFeatures?: boolean }) {
   return summary.missingSlides > 0 ? (
     <p className="feature-pack-notice" role="note">
       <Icon name="info" size={18} />
       <span>This version contains {summary.matchedSlides.toLocaleString()} of {summary.slideCount.toLocaleString()} dataset slides.
-        Validation and packing cover these attached slides only; {summary.missingSlides.toLocaleString()} {summary.missingSlides === 1 ? 'slide still lacks' : 'slides still lack'} features.
+        {slideFeatures ? 'Validation covers' : 'Validation and packing cover'} these attached slides only; {summary.missingSlides.toLocaleString()} {summary.missingSlides === 1 ? 'slide still lacks' : 'slides still lack'} features.
         Attach the missing files and freeze a new version to expand coverage.</span>
     </p>
   ) : null;
 }
 
-export function FeatureValidationSummary({ report }: { report: FeatureValidationReport | null | undefined }) {
+export function FeatureValidationSummary({ report, slideFeatures = false }: { report: FeatureValidationReport | null | undefined; slideFeatures?: boolean }) {
   const valid = report?.valid && report.tensorValidationComplete && report.current !== false;
   return (
     <div className="feature-validation-summary" aria-label="Feature content validation">
@@ -56,10 +58,10 @@ export function FeatureValidationSummary({ report }: { report: FeatureValidation
         {valid ? 'Contents validated' : report?.current === false ? 'Source files changed' : report ? 'Validation needs attention' : 'Headers inspected only'}
       </Badge>
       <p>{valid
-        ? `${report.slideCount.toLocaleString()} slides and ${report.totalPatches.toLocaleString()} patches passed full tensor checks. Checksums identify the validated contents.`
+        ? `${report.slideCount.toLocaleString()} slides and ${report.totalPatches.toLocaleString()} ${slideFeatures ? 'slide embeddings' : 'patches'} passed full tensor checks. Checksums identify the validated contents.`
         : report?.current === false
           ? 'A source file changed since validation. Inspect the changed files and freeze a new version before reusing them.'
-          : 'The feature inventory records file references and headers. Validate every feature and coordinate array before freezing a bundle.'}</p>
+          : slideFeatures ? 'Validate every slide embedding before freezing a bundle. Slide embeddings have no patch coordinates.' : 'The feature inventory records file references and headers. Validate every feature and coordinate array before freezing a bundle.'}</p>
       {valid && !report.provenanceComplete ? <p className="muted">Tensor checks passed; encoder or checkpoint provenance remains incomplete. Review the source metadata before comparing models.</p> : null}
       {report?.validatedAt ? <small className="muted">Last check: {new Date(report.validatedAt).toLocaleString()}</small> : null}
       {report?.findings?.length ? <Findings findings={report.findings} /> : null}
@@ -69,7 +71,7 @@ export function FeatureValidationSummary({ report }: { report: FeatureValidation
 
 export function FeaturePackProgress({ job }: { job: FeaturePackJob }) {
   const progress = job.progress;
-  const working = job.state === 'starting' || job.state === 'running';
+  const working = job.state === 'queued' || job.state === 'starting' || job.state === 'running';
   const succeeded = job.state === 'succeeded';
   const percent = progress?.percent !== null && progress?.percent !== undefined && Number.isFinite(progress.percent)
     ? Math.max(0, Math.min(100, progress.percent)) : null;
@@ -116,7 +118,7 @@ export function ExistingPackComparison({ preview }: { preview: FeaturePackPrevie
     ['Slides', preview.slideCount.toLocaleString(), pack.slideCount.toLocaleString()],
     ['Patch rows', preview.patchCount.toLocaleString(), pack.totalPatches.toLocaleString()],
     ['Feature dimensions', String(preview.dimensions ?? 'Unknown'), String(pack.dimensions)],
-    ['Feature dtype', dtypeLabel(preview.sourceDtype), pack.outputDtype],
+    ['Feature dtype', dtypeLabel(preview.sourceDtype), pack.precision === 'reduced' ? `${pack.outputDtype} · reduced precision` : pack.outputDtype],
     ['Feature payload', formatPackBytes(pack.expectedFeatureBytes), formatPackBytes(pack.featureBytes)],
     ['Coordinate payload', formatPackBytes(pack.expectedCoordinateBytes), formatPackBytes(pack.coordinateBytes)],
   ];
@@ -126,6 +128,7 @@ export function ExistingPackComparison({ preview }: { preview: FeaturePackPrevie
     <p className="muted">Pack folder: {formatPackBytes(pack.totalBytes)}. Source HDF5 files: {formatPackBytes(pack.sourceContainerBytes)}. HDF5 metadata and compression affect file size; dense payload sizes and per-slide patch counts are checked separately.</p>
     {pack.missingSlideCount || pack.extraSlideCount || pack.mismatchedSlideCount ? <p className="feature-pack-notice" role="alert">{pack.missingSlideCount.toLocaleString()} missing slides · {pack.extraSlideCount.toLocaleString()} extra slides · {pack.mismatchedSlideCount.toLocaleString()} slides with different patch counts. Choose a matching pack or create a new pack from this feature version.</p> : null}
     {pack.missingSlides.length || pack.extraSlides.length || pack.mismatchedSlides.length ? <details><summary>Slide mismatch examples</summary><p className="muted">Up to 20 examples per mismatch type.</p><ul>{pack.missingSlides.map((id) => <li key={`missing-${id}`}><code>{id}</code>: missing from the pack</li>)}{pack.extraSlides.map((id) => <li key={`extra-${id}`}><code>{id}</code>: absent from the feature version</li>)}{pack.mismatchedSlides.map((slide) => <li key={`count-${slide.slideId}`}><code>{slide.slideId}</code>: {slide.sourcePatches.toLocaleString()} source patches; {slide.packPatches.toLocaleString()} packed patches</li>)}</ul></details> : null}
+    {pack.precision === 'reduced' ? <p className="muted">This pack stores {dtypeLabel(preview.sourceDtype)} sources at {pack.outputDtype}. Verification compares every packed value with the source converted to {pack.outputDtype}, so rounding is accepted and any other difference is not.</p> : null}
     <p className="muted">Matching counts and sizes do not prove the values match. Verification reads all source features and packed arrays and compares every feature row and coordinate before this pack can be included in a bundle.</p>
   </div>;
 }
@@ -199,6 +202,7 @@ export default function FeaturePacking({ project, configuration, configurations,
 }) {
   const client = useQueryClient();
   const featureSetId = configuration.id;
+  const slideFeatures = (configuration.manifest.spec as FeatureSpec).featureKind === 'slide';
   const actionId = useId();
   const [chosenAction, setChosenAction] = useState<FeaturePackSpec['action'] | null>(null);
   const [dtype, setDtype] = useState<FeaturePackSpec['dtype']>('preserve');
@@ -243,7 +247,7 @@ export default function FeaturePacking({ project, configuration, configurations,
   }, [client, project, featureSetId, completionKey]);
   const artifacts = jobs.data?.artifacts.filter((artifact) => artifact.featureSetId === featureSetId) ?? [];
   const orderedArtifacts = [...artifacts].sort((left, right) => Number(selectedPackIds.includes(right.id)) - Number(selectedPackIds.includes(left.id)));
-  const action = chosenAction ?? (selectedPackIds.length ? 'attach' : 'validate');
+  const action = slideFeatures ? 'validate' : chosenAction ?? (selectedPackIds.length ? 'attach' : 'validate');
   const spec: FeaturePackSpec = {
     featureSetId, action, dtype: action === 'pack' ? dtype : 'preserve',
     outputPath: action === 'pack' ? outputPath.trim() || null : null,
@@ -300,11 +304,11 @@ export default function FeaturePacking({ project, configuration, configurations,
       <li><strong>Verify all contents</strong><span>Compare every feature value and coordinate against the original files.</span></li>
       <li><strong>Add to the bundle</strong><span>Include the verified pack before freezing the bundle.</span></li>
     </ol>
-    <button type="button" className="btn btn-secondary science-fit" disabled={previewDisabled || !existingPath.trim()} onClick={requestPreview}>{busy === 'preview' ? 'Checking structure…' : 'Check pack compatibility'} <Icon name="arrow" size={16} /></button>
+    <StageContinueButton type="button" tone="secondary" className="science-fit" disabled={previewDisabled || !existingPath.trim()} onClick={requestPreview}>{busy === 'preview' ? 'Checking structure…' : 'Check pack compatibility'} </StageContinueButton>
   </div>;
 
   return <section className="feature-packing stack" aria-label="Feature bundle preparation">
-    <div className="feature-pack-section-heading"><div><h3>Prepare the feature bundle</h3><p>Keep the features alone, include verified existing packs, or create a new pack for this bundle.</p></div><Badge>Optional packing</Badge></div>
+    <div className="feature-pack-section-heading"><div><h3>Prepare the feature bundle</h3><p>{slideFeatures ? 'Validate one embedding per slide. Packing is unavailable for slide embeddings.' : 'Keep the features alone, include verified existing packs, or create a new pack for this bundle.'}</p></div><Badge>{slideFeatures ? 'Slide embeddings' : 'Optional packing'}</Badge></div>
     <ErrorNotice error={error ?? jobs.error ?? validation.error} />
     <StageSteps label="Feature validation and packing steps" current={page} disabled={busy !== null} steps={[
       { id: 'settings', title: 'Contents & validation' },
@@ -313,15 +317,15 @@ export default function FeaturePacking({ project, configuration, configurations,
     ]} onChange={(step) => { if (step === 'settings' || step === 'activity' || step === 'review' && preview) setPage(step); }} />
     <StagePage pageKey={page}>
     {page === 'settings' ? <>
-    <FeaturePackCoverage summary={summary} />
+    <FeaturePackCoverage summary={summary} slideFeatures={slideFeatures} />
     <section className="feature-pack-bundle-summary" aria-label="Current bundle draft contents">
-      <div className="feature-pack-section-heading"><div><h4>Included in this draft</h4><p>{configurationVersionLabel(configuration)} · {summary.matchedSlides.toLocaleString()} slides · {summary.patchCount.toLocaleString()} patches</p></div><Badge>{selectedPackIds.length ? `Features + ${selectedPackIds.length} ${selectedPackIds.length === 1 ? 'pack' : 'packs'}` : 'Features only'}</Badge></div>
+      <div className="feature-pack-section-heading"><div><h4>Included in this draft</h4><p>{configurationVersionLabel(configuration)} · {summary.matchedSlides.toLocaleString()} slides · {summary.patchCount.toLocaleString()} {slideFeatures ? 'slide embeddings' : 'patches'}</p></div><Badge>{selectedPackIds.length ? `Features + ${selectedPackIds.length} ${selectedPackIds.length === 1 ? 'pack' : 'packs'}` : 'Features only'}</Badge></div>
       {selectedPackIds.length ? <ul className="feature-pack-included-list">{selectedPackIds.map((id) => {
         const artifact = artifacts.find((item) => item.id === id);
         const current = artifact && canIncludeFeaturePack(artifact);
         return <li key={id}><div><span className="mono">{artifact?.outputPath ?? id}</span><Badge tone={current ? 'green' : jobs.data ? 'orange' : 'neutral'}>{current ? `${artifact.outputDtype} · verified` : jobs.data ? 'Needs verification' : 'Checking pack'}</Badge></div><button type="button" className="btn btn-secondary btn-small" disabled={busy !== null} aria-label={`Remove ${artifact?.outputPath ?? id} from bundle`} onClick={() => onSelectedPackIdsChange(selectedPackIds.filter((item) => item !== id))}>Remove</button></li>;
       })}</ul> : <p className="muted">This draft contains the original feature files without a pack. Full feature validation is required before freezing.</p>}
-      <p className="muted">Freezing records these exact feature and pack identities. You can include multiple verified packs.</p>
+      <p className="muted">{slideFeatures ? 'Freezing records these exact slide embedding identities. Remove any retained pack selection before continuing.' : 'Freezing records these exact feature and pack identities. You can include multiple verified packs.'}</p>
     </section>
 
     <fieldset className="science-fieldset stack" disabled={busy !== null}>
@@ -330,19 +334,19 @@ export default function FeaturePacking({ project, configuration, configurations,
         <button type="button" className={`feature-pack-action ${action === 'validate' ? 'is-selected' : ''}`} aria-pressed={action === 'validate'} aria-controls={actionId} onClick={() => edit(() => { setChosenAction('validate'); onSelectedPackIdsChange([]); })}>
           <Icon name="dataset" size={22} /><span><strong>Features only — skip packing</strong><small>Validate features and freeze without a pack</small></span>
         </button>
-        <button type="button" className={`feature-pack-action ${action === 'attach' ? 'is-selected' : ''}`} aria-pressed={action === 'attach'} aria-controls={actionId} onClick={() => edit(() => setChosenAction('attach'))}>
+        {!slideFeatures ? <><button type="button" className={`feature-pack-action ${action === 'attach' ? 'is-selected' : ''}`} aria-pressed={action === 'attach'} aria-controls={actionId} onClick={() => edit(() => setChosenAction('attach'))}>
           <Icon name="folder" size={22} /><span><strong>Features + existing pack</strong><small>{artifacts.length ? `${artifacts.length} connected ${artifacts.length === 1 ? 'pack' : 'packs'}, or choose another folder` : 'Reuse a verified pack or connect a folder'}</small></span>
         </button>
         <button type="button" className={`feature-pack-action ${action === 'pack' ? 'is-selected' : ''}`} aria-pressed={action === 'pack'} aria-controls={actionId} onClick={() => edit(() => setChosenAction('pack'))}>
           <Icon name="features" size={22} /><span><strong>Features + new pack</strong><small>Choose a destination, then build and verify</small></span>
-        </button>
+        </button></> : null}
       </div>
       <div id={actionId} className="feature-pack-options stack">
         {action === 'validate' ? <>
-          <div className="feature-pack-section-heading"><div><h4>Validate features before freezing</h4><p>Full validation reads every feature and coordinate array and records source checksums. Creating or verifying a pack includes the same source checks.</p></div>
+          <div className="feature-pack-section-heading"><div><h4>Validate features before freezing</h4><p>{slideFeatures ? 'Full validation reads every slide embedding and records source checksums. No patch coordinates are required.' : 'Full validation reads every feature and coordinate array and records source checksums. Creating or verifying a pack includes the same source checks.'}</p></div>
           </div>
-          {validation.isPending ? <p className="muted" role="status">Checking saved validation…</p> : <FeatureValidationSummary report={validation.data} />}
-          <button type="button" className="btn btn-secondary science-fit" disabled={previewDisabled} onClick={requestPreview}>{busy === 'preview' ? 'Reviewing…' : 'Validate feature contents'} <Icon name="arrow" size={16} /></button>
+          {validation.isPending ? <p className="muted" role="status">Checking saved validation…</p> : <FeatureValidationSummary report={validation.data} slideFeatures={slideFeatures} />}
+          <StageContinueButton type="button" tone="secondary" className="science-fit" disabled={previewDisabled} onClick={requestPreview}>{busy === 'preview' ? 'Reviewing…' : slideFeatures ? 'Validate slide embeddings' : 'Validate feature contents'} </StageContinueButton>
         </> : action === 'attach' ? <>
           {artifacts.length ? <section className="feature-pack-artifacts stack" aria-label="Packs for this feature version"><div><h4>Packs verified for these features</h4><p className="muted">Add one or more current verified packs to this bundle, or connect another folder below.</p></div>
             {orderedArtifacts.slice(0, 3).map((artifact) => <SavedPackChoice key={artifact.id} artifact={artifact} included={selectedPackIds.includes(artifact.id)} busy={busy !== null} onToggle={() => togglePack(artifact)} />)}
@@ -358,7 +362,7 @@ export default function FeaturePacking({ project, configuration, configurations,
           <p className="feature-pack-precision"><Badge tone={dtype === 'preserve' ? 'neutral' : 'orange'}>{dtype === 'preserve' ? 'Source precision preserved' : 'Lossy float16 conversion'}</Badge><span>{dtype === 'preserve' ? 'Feature values keep their original dtype.' : 'Float16 rounding changes higher precision feature values.'}</span></p>
           <details className="feature-pack-advanced"><summary>Advanced: feature precision</summary><label className="label">Feature precision<select className="field" value={dtype} onChange={(event) => edit(() => setDtype(event.target.value as FeaturePackSpec['dtype']))}><option value="preserve">Preserve source precision (recommended)</option><option value="float16">Convert to float16 (smaller, lossy)</option></select><small>Overflow fails validation. Original feature files remain in place.</small></label></details>
           <PackFolderExamples />
-          <button type="button" className="btn btn-secondary science-fit" disabled={previewDisabled} onClick={requestPreview}>{busy === 'preview' ? 'Reviewing…' : 'Review pack creation'} <Icon name="arrow" size={16} /></button>
+          <StageContinueButton type="button" tone="secondary" className="science-fit" disabled={previewDisabled} onClick={requestPreview}>{busy === 'preview' ? 'Reviewing…' : 'Review pack creation'} </StageContinueButton>
         </>}
         {activeJobs.length ? <p className="muted" role="status">A job is already processing this version. Open Runs &amp; results to follow its progress before starting another.</p> : null}
       </div>
@@ -366,27 +370,27 @@ export default function FeaturePacking({ project, configuration, configurations,
 
     </> : null}
     {page === 'review' && preview ? <section className="feature-pack-review stack" aria-label="Feature job review">
-      <button type="button" className="btn btn-secondary science-fit" disabled={busy !== null} onClick={() => setPage('settings')}>← Back to pack settings</button>
+      <StageBackButton type="button" className="science-fit" disabled={busy !== null} onClick={() => setPage('settings')}>Back to pack settings</StageBackButton>
       <div className="feature-pack-section-heading"><div><h4>{action === 'pack' ? 'Review destination and build' : action === 'attach' ? 'Check complete · review the comparison' : 'Review content validation'}</h4><p>{configurationVersionLabel(configuration)} · Encoder: {configuration.manifest.layout?.encoderId || (configuration.manifest.spec as FeatureSpec).encoderId || 'Unspecified'}</p></div><Badge tone={preview.canRun ? 'green' : 'orange'}>{preview.canRun ? action === 'attach' ? 'Ready for full verification' : 'Ready to start' : 'Resolve findings'}</Badge></div>
       {action === 'attach' ? <ExistingPackComparison preview={preview} /> : <div className="science-metrics feature-pack-metrics">
         <Metric label="Attached slides" value={preview.slideCount.toLocaleString()} note={`${summary.slideCount.toLocaleString()} in the dataset`} />
-        <Metric label="Patches" value={preview.patchCount.toLocaleString()} note={`${preview.dimensions ?? 'Unknown'} dimensions`} />
+        <Metric label={slideFeatures ? 'Slide embeddings' : 'Patches'} value={preview.patchCount.toLocaleString()} note={`${preview.dimensions ?? 'Unknown'} dimensions`} />
         <Metric label="Precision" value={action === 'pack' ? dtypeLabel(preview.outputDtype) : dtypeLabel(preview.sourceDtype)} note={action === 'pack' ? `${dtypeLabel(preview.sourceDtype)} source${preview.spec.dtype === 'float16' && preview.sourceDtype !== preview.outputDtype ? ' · lossy conversion' : ' · preserved'}` : 'No conversion'} />
         {action === 'pack' ? <Metric label="Estimated pack size" value={formatPackBytes(preview.estimatedBytes)} note={`${formatPackBytes(preview.availableBytes)} available`} /> : null}
       </div>}
       {preview.outputPath && action === 'pack' ? <p className="feature-pack-output"><strong>Save pack to</strong><span className="mono">{preview.outputPath}</span></p> : null}
       {preview.existingPath && action === 'attach' ? <p className="feature-pack-output"><strong>Verify existing pack</strong><span className="mono">{preview.existingPath}</span></p> : null}
       <Findings findings={preview.findings} />
-      <div className="feature-pack-launch"><p>{action === 'attach' ? 'Structure checks are the first step. The next job reads every feature and coordinate before this pack can be added to the bundle.' : 'Runs on the server. You can leave this page and return to the saved result.'}</p><button type="button" className="btn btn-primary" disabled={busy !== null || !preview.canRun || activeJobs.length > 0} onClick={() => void run('start', async () => {
+      <div className="feature-pack-launch"><p>{action === 'attach' ? 'Structure checks are the first step. The next job reads every feature and coordinate before this pack can be added to the bundle.' : 'Runs on the server. You can leave this page and return to the saved result.'}</p><StageContinueButton type="button" disabled={busy !== null || !preview.canRun || activeJobs.length > 0} onClick={() => void run('start', async () => {
         if (!operationId.current) return;
         await recordJob(await packing.start(project, preview.spec, preview.previewHash, operationId.current));
         setReview(null); operationId.current = null;
         setPage('activity');
-      })}>{busy === 'start' ? 'Starting…' : action === 'pack' ? 'Build and verify pack' : action === 'attach' ? 'Verify all pack contents' : 'Start validation'} <Icon name="arrow" size={16} /></button></div>
+      })}>{busy === 'start' ? 'Starting…' : action === 'pack' ? 'Build and verify pack' : action === 'attach' ? 'Verify all pack contents' : 'Start validation'} </StageContinueButton></div>
     </section> : null}
 
     {page === 'activity' ? <div className="feature-pack-jobs stack">
-      <button type="button" className="btn btn-secondary science-fit" disabled={busy !== null} onClick={() => setPage('settings')}>← Back to bundle contents</button>
+      <StageBackButton type="button" className="science-fit" disabled={busy !== null} onClick={() => setPage('settings')}>Back to bundle contents</StageBackButton>
       {!versionJobs.length ? <p className="muted">No validation or packing jobs for this source yet. Choose bundle contents to review a job.</p> : null}
       {job && (featurePackActive(job) || job.spec.action === action) ? <section className="stack" aria-label="Current feature job"><ErrorNotice error={detail.error} /><FeaturePackProgress job={job} />
         {featurePackActive(job) ? <button type="button" className="btn btn-secondary science-fit" disabled={busy !== null || job.state === 'cancelling'} onClick={() => void run('cancel', async () => { await recordJob(await packing.cancel(project, job.id)); })}>{job.state === 'cancelling' || busy === 'cancel' ? 'Stopping…' : 'Cancel job'}</button> : null}

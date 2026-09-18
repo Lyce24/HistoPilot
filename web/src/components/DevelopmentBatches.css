@@ -1,5 +1,5 @@
 .development-tabs { display: flex; gap: .35rem; flex-wrap: wrap; margin-bottom: 1.25rem; border-bottom: 1px solid var(--line); padding-bottom: .75rem; }
-.development-tabs button[aria-selected="true"] { background: var(--accent-soft, var(--theme-accent-soft)); color: var(--accent-dark, var(--brand-red)); }
+.development-tabs button[aria-selected="true"] { background: var(--accent-soft, var(--theme-accent-soft)); color: var(--accent-dark, var(--brand-primary)); }
 .development-batches { display: grid; gap: 1.2rem; }
 .development-editor { border: 0; padding: 0; margin: 0 0 1rem; display: grid; gap: 1rem; min-width: 0; }
 .development-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: .85rem; }
@@ -9,8 +9,8 @@
 .development-bag-mode .label { margin-top: .25rem; }
 .development-bag-help { margin: 0; line-height: 1.5; }
 .development-bag-mode small { color: var(--text-muted, var(--theme-muted)); line-height: 1.5; }
-.development-field-error { color: var(--brand-red); line-height: 1.4; }
-.development-fields .field[aria-invalid="true"] { border-color: var(--brand-red); }
+.development-field-error { color: var(--brand-primary); line-height: 1.4; }
+.development-fields .field[aria-invalid="true"] { border-color: var(--brand-primary); }
 .development-recipe-row { border-bottom: 1px solid var(--line); padding-bottom: 1rem; display: grid; gap: .75rem; }
 .development-count { line-height: 1.7; }
 .development-table { position: relative; overflow-x: auto; max-width: 100%; margin: .75rem 0; }
@@ -18,12 +18,12 @@
 .development-table th, .development-table td { padding: .65rem .75rem; border-bottom: 1px solid var(--line); }
 .development-table th { font-weight: 600; white-space: nowrap; }
 .development-table td { white-space: normal; }
-.development-table progress { accent-color: var(--accent, var(--brand-red)); max-width: 100%; }
+.development-table progress { accent-color: var(--accent, var(--brand-primary)); max-width: 100%; }
 .development-saved-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; padding: .5rem 0; }
 .mil-protocol-summary { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }
 .development-execution { display: grid; gap: .9rem; margin-top: 1rem; }
 .development-run-counts { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.2rem; padding: 1rem; background: var(--theme-soft); border: 1px solid var(--line); border-radius: 10px; font-size: .85rem; font-variant-numeric: tabular-nums; }
-.development-run-counts > strong { color: var(--brand-brown); margin-right: auto; font-size: .95rem; }
+.development-run-counts > strong { color: var(--theme-ink); margin-right: auto; font-size: .95rem; }
 .development-run-counts > span { color: var(--muted); }
 .development-batch-selector { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px 18px; }
 .development-batch-selector > .label { flex: 1 1 340px; min-width: 0; }
@@ -31,7 +31,7 @@
 .experiment-execution-resources { display: grid; gap: 14px; min-width: 0; margin-top: 10px; padding-top: 24px; border-top: 1px solid var(--line); }
 .experiment-execution-resources > .run-resource-usage { margin-top: 0; padding-top: 0; border-top: 0; }
 .experiment-worker-details { min-width: 0; padding: 0 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--theme-surface); }
-.experiment-worker-details > summary { cursor: pointer; padding: 13px 0; color: var(--brand-brown); font-size: 13px; font-weight: 600; }
+.experiment-worker-details > summary { cursor: pointer; padding: 13px 0; color: var(--theme-ink); font-size: 13px; font-weight: 600; }
 .experiment-worker-details[open] { padding-bottom: 14px; }
 .experiment-worker-details p { font-size: 12px; }
 .experiment-worker-details .development-table { max-width: 100%; }
@@ -49,6 +49,11 @@
 .development-capacity { background: var(--accent-light, var(--theme-accent-soft)); border: 1px solid var(--line); border-radius: .6rem; padding: .85rem; }
 .development-capacity p { margin: .35rem 0; line-height: 1.5; }
 .development-capacity small { color: var(--muted); }
+.runtime-recommendation { margin-bottom: 1rem; }
+.runtime-recommendation .batch-settings-summary { margin-top: .85rem; }
+.runtime-recommendation .setup-details { margin: .75rem 0; }
+.runtime-recommendation-findings { margin: .75rem 0; padding-left: 1.25rem; }
+.runtime-recommendation-findings li + li { margin-top: .4rem; }
 .development-architecture summary > span { font-weight: 400; font-size: .85em; }
 .batch-plan-list { display: grid; gap: .75rem; }
 .batch-plan-card { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .75rem; padding: 1rem; border: 1px solid var(--line); border-radius: .7rem; min-width: 0; }
@@ -131,3 +136,17 @@
 .batch-predictor-summary { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .7rem; margin-top: .6rem; font-size: .8rem; }
 .batch-predictor-summary > span { overflow-wrap: anywhere; }
 .batch-predictor-summary > span:not(.badge) { color: var(--muted); }
+.batch-recovery-notice strong { margin-right: .25rem; }
+.batch-stale-recovery p { margin: 0 0 .7rem; line-height: 1.6; }
+.batch-stale-recovery p:last-child { margin: .7rem 0 0; }
+.batch-page-review { display: grid; gap: .8rem; margin-bottom: 1rem; }
+.batch-page-review > h3, .batch-page-review > p { margin: 0; }
+.batch-review-checks { padding: 1rem; border: 1px solid var(--line); border-radius: .65rem; background: var(--theme-soft); }
+.batch-review-checks > h4 { margin: 0 0 .7rem; font-size: .95rem; }
+.batch-review-checks summary { cursor: pointer; font-size: .85rem; }
+.development-batches [aria-label="Batch configuration steps"] { margin: 0 0 .8rem; border-bottom: 1px solid var(--line); padding-bottom: .7rem; }
+.development-batches [aria-label="Batch configuration steps"] ol { gap: .35rem; }
+.development-batches [aria-label="Batch configuration steps"] .stage-step { padding: .55rem .65rem; min-height: 0; border-radius: .45rem; }
+.development-batches [aria-label="Batch configuration steps"] .stage-step-number { width: 1.45rem; height: 1.45rem; min-width: 1.45rem; font-size: .72rem; }
+.development-batches [aria-label="Batch configuration steps"] .stage-step-copy strong { font-size: .78rem; }
+.development-batches [aria-label="Batch configuration steps"] .stage-step-copy small { display: none; }

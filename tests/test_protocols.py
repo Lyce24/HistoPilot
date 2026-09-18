@@ -480,7 +480,7 @@ def test_infeasible_class_partition_counts_block_freeze():
     assert not result["canFreeze"]
 
 
-def test_feature_binding_requires_same_dataset_and_complete_cohort_coverage():
+def test_feature_binding_uses_slide_coverage_across_dataset_versions():
     store = MemoryStore()
     store.draft["payload"]["spec"]["featureSetId"] = "configuration-" + "f" * 64
     store.feature = {
@@ -495,7 +495,27 @@ def test_feature_binding_requires_same_dataset_and_complete_cohort_coverage():
     store.feature["manifest"]["files"].pop()
     assert "MISSING_FEATURE_COVERAGE" in codes(preview(store))
     store.feature["manifest"]["datasetId"] = "dataset-" + "b" * 64
-    assert "FEATURE_DATASET_MISMATCH" in codes(preview(store))
+    assert "FEATURE_DATASET_MISMATCH" not in codes(preview(store))
+    assert "MISSING_FEATURE_COVERAGE" in codes(preview(store))
+    # A store-scoped feature set names no dataset; coverage alone decides whether it binds.
+    store.feature["manifest"]["datasetId"] = None
+    assert "FEATURE_DATASET_MISMATCH" not in codes(preview(store))
+    assert "MISSING_FEATURE_COVERAGE" in codes(preview(store))
+    store.feature["manifest"]["files"] = [{"slideId": row["slideId"]} for row in store.rows] + [
+        {"slideId": "slide-outside-this-cohort"}
+    ]
+    assert preview(store)["canFreeze"]
+    # Eligibility that excludes rows narrows what must be covered, never what may exist:
+    # features for the excluded slides are neither required nor in the way.
+    primary = [row for row in store.rows if row["attributes"]["stage"] == "Primary"]
+    store.draft["payload"]["spec"]["eligibility"] = [
+        {"field": "stage", "op": "eq", "value": "Primary"}
+    ]
+    store.feature["manifest"]["files"] = [{"slideId": row["slideId"]} for row in primary] + [
+        {"slideId": "slide-outside-this-cohort"}
+    ]
+    assert 0 < len(primary) < len(store.rows)
+    assert preview(store)["canFreeze"]
 
 
 def test_unselected_pack_preserves_existing_protocol_preview_hash():
@@ -1047,3 +1067,106 @@ def test_generated_split_modes_leave_unfixed_live_cohort_for_generation():
     assert result["partitions"]["train"]["selection"] == "none"
     assert result["partitions"]["train"]["expanded"]["totalSlides"] == 0
     assert result["unassigned"]["totalSlides"] == 24
+
+
+def test_restricting_to_feature_coverage_defines_the_population_as_the_intersection():
+    """Development data can be the dataset's eligible slides that actually have features."""
+    store = MemoryStore()
+    covered = store.rows[: len(store.rows) - 4]
+    store.feature = {
+        "contentHash": "f" * 64,
+        "manifest": {
+            "kind": "feature",
+            "datasetId": None,
+            "files": [{"slideId": row["slideId"]} for row in covered]
+            + [{"slideId": "encoded-but-outside-this-dataset"}],
+        },
+    }
+    store.draft["payload"]["spec"]["featureSetId"] = "configuration-features"
+    # Requiring coverage blocks, because four eligible slides have no features.
+    assert "MISSING_FEATURE_COVERAGE" in codes(preview(store))
+    # Restricting instead makes the intersection the population.
+    store.draft["payload"]["spec"]["featureCoverage"] = "restrict"
+    reviewed = preview(store)
+    assert "MISSING_FEATURE_COVERAGE" not in codes(reviewed)
+    assert reviewed["canFreeze"], reviewed["findings"]
+    summary = reviewed["summary"]
+    assert summary["populationSource"] == "dataset_and_features"
+    assert summary["featureExclusions"] == 4
+    assert summary["eligibleSlides"] == len(covered)
+    assert summary["labelExclusions"].get("withoutFeatures") is None
+    assert any(item["code"] == "RESTRICTED_TO_FEATURE_COVERAGE" for item in reviewed["findings"])
+
+
+def test_restricting_to_a_feature_set_that_covers_nothing_is_refused():
+    store = MemoryStore()
+    store.feature = {
+        "contentHash": "f" * 64,
+        "manifest": {"kind": "feature", "datasetId": None, "files": [{"slideId": "elsewhere"}]},
+    }
+    store.draft["payload"]["spec"]["featureSetId"] = "configuration-features"
+    store.draft["payload"]["spec"]["featureCoverage"] = "restrict"
+    assert "NO_FEATURE_COVERAGE" in codes(preview(store))
+
+
+def test_restriction_requires_a_feature_version():
+    with pytest.raises(ValidationError):
+        ProtocolSpec.model_validate({**specification(), "featureCoverage": "restrict"})
+
+
+def test_live_counts_apply_the_same_feature_restriction_as_the_frozen_protocol():
+    """The number shown while choosing development data is the number that gets frozen."""
+    store = MemoryStore()
+    covered = store.rows[: len(store.rows) - 4]
+    store.feature = {
+        "contentHash": "f" * 64,
+        "manifest": {
+            "kind": "feature",
+            "datasetId": None,
+            "files": [{"slideId": row["slideId"]} for row in covered],
+        },
+    }
+    service = ProtocolService(store, None)
+    base = {
+        "datasetId": DATASET_ID,
+        "targetField": "label",
+        "eligibility": [],
+        "featureSetId": "configuration-features",
+    }
+    unrestricted = service.explore(ProtocolExploreRequest.model_validate(base))
+    restricted = service.explore(
+        ProtocolExploreRequest.model_validate({**base, "featureCoverage": "restrict"})
+    )
+    assert unrestricted["cohort"]["totalSlides"] == len(store.rows)
+    assert restricted["cohort"]["totalSlides"] == len(covered)
+    assert restricted["featureExclusions"] == 4
+    assert restricted["populationSource"] == "dataset_and_features"
+    # The restricted live count equals what the frozen protocol will include.
+    store.draft["payload"]["spec"]["featureSetId"] = "configuration-features"
+    store.draft["payload"]["spec"]["featureCoverage"] = "restrict"
+    assert preview(store)["summary"]["eligibleSlides"] == restricted["cohort"]["totalSlides"]
+
+
+def test_the_default_coverage_rule_leaves_every_existing_preview_hash_untouched():
+    """A protocol frozen before this field must still hash, freeze and retry identically."""
+    store = MemoryStore()
+    baseline = preview(store)["previewHash"]
+    store.draft["payload"]["spec"]["featureCoverage"] = "require"
+    assert preview(store)["previewHash"] == baseline
+    assert "featureCoverage" not in preview(store)["spec"]
+    assert "populationSource" not in preview(store)["summary"]
+    assert "featureExclusions" not in preview(store)["summary"]
+    # Restricting is a different protocol and must hash differently.
+    store.feature = {
+        "contentHash": "f" * 64,
+        "manifest": {
+            "kind": "feature",
+            "datasetId": None,
+            "files": [{"slideId": row["slideId"]} for row in store.rows],
+        },
+    }
+    store.draft["payload"]["spec"]["featureSetId"] = "configuration-features"
+    store.draft["payload"]["spec"]["featureCoverage"] = "restrict"
+    restricted = preview(store)
+    assert restricted["previewHash"] != baseline
+    assert restricted["spec"]["featureCoverage"] == "restrict"

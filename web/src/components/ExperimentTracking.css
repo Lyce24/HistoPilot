@@ -16,15 +16,15 @@
 .experiment-runs-table tbody th { background: transparent; text-transform: none; letter-spacing: normal; }
 .experiment-runs-table tbody tr:last-child > * { border-bottom: 0; }
 .experiment-runs-table tbody tr:hover { background: var(--theme-soft); }
-.experiment-runs-table tbody tr.is-selected { background: var(--theme-gold-soft); }
-.experiment-runs-table tbody tr.is-selected > th { box-shadow: inset 3px 0 var(--brand-yellow, #ffc72c); }
+.experiment-runs-table tbody tr.is-selected { background: var(--theme-next-soft); }
+.experiment-runs-table tbody tr.is-selected > th { box-shadow: inset 3px 0 var(--brand-accent, #00a58f); }
 .experiment-runs-table td > small { display: block; color: var(--muted); margin-top: .4rem; }
 .experiment-runs-table td { font-variant-numeric: tabular-nums; }
 .experiment-run-select { border: 0; padding: .35rem 0; background: transparent; color: var(--ink); font: inherit; font-weight: 600; text-align: left; cursor: pointer; min-width: 10rem; max-width: 22rem; line-height: 1.6; }
 .experiment-run-select:hover { color: var(--accent); }
-.experiment-run-select:focus-visible { outline: 2px solid var(--accent, var(--brand-red)); outline-offset: 4px; border-radius: 3px; }
+.experiment-run-select:focus-visible { outline: 2px solid var(--accent, var(--brand-primary)); outline-offset: 4px; border-radius: 3px; }
 .experiment-epoch { display: grid; gap: .35rem; min-width: 7.5rem; font-variant-numeric: tabular-nums; }
-.experiment-epoch progress { width: 100%; height: 6px; accent-color: var(--brand-brown); }
+.experiment-epoch progress { width: 100%; height: 6px; accent-color: var(--brand-primary); }
 .experiment-epoch small { color: var(--muted); }
 .experiment-run-detail { display: grid; gap: 1rem; padding: 1.1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--theme-surface, #fff); min-width: 0; }
 .experiment-run-detail > p { margin: 0; }

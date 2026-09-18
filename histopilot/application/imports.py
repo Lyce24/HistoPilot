@@ -18,7 +18,7 @@ import zipfile
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from xml.etree.ElementTree import ParseError
 
 from pydantic import ValidationError
@@ -431,6 +431,110 @@ class ImportService:
                 ) from error
         return sorted(inventory, key=lambda item: (item["slideId"], item["relativePath"]))
 
+    def _declared(self, spec: ImportSpec, primary: dict, findings: _Findings) -> list[dict]:
+        """Take each slide file from the table itself.
+
+        A source table that already names its files needs no folder scan: nothing is inferred
+        from a filename stem, so cohorts in separate subfolders resolve exactly, and superseded
+        or quarantined copies that repeat a stem elsewhere in the tree are never consulted.
+        """
+        root = self.filesystem.directory(spec.slideRoot) if spec.slideRoot else None
+        inventory, unresolved = [], 0
+        for row in primary["rows"]:
+            values = row["values"]
+            slide_id = self._value(values[spec.slideIdColumn], spec.missingValues)
+            if slide_id is None or not slide_id.strip():
+                continue  # Identity problems belong to the record loop, which reports them once.
+            declared = self._value(values[spec.slidePathColumn], spec.missingValues)
+            if declared is None or not declared.strip():
+                unresolved += 1
+                continue
+            if len(inventory) >= MAX_FILES:
+                raise _error(
+                    "The mapped slide paths exceed 10,000 files; import a smaller population.",
+                    "SCAN_LIMIT",
+                    413,
+                )
+            item = self._declared_file(declared, slide_id, root, row["row"], findings)
+            if item is not None:
+                inventory.append(item)
+        if unresolved:
+            findings.add(
+                "SLIDE_PATH_UNRESOLVED",
+                f"Rows have no value in {spec.slidePathColumn}; they carry no slide file.",
+                severity="warning",
+                count=unresolved,
+            )
+        return sorted(inventory, key=lambda item: (item["slideId"], item["relativePath"]))
+
+    def _declared_file(self, declared, slide_id, root, row, findings) -> dict | None:
+        value = declared.strip().replace("\\", "/")
+        relative = PurePosixPath(value)
+        if any(ord(character) < 32 for character in value) or ".." in relative.parts:
+            findings.add(
+                "SLIDE_PATH_INVALID",
+                "A mapped slide path traverses its folder or contains control characters.",
+                example=f"row {row}",
+            )
+            return None
+        if relative.is_absolute():
+            path = Path(value)
+        elif root is None:
+            findings.add(
+                "SLIDE_ROOT_REQUIRED",
+                "Slide paths relative to a folder need that slide folder selected.",
+                example=f"row {row}",
+            )
+            return None
+        else:
+            path = root / Path(*relative.parts)
+        if path.suffix.lower() not in SLIDE_EXTENSIONS:
+            findings.add(
+                "SLIDE_PATH_UNSUPPORTED",
+                "A mapped slide path is not a supported whole-slide image.",
+                example=value,
+            )
+            return None
+        try:
+            resolved = path.resolve(strict=True)
+            if not self.filesystem._contains(resolved) or (
+                root is not None and not resolved.is_relative_to(root)
+            ):
+                findings.add(
+                    "SOURCE_PATH_ESCAPE",
+                    "A mapped slide path leaves the selected folder or configured data roots.",
+                    example=value,
+                )
+                return None
+            info = resolved.stat()
+            if not stat.S_ISREG(info.st_mode):
+                findings.add(
+                    "SLIDE_FILE_INVALID",
+                    "A mapped slide path is not a regular file.",
+                    example=value,
+                )
+                return None
+        except (OSError, RuntimeError):
+            findings.add(
+                "SLIDE_FILE_MISSING_PATH",
+                "A mapped slide path does not exist or cannot be inspected.",
+                example=value,
+            )
+            return None
+        if info.st_size == 0:
+            findings.add("SLIDE_EMPTY", "A mapped slide file is empty.", example=value)
+        return {
+            "slideId": slide_id,
+            "path": str(resolved),
+            "relativePath": (
+                resolved.relative_to(root).as_posix() if root is not None else resolved.as_posix()
+            ),
+            "sizeBytes": info.st_size,
+            "mtimeNs": info.st_mtime_ns,
+            "device": info.st_dev,
+            "inode": info.st_ino,
+        }
+
     @staticmethod
     def _value(value, missing):
         return None if value is None or value in missing else value
@@ -563,7 +667,7 @@ class ImportService:
             if any(
                 len(column) > 128
                 for column in primary["headers"]
-                if column not in {spec.slideIdColumn, spec.patientIdColumn}
+                if column not in {spec.slideIdColumn, spec.patientIdColumn, spec.slidePathColumn}
             ):
                 raise _error(
                     "Map long source headers to explicit attribute keys of at most 128 characters.",
@@ -572,7 +676,7 @@ class ImportService:
             main_fields = [
                 AttributeMapping(key=column, sourceColumn=column)
                 for column in primary["headers"]
-                if column not in {spec.slideIdColumn, spec.patientIdColumn}
+                if column not in {spec.slideIdColumn, spec.patientIdColumn, spec.slidePathColumn}
             ]
         all_fields = [*main_fields, *spec.patientAttributes]
         dictionary = [field.model_dump(exclude_none=True) for field in all_fields]
@@ -585,6 +689,8 @@ class ImportService:
         required_main = {spec.slideIdColumn, *(field.sourceColumn for field in main_fields)}
         if spec.patientIdColumn:
             required_main.add(spec.patientIdColumn)
+        if spec.slidePathColumn:
+            required_main.add(spec.slidePathColumn)
         if required_main - set(primary["headers"]):
             raise _error(
                 "One or more selected columns are absent from the main table.",
@@ -613,9 +719,17 @@ class ImportService:
                 "Numeric spreadsheet identifiers retain the stored value; formatting or previously lost zeros cannot establish the original ID.",
                 severity="warning",
             )
-        inventory = self._scan(spec, findings)
+        inventory = (
+            self._declared(spec, primary, findings)
+            if spec.slidePathColumn
+            else self._scan(spec, findings)
+        )
         matches = defaultdict(list)
         physical = defaultdict(list)
+        selected_ids = {
+            self._value(row["values"][spec.slideIdColumn], spec.missingValues)
+            for row in primary["rows"]
+        }
         for item in inventory:
             matches[item["slideId"]].append(item)
             physical[(item["device"], item["inode"])].append(item)
@@ -624,6 +738,7 @@ class ImportService:
                 findings.add(
                     "SLIDE_MATCH_AMBIGUOUS",
                     "A filename stem resolves to multiple slide files.",
+                    severity="error" if slide_id in selected_ids else "warning",
                     example=slide_id,
                 )
         for items in physical.values():
@@ -631,6 +746,9 @@ class ImportService:
                 findings.add(
                     "DUPLICATE_SLIDE_ALIAS",
                     "Multiple inventory paths identify the same physical file.",
+                    severity="error"
+                    if sum(item["slideId"] in selected_ids for item in items) > 1
+                    else "warning",
                     example=items[0]["relativePath"],
                 )
         patient_rows, secondary_used = {}, set()

@@ -1,4 +1,4 @@
-"""Exact ABMIL whole-bag pooling attention for refit and frozen ensembles."""
+"""Whole-bag ABMIL/nnMIL pooling attention for refit and frozen ensembles."""
 
 import hashlib
 import json
@@ -11,16 +11,18 @@ import torch
 
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import checkpoint_snapshot
+from histopilot.models import catalog
 from histopilot.storage.attention_inputs import inspect_inputs, verify_sources
 from histopilot.storage.packed import _source
 from histopilot.storage.project_lock import _reject_symlink_components, ensure_managed_directory
 from histopilot.storage.scientific import ScientificStore
-from histopilot.training.module import MILTrainModule
+from histopilot.training.module import MILTrainModule, class_logits, window_uncertainty_rows
 from histopilot.workers.packing_process import write_json
 
 ATTENTION_NOTE = (
-    "Class-independent ABMIL pooling weights, normalized over all patches in this slide. "
-    "The ensemble mean averages each member's normalized attention. Percentiles are "
+    "Class-independent pooling weights, normalized over all patches in this slide. "
+    "For nnMIL, each member averages normalized attention across its feature windows. "
+    "The ensemble mean averages each member's attention. Percentiles are "
     "within-slide midranks for display, not calibrated probabilities or class-specific attribution."
 )
 MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
@@ -82,7 +84,10 @@ def _percentiles(weights):
     return ((np.cumsum(counts) - counts / 2) / len(weights))[inverse]
 
 
-def _map(slide, coords, weights, probabilities, plan, *, member):
+def _map(
+    slide, coords, weights, probabilities, plan, *, member, log_probabilities=None,
+    window_uncertainty=None,
+):
     ranks = _percentiles(weights)
     return {
         "slideId": slide["slideId"],
@@ -97,6 +102,12 @@ def _map(slide, coords, weights, probabilities, plan, *, member):
         "classOrder": plan["target"]["classes"],
         "member": member,
         "probabilities": probabilities.tolist(),
+        **({"windowUncertainty": window_uncertainty} if window_uncertainty is not None else {}),
+        **(
+            {"logProbabilities": log_probabilities.tolist()}
+            if log_probabilities is not None
+            else {}
+        ),
         "patches": [
             {
                 "index": index,
@@ -122,7 +133,19 @@ def _validate(weights, probabilities, patch_count, classes):
         or np.any(probabilities > 1)
         or not np.isclose(probabilities.sum(), 1, atol=1e-6)
     ):
-        raise ValueError("ABMIL produced invalid attention or class probabilities.")
+        raise ValueError("MIL produced invalid attention or class probabilities.")
+
+
+def _validate_log_probabilities(log_probabilities, probabilities):
+    if (
+        log_probabilities.shape != probabilities.shape
+        or not np.isfinite(log_probabilities).all()
+        or not np.isclose(np.logaddexp.reduce(log_probabilities), 0, atol=1e-6)
+        or not np.allclose(np.exp(log_probabilities), probabilities, atol=1e-6, rtol=1e-5)
+    ):
+        raise ValueError(
+            "Saved attention log probabilities must be finite and match probabilities."
+        )
 
 
 def interpret(plan, output_dir):
@@ -134,6 +157,9 @@ def interpret(plan, output_dir):
     folder = Path(output_dir)
     ensure_managed_directory(folder)
     method, checkpoints = plan["method"], plan["checkpoints"]
+    aggregation = plan.get("aggregation", "mean_probability")
+    if aggregation not in {"mean_probability", "mean_logit", "single_model"}:
+        raise ValueError("The frozen ensemble aggregation is unsupported.")
     if (
         method not in {"refit", "ensemble"}
         or not checkpoints
@@ -153,12 +179,13 @@ def interpret(plan, output_dir):
     torch.set_num_threads(plan["resources"]["cpuThreadsPerRun"])
     torch.use_deterministic_algorithms(True)
     device = torch.device(plan.get("device", "cpu"))
-    input_hash = _hash(
-        {
-            key: plan.get(key)
-            for key in ("method", "target", "featureContract", "slides", "checkpoints", "code")
-        }
-    )
+    input_contract = {
+        key: plan.get(key)
+        for key in ("method", "target", "featureContract", "slides", "checkpoints", "code")
+    }
+    if aggregation == "mean_logit":
+        input_contract["aggregation"] = aggregation
+    input_hash = _hash(input_contract)
     artifacts, summaries = {}, []
     for slide_index, slide in enumerate(plan["slides"]):
         if (folder / "cancel.requested").exists():
@@ -173,6 +200,7 @@ def interpret(plan, output_dir):
         tensor = torch.from_numpy(features).unsqueeze(0).to(device)
         total_weights = np.zeros(len(coords), dtype=np.float64)
         total_probabilities = np.zeros(len(plan["target"]["classes"]), dtype=np.float64)
+        total_log_probabilities = np.zeros_like(total_probabilities)
         members = []
         for member_index, checkpoint in enumerate(checkpoints):
             if (folder / "cancel.requested").exists():
@@ -180,7 +208,8 @@ def interpret(plan, output_dir):
             filename = f"slide-{slide_index}-member-{member_index}.json"
             path = folder / filename
             cache_receipt = folder / f".slide-{slide_index}-member-{member_index}.receipt.json"
-            weights, probabilities = None, None
+            weights, probabilities, log_probabilities = None, None, None
+            window_uncertainty = None
             if cache_receipt.exists() and path.exists():
                 cached = json.loads(ScientificStore._read_file(cache_receipt, 4096))
                 if cached.get("inputHash") != input_hash or cached.get("artifact") != _receipt(
@@ -205,6 +234,10 @@ def interpret(plan, output_dir):
                     [patch["weight"] for patch in value["patches"]], dtype=np.float64
                 )
                 probabilities = np.asarray(value["probabilities"], dtype=np.float64)
+                window_uncertainty = value.get("windowUncertainty")
+                if aggregation == "mean_logit":
+                    log_probabilities = np.asarray(value.get("logProbabilities"), dtype=np.float64)
+                    _validate_log_probabilities(log_probabilities, probabilities)
             if weights is None:
                 model = MILTrainModule.load_from_checkpoint(
                     checkpoint["path"], map_location="cpu", weights_only=True
@@ -212,25 +245,44 @@ def interpret(plan, output_dir):
                 if (
                     model.target != plan["target"]
                     or model.hparams.feature_dim != plan["featureContract"]["dimensions"]
-                    or model.recipe.get("model", "abmil").lower() != "abmil"
+                    or not catalog.supports_attention(
+                        model.recipe.get("model"), model.recipe.get("inputMode", "image")
+                    )
                 ):
                     raise ValueError(
                         "Checkpoint architecture, target or feature dimensions differ from the predictor."
                     )
                 model.eval().to(device)
                 with torch.inference_mode():
-                    output = model.model(tensor, return_attention=True)
-                    weights = output["attention"][0].double().cpu().numpy()
-                    probabilities = (
-                        torch.softmax(output["logits"][0].double(), dim=-1).cpu().numpy()
+                    output = model.prediction_output(
+                        tensor, return_attention=True,
+                        **({"clinical": [slide["clinical"]]} if "clinical" in slide else {}),
                     )
+                    weights = output["attention"][0].double().cpu().numpy()
+                    logits = class_logits(output["logits"], model.target)[0].double()
+                    probabilities = torch.softmax(logits, dim=-1).cpu().numpy()
+                    if aggregation == "mean_logit":
+                        log_probabilities = torch.log_softmax(logits, dim=-1).cpu().numpy()
+                    if output.get("window_uncertainty") is not None:
+                        window_uncertainty = window_uncertainty_rows(
+                            output["window_uncertainty"], model.target
+                        )[0]
                 del output, model
                 # Double-precision renormalization removes softmax roundoff only.
                 weights = weights / weights.sum()
                 _validate(weights, probabilities, len(coords), len(total_probabilities))
                 _write_attention_json(
                     path,
-                    _map(slide, coords, weights, probabilities, plan, member=str(member_index)),
+                    _map(
+                        slide,
+                        coords,
+                        weights,
+                        probabilities,
+                        plan,
+                        member=str(member_index),
+                        log_probabilities=log_probabilities,
+                        window_uncertainty=window_uncertainty,
+                    ),
                 )
                 write_json(cache_receipt, {"inputHash": input_hash, "artifact": _receipt(path)})
             _validate(weights, probabilities, len(coords), len(total_probabilities))
@@ -240,6 +292,9 @@ def interpret(plan, output_dir):
             artifacts[array_name] = _receipt(folder / array_name)
             total_weights += weights / len(checkpoints)
             total_probabilities += probabilities / len(checkpoints)
+            if aggregation == "mean_logit":
+                _validate_log_probabilities(log_probabilities, probabilities)
+                total_log_probabilities += log_probabilities / len(checkpoints)
             members.append(
                 {
                     "index": member_index,
@@ -247,6 +302,8 @@ def interpret(plan, output_dir):
                     "probabilities": probabilities.tolist(),
                     "attentionArtifact": filename,
                     "attentionArray": array_name,
+                    **({"windowUncertainty": window_uncertainty}
+                       if window_uncertainty is not None else {}),
                 }
             )
             write_json(
@@ -262,11 +319,22 @@ def interpret(plan, output_dir):
                 },
             )
         del tensor, features
+        if aggregation == "mean_logit":
+            total_log_probabilities -= np.logaddexp.reduce(total_log_probabilities)
+            total_probabilities = np.exp(total_log_probabilities)
         _validate(total_weights, total_probabilities, len(coords), len(total_probabilities))
         filename = f"slide-{slide_index}.json"
         _write_attention_json(
             folder / filename,
-            _map(slide, coords, total_weights, total_probabilities, plan, member="mean"),
+            _map(
+                slide,
+                coords,
+                total_weights,
+                total_probabilities,
+                plan,
+                member="mean",
+                log_probabilities=total_log_probabilities if aggregation == "mean_logit" else None,
+            ),
         )
         artifacts[filename] = _receipt(folder / filename)
         array_name = f"slide-{slide_index}.npy"
@@ -291,6 +359,7 @@ def interpret(plan, output_dir):
             "classOrder": plan["target"]["classes"],
             "attentionKind": "class_independent_pooling",
             "attentionNote": ATTENTION_NOTE,
+            **({"ensembleAggregation": aggregation} if aggregation == "mean_logit" else {}),
             "slides": summaries,
         },
     )
@@ -304,6 +373,7 @@ def interpret(plan, output_dir):
         "classOrder": plan["target"]["classes"],
         "attentionKind": "class_independent_pooling",
         "attentionNote": ATTENTION_NOTE,
+        **({"ensembleAggregation": aggregation} if aggregation == "mean_logit" else {}),
         "slides": summaries,
         "artifacts": artifacts,
     }

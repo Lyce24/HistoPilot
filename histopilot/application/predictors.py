@@ -18,6 +18,8 @@ from histopilot.application.development import development_plans
 from histopilot.application.experiment_policy import has_predictor_intent, policy_for_batch
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.training import membership_plan_id
+from histopilot.domain.features import representation_kind
+from histopilot.models import catalog
 from histopilot.schemas.predictors import PredictorSelection
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError, _reject_symlink_components
@@ -102,6 +104,7 @@ def feature_contract(document, bundle):
     dimensions = {row["dimensions"] for row in manifest["files"]}
     dtypes = {row["dtype"] for row in manifest["files"]}
     return {
+        **({"featureKind": "slide"} if representation_kind(manifest) == "slide" else {}),
         "feature": reference(document),
         "bundle": reference(bundle),
         "dimensions": next(iter(dimensions)) if len(dimensions) == 1 else None,
@@ -288,12 +291,19 @@ class PredictorService:
             experiment_id = manifest["spec"].get("experimentId") or f"legacy-{batch['id']}"
             if lifecycle.get(f"draft:{experiment_id}", {}).get("state", "active") != "active":
                 continue
+            selected_candidate = None
+            select_best = manifest["spec"].get("candidateSelection") == "best_validation"
             try:
                 experiment = self._experiment(experiment_id, batch)
                 folder = self.store.folder / "training" / batch["id"]
                 state_path = folder / "state.json"
                 state = read_evidence(state_path, folder) if state_path.exists() else {}
                 states = {row["id"]: row for row in state.get("runs", [])}
+                if select_best and (folder / "plan.json").exists():
+                    from histopilot.candidate_selection import validation_selection
+
+                    selection_report = validation_selection(read_evidence(folder / "plan.json", folder), state)
+                    selected_candidate = (selection_report or {}).get("selectedCandidateId")
                 error = None
             except StorageError as problem:
                 experiment, states, error = (
@@ -314,6 +324,12 @@ class PredictorService:
                 )
                 reason = (
                     error
+                    or (
+                        "Waiting for validation scores from every configuration."
+                        if select_best and selected_candidate is None
+                        else "Another configuration was selected by validation performance."
+                        if select_best and selected_candidate != candidate else None
+                    )
                     or (
                         "This configuration and seed group already has both predictor methods. Restore existing predictors to reuse their identities."
                         if len(existing) == 2
@@ -345,7 +361,7 @@ class PredictorService:
                         "eligibleMethods": [
                             method
                             for method in ("ensemble", "refit")
-                            if method not in existing and completed == len(runs) and not error
+                            if method not in existing and reason is None
                         ],
                         "recipe": candidates[candidate]["recipe"],
                     }
@@ -419,10 +435,43 @@ class PredictorService:
             row for row in manifest["configurations"] if row["id"] == selection.candidateId
         )
         target = protocol["manifest"]["spec"]["target"]
+        from histopilot.candidate_selection import validation_selection
+
+        for key in ("selectionMetric", "candidateSelection"):
+            if plan.get(key) != manifest["spec"].get(key):
+                raise StorageError("Configuration selection differs from the frozen batch.",
+                                   "PREDICTOR_SELECTION_CHANGED", 409)
+        selection_evidence = validation_selection(plan, state)
+        if selection_evidence and selection_evidence["ready"]:
+            # Every competing configuration influences promotion. Verify all
+            # selection receipts, not only the winning model's checkpoints.
+            selection_states = {row["id"]: row for row in state["runs"]}
+            for selection_run in plan["runs"]:
+                evidence_folder = folder / "runs" / selection_run["id"]
+                receipt = read_evidence(evidence_folder / "result.json", evidence_folder)
+                if (receipt != selection_states[selection_run["id"]].get("result")
+                        or receipt.get("runId") != selection_run["id"]
+                        or receipt.get("state") != "succeeded"):
+                    raise StorageError("A configuration-selection receipt changed.",
+                                       "PREDICTOR_SELECTION_CHANGED", 409)
+        if plan.get("candidateSelection") == "best_validation" and (
+            not selection_evidence or not selection_evidence["ready"]
+            or selection_evidence["selectedCandidateId"] != selection.candidateId
+        ):
+            raise StorageError(
+                "This batch promotes the configuration selected by its frozen validation metric after all configurations finish.",
+                "PREDICTOR_VALIDATION_SELECTION_REQUIRED", 409,
+            )
         memberships = defaultdict(list)
         for row in protocol["manifest"]["memberships"]:
             memberships[membership_plan_id(row)].append(row)
         required = {row["slideId"] for row in protocol["manifest"]["memberships"]}
+        from histopilot.application.clinical_inputs import development_clinical_values
+
+        expected_clinical = development_clinical_values(
+            self.store, self.filesystem, protocol["manifest"],
+            [item["recipe"] for item in manifest["configurations"]],
+        )
         files = {
             row["slideId"]: row
             for row in feature["manifest"]["files"]
@@ -442,6 +491,7 @@ class PredictorService:
             or plan.get("memberships") != dict(memberships)
             or development_plans(protocol["manifest"]) != manifest["splitPlans"]
             or plan.get("data", {}).get("featureFiles") != files
+            or plan.get("data", {}).get("clinicalValues", {}) != expected_clinical
             or plan.get("data", {}).get("sourceStamps")
             != {row["path"]: row for row in files.values()}
         ):
@@ -453,11 +503,23 @@ class PredictorService:
         if (
             protocol["manifest"]["spec"]["split"].get("mode") != "kfold"
             or protocol["manifest"]["spec"]["split"].get("version") != 4
-            or candidate["recipe"]["model"].lower() != "abmil"
+            or not catalog.is_supported(candidate["recipe"]["model"])
         ):
             raise StorageError(
-                "Predictor promotion currently supports k-fold ABMIL.",
+                f"Predictor promotion supports k-fold models from: {catalog.choices()}.",
                 "PREDICTOR_MODEL_UNSUPPORTED",
+                422,
+            )
+        feature_kind = representation_kind(feature["manifest"])
+        if (
+            candidate["recipe"].get("inputMode", "image") != "clinical"
+            and catalog.feature_kind(candidate["recipe"].get("model")) != feature_kind
+        ):
+            raise StorageError(
+                f"The trained model requires {catalog.feature_kind(candidate['recipe'].get('model'))} "
+                f"features, but its frozen bundle holds {feature_kind} features. "
+                "Train a compatible model in a new batch.",
+                "PREDICTOR_FEATURE_KIND_MISMATCH",
                 422,
             )
         states = {row["id"]: row for row in state.get("runs", [])}
@@ -483,6 +545,49 @@ class PredictorService:
             run_folder = folder / "runs" / run["id"]
             receipt = read_evidence(run_folder / "result.json", run_folder)
             run_plan = read_evidence(run_folder / "plan.json", run_folder)
+            from histopilot.schemas.training_controls import resolve_stopping, sampling_memberships
+
+            expected_memberships = sampling_memberships(
+                plan["memberships"][run["splitPlanId"]],
+                candidate["recipe"],
+                plan["data"].get("cohortValues", {}),
+            )
+            from histopilot.schemas.nnmil import resolve_nnmil_recipe
+
+            try:
+                effective_recipe, nnmil_planning = resolve_nnmil_recipe(
+                    candidate["recipe"], expected_memberships, files
+                )
+            except ValueError as error:
+                raise StorageError(str(error), "PREDICTOR_PROVENANCE_CHANGED", 409) from error
+            resolved_recipe, stopping_decision = resolve_stopping(
+                effective_recipe, target, expected_memberships
+            )
+            if nnmil_planning and (
+                run_plan.get("effectiveRecipe") != effective_recipe
+                or run_plan.get("nnmilPlanning") != nnmil_planning
+                or receipt.get("effectiveRecipe") != effective_recipe
+                or receipt.get("nnmilPlanning") != nnmil_planning
+            ):
+                raise StorageError("Resolved MIL settings differ from the fitting evidence.",
+                                   "PREDICTOR_PROVENANCE_CHANGED", 409)
+            is_nnmil = candidate["recipe"].get("model", "abmil").lower() == "nnmil"
+            if is_nnmil:
+                checkpoint_policy = "final_epoch" if stopping_decision else candidate["recipe"].get(
+                    "nnmilCheckpointSelection", "best_validation"
+                )
+                epoch, completed = receipt.get("selectedEpoch"), receipt.get("epochsCompleted")
+                expected_epoch = completed if checkpoint_policy != "best_validation" else receipt.get("bestEpoch")
+                if (
+                    receipt.get("checkpointSelection") != checkpoint_policy
+                    or type(epoch) is not int or type(completed) is not int
+                    or not 1 <= epoch <= completed <= resolved_recipe["maxEpochs"]
+                    or epoch != expected_epoch
+                    or (checkpoint_policy != "best_validation" and receipt.get("bestCheckpointPath")
+                        != receipt.get("lastCheckpointPath"))
+                ):
+                    raise StorageError("nnMIL checkpoint selection differs from its frozen policy.",
+                                       "PREDICTOR_PROVENANCE_CHANGED", 409)
             if (
                 receipt.get("state") != "succeeded"
                 or receipt.get("runId") != run["id"]
@@ -496,11 +601,19 @@ class PredictorService:
                 or run_plan.get("target") != target
                 or run_plan.get("splitPlan")
                 != next(row for row in plan["splitPlans"] if row["id"] == run["splitPlanId"])
-                or run_plan.get("data")
-                != {**plan["data"], "memberships": plan["memberships"][run["splitPlanId"]]}
+                or run_plan.get("data") != {**plan["data"], "memberships": expected_memberships}
                 or run_plan.get("runtime") != plan.get("runtime")
                 or run_plan.get("code") != plan.get("code")
-                or receipt.get("checkpointMetric") != candidate["recipe"]["checkpointMetric"]
+                or receipt.get("checkpointMetric") != resolved_recipe["checkpointMetric"]
+                or receipt.get("stoppingDecision") != stopping_decision
+                or (
+                    stopping_decision
+                    and (
+                        receipt.get("selectedEpoch" if is_nnmil else "bestEpoch") != stopping_decision["epochs"]
+                        or receipt.get("epochsCompleted") != stopping_decision["epochs"]
+                        or receipt.get("bestCheckpointPath") != receipt.get("lastCheckpointPath")
+                    )
+                )
                 or not isinstance(receipt.get("bestValidationScore"), (int, float))
                 or not math.isfinite(receipt["bestValidationScore"])
             ):
@@ -509,6 +622,18 @@ class PredictorService:
                     "PREDICTOR_PROVENANCE_CHANGED",
                     409,
                 )
+            from histopilot.clinical_features import clinical_fields, fit_clinical_preprocessor
+
+            fields = clinical_fields(candidate["recipe"])
+            clinical_preprocessing = None
+            if fields:
+                clinical_preprocessing = fit_clinical_preprocessor(
+                    [row for row in expected_memberships if row["partition"] == "train"],
+                    expected_clinical, fields,
+                )
+                if receipt.get("clinicalPreprocessing") != clinical_preprocessing:
+                    raise StorageError("Clinical preprocessing differs from its training patients.",
+                                       "PREDICTOR_CLINICAL_PROVENANCE_CHANGED", 409)
             snapshot = checkpoint_snapshot(receipt["bestCheckpointPath"], run_folder)
             checkpoints.append(
                 {
@@ -519,6 +644,12 @@ class PredictorService:
                     "runPlanHash": _hash(run_plan),
                     "bestValidationScore": receipt["bestValidationScore"],
                     "epochsCompleted": receipt.get("epochsCompleted"),
+                    **({"clinicalPreprocessing": clinical_preprocessing} if clinical_preprocessing else {}),
+                    **({"effectiveRecipe": effective_recipe, "nnmilPlanning": nnmil_planning}
+                       if nnmil_planning else {}),
+                    **({"selectedEpoch": receipt["selectedEpoch"],
+                        "checkpointSelection": receipt["checkpointSelection"],
+                        "bestEpoch": receipt.get("bestEpoch")} if is_nnmil else {}),
                 }
             )
         contract = feature_contract(feature, bundle)
@@ -564,10 +695,13 @@ class PredictorService:
                 },
             },
             "trainingPlanHash": _hash(plan),
+            **({"selectionEvidence": selection_evidence} if selection_evidence else {}),
             "compute": plan.get("code"),
             "runtime": plan.get("runtime"),
-            "aggregation": "mean_probability",
-            "patientAggregation": "mean",
+            "aggregation": candidate["recipe"].get("ensembleAggregation", "mean_probability"),
+            "patientAggregation": "mean_logits"
+            if candidate["recipe"].get("patientAggregation") == "mean_logits"
+            else "mean",
             "executionEnabled": True,
         }
 

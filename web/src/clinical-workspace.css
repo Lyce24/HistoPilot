@@ -3,9 +3,11 @@
   --ink: var(--theme-ink);
   --muted: var(--theme-muted);
   --line: var(--theme-line);
-  --accent: var(--brand-red);
+  --accent: var(--brand-primary);
   --accent-light: var(--theme-accent-soft);
-  --green: var(--brand-brown);
+  --green: var(--brand-primary);
+  --surface: var(--theme-surface);
+  --text: var(--theme-ink);
   color: var(--ink);
   font-size: 14px;
   max-width: 1240px;
@@ -22,7 +24,7 @@
   line-height: 1.2;
 }
 .clinical-workspace .eyebrow {
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   font-size: 10px;
   letter-spacing: 1.6px;
   margin-bottom: 12px;
@@ -30,7 +32,7 @@
   align-items: center;
   gap: 9px;
 }
-.clinical-workspace .eyebrow::before, .roadmap-heading .eyebrow::before { content: ''; display: inline-block; width: 20px; height: 3px; background: var(--brand-gold); border-radius: 2px; flex-shrink: 0; }
+.clinical-workspace .eyebrow::before, .roadmap-heading .eyebrow::before { content: ''; display: inline-block; width: 20px; height: 3px; background: var(--brand-accent); border-radius: 2px; flex-shrink: 0; }
 .roadmap-heading .eyebrow { display: flex; align-items: center; gap: 9px; }
 .clinical-workspace .page-header p {
   font-size: 14px;
@@ -98,7 +100,7 @@
   border-color: var(--brand-gray);
 }
 .clinical-workspace .field:focus-visible {
-  outline: 3px solid var(--brand-red);
+  outline: 3px solid var(--brand-primary);
   outline-offset: 2px;
 }
 .clinical-workspace .field::placeholder {
@@ -121,12 +123,12 @@
   box-shadow: 0 2px 4px rgb(var(--theme-shadow-rgb) / 0.08);
 }
 .clinical-workspace .btn-primary:hover:not(:disabled) {
-  background: var(--brand-red-hover);
+  background: var(--brand-primary-hover);
 }
 .clinical-workspace .btn-secondary {
   border-color: var(--theme-line-strong);
-  color: var(--brand-brown);
-  box-shadow: 0 1px 2px rgb(52 39 32 / 3%);
+  color: var(--theme-ink);
+  box-shadow: 0 1px 2px rgb(31 44 46 / 3%);
 }
 .clinical-workspace .btn-small {
   min-height: 36px;
@@ -135,9 +137,9 @@
 }
 .clinical-workspace .text-button,
 .clinical-workspace .text-link {
-  color: var(--brand-brown);
+  color: var(--theme-ink);
 }
-.clinical-workspace .text-button:hover, .clinical-workspace .text-link:hover { color: var(--brand-red); }
+.clinical-workspace .text-button:hover, .clinical-workspace .text-link:hover { color: var(--brand-primary); }
 .clinical-workspace .science-toolbar {
   padding: 16px 20px;
   background: var(--theme-soft);
@@ -163,7 +165,7 @@
   color: var(--muted);
   font-size: 12px;
 }
-.clinical-workspace .metric-value {
+.clinical-workspace .metric-value:not(.metric-value-text) {
   font-variant-numeric: tabular-nums;
   font-size: 30px;
   color: var(--ink);
@@ -192,9 +194,9 @@
   line-height: 1.65;
 }
 .clinical-workspace .callout-warning {
-  background: var(--theme-gold-soft);
-  border-color: var(--theme-gold-line);
-  color: var(--brand-brown);
+  background: var(--theme-next-soft);
+  border-color: var(--theme-next-line);
+  color: var(--theme-ink);
 }
 .clinical-workspace .finding {
   font-size: 13px;
@@ -241,7 +243,7 @@
   background: var(--theme-soft);
 }
 .clinical-workspace .science-bar-track > span {
-  background: var(--brand-brown);
+  background: var(--brand-deep);
 }
 .clinical-workspace .source-inspection {
   font-size: 13px;

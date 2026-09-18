@@ -161,6 +161,62 @@ def test_open_descriptor_in_fresh_registry_and_allow_moved_folder(settings, tmp_
         assert second.get(f"{API}/projects/{created['id']}/workspace").status_code == 200
 
 
+def test_stale_project_settings_preserve_saved_config_and_descriptor(client, settings):
+    project = create(client, settings, config={"seed": 7})
+    path = f"{API}/projects/{project['id']}"
+    first = client.patch(path, json={"config": {"seed": 13}, "expectedConfig": {"seed": 7}})
+    assert first.status_code == 200
+    descriptor = settings.workspace / "Bladder" / DESCRIPTOR
+    saved_bytes = descriptor.read_bytes()
+    stale = client.patch(path, json={"config": {"folds": 3}, "expectedConfig": {"seed": 7}})
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "PROJECT_CONFIG_CONFLICT"
+    assert descriptor.read_bytes() == saved_bytes
+    assert client.get(path + "/workspace").json()["project"]["config"] == {"seed": 13}
+
+
+def test_retry_project_save_is_idempotent_after_lost_response(client, settings):
+    project = create(client, settings)
+    path = f"{API}/projects/{project['id']}"
+    payload = {"config": {"seed": 19}, "expectedConfig": {}}
+    saved = client.patch(path, json=payload)
+    assert saved.status_code == 200
+    replay = client.patch(path, json=payload)
+    assert replay.status_code == 200
+    assert replay.json() == saved.json()
+
+
+def test_source_addition_does_not_invalidate_settings_baseline(client, settings):
+    project = create(client, settings)
+    path = f"{API}/projects/{project['id']}"
+    source = client.post(path + "/sources", json={"path": str(settings.data_roots[0])})
+    assert source.status_code == 201
+    response = client.patch(path, json={"config": {"seed": 2}, "expectedConfig": {}})
+    assert response.status_code == 200
+    assert response.json()["sources"] == [source.json()]
+
+
+def test_two_project_editors_cannot_both_replace_the_same_settings(client, settings):
+    project = create(client, settings)
+    path = f"{API}/projects/{project['id']}"
+    # Different control instances have independent thread locks; the project
+    # writer lock must serialize their read/check/write sections as well.
+    with connection(settings) as second:
+        authenticate(second)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            responses = list(
+                executor.map(
+                    lambda item: item[0].patch(
+                        path, json={"config": {"seed": item[1]}, "expectedConfig": {}}
+                    ),
+                    [(client, 3), (second, 5)],
+                )
+            )
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    winner = next(response.json() for response in responses if response.status_code == 200)
+    assert client.get(path + "/workspace").json()["project"]["config"] == winner["config"]
+
+
 def test_project_paths_and_legacy_demo_remain_isolated(client, settings):
     first = create(client, settings)
     second = create(client, settings, name="CRC KRAS")

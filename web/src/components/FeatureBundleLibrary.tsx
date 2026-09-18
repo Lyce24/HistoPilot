@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import type { FeatureBundle } from '../api/bundles';
-import type { Configuration } from '../api/scientific';
+import type { Configuration, FeatureSpec } from '../api/scientific';
 import { versionLabelText, configurationVersionLabel } from '../lib/versionLabels';
 import VersionLabelEditor from './VersionLabelEditor';
 import { Findings } from './ScientificUI';
 import { Badge, EmptyState, Icon, Panel } from './ui';
 import { preparationLink, type PreparationContext } from '../lib/preparationRoute';
 import { StageLibrary, StageLibraryToolbar, StageRecordManageButton } from './StageWorkflow';
+import VisualQualityExplorer from './VisualQualityExplorer';
 
 type BundleStatus = '' | 'verified' | 'attention';
 type BundleSort = 'recent' | 'oldest' | 'name';
@@ -68,21 +69,30 @@ export default function FeatureBundleLibrary({ project, items, features, selecte
         <td><time dateTime={bundleUpdatedAt(item)}>{new Date(bundleUpdatedAt(item)).toLocaleDateString()}</time></td>
         <td><StageRecordManageButton type="configuration" id={item.id} name={bundleLabel(item)} /></td>
       </tr>)}
-    </tbody></table></div> : <EmptyState title={items.length ? 'No matching bundles' : 'No feature bundles yet'} description={items.length ? 'Try another search or clear the filters.' : 'Create a feature bundle to choose features, check their coverage and save them for experiments.'} />}
+    </tbody></table></div> : <EmptyState
+      icon="features"
+      title={items.length ? 'No matching bundles' : 'No feature bundles yet'}
+      description={items.length ? 'Try another search or clear the filters.' : 'Create a feature bundle to choose features, check their coverage and save them for experiments.'}
+      action={items.length
+        ? <button type="button" className="btn btn-secondary" onClick={() => setFilters({ search: '', status: '', sort: 'recent' })}>Clear filters</button>
+        : undefined}
+    />}
   </StageLibrary>;
   const source = features.find((item) => item.id === bundle.manifest.spec.featureSetId);
+  const slideFeatures = (source?.manifest.spec as FeatureSpec | undefined)?.featureKind === 'slide';
   return <>
-    <div className="pfm-version-detail"><Panel title={bundleLabel(bundle)} subtitle="The feature source and included packs are frozen together." actions={<Badge tone={bundle.current ? 'green' : 'orange'}>{bundle.current ? 'Verified inputs' : 'Inputs need attention'}</Badge>}>
+    <div className="pfm-version-detail"><Panel title={bundleLabel(bundle)} subtitle="Reuse this named bundle with any dataset. Targets & splits selects their shared slides." actions={<Badge tone={bundle.current ? 'green' : 'orange'}>{bundle.current ? 'Verified inputs' : 'Inputs need attention'}</Badge>}>
       <div className="stack">
-        <dl className="pfm-version-facts"><div><dt>Feature source</dt><dd>{source ? configurationVersionLabel(source) : bundle.manifest.feature.id}</dd></div><div><dt>Contents</dt><dd>{bundle.manifest.packs.length ? `Features + ${bundle.manifest.packs.length} verified pack(s)` : 'Features alone'}</dd></div><div><dt>Coverage</dt><dd>{bundle.manifest.summary.slideCount.toLocaleString()} slides · {bundle.manifest.summary.patchCount.toLocaleString()} patches · {bundle.manifest.summary.dimensions} dimensions</dd></div></dl>
+        <dl className="pfm-version-facts"><div><dt>Feature source</dt><dd>{source ? configurationVersionLabel(source) : bundle.manifest.feature.id}</dd></div><div><dt>Contents</dt><dd>{bundle.manifest.packs.length ? `Features + ${bundle.manifest.packs.length} verified pack(s)` : 'Features alone'}</dd></div><div><dt>Coverage</dt><dd>{bundle.manifest.summary.slideCount.toLocaleString()} slides · {bundle.manifest.summary.patchCount.toLocaleString()} {slideFeatures ? 'slide embeddings' : 'patches'} · {bundle.manifest.summary.dimensions} dimensions</dd></div></dl>
         {bundle.versionLabel?.note ? <p>{bundle.versionLabel.note}</p> : null}
         {bundle.manifest.packs.length ? <div className="stack"><h3>Included packs</h3>{bundle.manifest.packs.map((pack) => <div key={pack.id} className="feature-bundle-pack"><Badge>{pack.outputDtype}</Badge><span className="mono">{pack.outputPath}</span></div>)}</div> : <p>No pack is included in this bundle.</p>}
         <Findings findings={bundle.findings} />
-        <div className="inline-actions"><a className="btn btn-primary" href={preparationLink('experiments', { datasetId: bundle.manifest.datasetId, bundleId: bundle.id, protocolId: context.datasetId === bundle.manifest.datasetId ? context.protocolId : undefined })}>Open MIL experiments <Icon name="arrow" /></a><button type="button" className="btn btn-secondary" onClick={() => onPrepare(bundle.manifest.spec.featureSetId, bundle.manifest.spec.packArtifactIds)}>Prepare another bundle</button></div>
-        <p className="muted">Create another bundle to change the included packs. This bundle remains available to experiments that reference it.</p>
+        <div className="inline-actions"><a className="btn btn-primary" href={preparationLink('cohort', { datasetId: context.datasetId, bundleId: bundle.id, protocolId: context.protocolId })}>Use in Targets &amp; splits <Icon name="arrow" /></a><button type="button" className="btn btn-secondary" onClick={() => onPrepare(bundle.manifest.spec.featureSetId, bundle.manifest.spec.packArtifactIds)}>Prepare another bundle</button></div>
+        <p className="muted">{slideFeatures ? 'This bundle holds one embedding per slide; packing and patch attention are unavailable.' : 'Create another bundle to change the included packs. This bundle remains available to experiments that reference it.'}</p>
         <details><summary>Edit bundle name &amp; note</summary><VersionLabelEditor project={project} resourceType="configuration" resource={bundle} tagLabel="Bundle version tag" /></details>
         <details onToggle={(event) => setShowEvidence(event.currentTarget.open)}><summary>Frozen bundle evidence</summary>{showEvidence ? <pre className="code-block">{JSON.stringify(bundle.manifest, null, 2)}</pre> : null}</details>
       </div>
     </Panel></div>
+    {context.datasetId || bundle.manifest.datasetId ? <VisualQualityExplorer key={`${context.datasetId || bundle.manifest.datasetId}:${bundle.id}`} project={project} datasetId={(context.datasetId || bundle.manifest.datasetId)!} initialBundleId={bundle.id} /> : <p className="muted">Open a frozen dataset to review its exact slides with this feature bundle.</p>}
   </>;
 }

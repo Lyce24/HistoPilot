@@ -40,6 +40,17 @@ describe('shared stage workflow', () => {
     expect(html).toContain('No datasets yet.');
   });
 
+  it('hides search and filters for an empty library, and restores them with records', () => {
+    const toolbar = (total: number, reset = false) => renderToStaticMarkup(<StageLibraryToolbar search="" onSearch={() => {}} searchLabel="Search datasets" count={total} total={total} onReset={reset ? () => {} : undefined}><label>Status<select><option>All</option></select></label></StageLibraryToolbar>);
+    expect(toolbar(0)).toBe('');
+    // Resuming or refreshing still applies to an empty list, so actions stay.
+    expect(renderToStaticMarkup(<StageLibraryToolbar search="" onSearch={() => {}} searchLabel="Search datasets" count={0} total={0} actions={<button type="button">Return to current import</button>} />))
+      .toContain('Return to current import');
+    // A filter that hides every record still needs its reset control.
+    expect(toolbar(0, true)).toContain('Clear filters');
+    expect(toolbar(1)).toContain('aria-label="Search datasets"');
+  });
+
   it('labels search and filter results and exposes reset only when supplied', () => {
     const toolbar = (reset = false) => renderToStaticMarkup(<StageLibraryToolbar search="cohort" onSearch={() => {}} searchLabel="Search datasets" count={1} total={8} onReset={reset ? () => {} : undefined}><label>Status<select><option>All</option></select></label></StageLibraryToolbar>);
     expect(toolbar()).toContain('type="search"');

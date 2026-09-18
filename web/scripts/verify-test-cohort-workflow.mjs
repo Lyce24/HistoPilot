@@ -155,6 +155,12 @@ async function fill(text, value, selector = 'input,select,textarea') {
   await waitFor(element, 'field ' + text);
   await evaluate('(() => { const el = ' + element + '; const prototype = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, "value").set.call(el, ' + JSON.stringify(value) + '); el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true })); })()');
 }
+async function assertAction(label, kind) {
+  const target = button(label);
+  await waitFor(target);
+  assert.equal(await evaluate(target + '.dataset.stageAction'), kind, label + ' uses its shared control');
+  assert.equal(await evaluate(target + '.querySelectorAll(".stage-action-icon svg").length'), 1, label + ' has one consistent icon');
+}
 async function screenshot(name) {
   const { data } = await cdp('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
   await writeFile(join(output, name + '.png'), Buffer.from(data, 'base64'));
@@ -168,6 +174,8 @@ try {
   await waitFor('Boolean(document.body)');
   await waitFor('document.body.innerText.includes("No test cohorts yet")');
   assert.equal(await evaluate('document.querySelectorAll(".test-cohort-stage").length'), 0);
+  await assertAction('Create test cohort', 'create');
+  assert.equal(await evaluate('document.querySelectorAll(".page-header [data-stage-action=create]").length'), 1);
   await screenshot('00-list');
   await click('Create test cohort');
   await fill('Cohort name', 'External validation');
@@ -180,7 +188,9 @@ try {
   await waitFor('[...document.querySelectorAll("progress")].filter(el => el.value === 2).length === 2');
   assert.equal(await evaluate('document.querySelectorAll(".test-cohort-stage").length'), 1);
   await screenshot('01-test-data');
-  await click('Continue to Prediction Targets');
+  await assertAction('Back to test cohorts', 'back');
+  await assertAction('Continue to prediction targets', 'continue');
+  await click('Continue to prediction targets');
   assert.equal(await evaluate('document.querySelector(".test-cohort-datasets") === null'), true);
   await fill('Target attribute', 'grade', 'select');
   await waitFor(field('Class names', 'input') + '?.value.includes("high")');
@@ -191,7 +201,7 @@ try {
   await fill('Source value', 'high', 'input');
   await waitFor('document.body.innerText.includes("already has a mapping")');
   assert.equal(await evaluate('document.querySelectorAll(".science-label-row").length'), 2);
-  await click('Continue to Review and Freeze');
+  await click('Continue to review and freeze');
   await waitFor('document.body.innerText.includes("Selected test slides")');
   const saved = await evaluate('window.workflow.calls.filter(call => call.method === "saveDraft").at(-1).spec');
   assert.deepEqual(saved.datasetIds, ['dataset-a', 'dataset-b']);
@@ -200,6 +210,7 @@ try {
   assert.deepEqual(Object.keys(saved.target.labels), ['low', 'high']);
   assert.ok(!saved.protocolId && !saved.featureBundleId && !saved.developmentFeatureBundleId);
   await screenshot('03-review');
+  assert.equal(await evaluate(button('Freeze test cohort') + '.dataset.stageAction'), undefined);
   await click('Freeze test cohort');
   await fill('Version tag', 'external-validation-v1');
   await click('Freeze test cohort version');
@@ -235,7 +246,7 @@ try {
   assert.equal(await evaluate('window.workflow.drafts.filter(draft => draft.status === "editable").length'), 1);
   assert.deepEqual(await evaluate('window.workflow.errors'), []);
   assert.deepEqual(exceptions, []);
-  await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'Real React component and Chromium DOM with in-memory mocked scientific/evaluation APIs; no backend or HistoPilot server.', steps: ['list', 'create', 'multiple datasets', 'conditions', 'live distribution', 'prediction target', 'duplicate mapping guard', 'review', 'tagged freeze', 'list frozen and planned', 'search, status filters, reset and exact Manage record keys', 'resume draft'], calls: await evaluate('window.workflow.calls') }, null, 2));
+  await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'Real React component and Chromium DOM with in-memory mocked scientific/evaluation APIs; no backend or HistoPilot server.', steps: ['shared create/back/continue controls preserve explicit freeze', 'list', 'create', 'multiple datasets', 'conditions', 'live distribution', 'prediction target', 'duplicate mapping guard', 'review', 'tagged freeze', 'list frozen and planned', 'search, status filters, reset and exact Manage record keys', 'resume draft'], calls: await evaluate('window.workflow.calls') }, null, 2));
   console.log('PASS: real React/Chromium staged test-cohort workflow with mocked APIs, including freeze without development/features and draft resume.');
   console.log('Artifacts: ' + output);
 } catch (error) {

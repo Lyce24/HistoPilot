@@ -1,6 +1,6 @@
-/* Shared by scientific stages; model interpretation retains its own presentation. */
+/* Shared controls and libraries across the scientific workflow. */
 .stage-workspace .clinical-workspace, .clinical-workspace:has(.stage-page) {
-  --accent: var(--brand-red);
+  --accent: var(--brand-primary);
   --accent-light: var(--theme-accent-soft);
   --ink: var(--theme-ink);
   --muted: var(--theme-muted);
@@ -10,22 +10,22 @@
 .stage-page { min-width: 0; outline: none; }
 .stage-page:focus, .stage-page:focus-visible { outline: none; }
 .stage-page > .card, .stage-page > .callout { margin-bottom: 22px; }
-.stage-steps { margin: 20px 0 24px; }
+.stage-steps { margin: 16px 0 20px; }
 .stage-steps ol { display: flex; padding: 0; margin: 0; list-style: none; gap: 10px; }
 .stage-steps li { flex: 1 1 0; min-width: 0; }
 .stage-steps .stage-step {
   display: flex; align-items: center; gap: 11px; width: 100%; height: 100%;
-  min-height: 78px; padding: 15px 16px; border: 1px solid var(--theme-line);
+  min-height: 66px; padding: 12px 15px; border: 1px solid var(--theme-line);
   border-radius: 12px; background: #fff; color: var(--theme-muted); text-align: left;
   transition: border-color 150ms, background-color 150ms, box-shadow 150ms;
 }
 .stage-steps .stage-step:hover:not(:disabled):not([aria-current="step"]) { background: var(--theme-canvas); border-color: var(--theme-line-strong); }
-.stage-steps .stage-step[aria-current="step"] { border-color: var(--theme-accent-line); background: #fff; color: var(--brand-brown); box-shadow: inset 0 3px 0 var(--brand-red), 0 4px 14px rgb(var(--theme-shadow-rgb) / .05); }
-.stage-steps .stage-step:focus-visible { outline: 2px solid var(--brand-red); outline-offset: 3px; }
-.stage-step-number { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 30px; border: 1px solid var(--theme-line); border-radius: 50%; background: var(--theme-soft); color: var(--theme-muted); font-size: 12px; font-weight: 700; }
-.stage-step[aria-current="step"] .stage-step-number { background: var(--brand-gold); color: var(--brand-brown); border-color: var(--brand-gold); }
-.stage-step.is-complete:not([aria-current="step"]) .stage-step-number { color: var(--brand-brown); background: var(--theme-gold-soft); border-color: var(--theme-gold-line); }
-.stage-step.is-complete:not([aria-current="step"]) .stage-step-copy strong { color: var(--brand-brown); }
+.stage-steps .stage-step[aria-current="step"] { border-color: var(--theme-accent-line); background: #fff; color: var(--theme-ink); box-shadow: inset 0 3px 0 var(--brand-primary), 0 4px 14px rgb(var(--theme-shadow-rgb) / .05); }
+.stage-steps .stage-step:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 3px; }
+.stage-step-number { display: grid; place-items: center; width: 27px; height: 27px; flex: 0 0 27px; border: 1px solid var(--theme-line); border-radius: 50%; background: var(--theme-soft); color: var(--theme-muted); font-size: 12px; font-weight: 700; }
+.stage-step[aria-current="step"] .stage-step-number { background: var(--brand-accent); color: var(--theme-ink); border-color: var(--brand-accent); }
+.stage-step.is-complete:not([aria-current="step"]) .stage-step-number { color: var(--theme-ink); background: var(--theme-next-soft); border-color: var(--theme-next-line); }
+.stage-step.is-complete:not([aria-current="step"]) .stage-step-copy strong { color: var(--theme-ink); }
 .stage-step-copy { display: grid; gap: 4px; flex: 1; min-width: 0; }
 .stage-step-copy strong { font-size: 13px; font-weight: 650; line-height: 1.4; }
 .stage-step-copy small { color: var(--theme-muted); font-size: 11px; line-height: 1.5; font-weight: 400; }
@@ -33,7 +33,7 @@
 .stage-steps .stage-step[aria-current="step"]:disabled { opacity: 1; }
 .stage-library { margin: 0 0 24px; padding: 0; border: 1px solid var(--theme-line); border-radius: 16px; background: #fff; box-shadow: 0 4px 20px rgb(var(--theme-shadow-rgb) / .035); overflow: hidden; }
 .clinical-workspace:has(.record-management-page) > .page-header { display: none; }
-.record-management-page { --accent: var(--brand-red); --accent-light: var(--theme-accent-soft); outline: none; min-width: 0; }
+.record-management-page { --accent: var(--brand-primary); --accent-light: var(--theme-accent-soft); outline: none; min-width: 0; }
 .record-management-page:focus, .record-management-page:focus-visible { outline: none; }
 .record-management-page [hidden] { display: none !important; }
 .record-management-page .page-header { margin-bottom: 24px; }
@@ -42,6 +42,9 @@
 .record-management-identity code { padding: 5px 8px; border-radius: 6px; background: var(--theme-soft); font-size: 12px; color: var(--theme-muted); overflow-wrap: anywhere; }
 .record-management-page .experiment-lifecycle > .inline-actions { padding: 22px; border: 1px solid var(--theme-line); border-radius: 14px; background: #fff; box-shadow: 0 4px 16px rgb(var(--theme-shadow-rgb) / .035); }
 .stage-library-body { padding: 22px; min-width: 0; overflow-x: auto; }
+/* The library card is already a container; an empty state inside it should not
+   read as a second box. */
+.stage-library .empty-state, .stage-library .stage-empty { background: transparent; padding-block: 34px 30px; }
 .stage-library-toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 14px; }
 .stage-library-toolbar > .label { flex: 0 1 155px; min-width: 130px; margin: 0; color: var(--theme-muted); font-size: 12px; font-weight: 600; gap: 7px; }
 .stage-library-toolbar > .stage-library-search { flex: 1 1 240px; min-width: 180px; }
@@ -49,35 +52,46 @@
 .stage-library .stage-library-toolbar .field:hover:not(:disabled) { border-color: var(--theme-line-strong); }
 .stage-library .stage-library-toolbar .field:focus-visible { background: #fff; }
 .stage-library .stage-library-toolbar select.field { padding-right: 26px; }
-.stage-library .field:focus-visible { outline: 2px solid var(--brand-red); outline-offset: 2px; }
+.stage-library .field:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
 .stage-library-search-field { position: relative; display: block; }
 .stage-library-search-field > svg { position: absolute; top: 50%; left: 12px; transform: translateY(-50%); color: var(--theme-muted); pointer-events: none; }
 .stage-library .stage-library-search-field input.field { padding-left: 36px; }
 .stage-library-tool-actions { flex: 0 0 auto; gap: 8px; padding-bottom: 1px; }
 .stage-library-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; padding: 9px 0 0; color: var(--theme-muted); font-size: 12px; }
 .stage-library-tools { margin-bottom: 16px; }
+.stage-library-tools-empty { display: flex; justify-content: flex-end; }
 .stage-library-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--theme-line); margin: -4px 0 18px; }
 .stage-library-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 0; background: transparent; color: var(--theme-muted); font-size: 13px; }
-.stage-library-tabs button[aria-pressed="true"], .stage-library-tabs button[aria-selected="true"] { border-bottom-color: var(--brand-red); color: var(--brand-red); font-weight: 650; }
-.stage-library-tabs button:hover { color: var(--brand-brown); }
-.stage-library .stage-record-name { color: var(--brand-brown); font-size: 13px; font-weight: 650; text-align: left; text-decoration-color: transparent; text-underline-offset: 3px; white-space: normal; overflow-wrap: anywhere; }
-.stage-library .stage-record-name:hover, .stage-library .stage-record-name:focus-visible { color: var(--brand-red); text-decoration: underline; }
+.stage-library-tabs button[aria-pressed="true"], .stage-library-tabs button[aria-selected="true"] { border-bottom-color: var(--brand-primary); color: var(--brand-primary); font-weight: 650; }
+.stage-library-tabs button:hover { color: var(--theme-ink); }
+/* Opening a record is the primary action in every library, so it has to look
+   like one. The chevron marks the row as a destination, not a label. */
+.stage-library .stage-record-name { display: inline-flex; align-items: baseline; gap: 7px; color: var(--theme-ink); font-size: 13.5px; font-weight: 650; text-align: left; text-decoration-color: transparent; text-underline-offset: 3px; white-space: normal; overflow-wrap: anywhere; }
+.stage-library .stage-record-name::after { content: ''; align-self: center; width: 5px; height: 5px; flex: 0 0 5px; border-top: 1.6px solid currentcolor; border-right: 1.6px solid currentcolor; border-radius: 1px; transform: rotate(45deg); opacity: .38; transition: opacity 140ms, transform 140ms; }
+.stage-library .stage-record-name:hover, .stage-library .stage-record-name:focus-visible { color: var(--brand-primary); text-decoration: underline; }
+.stage-library .stage-record-name:hover::after, .stage-library .stage-record-name:focus-visible::after { opacity: 1; transform: rotate(45deg) translate(1.5px, -1.5px); }
+.stage-library .stage-record-name:disabled { text-decoration: none; }
 .stage-library-table { overflow-x: auto; }
 .clinical-workspace .stage-library .table-wrap, .stage-library .run-table-scroll { border: 0; border-radius: 0; }
 .stage-library table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-.stage-library table thead th { color: var(--theme-muted); font-weight: 600; font-size: 11px; letter-spacing: .045em; background: var(--theme-soft); }
+.stage-library table thead th { color: var(--theme-muted); font-weight: 650; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; background: var(--theme-soft); }
 .stage-library table thead th:first-child { border-top-left-radius: 8px; }
 .stage-library table thead th:last-child { border-top-right-radius: 8px; }
 .stage-library table tbody th { background: transparent; font-size: inherit; font-weight: 400; text-transform: none; letter-spacing: normal; }
 .stage-library table th, .stage-library table td { padding: 15px 12px; border-bottom: 1px solid var(--theme-line); vertical-align: middle; }
 .stage-library table tbody tr:last-child td, .stage-library table tbody tr:last-child th { border-bottom: 0; }
-.stage-library table tbody tr:hover { background: var(--theme-canvas); }
-.stage-library table tbody tr:has(input[type="checkbox"]:checked) { background: var(--theme-gold-soft); }
-.stage-library table tbody tr:has(input[type="checkbox"]:checked) > :first-child { box-shadow: inset 3px 0 0 var(--brand-gold); }
+.stage-library table tbody tr { transition: background-color 120ms; }
+.stage-library table tbody tr:hover { background: var(--theme-soft); }
+.stage-library table tbody tr:hover > :first-child { box-shadow: inset 2px 0 0 var(--brand-deep); }
+.stage-library table tbody tr:has(.stage-record-name:focus-visible) { background: var(--theme-soft); }
+.stage-library table tbody tr:has(input[type="checkbox"]:checked) { background: var(--theme-next-soft); }
+.stage-library table tbody tr:has(input[type="checkbox"]:checked) > :first-child { box-shadow: inset 3px 0 0 var(--brand-accent); }
 .stage-library table td small, .stage-library table tbody th small { display: block; color: var(--theme-muted); margin-top: 5px; font-size: 11px; font-weight: 400; }
 .stage-library table td:last-child { white-space: nowrap; }
-.stage-empty { padding: 40px 20px; border-radius: 10px; background: var(--theme-canvas); text-align: center; color: var(--theme-muted); }
-.stage-empty h3 { margin-bottom: 8px; color: var(--theme-ink); }
+.stage-empty { display: flex; flex-direction: column; align-items: center; padding: 48px 20px 44px; border-radius: 14px; background: var(--theme-canvas); text-align: center; color: var(--theme-muted); }
+.stage-empty h3 { margin-bottom: 7px; color: var(--theme-ink); font-size: 15px; }
+.stage-empty p { max-width: 430px; font-size: 12.5px; }
+.stage-empty .inline-actions, .stage-empty .stage-action { margin-top: 20px; }
 .stage-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; border-top: 1px solid var(--theme-line); padding: 20px 0; margin-top: 20px; }
 .stage-actions > p { flex: 1; color: var(--theme-muted); font-size: 13px; }
 .stage-page [hidden], .stage-workspace [hidden] { display: none !important; }

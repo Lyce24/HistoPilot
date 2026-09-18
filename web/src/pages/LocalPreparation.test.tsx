@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
+import type { FeatureBundle } from '../api/bundles';
 import type { Configuration, DatasetVersion, ScientificDraft } from '../api/scientific';
 import LocalDataset from './LocalDataset';
 import LocalProtocol, { TabularPredictorSelection } from './LocalProtocol';
+import { editorRecoveryKey } from '../lib/editorRecovery';
+import { newSplit } from '../components/SplitStrategy';
 
 // Render explicit page snapshots with real React hooks. Initial navigation remains the default
 // in library tests; editor snapshots retain coverage of the scientific controls after opening.
@@ -30,12 +33,26 @@ const dataset = {
 } as DatasetVersion;
 afterEach(() => { vi.unstubAllGlobals(); pageSnapshot.view = ''; pageSnapshot.step = 1; pageSnapshot.filters = null; });
 
-function render(page: 'data' | 'targets', datasets: DatasetVersion[] = [dataset], newImport = false, records: { drafts?: ScientificDraft[]; protocols?: Configuration[] } = {}) {
+/** Unsaved editor input kept by the browser tab, as the running editors write it. */
+function stubRecovery(kind: 'dataset' | 'protocol', value: unknown, hash = '') {
+  const entries = new Map([[editorRecoveryKey('project', kind), JSON.stringify({ version: 1, value })]]);
+  vi.stubGlobal('window', {
+    location: { hash },
+    sessionStorage: {
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, raw: string) => entries.set(key, raw),
+      removeItem: (key: string) => entries.delete(key),
+    },
+  });
+}
+
+function render(page: 'data' | 'targets', datasets: DatasetVersion[] = [dataset], newImport = false, records: { drafts?: ScientificDraft[]; protocols?: Configuration[]; bundles?: FeatureBundle[] } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(['scientific', 'project', 'datasets'], { datasets });
   client.setQueryData(['scientific', 'project', 'drafts'], { drafts: records.drafts ?? [] });
   client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: records.protocols ?? [] });
   client.setQueryData(['scientific', 'project', 'configurations', 'feature'], { configurations: [] });
+  client.setQueryData(['feature-bundles', 'project'], { items: records.bundles ?? [] });
   client.setQueryData(['feature-packs', 'project'], { jobs: [], artifacts: [] });
   const current = newImport ? { ...workspace, dataset: { ...workspace.dataset, id: '' } } : workspace;
   try {
@@ -44,18 +61,18 @@ function render(page: 'data' | 'targets', datasets: DatasetVersion[] = [dataset]
 }
 
 describe('guided preparation', () => {
-  it('does not offer spreadsheet covariates that ABMIL cannot consume', () => {
+  it('offers explicitly declared clinical fields while preventing target selection', () => {
     const html = renderToStaticMarkup(<TabularPredictorSelection dictionary={dataset.manifest.dictionary ?? []} selected={[]} targetField="diagnosis" onChange={() => {}} />);
-    expect(html).toContain('Current ABMIL training uses slide image features only');
-    expect(html).toContain('Spreadsheet model inputs · unsupported');
+    expect(html).toContain('Declare patient-level variables available at prediction time');
+    expect(html).toContain('Extra spreadsheet inputs');
     expect(html).toMatch(/<input type="checkbox" disabled=""/);
     expect(html).not.toContain('Choose extra columns for the model');
   });
 
-  it('keeps unsupported legacy choices removable even when their columns are unavailable or are the target', () => {
+  it('keeps invalid legacy choices removable even when their columns are unavailable or are the target', () => {
     const html = renderToStaticMarkup(<TabularPredictorSelection dictionary={dataset.manifest.dictionary ?? []} selected={['diagnosis', 'old-age-column']} targetField="diagnosis" onChange={() => {}} />);
-    expect(html).toContain('2 selected in this draft');
-    expect(html).toContain('Remove these selections before training');
+    expect(html).toContain('2 declared');
+    expect(html).toContain('The target, identifiers and split columns cannot be predictors');
     expect(html).toContain('old-age-column');
     expect(html).toContain('Column unavailable');
     expect(html.match(/<input type="checkbox" checked=""/g)).toHaveLength(2);
@@ -69,7 +86,7 @@ describe('guided preparation', () => {
     const html = render('targets', [dataset, older]);
     expect(html).toContain('<option value="older" selected="">');
     expect(html).not.toContain('<option value="dataset" selected="">');
-    expect(html).toContain('Dataset saved. Define the target and development splits for this dataset below.');
+    expect(html).toContain('Dataset saved. Choose a feature bundle, then define the target and development splits.');
   });
 
   it('shows a missing linked dataset honestly instead of displaying a different dataset', () => {
@@ -87,30 +104,59 @@ describe('guided preparation', () => {
     expect(html).toContain('id="protocol-split" class="protocol-section" hidden=""');
     expect(html).toContain('id="protocol-review" class="science-savebar protocol-section" hidden=""');
     const firstStep = html.slice(html.indexOf('id="protocol-cohort"'), html.indexOf('id="protocol-split"'));
-    expect(firstStep).toContain('Select the development data');
+    expect(firstStep).toContain('Training and validation');
     expect(firstStep).toContain('Study slides');
     expect(firstStep).not.toContain('Choose how to compare models');
     expect(firstStep).not.toContain('Final test set');
     expect(html).toContain('Development data only. Select training records here; prepare test data later in Evaluate.');
-    expect(html).toMatch(/<button type="button" class="btn btn-primary">Continue to target/);
+    expect(html).toMatch(/<button(?=[^>]*data-stage-action="continue")(?=[^>]*disabled="")[^>]*><span>Continue to target/);
+    expect(html).toContain('Choose a verified feature bundle to continue.');
   });
 
   it('explains a missing frozen dataset and prevents continuing with an unresolved dataset ID', () => {
     pageSnapshot.view = 'editor';
     const html = render('targets', []);
     expect(html).toContain('Choose a frozen dataset to continue.');
-    expect(html).toMatch(/<button type="button" class="btn btn-primary" disabled="">Continue to target/);
+    expect(html).toMatch(/<button(?=[^>]*data-stage-action="continue")(?=[^>]*disabled="")[^>]*><span>Continue to target/);
     expect(html).toContain('No imported dataset yet');
   });
 
-  it('keeps optional filters, source bindings and minimum constraints collapsed', () => {
+  it('shows one training filter editor and a required named bundle without redundant selection gates', () => {
     pageSnapshot.view = 'editor';
     const html = render('targets');
-    expect(html).toContain('<details class="setup-details"><summary>Additional eligibility filters');
-    expect(html).toContain('<details class="setup-details"><summary>Optional feature reference');
+    expect(html).toContain('<details class="setup-details"><summary>Explore shared slide records');
+    expect(html).toContain('Choose a named feature bundle');
+    expect(html).toContain('Training slide filters');
+    expect(html).not.toContain('Training set selection');
+    expect(html).not.toContain('Which slides should be included?');
+    expect(html).not.toContain('Spreadsheet model inputs');
     expect(html).toContain('<details class="setup-details"><summary>Advanced minimum set sizes');
     expect(html).toContain('Development plan to review');
     expect(html).not.toContain('Execution unavailable');
+  });
+
+  it('accepts a named bundle from another dataset and keeps it selected from the preparation route', () => {
+    pageSnapshot.view = 'editor';
+    vi.stubGlobal('window', { location: { hash: '#cohort?dataset=dataset&bundle=shared-bundle' } });
+    const shared = { id: 'shared-bundle', current: true, findings: [], versionLabel: { tag: 'All slides · UNI' }, manifest: { datasetId: 'different-dataset', summary: { slideCount: 50 } } } as unknown as FeatureBundle;
+    const html = render('targets', [dataset], false, { bundles: [shared] });
+    expect(html).toContain('<option value="shared-bundle" selected="">All slides · UNI · 50 slides');
+    expect(html).toContain('Dataset and bundle coverage');
+    expect(html).toContain('Shared slides');
+    expect(html).toMatch(/<button(?=[^>]*data-stage-action="continue")(?![^>]*disabled)[^>]*><span>Continue to target/);
+  });
+
+  it('keeps metadata-only dataset rows enabled when starting an import', () => {
+    pageSnapshot.view = 'import';
+    const html = render('data', [], true);
+    expect(html).toMatch(/<input type="checkbox" checked=""\/> Keep metadata rows/);
+  });
+
+  it('does not list already frozen drafts alongside their dataset or protocol versions', () => {
+    const frozenImport = { id: 'old-import', name: 'Duplicated import', status: 'frozen', payload: { type: 'dataset-import', spec: {} } } as ScientificDraft;
+    const frozenProtocol = { id: 'old-protocol', name: 'Duplicated protocol', status: 'frozen', payload: { type: 'analysis-protocol', spec: {} } } as ScientificDraft;
+    expect(render('data', [dataset], false, { drafts: [frozenImport] })).not.toContain('Duplicated import');
+    expect(render('targets', [dataset], false, { drafts: [frozenProtocol] })).not.toContain('Duplicated protocol');
   });
 
   it('offers direct next actions for a frozen dataset and keeps its version tools secondary', () => {
@@ -130,7 +176,7 @@ describe('guided preparation', () => {
     expect(html).toContain('aria-label="Choose dataset files"');
     expect(html).toContain('class="dataset-section dataset-mapping-section" hidden=""');
     expect(html).toContain('<details class="setup-details"><summary>Add a separate patient table (optional)</summary>');
-    expect(html).toMatch(/<button type="button" class="btn btn-primary" disabled="">Preview dataset/);
+    expect(html).toMatch(/<button(?=[^>]*data-stage-action="continue")(?=[^>]*disabled="")[^>]*><span>Preview dataset/);
   });
 
   it('starts with saved datasets and import drafts even when a workspace dataset is selected', () => {
@@ -143,7 +189,7 @@ describe('guided preparation', () => {
     expect(html).toContain('Patient table import');
     expect(html).toContain('Open dataset');
     expect(html).toContain('Open import');
-    expect(html).toContain('New import');
+    expect(html).toContain('Create dataset');
     expect(html).not.toContain('Unrelated training draft');
     expect(html).not.toContain('Choose dataset files');
     expect(html).not.toContain('Explore your dataset');
@@ -153,7 +199,7 @@ describe('guided preparation', () => {
   it('keeps the empty dataset stage on its library until a new import is requested', () => {
     const html = render('data', [], true);
     expect(html).toContain('No datasets or import drafts yet');
-    expect(html).toContain('New import');
+    expect(html).toContain('Create dataset');
     expect(html).not.toContain('Dataset name');
     expect(html).not.toContain('Save draft');
     expect(html).not.toContain('Preview dataset');
@@ -168,7 +214,7 @@ describe('guided preparation', () => {
     expect(html).toContain('Revised development cohort');
     expect(html).toContain('Open protocol');
     expect(html).toContain('Open protocol draft');
-    expect(html).toContain('New protocol');
+    expect(html).toContain('Create protocol');
     expect(html).not.toContain('Protocol name');
     expect(html).not.toContain('Protocol sections');
     expect(html).not.toContain('protocol-cohort');
@@ -178,7 +224,7 @@ describe('guided preparation', () => {
   it('keeps empty protocols on their library without requiring a dataset before creating a draft', () => {
     const html = render('targets', []);
     expect(html).toContain('No protocols or drafts yet');
-    expect(html).toContain('New protocol');
+    expect(html).toContain('Create protocol');
     expect(html).not.toContain('No imported dataset yet');
     expect(html).not.toContain('Protocol name');
     expect(html).not.toContain('Save draft');
@@ -299,6 +345,55 @@ describe('guided preparation', () => {
     expect(filtered).toContain('No matching protocols or drafts');
     expect(filtered).toContain('Clear filters');
     expect(filtered).not.toContain('Saved protocols and drafts');
+  });
+
+  it('offers unsaved import input on the library after leaving the module', () => {
+    stubRecovery('dataset', {
+      version: 1, step: 2, draft: null, name: 'Recovered import',
+      spec: { source: { path: '/data/recovered.csv' }, slideIdColumn: 'De ID', slideRoot: '/slides', recursive: true, includeMissingSlides: false, missingValues: [''], attributes: [], patientIdFallback: 'unresolved' },
+    });
+    const html = render('data', [], true);
+    // Every module still opens on its saved-record library.
+    expect(html).toContain('data-stage-page="library-"');
+    expect(html).toContain('Unsaved import input was recovered in this tab');
+    expect(html).toContain('Return to current import');
+  });
+
+  it('restores the recovered import exactly when it is resumed', () => {
+    stubRecovery('dataset', {
+      version: 1, step: 2, draft: null, name: 'Recovered import',
+      spec: { source: { path: '/data/recovered.csv' }, slideIdColumn: 'De ID', slideRoot: '/slides', recursive: true, includeMissingSlides: false, missingValues: [''], attributes: [], patientIdFallback: 'unresolved' },
+    });
+    pageSnapshot.view = 'import';
+    const html = render('data', [], true);
+    expect(html).toContain('value="Recovered import"');
+    expect(html).toContain('value="/data/recovered.csv"');
+    // Column mapping needs the file read again, so the resumed import starts at the file step.
+    expect(html).toContain('data-stage-page="import-1"');
+    expect(html).toContain('Read file &amp; show columns');
+  });
+
+  it('restores the recovered protocol with its saved draft identity', () => {
+    stubRecovery('protocol', {
+      version: 1, step: 2, name: 'Recovered protocol',
+      draft: { id: 'protocol-draft', projectId: 'project', kind: 'experiment', name: 'Saved protocol', revision: 4, status: 'editable', createdAt: '', updatedAt: '', payload: { type: 'analysis-protocol', spec: {} } },
+      spec: { datasetId: 'dataset', target: { field: 'diagnosis', task: '', unit: 'patient', classes: [], labels: {}, missing: 'block', unmapped: 'block' }, predictors: [], eligibility: [], split: newSplit([7], 5), constraints: { minPatientsPerClass: 1, minPatientsPerPartition: 1 }, featureSetId: null, featurePackId: null },
+    });
+    expect(render('targets')).toContain('Return to current protocol');
+    pageSnapshot.view = 'editor';
+    const html = render('targets');
+    expect(html).toContain('data-stage-page="protocol-2"');
+    expect(html).toContain('revision 4');
+    expect(html).toContain('Unsaved changes');
+  });
+
+  it('ignores recovery entries that this editor could not have written', () => {
+    stubRecovery('dataset', { version: 1, step: 1, draft: null, name: 'Broken', spec: 'not a specification' });
+    const html = render('data', [], true);
+    expect(html).not.toContain('Recovered unsaved import input');
+    expect(html).not.toContain('Broken');
+    // An unusable entry leaves the saved-record library exactly as it was.
+    expect(html).toContain('No datasets or import drafts yet');
   });
 
 });

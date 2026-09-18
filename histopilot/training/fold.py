@@ -13,7 +13,10 @@ from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.utilities.exceptions import SIGTERMException
 
 from histopilot.datasets.datamodule import MILDataModule
+from histopilot.models import catalog
 from histopilot.schemas.development import TrainingRecipe
+from histopilot.schemas.nnmil import resolve_nnmil_plan
+from histopilot.schemas.training_controls import resolve_stopping, validate_training_controls
 from histopilot.storage.project_lock import _reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 from histopilot.training.module import (
@@ -75,7 +78,7 @@ def _completed_fit(plan, output_dir, recipe, checkpoint_path):
             or str(Path(checkpoint_path).absolute()) != payload["last"]["path"]
         ):
             raise ValueError("Resume a completed fit with its recorded last checkpoint.")
-        for key in ("best", "last"):
+        for key in ("best", "last", *(["validationBest"] if "validationBest" in payload else [])):
             if _checkpoint_evidence(payload[key]["path"], output_dir) != payload[key]:
                 raise ValueError("A completed fit checkpoint changed after fitting.")
         return payload
@@ -183,7 +186,7 @@ def _validate_plan(plan):
     for row in rows:
         if row["partition"] not in partitions:
             raise ValueError(
-                "The ABMIL worker accepts training, validation and development assessment only."
+                "The MIL worker accepts training, validation and development assessment only."
             )
         if row["slideId"] in slides:
             raise ValueError("A run cannot contain the same slide more than once.")
@@ -204,13 +207,7 @@ def _validate_plan(plan):
         raise ValueError(
             "Patient groups overlap between the run's fitting, validation or assessment partitions."
         )
-    if plan["recipe"].get("checkpointMetric") == "validation_auroc":
-        validation_classes = {row["label"] for row in rows if row["partition"] == "val"}
-        if validation_classes != set(plan["target"]["classes"]):
-            raise ValueError(
-                "Validation AUROC cannot select checkpoints when a frozen class is absent. "
-                "Choose validation loss or revise the development split before freezing."
-            )
+    validate_training_controls(plan.get("effectiveRecipe", plan["recipe"]), plan["target"], rows)
 
 
 def _predict(model, loader, target, device, precision="32-true"):
@@ -223,17 +220,34 @@ def _predict(model, loader, target, device, precision="32-true"):
                 dtype=torch.float16 if precision == "16-mixed" else torch.bfloat16,
                 enabled=precision != "32-true",
             ):
-                logits = model(batch["features"].to(device), batch["mask"].to(device))
+                if catalog.uses_structured_output(
+                    model.recipe.get("model"), model.recipe.get("inputMode", "image")
+                ):
+                    output = model.prediction_output(
+                        batch["features"].to(device), batch["mask"].to(device),
+                        **({"clinical": batch["clinical"]} if "clinical" in batch else {}),
+                    )
+                    logits = output["logits"]
+                else:
+                    output = {}
+                    logits = model(batch["features"].to(device), batch["mask"].to(device))
             if not bool(torch.isfinite(logits).all()):
                 raise FloatingPointError(
                     "The selected checkpoint produced nonfinite probabilities."
                 )
-            rows.extend(prediction_rows(batch, logits, target))
+            rows.extend(
+                prediction_rows(
+                    batch,
+                    logits,
+                    target,
+                    **({"window_uncertainty": output.get("window_uncertainty")} if output else {}),
+                )
+            )
     return sorted(rows, key=lambda row: row["slideId"])
 
 
 def train_fold(plan: dict, output_dir: Path, *, checkpoint_path=None) -> dict:
-    """Fit one plan, resume a last checkpoint, and assess its best validation checkpoint.
+    """Fit one plan, resume a last checkpoint, and assess its selected checkpoint.
 
     The scheduler assigns CUDA visibility before this module is imported. Data
     memberships and class order are inherited verbatim from the frozen protocol.
@@ -241,8 +255,11 @@ def train_fold(plan: dict, output_dir: Path, *, checkpoint_path=None) -> dict:
     A verified completion receipt resumes assessment without further fitting.
     Legacy runs without a receipt retain their original checkpoint resume behavior.
     """
+    plan = resolve_nnmil_plan(plan)
     _validate_plan(plan)
-    recipe = TrainingRecipe.model_validate(plan["recipe"], context={"legacy": True}).model_dump()
+    recipe = TrainingRecipe.model_validate(
+        plan.get("effectiveRecipe", plan["recipe"]), context={"legacy": True}
+    ).model_dump()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     resources = plan["resources"]
@@ -264,7 +281,8 @@ def train_fold(plan: dict, output_dir: Path, *, checkpoint_path=None) -> dict:
     L.seed_everything(plan["trainingSeed"], workers=True)
     if device_name == "cuda":
         torch.cuda.reset_peak_memory_stats()
-    datamodule = MILDataModule({**plan, **plan["data"], "recipe": recipe})
+    effective, _ = resolve_stopping(recipe, plan["target"], plan["data"]["memberships"])
+    datamodule = MILDataModule({**plan, **plan["data"], "recipe": effective})
     try:
         return _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path)
     finally:
@@ -274,9 +292,23 @@ def train_fold(plan: dict, output_dir: Path, *, checkpoint_path=None) -> dict:
 
 
 def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
+    requested_recipe = recipe
+    recipe, stopping_decision = resolve_stopping(
+        recipe, plan["target"], plan["data"]["memberships"]
+    )
     target = plan["target"]
     device_name = plan.get("device", "cpu")
-    model = MILTrainModule(plan["data"]["featureDim"], target, recipe)
+    # OceanPath's fixed-budget fallback truncates training without speeding up
+    # its original cosine trajectory. The trainer budget and LR horizon differ.
+    model_recipe = {**recipe, "maxEpochs": requested_recipe["maxEpochs"]}
+    model = MILTrainModule(
+        plan["data"]["featureDim"],
+        target,
+        model_recipe,
+        class_weights=datamodule.training_class_weights(),
+        class_weight_unit=datamodule.training_class_weight_unit(),
+        clinical_preprocessor=datamodule.clinical_preprocessor,
+    )
     monitor = recipe["checkpointMetric"]
     mode = "min" if monitor == "validation_loss" else "max"
     checkpoint = _EveryEpochCheckpoint(
@@ -333,14 +365,51 @@ def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
         or not last.is_file()
     ):
         raise RuntimeError("Training ended without both best and resumable last checkpoints.")
+    validation_best = best
+    honors_selection = catalog.honors_checkpoint_selection(recipe.get("model"))
+    checkpoint_selection = (
+        "final_epoch"
+        if stopping_decision
+        else recipe.get("nnmilCheckpointSelection", "best_validation")
+        if honors_selection
+        else "best_validation"
+    )
+    if checkpoint_selection in {"final_epoch", "latest"}:
+        best = last
     fit = {
         "planHash": _receipt_hash(
-            {"plan": plan, "recipe": recipe, "outputPath": str(output_dir.absolute())}
+            {"plan": plan, "recipe": requested_recipe, "outputPath": str(output_dir.absolute())}
         ),
         "best": _checkpoint_evidence(best, output_dir),
         "last": _checkpoint_evidence(last, output_dir),
         "history": model.history,
-        "bestValidationScore": float(checkpoint.best_model_score.cpu()),
+        "bestValidationScore": model.history[-1]["validation"][monitor.removeprefix("validation_")]
+        if checkpoint_selection in {"final_epoch", "latest"}
+        else float(checkpoint.best_model_score.cpu()),
+        **(
+            {
+                **({"stoppingDecision": stopping_decision} if stopping_decision else {}),
+                "validationBest": _checkpoint_evidence(validation_best, output_dir),
+            }
+            if stopping_decision or honors_selection
+            else {}
+        ),
+        **(
+            {
+                "checkpointSelection": checkpoint_selection,
+                "validationBestScore": float(checkpoint.best_model_score.cpu()),
+                # Map storage lazily to read the exact saved epoch without
+                # allocating a second full set of model and optimizer tensors.
+                "validationBestEpoch": int(
+                    torch.load(validation_best, map_location="cpu", weights_only=True, mmap=True)[
+                        "epoch"
+                    ]
+                )
+                + 1,
+            }
+            if honors_selection
+            else {}
+        ),
         "cudaPeakAllocatedBytes": torch.cuda.max_memory_allocated() if device_name == "cuda" else 0,
         "cudaPeakReservedBytes": torch.cuda.max_memory_reserved() if device_name == "cuda" else 0,
     }
@@ -358,9 +427,15 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
     assessment_only = fit is not None
     if fit is None:
         fit = _fit(plan, output_dir, recipe, datamodule, checkpoint_path)
+    effective_recipe, stopping_decision = resolve_stopping(
+        recipe, target, plan["data"]["memberships"]
+    )
+    aggregation = recipe.get("patientAggregation", "mean_probabilities")
     best, last = Path(fit["best"]["path"]), Path(fit["last"]["path"])
     _write_json(output_dir / "history.json", fit["history"])
     selected = MILTrainModule.load_from_checkpoint(str(best), map_location="cpu", weights_only=True)
+    if selected.clinical_preprocessor != datamodule.clinical_preprocessor:
+        raise ValueError("Selected checkpoint clinical preprocessing differs from the fitting partition.")
     device = torch.device(device_name)
     selected.to(device)
     validation = _predict(
@@ -374,7 +449,10 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
     predictions = {}
     metrics = {}
     for split, records in (("validation", validation), ("assessment", assessment)):
-        metrics[split] = classification_metrics(records, target)
+        metrics[split] = classification_metrics(
+            records, target, aggregation, analysis=recipe.get("analysis"),
+            decision_threshold=recipe.get("decisionThreshold", 0.5),
+        )
         patient_available = metrics[split]["patient"]["available"]
         path = output_dir / f"{split}-predictions.json"
         _write_json(
@@ -384,7 +462,10 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
                 "unit": target["unit"],
                 "checkpointPath": str(best),
                 "records": records,
-                "patientRecords": aggregate_patients(records) if patient_available else None,
+                "patientRecords": aggregate_patients(records, aggregation)
+                if patient_available
+                else None,
+                "patientAggregation": aggregation,
                 "patientMetrics": metrics[split]["patient"],
             },
         )
@@ -399,14 +480,35 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
         "historyPath": str(output_dir / "history.json"),
         "predictions": predictions,
         "metrics": metrics,
-        "checkpointMetric": recipe["checkpointMetric"],
+        "checkpointMetric": effective_recipe["checkpointMetric"],
+        **({"stoppingDecision": stopping_decision} if stopping_decision else {}),
         "checkpointUnit": target["unit"],
         "bestValidationScore": fit["bestValidationScore"],
-        "bestEpoch": int(selected.history[-1]["epoch"]) + 1,
+        "bestEpoch": fit.get("validationBestEpoch", int(selected.history[-1]["epoch"]) + 1),
+        **(
+            {
+                "checkpointSelection": fit["checkpointSelection"],
+                "selectedEpoch": int(selected.history[-1]["epoch"]) + 1,
+                "validationBestScore": fit["validationBestScore"],
+                "validationBestCheckpointPath": fit["validationBest"]["path"],
+            }
+            if catalog.honors_checkpoint_selection(recipe.get("model"))
+            else {}
+        ),
+        **(
+            {"effectiveRecipe": plan["effectiveRecipe"], "nnmilPlanning": plan["nnmilPlanning"]}
+            if "effectiveRecipe" in plan
+            else {}
+        ),
         "epochsCompleted": len(fit["history"]),
-        "trainingObjective": "patient_balanced_slide_cross_entropy"
-        if target["unit"] == "patient"
-        else "slide_cross_entropy",
+        "trainingObjective": datamodule.trainingObjective,
+        **({"clinicalPreprocessing": selected.clinical_preprocessor}
+           if selected.clinical_preprocessor else {}),
+        # Assessment-only resume must report the selected model's frozen loss
+        # settings, even for checkpoints created before weighting was corrected.
+        "resolvedClassWeights": selected.hparams.get("class_weights"),
+        "classWeightingUnit": selected.hparams.get("class_weight_unit"),
+        "patientAggregation": aggregation,
         "resumedFrom": str(checkpoint_path) if checkpoint_path else None,
         "assessmentOnlyResume": assessment_only,
         "resumePolicy": "replay_interrupted_epoch_from_last_completed_epoch",

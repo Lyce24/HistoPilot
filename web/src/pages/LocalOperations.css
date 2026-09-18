@@ -1,0 +1,15 @@
+.local-operations { display: grid; gap: 1.25rem; }
+.operations-form { display: flex; align-items: end; gap: .85rem; flex-wrap: wrap; }
+.operations-field { display: grid; gap: .4rem; flex: 1 1 240px; font-size: .88rem; font-weight: 600; }
+.operations-field input, .operations-field select { width: 100%; min-height: 40px; border: 1px solid var(--theme-line); border-radius: 6px; padding: .55rem .7rem; color: inherit; background: var(--theme-surface); font: inherit; font-weight: 400; }
+.operations-receipts { display: grid; gap: .85rem; margin-top: 1rem; }
+.operations-receipt, .operations-source { padding: 1rem 0; border-top: 1px solid var(--theme-line); }
+.operations-receipt-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.operations-path { display: block; overflow-wrap: anywhere; font-size: .82rem; margin-block: .45rem; }
+.operations-table-wrap { overflow-x: auto; }
+.operations-table { width: 100%; border-collapse: collapse; font-size: .87rem; }
+.operations-table th, .operations-table td { padding: .75rem; text-align: left; border-bottom: 1px solid var(--theme-line); vertical-align: top; }
+.operations-table th { font-weight: 600; }
+.local-operations summary { cursor: pointer; padding-block: .5rem; }
+.local-operations details p { overflow-wrap: anywhere; }
+@media (max-width: 680px) { .operations-form { display: grid; } .operations-receipt-heading { align-items: start; flex-wrap: wrap; } }

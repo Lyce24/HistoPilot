@@ -20,6 +20,7 @@ export type Page =
   | 'explorer'
   | 'provenance'
   | 'cleanup'
+  | 'operations'
   | 'system';
 export interface Patient {
   id: string;

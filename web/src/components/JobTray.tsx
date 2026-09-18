@@ -1,17 +1,17 @@
 import { useId, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { development, developmentPollInterval, trainingActive } from '../api/development';
-import { computeActive, computeStatusLabel, modelEvaluations, predictors } from '../api/predictors';
+import { computeActive, computePollInterval, computeStatusLabel, modelEvaluations, predictors } from '../api/predictors';
 import { interpretations } from '../api/interpretation';
 import { Badge, ErrorNotice, Icon } from './ui';
 
 export default function JobTray({ inline = false, projectId }: { inline?: boolean; projectId?: string }) {
   const [open, setOpen] = useState(false);
   const contentId = useId();
-  const jobs = useQuery({ queryKey: ['development-batches', projectId], queryFn: () => development.list(projectId!), enabled: Boolean(projectId), refetchInterval: (query) => developmentPollInterval(query.state.data) });
-  const refits = useQuery({ queryKey: ['refit-builds', projectId], queryFn: () => predictors.refits(projectId!), enabled: Boolean(projectId), refetchInterval: 10000 });
-  const evaluations = useQuery({ queryKey: ['model-evaluations', projectId], queryFn: () => modelEvaluations.list(projectId!), enabled: Boolean(projectId), refetchInterval: 10000 });
-  const attention = useQuery({ queryKey: ['interpretations', projectId], queryFn: () => interpretations.list(projectId!), enabled: Boolean(projectId), refetchInterval: 10000 });
+  const jobs = useQuery({ queryKey: ['development-batches', projectId], queryFn: () => development.list(projectId!), enabled: Boolean(projectId), refetchIntervalInBackground: false, refetchInterval: (query) => developmentPollInterval(query.state.data) });
+  const refits = useQuery({ queryKey: ['refit-builds', projectId], queryFn: () => predictors.refits(projectId!), enabled: Boolean(projectId), refetchIntervalInBackground: false, refetchInterval: (query) => computePollInterval(query.state.data?.items) });
+  const evaluations = useQuery({ queryKey: ['model-evaluations', projectId], queryFn: () => modelEvaluations.list(projectId!), enabled: Boolean(projectId), refetchIntervalInBackground: false, refetchInterval: (query) => computePollInterval(query.state.data?.items) });
+  const attention = useQuery({ queryKey: ['interpretations', projectId], queryFn: () => interpretations.list(projectId!), enabled: Boolean(projectId), refetchIntervalInBackground: false, refetchInterval: (query) => computePollInterval(query.state.data?.items) });
   const compute = [...(refits.data?.items ?? []).map((item) => ({ ...item, link: `#experiments?experiment=${encodeURIComponent(item.manifest.experimentId)}&tab=predictors`, kindLabel: 'Refit' })), ...(evaluations.data?.items ?? []).map((item) => ({ ...item, link: `#evaluation?predictor=${encodeURIComponent(item.manifest.predictorId)}`, kindLabel: 'Evaluation' })), ...(attention.data?.items ?? []).map((item) => ({ ...item, link: `#interpretation?interpretation=${encodeURIComponent(item.id)}`, kindLabel: 'Attention' }))].filter((item) => item.execution && item.execution.status !== 'not_started');
   const executions = jobs.data?.executions ?? [];
   const active = executions.filter(trainingActive).length + compute.filter((item) => computeActive(item.execution)).length;
@@ -19,14 +19,19 @@ export default function JobTray({ inline = false, projectId }: { inline?: boolea
   const queries = [jobs, refits, evaluations, attention];
   const loading = Boolean(projectId) && queries.some((query) => query.isPending);
   const error = queries.find((query) => query.error)?.error ?? null;
-  const summary = active ? `${active} active job${active === 1 ? '' : 's'} · ${completed} fold runs completed` : `${completed} fold runs completed`;
+  const summary = active ? `${active} active job${active === 1 ? '' : 's'} · ${completed} fold runs completed`
+    : completed ? `No active jobs · ${completed} fold runs completed`
+      : executions.length || compute.length ? 'No active jobs' : 'No jobs yet';
   const status = !projectId ? 'Demonstration workspace'
     : error ? active ? `${summary} · status may be outdated` : 'Status unavailable'
       : loading ? active ? `At least ${active} active job${active === 1 ? '' : 's'} · checking remaining jobs…` : 'Checking compute jobs…'
         : summary;
+  // A project with nothing running should not carry a prominent panel; it recedes
+  // until there is activity to report.
+  const idle = !open && !error && !loading && !active && !executions.length && !compute.length;
   return (
     <aside
-      className={`job-tray ${inline ? 'job-tray-inline' : ''} ${open ? 'open' : ''}`}
+      className={`job-tray ${inline ? 'job-tray-inline' : ''} ${open ? 'open' : ''} ${idle ? 'is-idle' : ''}`}
       aria-label="Training, evaluation and interpretation jobs"
     >
       <button
@@ -66,6 +71,7 @@ export default function JobTray({ inline = false, projectId }: { inline?: boolea
           <a className="text-link" href="#experiments">
             Experiments →
           </a>
+          {projectId ? <a className="text-link" href="#operations">All pipeline jobs & backups →</a> : null}
         </div>
       ) : null}
     </aside>

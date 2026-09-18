@@ -14,7 +14,7 @@ import EvaluationExperimentPicker from './EvaluationExperimentPicker';
 import EvaluationInputSettings, { initialEvaluationInputs, evaluationExecutionSelection, EvaluationCoverageSummary, type EvaluationExecutionInputs } from './EvaluationInputSettings';
 import { reportEditorValidity } from './NumericField';
 import { Badge, ErrorNotice } from './ui';
-import { StagePage, StageSteps } from './StageWorkflow';
+import { StageCreateButton, StageBackButton, StageContinueButton, StagePage, StageSteps } from './StageWorkflow';
 import './RunWorkspace.css';
 
 export default function BulkEvaluationRunner({ project, predictors, experiments = [], experimentsLoading, cohorts, linkedCohort = '', linkedExperiment = '', experimentIds, onExperimentsChange, onLockChange, onOpenEvaluation }: {
@@ -72,7 +72,7 @@ export default function BulkEvaluationRunner({ project, predictors, experiments 
     <StagePage pageKey={page}>
     {page === 'experiments' ? <>
     <EvaluationExperimentPicker options={options} selected={sourceIds} onChange={changeExperiments} disabled={fixed} loading={experimentsLoading} />
-    <div className="stage-actions"><p className="muted">{draftIds.length} {draftIds.length === 1 ? 'predictor' : 'predictors'} to evaluate from {sourceIds.length} selected {sourceIds.length === 1 ? 'experiment' : 'experiments'}</p><button type="button" className="btn btn-primary" disabled={!sourceIds.length || fixed} onClick={() => setInputStep('inputs')}>Continue to evaluation inputs</button></div>
+    <div className="stage-actions"><p className="muted">{draftIds.length} {draftIds.length === 1 ? 'predictor' : 'predictors'} to evaluate from {sourceIds.length} selected {sourceIds.length === 1 ? 'experiment' : 'experiments'}</p><StageContinueButton disabled={!sourceIds.length || fixed} onClick={() => setInputStep('inputs')}>Continue to evaluation inputs</StageContinueButton></div>
     </> : null}
     {page === 'inputs' ? <>
     <section className="evaluation-step" aria-labelledby="evaluation-method-title"><h3 id="evaluation-method-title">2. Choose methods and test cohort</h3>
@@ -94,18 +94,21 @@ export default function BulkEvaluationRunner({ project, predictors, experiments 
     </section>
     <div className="run-selection-bar"><strong>{selectedIds.length} {selectedIds.length === 1 ? 'predictor' : 'predictors'} {action.review ? 'fixed for review' : 'to evaluate'} from {sourceIds.length} selected {sourceIds.length === 1 ? 'experiment' : 'experiments'}</strong></div>
     {tooMany ? <p className="callout" role="status">This selection contains {selectedIds.length} predictors. Choose fewer experiments or methods, or use individual selection to stay within 256 predictors per batch.</p> : null}
-    <div className="stage-actions"><button type="button" className="btn btn-secondary" disabled={fixed} onClick={() => setInputStep('experiments')}>Back</button>
-    {!action.review ? <button className="btn btn-primary" disabled={action.locked || !ready || !selectedIds.length || tooMany} onClick={() => { if (reportEditorValidity(editor.current)) void action.preview({ cohortId, scope: 'selected', predictorIds: selectedIds, ...evaluationExecutionSelection(inputs), ...(name.trim() ? { namePrefix: name.trim() } : {}) }); }}>{action.busy ? 'Checking compatibility…' : 'Review experiment evaluation'}</button> : null}</div>
+    <div className="stage-actions"><StageBackButton disabled={fixed} onClick={() => setInputStep('experiments')}>Back</StageBackButton>
+    {!action.review ? <StageContinueButton disabled={action.locked || !ready || !selectedIds.length || tooMany} onClick={() => { if (reportEditorValidity(editor.current)) void action.preview({ cohortId, scope: 'selected', predictorIds: selectedIds, ...evaluationExecutionSelection(inputs), ...(name.trim() ? { namePrefix: name.trim() } : {}) }); }}>{action.busy ? 'Checking compatibility…' : 'Review experiment evaluation'}</StageContinueButton> : null}</div>
     </> : null}
     {action.review ? <div className="run-bulk-review"><h3>3. Review experiment evaluation</h3><p><strong>{action.review.preview.eligibleCount}</strong> compatible predictors will run · <strong>{action.review.preview.blockedCount}</strong> excluded. Prediction tasks, class encoding, extracted features, pack coverage and development overlap are checked for every predictor. The reviewed predictor list is fixed for this batch.</p>
       {arrivals ? <p className="callout" role="status">{arrivals} additional ready {arrivals === 1 ? 'predictor is' : 'predictors are'} excluded from this review. Change the selection and review again to include new arrivals.</p> : null}
-      {!action.submitted ? <button className="btn btn-secondary" disabled={action.busy} onClick={action.reset}>Change selection and review again</button> : null}
       <div className="run-table-scroll"><table className="run-table"><thead><tr><th>Experiment / predictor</th><th>Method</th><th>Compatibility</th><th>Details</th></tr></thead><tbody>{action.review.preview.items.map((item) => { const source = predictors.find((candidate) => candidate.id === item.predictorId)?.manifest; return <tr key={item.predictorId}><td>{source?.experiment?.name ?? shortRecordId(source?.experimentId ?? '')}<small>{item.predictorName}</small></td><td>{predictorMethodLabel(item.method)}</td><td><Badge tone={item.eligible ? 'success' : 'warning'}>{item.eligible ? 'Will run' : 'Excluded'}</Badge></td><td>{item.findings.map((finding) => finding.message).join(' ') || 'Inputs verified'}<EvaluationCoverageSummary manifest={item.evaluationManifest} /></td></tr>; })}</tbody></table></div>
-      {action.review.preview.canRun ? <><label className="development-check"><input type="checkbox" checked={action.acknowledged} disabled={action.busy || action.submitted} onChange={(event) => action.setAcknowledged(event.target.checked)} />I reviewed the test cohort, predictor list and exclusions.</label><button className="btn btn-primary" disabled={action.busy || (!action.acknowledged && !action.submitted)} onClick={() => void action.apply()}>{action.busy ? 'Submitting evaluation jobs…' : action.submitted ? 'Retry unfinished submissions' : 'Run reviewed predictors'}</button></> : null}
+      {action.review.preview.canRun ? <label className="development-check"><input type="checkbox" checked={action.acknowledged} disabled={action.busy || action.submitted} onChange={(event) => action.setAcknowledged(event.target.checked)} />I reviewed the test cohort, predictor list and exclusions.</label> : null}
+      <div className="stage-actions">
+        {!action.submitted ? <StageBackButton disabled={action.busy} onClick={action.reset}>Back to evaluation inputs</StageBackButton> : null}
+        {action.review.preview.canRun ? <button className="btn btn-primary" disabled={action.busy || (!action.acknowledged && !action.submitted)} onClick={() => void action.apply()}>{action.busy ? 'Submitting evaluation jobs…' : action.submitted ? 'Retry unfinished submissions' : 'Run reviewed predictors'}</button> : null}
+      </div>
     </div> : null}
     {action.result && action.submitted ? <div className="callout" role="status"><p>The evaluation batch is saved. Retry the unfinished submissions, or keep this batch and inspect the jobs already accepted.</p><button type="button" className="btn btn-secondary" disabled={action.busy} onClick={() => { action.reset(); setInputStep('results'); }}>Keep this batch and view submitted results</button></div> : null}
     {action.result && page === 'results' ? <div className="callout" role="status"><p>Evaluation batch saved. Each predictor has its own job and results below.</p>{action.submitted ? <button className="text-button" disabled={action.busy} onClick={action.reset}>Start a new review; keep this evaluation batch</button> : null}</div> : null}
-    {page === 'results' && batchId ? <><EvaluationBatchStatus key={batchId} project={project} id={batchId} onOpen={onOpenEvaluation} /><div className="stage-actions"><button type="button" className="btn btn-secondary" onClick={() => { action.reset(); setInputStep('experiments'); }}>Create another evaluation batch</button></div></> : null}
+    {page === 'results' && batchId ? <><EvaluationBatchStatus key={batchId} project={project} id={batchId} onOpen={onOpenEvaluation} /><div className="stage-actions"><StageCreateButton onClick={() => { action.reset(); setInputStep('experiments'); }}>Create evaluation batch</StageCreateButton></div></> : null}
     </StagePage>
   </div>;
 }

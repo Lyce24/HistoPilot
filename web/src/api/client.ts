@@ -160,6 +160,15 @@ export async function downloadArtifact(path: string, filename: string, retrySess
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** Export a bounded, server-verified query without exposing the session token. */
+export async function downloadRequestedArtifact(path: string, filename: string, init: RequestInit): Promise<void> {
+  const response = await authenticatedResponse(path, init);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /** Gate metadata-aware writes so an older running server cannot freeze without the label. */
 export async function requestScientificSave<T>(
   path: string,
@@ -185,7 +194,7 @@ export const api = {
     request<ProjectSummary>('/projects/open', { method: 'POST', body: JSON.stringify({ path }) }),
   projectWorkspace: (id: string) =>
     request<Workspace>(`/projects/${encodeURIComponent(id)}/workspace`),
-  updateProject: (id: string, input: { config: InitialConfig }) =>
+  updateProject: (id: string, input: { config: InitialConfig; expectedConfig: InitialConfig }) =>
     request<ProjectSummary>(`/projects/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(input),

@@ -172,7 +172,7 @@ def test_ambiguous_or_outside_bundle_choices_never_silently_fallback(
     assert result["packArtifactId"] is None
 
 
-def test_stale_bundle_and_dataset_conflict_both_block_planning(inputs):
+def test_stale_bundle_blocks_planning_independently_of_dataset_provenance(inputs):
     inputs.bundle.update(
         current=False,
         findings=[{"severity": "error", "code": "PACK_BINDING_CHANGED", "message": "Changed."}],
@@ -180,7 +180,8 @@ def test_stale_bundle_and_dataset_conflict_both_block_planning(inputs):
     inputs.protocol["manifest"]["datasetId"] = "dataset-other"
     result = inputs.service.preview(specification())
     assert not result["canPlan"]
-    assert {"BUNDLE_STALE", "PACK_BINDING_CHANGED", "BUNDLE_DATASET_MISMATCH"} <= codes(result)
+    assert {"BUNDLE_STALE", "PACK_BINDING_CHANGED"} <= codes(result)
+    assert "BUNDLE_DATASET_MISMATCH" not in codes(result)
 
 
 def test_protocol_pinned_feature_source_must_match_bundle(inputs):
@@ -190,13 +191,13 @@ def test_protocol_pinned_feature_source_must_match_bundle(inputs):
     assert "BUNDLE_FEATURE_MISMATCH" in codes(result)
 
 
-def test_extra_spreadsheet_predictors_cannot_be_silently_ignored_by_image_only_training(inputs):
+def test_declared_clinical_fields_are_explicit_recipe_choices_without_mutating_protocol(inputs):
     inputs.protocol["manifest"]["spec"]["predictors"] = ["age"]
     before = copy.deepcopy(inputs.protocol)
     result = inputs.service.preview(specification())
-    assert not result["canPlan"]
-    assert "TABULAR_PREDICTORS_UNSUPPORTED" in codes(result)
-    assert result["resolvedLoadingPolicy"] is None
+    assert result["canPlan"]
+    assert "CLINICAL_INPUTS_AVAILABLE" in {item["code"] for item in result["findings"]}
+    assert "each training recipe" in next(item["message"] for item in result["findings"] if item["code"] == "CLINICAL_INPUTS_AVAILABLE")
     assert inputs.protocol == before
 
 
@@ -437,3 +438,44 @@ def test_mil_api_uses_immutable_bundles_and_does_not_change_old_preferences(tmp_
             {"protocolId": protocol["id"], "featureBundleId": saved[0]["id"], "launch": True},
             422,
         )
+
+
+def test_features_may_cover_more_slides_than_the_dataset_and_the_protocol_uses_fewer(inputs):
+    """2,100 encoded · 2,000 in the dataset · 1,600 trained: coverage decides, never equality."""
+    encoded = [f"slide-{index:04d}" for index in range(2100)]
+    claimed = set(encoded[:1900]) | {f"only-in-dataset-{index}" for index in range(100)}
+    trained = encoded[:1600]
+    inputs.feature["manifest"]["files"] = [{"slideId": identity} for identity in encoded]
+    inputs.feature["manifest"]["datasetId"] = None
+    inputs.bundle["manifest"]["datasetId"] = None
+    inputs.protocol["manifest"]["memberships"] = [{"slideId": identity} for identity in trained]
+    assert len(claimed) == 2000
+    result = inputs.service.preview(specification())
+    assert result["canPlan"], result["findings"]
+    # The 500 encoded slides outside the protocol and the 100 dataset rows with no features
+    # are both irrelevant: only the 1,600 slides this model trains on must be present.
+    inputs.protocol["manifest"]["memberships"].append({"slideId": "only-in-dataset-0"})
+    assert "MISSING_FEATURES" in codes(inputs.service.preview(specification()))
+
+
+def test_a_bundle_selected_with_another_dataset_is_reusable(inputs):
+    inputs.bundle["manifest"]["datasetId"] = "dataset-b"
+    assert inputs.service.preview(specification())["canPlan"]
+
+
+def test_protocol_bundle_choice_is_enforced_even_with_matching_features(inputs):
+    inputs.protocol["manifest"]["spec"]["featureBundleId"] = "another-bundle"
+    result = inputs.service.preview(specification())
+    assert not result["canPlan"]
+    assert "PROTOCOL_BUNDLE_MISMATCH" in codes(result)
+    inputs.protocol["manifest"]["spec"]["featureBundleId"] = BUNDLE_ID
+    assert inputs.service.preview(specification())["canPlan"]
+
+
+def test_protocol_bundle_content_identity_is_checked(inputs):
+    inputs.protocol["manifest"]["spec"]["featureBundleId"] = BUNDLE_ID
+    inputs.protocol["manifest"]["featureBundle"] = {"contentHash": "saved-hash"}
+    inputs.bundle["contentHash"] = "changed-hash"
+    assert "PROTOCOL_BUNDLE_CHANGED" in codes(inputs.service.preview(specification()))
+    inputs.bundle["contentHash"] = "saved-hash"
+    assert inputs.service.preview(specification())["canPlan"]

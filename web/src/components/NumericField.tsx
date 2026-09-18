@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { useNumericDraft, type NumericDraft } from './NumericFieldDrafts';
 
 export interface NumericConstraints {
   label: string;
@@ -32,7 +33,10 @@ export function parseNumericField(text: string, constraints: NumericConstraints)
 export default function NumericField({ value, onChange, disabled, ...constraints }: NumericConstraints & {
   value: number; onChange: (value: number) => void; disabled?: boolean;
 }) {
-  const [draft, setDraft] = useState({ source: value, text: String(value) });
+  const [localDraft, setLocalDraft] = useState({ source: value, text: String(value) });
+  const recovery = useNumericDraft(constraints.label);
+  const draft = recovery.draft ?? localDraft;
+  function setDraft(next: NumericDraft) { setLocalDraft(next); recovery.setDraft(next); }
   const [touched, setTouched] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const errorId = useId();

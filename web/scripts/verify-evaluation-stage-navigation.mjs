@@ -25,6 +25,8 @@ import { evaluation } from ${source('api/evaluation.ts')};
 import { bulkEvaluations } from ${source('api/bulkEvaluations.ts')};
 import { clinicalAnalyses } from ${source('api/clinicalUtility.ts')};
 import { experiments } from ${source('api/experiments.ts')};
+import { ApiError } from ${source('api/client.ts')};
+import { useReviewedPublication } from ${source('components/useReviewedPublication.ts')};
 import { bundles } from ${source('api/bundles.ts')};
 import ${source('styles.css')};
 import ${source('local-workspace.css')};
@@ -47,8 +49,15 @@ const evalManifest = (selection) => ({ ...complete.manifest, ...copy(selection),
 modelEvaluations.preview = async (_, selection) => { state.calls.push({ method: 'single-preview', selection: copy(selection) }); return { canSave: true, previewHash: 'single-hash', findings: [], manifest: evalManifest(selection) }; };
 modelEvaluations.save = async (_, selection, hash, operation) => {
   state.calls.push({ method: 'single-save', selection: copy(selection), hash, operation });
-  if (state.calls.filter((call) => call.method === 'single-save').length === 1) throw new Error('Simulated lost save response.');
-  const saved = { ...complete, id: 'new-eval', manifest: evalManifest(selection), execution: { status: 'not_started' } }; state.evaluations.push(saved); return copy(saved);
+  const accepted = state.evaluationOperations ??= {};
+  if (!accepted[operation]) {
+    accepted[operation] = { ...complete, id: 'new-eval', manifest: evalManifest(selection), execution: { status: 'not_started' } };
+    state.evaluations.push(accepted[operation]);
+  }
+  const attempts = state.calls.filter((call) => call.method === 'single-save').length;
+  if (attempts === 1) throw new Error('Simulated lost save response.');
+  if (attempts === 2) throw new ApiError('Simulated HTTP 503 after acceptance.', 503);
+  return copy(accepted[operation]);
 };
 bulkEvaluations.list = async () => ({ items: copy(state.batches) });
 bulkEvaluations.get = async (_, id) => copy(state.batches.find((batch) => batch.id === id));
@@ -71,8 +80,25 @@ clinicalAnalyses.list = async () => ({ items: copy(state.reports) });
 clinicalAnalyses.preview = async (_, selection) => { state.calls.push({ method: 'clinical-preview', selection: copy(selection) }); return { canSave: true, previewHash: 'clinical-hash', findings: [], manifest: clinicalManifest(selection) }; };
 clinicalAnalyses.save = async (_, selection, hash, operation) => { state.calls.push({ method: 'clinical-save', selection: copy(selection), hash, operation }); const saved = { id: 'report-one', createdAt: '', lifecycleState: 'active', contentHash: 'saved', manifest: clinicalManifest(selection) }; state.reports.push(saved); return copy(saved); };
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+function PublicationProbe() {
+  const publication = useReviewedPublication(
+    async selection => ({ canSave: true, previewHash: 'probe-hash' }),
+    async (selection, hash, operation) => {
+      state.calls.push({ method: 'probe-save', selection: copy(selection), hash, operation });
+      if (state.calls.filter(call => call.method === 'probe-save').length === 1) {
+        await new Promise(resolve => { window.releasePublication = resolve; });
+        throw new Error('Uncertain publication probe');
+      }
+      return { id: 'original-probe-record' };
+    },
+    preview => preview.canSave,
+    async saved => { state.probeSaved = saved; },
+  );
+  window.publicationProbe = publication;
+  return <p id="publication-probe">Publication guard verification</p>;
+}
 const root = createRoot(document.getElementById('app'));
-window.renderStage = (stage) => root.render(<QueryClientProvider client={client}><div className="stage-workspace">{stage === 'clinical' ? <LocalClinicalUtility workspace={{ project: { id: 'project', name: 'Evidence study' } }} /> : <LocalModelEvaluation workspace={{ project: { id: 'project', name: 'Evidence study' } }} />}</div></QueryClientProvider>);
+window.renderStage = (stage) => root.render(<QueryClientProvider client={client}><div className="stage-workspace">{stage === 'publication-probe' ? <PublicationProbe /> : stage === 'clinical' ? <LocalClinicalUtility workspace={{ project: { id: 'project', name: 'Evidence study' } }} /> : <LocalModelEvaluation workspace={{ project: { id: 'project', name: 'Evidence study' } }} />}</div></QueryClientProvider>);
 window.renderStage('evaluation');
 `);
 
@@ -145,6 +171,12 @@ async function fill(text, value, selector = 'input,select,textarea') {
   await waitFor(element, 'field ' + text);
   await evaluate('(() => { const el = ' + element + '; const prototype = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, "value").set.call(el, ' + JSON.stringify(value) + '); el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true })); })()');
 }
+async function assertAction(label, kind) {
+  const target = button(label);
+  await waitFor(target);
+  assert.equal(await evaluate(target + '.dataset.stageAction'), kind, label + ' uses its shared control');
+  assert.equal(await evaluate(target + '.querySelectorAll(".stage-action-icon svg").length'), 1, label + ' has one consistent icon');
+}
 async function screenshot(name) {
   await new Promise((resolve) => setTimeout(resolve, 200));
   const { data } = await cdp('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
@@ -162,6 +194,8 @@ try {
   assert.equal(await evaluate('document.querySelector("#evaluation-experiments-title") === null'), true);
   assert.equal(await evaluate('document.body.innerText.includes("Stage 0 · Saved records")'), false);
   assert.equal(await evaluate(`document.querySelector('.stage-library button[data-record-key="configuration:completed-eval"]')?.textContent`), 'Manage');
+  await assertAction('Create evaluation', 'create');
+  assert.equal(await evaluate('document.querySelectorAll(".page-header [data-stage-action=create]").length'), 1);
   await screenshot('00-evaluation-library');
   await fill('Search', 'no-such-evaluation');
   await waitFor('document.body.innerText.includes("No matching evaluations")');
@@ -186,6 +220,7 @@ try {
   await waitFor('document.querySelector("#evaluation-experiments-title")');
   assert.equal(await evaluate(field('Test cohort for selected experiments') + ' == null'), true);
   await evaluate('[...document.querySelectorAll("input")].find(el => el.getAttribute("aria-label") === "Evaluate experiment Three-seed ABMIL comparison (study)")?.click()');
+  await assertAction('Continue to evaluation inputs', 'continue');
   await click('Continue to evaluation inputs');
   assert.equal(await evaluate('document.querySelector("#evaluation-experiments-title") === null'), true);
   await fill('Test cohort for selected experiments', 'cohort', 'select');
@@ -198,6 +233,7 @@ try {
   await click('Resume evaluation setup');
   assert.equal(await evaluate(field('Evaluation batch name', 'input') + '.value'), 'Method comparison');
   await click('Back');
+  await assertAction('Continue to evaluation inputs', 'continue');
   await click('Continue to evaluation inputs');
   assert.equal(await evaluate(field('Evaluation batch name', 'input') + '.value'), 'Method comparison');
   assert.equal(await evaluate(field('Decision threshold', 'input') + '.value'), '0');
@@ -205,6 +241,8 @@ try {
   await waitFor('document.body.innerText.includes("compatible predictors will run")');
   assert.equal(await evaluate(field('Test cohort for selected experiments') + ' == null'), true);
   assert.equal(await evaluate('document.querySelector(".stage-library") === null'), true);
+  await assertAction('Back to evaluation inputs', 'back');
+  assert.equal(await evaluate(button('Run reviewed predictors') + '.dataset.stageAction'), undefined);
   await screenshot('01-batch-review');
   await evaluate(field('I reviewed the test cohort', 'input') + '.click()');
   await click('Run reviewed predictors');
@@ -244,37 +282,52 @@ try {
   await evaluate(field('I reviewed the selected inputs', 'input') + '.click()');
   await click('Save evaluation plan');
   await waitFor(button('Retry this save'));
+  assert.equal(await evaluate(button('Back to review') + ' === undefined'), true, 'Uncertain publication must not offer a reset escape');
   assert.equal(await evaluate(button('Back to evaluations') + '.disabled'), true);
   assert.equal(await evaluate(button('Back to evaluation inputs') + '.disabled'), true);
   await screenshot('02-uncertain-single-save');
   await evaluate('window.dispatchEvent(new Event("histopilot:stage-library"))');
   assert.equal(await evaluate('document.querySelector(".stage-library") === null'), true);
   await click('Retry this save');
+  await waitFor('document.body.innerText.includes("Simulated HTTP 503 after acceptance.")');
+  assert.equal(await evaluate(button('Back to evaluations') + '.disabled'), true);
+  assert.equal(await evaluate(button('Back to review') + ' === undefined'), true);
+  await click('Retry this save');
   await waitFor(button('Run evaluation'));
   const saves = await evaluate('window.workflow.calls.filter(call => call.method === "single-save")');
+  assert.equal(saves.length, 3);
+  assert.equal(await evaluate('Object.keys(window.workflow.evaluationOperations).length'), 1);
+  assert.equal(await evaluate('window.workflow.evaluations.filter(record => record.id === "new-eval").length'), 1);
   assert.deepEqual(saves[0], saves[1]);
+  assert.deepEqual(saves[0], saves[2]);
   assert.equal(await evaluate('document.querySelector(".stage-library") === null'), true);
   await evaluate('window.renderStage("clinical")');
   await waitFor(button('Create clinical analysis'));
   assert.equal(await evaluate(field('Completed evaluation') + ' == null'), true);
+  await assertAction('Create clinical analysis', 'create');
+  assert.equal(await evaluate('document.querySelectorAll(".page-header [data-stage-action=create]").length'), 1);
   await click('Create clinical analysis');
+  await assertAction('Back to clinical analyses', 'back');
   await fill('Completed evaluation', 'completed-eval', 'select');
   await fill('Report name', 'Clinical utility evidence', 'input');
   await evaluate('window.dispatchEvent(new Event("histopilot:stage-library"))');
   await waitFor(button('Resume clinical analysis'));
   await click('Resume clinical analysis');
   assert.equal(await evaluate(field('Report name', 'input') + '.value'), 'Clinical utility evidence');
+  await assertAction('Analyze clinical utility', 'continue');
   await click('Analyze clinical utility');
   await waitFor(button('Save clinical utility report'));
   assert.equal(await evaluate(field('Completed evaluation') + ' == null'), true);
   assert.equal(await evaluate('document.querySelector(".stage-library") === null'), true);
   await click('Back to analysis settings');
   assert.equal(await evaluate(field('Report name', 'input') + '.value'), 'Clinical utility evidence');
+  await assertAction('Analyze clinical utility', 'continue');
   await click('Analyze clinical utility');
   await waitFor(button('Save clinical utility report'));
   await evaluate(field('I reviewed the selected inputs', 'input') + '.click()');
   await click('Save clinical utility report');
   await waitFor(button('Copy into a new analysis'));
+  assert.equal(await evaluate('document.querySelector("a[data-stage-action=continue]").textContent'), 'Continue to model interpretation');
   await click('Copy into a new analysis');
   assert.equal(await evaluate(field('Report name', 'input') + '.value'), 'Clinical utility evidence copy');
   await click('Back to clinical analyses');
@@ -297,9 +350,37 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await screenshot('04-clinical-library-mobile');
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
+  await evaluate('window.renderStage("publication-probe")');
+  await waitFor('window.publicationProbe');
+  await evaluate('window.publicationProbe.preview({ name: "Deliberate review" })');
+  await waitFor('window.publicationProbe.review');
+  await evaluate('window.publicationProbe.reset()');
+  await waitFor('window.publicationProbe.review === null');
+  await evaluate('window.publicationProbe.preview({ name: "Preserve this exact request" })');
+  await waitFor('window.publicationProbe.review');
+  await evaluate('window.publicationProbe.setAcknowledged(true)');
+  await waitFor('window.publicationProbe.acknowledged');
+  const reviewed = await evaluate('window.publicationProbe.review');
+  // Call reset synchronously after publish, before React can disable the UI.
+  await evaluate('window.beforeFailureReset = window.publicationProbe.reset; window.pendingPublication = window.publicationProbe.publish(); window.publicationProbe.reset(); void window.publicationProbe.publish()');
+  await waitFor('window.releasePublication');
+  assert.deepEqual(await evaluate('window.publicationProbe.review'), reviewed);
+  assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "probe-save").length'), 1);
+  await evaluate('(async () => { window.releasePublication(); await window.pendingPublication; window.beforeFailureReset(); })()');
+  await waitFor('window.publicationProbe.review?.uncertain');
+  await evaluate('window.publicationProbe.reset(); void window.publicationProbe.preview({ name: "Replacement request" })');
+  assert.deepEqual(await evaluate('window.publicationProbe.review.selection'), reviewed.selection);
+  assert.equal(await evaluate('window.publicationProbe.review.operationId'), reviewed.operationId);
+  await evaluate('window.publicationProbe.publish()');
+  await waitFor('window.publicationProbe.saved?.id === "original-probe-record"');
+  const probeSaves = await evaluate('window.workflow.calls.filter(call => call.method === "probe-save")');
+  assert.equal(probeSaves.length, 2);
+  assert.deepEqual(probeSaves[0], probeSaves[1]);
+  await evaluate('window.publicationProbe.reset()');
+  await waitFor('window.publicationProbe.saved === null');
   assert.deepEqual(await evaluate('window.workflow.errors'), []);
   assert.deepEqual(exceptions, []);
-  await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'Real React and local Chromium with mocked APIs; no backend or HistoPilot server.', checks: ['library search, filters, reset and exact Manage record keys', 'library and detail separation', 'batch page transitions and retained inputs', 'independent cohort compatibility review', 'partial batch retries preserve request identity', 'single review and uncertain-save locks', 'clinical create, review, save, copy and library', 'mobile library containment'], calls: await evaluate('window.workflow.calls') }, null, 2));
+  await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'Real React and local Chromium with mocked APIs; no backend or HistoPilot server.', checks: ['shared create/back/continue controls and execution action distinction', 'library search, filters, reset and exact Manage record keys', 'library and detail separation', 'batch page transitions and retained inputs', 'independent cohort compatibility review', 'partial batch retries preserve request identity', 'single review and transport/503 uncertain-save locks', 'pending and uncertain reset cannot erase operation identity; confirmed preview reset still works', 'clinical create, review, save, copy and library', 'mobile library containment'], calls: await evaluate('window.workflow.calls') }, null, 2));
   console.log('PASS: evaluation, batch and clinical library/page transitions, input preservation and publication retry locks.');
   console.log('Artifacts: ' + output);
 } catch (error) {

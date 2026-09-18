@@ -2,12 +2,15 @@
 
 import copy
 import runpy
+import sys
 from pathlib import Path
 
 import pytest
 
+from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.refits import RefitService, epoch_budget
+from histopilot.schemas.development import ResourcePolicy
 from histopilot.schemas.predictors import FreezePredictor, LaunchRefit, PredictorSelection
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
@@ -26,6 +29,9 @@ class FakeJobs:
 
     def status(self, identity, **kwargs):
         return self.states.get(identity, {"status": "not_started"})
+
+    def replay_launch(self, identity, operation_id, **kwargs):
+        return None
 
     def launch(self, identity, plan, operation_id, resume=False):
         folder = self.folder(identity)
@@ -52,7 +58,11 @@ class FakeJobs:
 
 
 def refit_candidate(service, *, epochs=(3, 10), percentile=50, legacy_history=False):
-    selection, folder, state = candidate(service, refit_ready=True)
+    # Historical loss-only histories must declare their historical monitor;
+    # new recipes intentionally default to validation AUROC.
+    selection, folder, state = candidate(
+        service, refit_ready=True, checkpoint_metric="validation_loss" if legacy_history else None
+    )
     for run, epoch in zip(state["runs"], epochs, strict=True):
         result = run["result"]
         result["epochsCompleted"] = 12
@@ -170,6 +180,27 @@ def test_refit_rejects_changed_source_after_review_or_training(registry):
     with pytest.raises(StorageError) as error:
         refits.publish(record["id"], "publish-refit")
     assert error.value.code == "REFIT_EVIDENCE_CHANGED"
+
+
+def test_accepted_refit_retry_skips_evidence_scan_but_rejects_changed_resources(registry, monkeypatch):
+    service, _ = registry
+    selection, _, _ = refit_candidate(service)
+    job_support = runpy.run_path(str(Path(__file__).with_name("test_compute_jobs.py")))
+    executor = job_support["Executor"]()
+    jobs = ComputeJobService(service.store, executor=executor, runtime=lambda: {
+        "available": True, "python": sys.executable, "versions": {},
+        "cudaAvailable": False, "gpuCount": 0})
+    refits, record, _ = create(service, selection, jobs)
+    request = LaunchRefit(operationId="launch-refit", resources=ResourcePolicy(gpuIds=[]))
+    first = refits.launch(record["id"], request)
+    monkeypatch.setattr(refits, "_verify_sources", lambda *_: pytest.fail(
+        "Accepted refit retry must not scan completed fold evidence"))
+    assert refits.launch(record["id"], request)["planHash"] == first["planHash"]
+    assert len(executor.calls) == 1
+    with pytest.raises(StorageError) as caught:
+        refits.launch(record["id"], LaunchRefit(operationId="launch-refit",
+                      resources=ResourcePolicy(gpuIds=[], ramGbPerRun=2)))
+    assert caught.value.code == "OPERATION_CONFLICT"
 
 
 def test_refit_refuses_altered_completed_output_plan(registry):

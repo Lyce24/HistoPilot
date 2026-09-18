@@ -1,0 +1,4 @@
+.btn.stage-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; }
+.btn.stage-action.btn-small { min-height: 32px; }
+.stage-action-icon { display: inline-flex; flex: 0 0 16px; }
+.stage-action-back .stage-action-icon { transform: rotate(180deg); }

@@ -5,9 +5,21 @@ import type { TrainingExecution } from './development';
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
 describe('development batch intent', () => {
+  it('posts the exact draft for a cancellable read-only runtime recommendation', async () => {
+    const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' })).mockResolvedValueOnce(response({ version: 1, applicable: false }));
+    vi.stubGlobal('fetch', fetcher);
+    const { development } = await import('./development');
+    const spec = { version: 1 as const, experimentName: 'nnMIL', batchName: 'Folds', inputs: { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native' as const, packArtifactId: null }, recipe: defaultRecipe(), mode: 'single' as const, grid: { learningRates: [0.0001], weightDecays: [0.005], maxEpochs: [40] }, configurations: [], trainingSeeds: [42], resources: defaultResources(), notes: '' };
+    const signal = new AbortController().signal;
+    await development.runtimeRecommendation('project/one', spec, signal);
+    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/projects/project%2Fone/mil-experiments/batches/runtime-recommendation');
+    expect(fetcher.mock.calls[1][1]).toMatchObject({ method: 'POST', signal });
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual(spec);
+  });
   it('keeps CPU workers separate from concurrent runs and defaults to one process per GPU', () => {
     expect(defaultResources()).toMatchObject({ maxConcurrentRuns: 1, runsPerGpu: 1, dataLoaderWorkers: 2, cpuThreadsPerRun: 2 });
-    expect(defaultRecipe().checkpointMetric).toBe('validation_loss');
+    expect(defaultRecipe().checkpointMetric).toBe('validation_auroc');
   });
 
   it('fills legacy architecture defaults without changing saved optimization settings or mutating the original', () => {

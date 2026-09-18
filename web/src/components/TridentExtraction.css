@@ -29,9 +29,9 @@
   font-size: 12px;
 }
 .pfm-mode.is-selected {
-  border-color: var(--brand-red);
+  border-color: var(--brand-primary);
   background: var(--theme-accent-soft);
-  box-shadow: 0 0 0 1px var(--brand-red);
+  box-shadow: 0 0 0 1px var(--brand-primary);
 }
 .pfm-content[hidden] {
   display: none;
@@ -63,7 +63,8 @@
 }
 .trident-inputs {
   display: grid;
-  grid-template-columns: minmax(220px, 0.75fr) minmax(0, 1.25fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 22px;
 }
 .trident-output-input {
@@ -116,12 +117,12 @@
   cursor: pointer;
 }
 .trident-stage:focus-within {
-  outline: 3px solid var(--brand-red);
+  outline: 3px solid var(--brand-primary);
   outline-offset: 3px;
 }
 .trident-stage.is-selected {
-  color: var(--brand-red);
-  border-color: var(--brand-red);
+  color: var(--brand-primary);
+  border-color: var(--brand-primary);
   background: var(--theme-accent-soft);
 }
 .trident-stage strong,
@@ -272,7 +273,7 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  color: var(--brand-red);
+  color: var(--brand-primary);
 }
 .trident-layout dl {
   display: grid;
@@ -350,7 +351,7 @@
   background: var(--theme-canvas);
 }
 .trident-completion strong {
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   font-size: 13px;
 }
 .trident-completion p {
@@ -426,7 +427,7 @@
   font-size: 12px;
 }
 .trident-job-row.is-selected {
-  border-color: var(--brand-red);
+  border-color: var(--brand-primary);
   background: var(--theme-accent-soft);
 }
 .trident-job-row strong,
@@ -494,7 +495,7 @@
 }
 .trident-log {
   padding: 16px;
-  background: var(--brand-brown);
+  background: var(--brand-deep);
   color: var(--theme-on-dark);
   border-radius: 8px;
   font-size: 11px;

@@ -1,11 +1,10 @@
-"""Whole-bag inference for frozen single-refit and mean-probability ensembles."""
+"""Frozen slide and patient inference with recorded bag and ensemble policies."""
 
 import csv
 import hashlib
 import json
 import os
 import tempfile
-from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -16,9 +15,15 @@ from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import checkpoint_snapshot
 from histopilot.datasets.datamodule import _worker_init
 from histopilot.datasets.mil import SlideDataset, collate_mil
+from histopilot.scoring import patient_predictions
 from histopilot.storage.project_lock import _reject_symlink_components, ensure_managed_directory
 from histopilot.storage.scientific import ScientificStore
-from histopilot.training.module import MILTrainModule, _metrics
+from histopilot.training.module import (
+    MILTrainModule,
+    _metrics,
+    class_logits,
+    window_uncertainty_rows,
+)
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import _check_inputs
 
@@ -37,66 +42,12 @@ def _decisions(records, target, threshold):
 def evaluation_metrics(records, target, threshold):
     """Metrics use labeled rows only; threshold changes decisions, never ranking scores."""
     labeled = [row for row in records if row["labelIndex"] is not None]
-    result = _metrics(labeled, target)
-    if result["available"]:
-        confusion = np.zeros((len(target["classes"]), len(target["classes"])), dtype=np.int64)
-        for row in labeled:
-            confusion[row["labelIndex"], row["predictedIndex"]] += 1
-        support = confusion.sum(axis=1)
-        recall = np.divide(
-            confusion.diagonal(), support, out=np.zeros(len(support)), where=support > 0
-        )
-        precision = np.divide(
-            confusion.diagonal(),
-            confusion.sum(axis=0),
-            out=np.zeros(len(support)),
-            where=confusion.sum(axis=0) > 0,
-        )
-        f1 = np.divide(
-            2 * recall * precision,
-            recall + precision,
-            out=np.zeros(len(support)),
-            where=(recall + precision) > 0,
-        )
-        result.update(
-            accuracy=float(confusion.trace() / len(labeled)),
-            balancedAccuracy=float(recall[support > 0].mean()),
-            macroF1=float(f1.mean()),
-            confusionMatrix=confusion.tolist(),
-        )
+    result = _metrics(labeled, target, decision_threshold=threshold)
     return {
         **result,
         "predictionCount": len(records),
         "unlabeledCount": len(records) - len(labeled),
     }
-
-
-def patient_predictions(records):
-    groups = defaultdict(list)
-    for row in records:
-        if row["patientId"]:
-            groups[row["patientId"]].append(row)
-    patients = []
-    for patient, slides in sorted(groups.items()):
-        labels = {row["labelIndex"] for row in slides if row["labelIndex"] is not None}
-        if len(labels) > 1:
-            raise ValueError("Patient evaluation requires consistent labels within each patient.")
-        labeled = next((row for row in slides if row["labelIndex"] is not None), None)
-        patients.append(
-            {
-                "patientId": patient,
-                "slideIds": [row["slideId"] for row in slides],
-                "labelIndex": labeled["labelIndex"] if labeled else None,
-                "label": labeled["label"] if labeled else None,
-                "probabilities": np.mean([row["probabilities"] for row in slides], axis=0).tolist(),
-            }
-        )
-        if all("logProbabilities" in row for row in slides):
-            patients[-1]["logProbabilities"] = (
-                np.logaddexp.reduce([row["logProbabilities"] for row in slides], axis=0)
-                - np.log(len(slides))
-            ).tolist()
-    return patients
 
 
 def _write_csv(path, rows, classes, *, patient=False):
@@ -127,11 +78,93 @@ def _write_csv(path, rows, classes, *, patient=False):
     temporary.replace(path)
 
 
+def _valid_probabilities(probabilities, log_probabilities, shape):
+    return (
+        probabilities.shape == shape
+        and log_probabilities.shape == shape
+        and np.isfinite(probabilities).all()
+        and np.all(probabilities >= 0)
+        and np.all(probabilities <= 1)
+        and np.allclose(probabilities.sum(axis=1), 1, atol=1e-6, rtol=0)
+        and np.isfinite(log_probabilities).all()
+        and np.allclose(np.exp(log_probabilities), probabilities, atol=1e-6, rtol=0)
+        and np.allclose(np.logaddexp.reduce(log_probabilities, axis=1), 0, atol=1e-6, rtol=0)
+    )
+
+
+def _valid_window_uncertainty(rows, shape):
+    if not isinstance(rows, list) or len(rows) != shape[0]:
+        return False
+    scalar_fields = ("entropyOfMeanProbability", "meanWindowEntropy", "mutualInformation")
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"windowCount", "probabilityVariance", *scalar_fields}
+            or type(row["windowCount"]) is not int or row["windowCount"] < 1
+        ):
+            return False
+        if any(
+            isinstance(row[name], bool) or not isinstance(row[name], (int, float))
+            or not np.isfinite(row[name]) or not 0 <= row[name] <= np.log(shape[1]) + 1e-6
+            for name in scalar_fields
+        ):
+            return False
+        variance = row["probabilityVariance"]
+        if (
+            not isinstance(variance, list) or len(variance) != shape[1]
+            or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                   or not np.isfinite(value) or not 0 <= value <= 0.25 + 1e-6 for value in variance)
+        ):
+            return False
+    return True
+
+
+def _cached_member(path, input_hash, member_hash, identities, shape, *, include_uncertainty=False):
+    if not path.exists() and not path.is_symlink():
+        return None
+    # Filesystem safety failures remain errors; malformed derived predictions can
+    # be discarded and recomputed from the still-verified checkpoint and features.
+    content = ScientificStore._read_file(path, 64 * 1024 * 1024)
+    try:
+        cache = json.loads(content)
+        if (
+            not isinstance(cache, dict)
+            or cache.get("inputHash") != input_hash
+            or cache.get("memberHash") != member_hash
+            or cache.get("slideIds") != identities
+            or "logProbabilities" not in cache
+            or cache.get("sha256")
+            != _hash(
+                {
+                    "probabilities": cache.get("probabilities"),
+                    "logProbabilities": cache.get("logProbabilities"),
+                    **({"windowUncertainty": cache["windowUncertainty"]}
+                       if "windowUncertainty" in cache else {}),
+                }
+            )
+        ):
+            return None
+        probabilities = np.asarray(cache["probabilities"], dtype=np.float64)
+        log_probabilities = np.asarray(cache["logProbabilities"], dtype=np.float64)
+        uncertainty = cache.get("windowUncertainty")
+        if (
+            _valid_probabilities(probabilities, log_probabilities, shape)
+            and (uncertainty is None or _valid_window_uncertainty(uncertainty, shape))
+        ):
+            if include_uncertainty:
+                return probabilities, log_probabilities, uncertainty
+            return probabilities, log_probabilities
+    except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
+        pass
+    return None
+
+
 def evaluate(plan, output_dir):
     """Run each model sequentially so ensembles do not multiply GPU model memory.
 
-    Completed member predictions are cached with a digest and the full input
-    fingerprint. Resume restarts the interrupted member and reuses completed ones.
+    Completed member predictions are cached with a digest, the full input
+    fingerprint, and the individual checkpoint identity. Resume restarts the
+    interrupted member and reuses verified completed ones.
     """
     folder = Path(output_dir)
     ensure_managed_directory(folder)
@@ -155,8 +188,12 @@ def evaluate(plan, output_dir):
         raise ValueError("Test labels must preserve the frozen target class order.")
     if target["unit"] == "patient" and any(not row.get("patientId") for row in rows):
         raise ValueError("Patient evaluation requires a grouping identity for every slide.")
-    if plan["inference"]["patientAggregation"] != "mean":
-        raise ValueError("Frozen predictors require mean patient probabilities.")
+    patient_aggregation = plan["inference"]["patientAggregation"]
+    if patient_aggregation not in {"mean", "mean_logits"}:
+        raise ValueError("Frozen predictors require mean probabilities or mean logits.")
+    aggregation = plan.get("aggregation", "mean_probability")
+    if aggregation not in {"mean_probability", "mean_logit", "single_model"}:
+        raise ValueError("The frozen ensemble aggregation is unsupported.")
     device = torch.device(plan.get("device", "cpu"))
     precision = plan["inference"]["precision"]
     if precision == "float16" and device.type != "cuda":
@@ -172,7 +209,11 @@ def evaluate(plan, output_dir):
         for row in rows
     ]
     dataset = SlideDataset(
-        {**data, "target": target, "trainingSeed": 0, "recipe": {"bagSize": None}},
+        {**data, "target": target,
+         "trainingSeed": plan.get("bagPolicy", {}).get("trainingSeed", 0),
+         "recipe": {"bagSize": None, "evalBagSize": plan.get("bagPolicy", {}).get("evalBagSize"),
+                    "inputMode": data.get("inputMode", "image"),
+                    "clinicalFields": data.get("clinicalFields", [])}},
         memberships,
         training=False,
     )
@@ -188,8 +229,17 @@ def evaluate(plan, output_dir):
     )
     totals = np.zeros((len(rows), len(classes)), dtype=np.float64)
     log_totals = np.full_like(totals, -np.inf)
+    logit_totals = np.zeros_like(totals)
+    window_uncertainty_members = [[] for _ in rows]
     input_hash = _hash(
-        {"data": data, "target": target, "inference": plan["inference"], "checkpoints": checkpoints}
+        {
+            "data": data,
+            "target": target,
+            "inference": plan["inference"],
+            "checkpoints": checkpoints,
+            **({"bagPolicy": plan["bagPolicy"]} if "bagPolicy" in plan else {}),
+            **({"aggregation": aggregation} if aggregation == "mean_logit" else {}),
+        }
     )
     cache_dir = folder / "members"
     ensure_managed_directory(cache_dir)
@@ -201,25 +251,12 @@ def evaluate(plan, output_dir):
             if any(snapshot[key] != checkpoint[key] for key in ("path", "bytes", "sha256")):
                 raise ValueError("A frozen predictor checkpoint changed.")
             cache_path = cache_dir / f"member-{index}.json"
-            probabilities = None
-            log_probabilities = None
-            if cache_path.exists():
-                cache = json.loads(ScientificStore._read_file(cache_path, 64 * 1024 * 1024))
-                if (
-                    cache.get("inputHash") == input_hash
-                    and cache.get("slideIds") == identities
-                    and "logProbabilities" in cache
-                    and cache.get("sha256")
-                    == _hash(
-                        {
-                            "probabilities": cache.get("probabilities"),
-                            "logProbabilities": cache.get("logProbabilities"),
-                        }
-                    )
-                ):
-                    probabilities = np.asarray(cache["probabilities"], dtype=np.float64)
-                    log_probabilities = np.asarray(cache["logProbabilities"], dtype=np.float64)
-            if probabilities is None:
+            member_hash = _hash({"inputHash": input_hash, "checkpoint": checkpoint})
+            cached = _cached_member(
+                cache_path, input_hash, member_hash, identities, totals.shape,
+                include_uncertainty=True,
+            )
+            if cached is None:
                 model = MILTrainModule.load_from_checkpoint(
                     checkpoint["path"], map_location="cpu", weights_only=True
                 )
@@ -227,8 +264,11 @@ def evaluate(plan, output_dir):
                     raise ValueError(
                         "The checkpoint target or feature dimensions differ from its predictor."
                     )
+                if (model.recipe.get("inputMode", "image") != data.get("inputMode", "image")
+                        or model.recipe.get("clinicalFields", []) != data.get("clinicalFields", [])):
+                    raise ValueError("Checkpoint clinical schema differs from its frozen evaluation.")
                 model.eval().to(device)
-                collected, log_collected, observed = [], [], []
+                collected, log_collected, observed, uncertainty_collected = [], [], [], []
                 with torch.inference_mode():
                     for batch in loader:
                         if (folder / "cancel.requested").exists():
@@ -238,43 +278,55 @@ def evaluate(plan, output_dir):
                             dtype=torch.float16 if precision == "float16" else torch.bfloat16,
                             enabled=precision != "float32",
                         ):
-                            logits = model(batch["features"].to(device), batch["mask"].to(device))
+                            output = model.prediction_output(
+                                batch["features"].to(device), batch["mask"].to(device),
+                                **({"clinical": batch["clinical"]} if "clinical" in batch else {}),
+                            )
+                            logits = output["logits"]
+                        logits = class_logits(logits, target)
                         collected.extend(torch.softmax(logits.double(), dim=-1).cpu().tolist())
                         log_collected.extend(
                             torch.log_softmax(logits.double(), dim=-1).cpu().tolist()
                         )
                         observed.extend(batch["slideIds"])
+                        if output.get("window_uncertainty") is not None:
+                            uncertainty_collected.extend(window_uncertainty_rows(
+                                output["window_uncertainty"], target
+                            ))
                 del model
                 if observed != identities:
                     raise ValueError("Inference changed the selected slide order or membership.")
                 probabilities = np.asarray(collected, dtype=np.float64)
                 log_probabilities = np.asarray(log_collected, dtype=np.float64)
+                if not _valid_probabilities(probabilities, log_probabilities, totals.shape):
+                    raise ValueError("A checkpoint produced invalid probabilities.")
+                uncertainty = uncertainty_collected or None
+                if uncertainty is not None and not _valid_window_uncertainty(uncertainty, totals.shape):
+                    raise ValueError("A checkpoint produced invalid feature-window uncertainty.")
+                payload = {
+                    "probabilities": collected, "logProbabilities": log_collected,
+                    **({"windowUncertainty": uncertainty} if uncertainty is not None else {}),
+                }
                 write_json(
                     cache_path,
                     {
                         "inputHash": input_hash,
+                        "memberHash": member_hash,
                         "slideIds": identities,
-                        "probabilities": collected,
-                        "logProbabilities": log_collected,
-                        "sha256": _hash(
-                            {"probabilities": collected, "logProbabilities": log_collected}
-                        ),
+                        **payload,
+                        "sha256": _hash(payload),
                     },
                 )
-            if (
-                probabilities.shape != totals.shape
-                or not np.isfinite(probabilities).all()
-                or np.any(probabilities < 0)
-                or np.any(probabilities > 1)
-                or not np.allclose(probabilities.sum(axis=1), 1, atol=1e-6)
-                or log_probabilities.shape != totals.shape
-                or not np.isfinite(log_probabilities).all()
-                or not np.allclose(np.exp(log_probabilities), probabilities, atol=1e-6)
-                or not np.allclose(np.logaddexp.reduce(log_probabilities, axis=1), 0, atol=1e-6)
-            ):
-                raise ValueError("A checkpoint produced invalid probabilities.")
+            else:
+                probabilities, log_probabilities, uncertainty = cached
+            if uncertainty is not None:
+                for members, scores in zip(window_uncertainty_members, uncertainty, strict=True):
+                    members.append({
+                        "memberIndex": index, "checkpointSha256": checkpoint["sha256"], **scores,
+                    })
             totals += probabilities / len(checkpoints)
             log_totals = np.logaddexp(log_totals, log_probabilities - np.log(len(checkpoints)))
+            logit_totals += log_probabilities / len(checkpoints)
             write_json(
                 folder / "progress.json",
                 {
@@ -286,6 +338,9 @@ def evaluate(plan, output_dir):
     finally:
         dataset.close()
     _check_inputs(data)
+    if aggregation == "mean_logit":
+        log_totals = logit_totals - np.logaddexp.reduce(logit_totals, axis=1, keepdims=True)
+        totals = np.exp(log_totals)
     records = [
         {
             "slideId": row["slideId"],
@@ -298,10 +353,13 @@ def evaluate(plan, output_dir):
         }
         for row, probability, log_probability in zip(rows, totals, log_totals, strict=True)
     ]
+    for row, members in zip(records, window_uncertainty_members, strict=True):
+        if members:
+            row["windowUncertaintyByMember"] = members
     threshold = plan["inference"]["decisionThreshold"]
     records = _decisions(records, target, threshold)
     try:
-        patients = _decisions(patient_predictions(records), target, threshold)
+        patients = _decisions(patient_predictions(records, patient_aggregation), target, threshold)
         patient_metrics = evaluation_metrics(patients, target, threshold)
     except ValueError as error:
         if target["unit"] == "patient":
@@ -313,11 +371,23 @@ def evaluate(plan, output_dir):
         "classOrder": classes,
         "positiveClass": target.get("positiveClass"),
         "decisionThreshold": threshold,
-        "patientAggregation": "mean_probabilities",
+        "patientAggregation": "mean_logits"
+        if patient_aggregation == "mean_logits"
+        else "mean_probabilities",
+        **({"ensembleAggregation": aggregation} if aggregation == "mean_logit" else {}),
         "slide": slide_metrics,
         "patient": patient_metrics,
         "selected": patient_metrics if target["unit"] == "patient" else slide_metrics,
     }
+    if plan.get("analysis") is not None:
+        from histopilot.statistics import patient_analysis
+
+        metrics["patientAnalysis"] = patient_analysis(
+            records, patients, target, plan["analysis"]
+        )
+        intervals = metrics["patientAnalysis"]["uncertainty"].get("intervals")
+        if intervals:
+            patient_metrics["confidenceIntervals"] = intervals
     write_json(
         folder / "predictions.json",
         {"classOrder": classes, "records": records, "patientRecords": patients},

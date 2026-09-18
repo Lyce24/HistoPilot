@@ -3,7 +3,7 @@
 .cleanup-retention { line-height: 1.65; }
 .cleanup-tabs { display: flex; gap: 8px; padding: 18px 22px; border-bottom: 1px solid var(--border, var(--theme-line)); }
 .cleanup-tabs button { border: 1px solid transparent; border-radius: 8px; padding: 9px 16px; background: transparent; color: inherit; cursor: pointer; }
-.cleanup-tabs button.selected { background: var(--theme-accent-soft); border-color: var(--theme-line-strong); color: var(--brand-brown); }
+.cleanup-tabs button.selected { background: var(--theme-accent-soft); border-color: var(--theme-line-strong); color: var(--theme-ink); }
 .cleanup-tabs button span { margin-left: 8px; font-size: 12px; opacity: .75; }
 .cleanup-filters, .cleanup-actions { display: flex; align-items: end; gap: 18px; padding: 20px 22px; }
 .cleanup-filters label { flex: 1; }
@@ -28,7 +28,7 @@
 .cleanup-blockers h3, .cleanup-required h3 { margin: 0; font-size: 15px; }
 .cleanup-ack { display: flex; align-items: start; gap: 10px; margin: 22px 0 18px; line-height: 1.6; }
 .cleanup-ack input { margin-top: 6px; }
-.cleanup-trash-button { background: var(--brand-red); border-color: var(--brand-red); color: white; }
+.cleanup-trash-button { background: var(--brand-primary); border-color: var(--brand-primary); color: white; }
 .cleanup-audit { padding: 18px 22px; }
 .cleanup-audit summary { font-weight: 600; cursor: pointer; }
 .cleanup-audit li { display: flex; gap: 20px; padding: 8px 0; font-size: 13px; }

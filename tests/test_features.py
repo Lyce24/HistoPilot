@@ -50,6 +50,7 @@ def test_attach_reload_then_modified_file_blocks_validation(attached):
     preview = service.preview(spec)
     assert preview["summary"] == {
         "slideCount": 2,
+        "scope": "dataset",
         "matchedSlides": 2,
         "missingSlides": 0,
         "orphanFiles": 0,
@@ -191,3 +192,131 @@ def test_source_change_at_publication_boundary_cannot_publish_stale_headers(atta
         service.freeze(spec, preview["previewHash"], "raced-attach")
     assert caught.value.code == "PREVIEW_STALE"
     assert service.store.configuration_publication("raced-attach") is None
+
+
+def test_a_feature_set_without_a_dataset_covers_the_whole_slide_store(attached, tmp_path):
+    service, spec, root = attached
+    hdf5(root / "001.A.h5")
+    hdf5(root / "002.h5")
+    # An encoded store legitimately holds slides no single frozen cohort claims.
+    hdf5(root / "encoded-but-not-in-this-dataset.h5")
+    scoped = service.preview(spec)
+    assert scoped["summary"]["scope"] == "dataset"
+    assert (scoped["summary"]["matchedSlides"], scoped["summary"]["orphanFiles"]) == (2, 1)
+    store_wide = service.preview(spec.model_copy(update={"datasetId": None}))
+    assert store_wide["summary"]["scope"] == "store"
+    assert (store_wide["summary"]["matchedSlides"], store_wide["summary"]["orphanFiles"]) == (3, 0)
+    assert store_wide["summary"]["missingSlides"] == 0
+    assert store_wide["summary"]["slideCount"] == 3
+    frozen = service.freeze(
+        spec.model_copy(update={"datasetId": None}), store_wide["previewHash"], "store-wide"
+    )
+    assert frozen["manifest"]["datasetId"] is None
+    assert service.verify_binding(frozen) == []
+
+
+def test_a_slide_list_narrows_the_feature_folder_before_any_dataset(attached, tmp_path):
+    """Source, then filter: the list decides the initial set and a dataset narrows it."""
+    service, spec, root = attached
+    hdf5(root / "001.A.h5")
+    hdf5(root / "002.h5")
+    hdf5(root / "encoded-but-not-in-this-dataset.h5")
+    listing = tmp_path / "slides.csv"
+    listing.write_text(
+        "wsi,mpp\ncohort/002.svs,0.25\ncohort/encoded-but-not-in-this-dataset.svs,0.5\n"
+    )
+    listed = spec.model_copy(update={"datasetId": None, "slideListPath": str(listing)})
+    preview = service.preview(listed)
+    assert preview["summary"]["scope"] == "list"
+    assert preview["summary"]["matchedSlides"] == 2
+    assert preview["slideList"]["listedCount"] == 2
+    assert preview["slideList"]["declaresMpp"] is True
+    # The same list, now narrowed by the cohort: only slides in both survive.
+    both = service.preview(spec.model_copy(update={"slideListPath": str(listing)}))
+    assert both["summary"]["scope"] == "dataset"
+    assert [item["slideId"] for item in both["files"]] == ["002"]
+    assert both["summary"]["orphanFiles"] == 2
+
+
+def test_an_unreadable_slide_list_is_refused(attached, tmp_path):
+    service, spec, root = attached
+    hdf5(root / "001.A.h5")
+    listing = tmp_path / "slides.csv"
+    listing.write_text("slide\n001.A\n")
+    with pytest.raises(StorageError) as error:
+        service.preview(spec.model_copy(update={"slideListPath": str(listing)}))
+    assert error.value.code == "INVALID_SLIDE_LIST"
+
+
+def test_uploaded_slide_list_selects_features_without_slide_files_or_dataset(attached):
+    import base64
+
+    service, original, root = attached
+    hdf5(root / "001.A.h5")
+    hdf5(root / "002.h5")
+    spec = FeatureSpec(
+        path=original.path,
+        slideList={
+            "filename": "offline-slides.csv",
+            "contentBase64": base64.b64encode(b"wsi,mpp\noffline/001.A.svs,0.25\n").decode(),
+        },
+    )
+    preview = service.preview(spec)
+    assert preview["canFreeze"], preview["findings"]
+    assert preview["summary"]["scope"] == "list"
+    assert [item["slideId"] for item in preview["files"]] == ["001.A"]
+    assert preview["slideList"]["filename"] == "offline-slides.csv"
+    frozen = service.freeze(spec, preview["previewHash"], "uploaded-features")
+    assert frozen["manifest"]["datasetId"] is None
+    assert frozen["manifest"]["spec"]["slideList"] == spec.slideList.model_dump()
+
+
+def test_legacy_feature_preview_and_freeze_retry_keep_their_identity(attached):
+    from histopilot.application.features import _hash
+
+    service, spec, root = attached
+    for name in ("001.A.h5", "002.h5"):
+        hdf5(root / name)
+    # The exact pre-upload schema: no slideList field, including no null placeholder.
+    legacy_spec = {
+        "slideListPath": None,
+        "datasetId": spec.datasetId,
+        "path": str(root),
+        "encoderId": None,
+        "fileSuffix": ".h5",
+        "idSuffix": "",
+        "recursive": False,
+        "layout": "auto",
+        "coordinatesPath": None,
+        "sourceExtractionJobId": None,
+    }
+    request = FeatureSpec.model_validate({**legacy_spec, "slideList": None})
+    assert request.model_dump(mode="json") == legacy_spec
+    assert json.loads(request.model_dump_json()) == legacy_spec
+    preview = service.preview(request)
+    assert preview["spec"] == legacy_spec
+    inventory = [
+        {"path": item["path"], "size": item["sizeBytes"], "mtime": item["mtimeNs"]}
+        for item in preview["files"]
+    ]
+    legacy_preview_hash = _hash(
+        {
+            **{key: value for key, value in preview.items() if key != "previewHash"},
+            "spec": legacy_spec,
+            "inventory": inventory,
+        }
+    )
+    assert preview["previewHash"] == legacy_preview_hash
+    legacy_manifest = {
+        "kind": "feature",
+        "schemaVersion": 1,
+        "datasetId": spec.datasetId,
+        **{key: value for key, value in preview.items() if key != "canFreeze"},
+        "spec": legacy_spec,
+    }
+    saved = service.store.publish_configuration(
+        manifest=legacy_manifest, operation_id="legacy-feature-freeze"
+    )
+    replay = service.freeze(request, legacy_preview_hash, "legacy-feature-freeze")
+    assert replay["id"] == saved["id"]
+    assert service.store.list_configurations("feature") == [saved]

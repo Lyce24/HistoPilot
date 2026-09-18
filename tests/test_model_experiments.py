@@ -487,3 +487,33 @@ def test_registry_api_project_isolation_auth_and_generic_route_bypass_are_protec
             },
         )
         assert response.status_code == 409, response.text
+
+
+def test_bundle_dataset_provenance_does_not_prevent_reuse(prepared):
+    """Experiments accept a bundle that names no cohort; coverage is the real question."""
+    from histopilot.application.model_experiments import input_snapshot
+
+    _service, development, spec, _experiment, _source = prepared
+    store = development.store
+    original = store.get_configuration
+
+    def scoped(scope):
+        def read(identity, **options):
+            document = original(identity, **options)
+            if identity == spec.inputs.featureBundleId:
+                document["manifest"] = {**document["manifest"], "datasetId": scope}
+            return document
+
+        return read
+
+    protocol_dataset = store.get_configuration(spec.inputs.protocolId)["manifest"]["datasetId"]
+    assert original(spec.inputs.featureBundleId)["manifest"]["datasetId"] == protocol_dataset
+    store.get_configuration = scoped(None)
+    try:
+        snapshot = input_snapshot(store, spec.inputs)
+        assert snapshot["featureBundle"]["id"] == spec.inputs.featureBundleId
+        store.get_configuration = scoped("dataset-" + "b" * 64)
+        snapshot = input_snapshot(store, spec.inputs)
+        assert snapshot["featureBundle"]["id"] == spec.inputs.featureBundleId
+    finally:
+        store.get_configuration = original

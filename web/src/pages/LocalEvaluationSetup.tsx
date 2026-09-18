@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
-import type { AttributeMapping, Condition, ConditionValue, ProtocolExploration, ProtocolSpec, VersionLabelInput } from '../api/scientific';
+import type { Condition, ProtocolExploration, ProtocolSpec, VersionLabelInput } from '../api/scientific';
 import { scientific } from '../api/scientific';
 import { evaluation, type EvaluationDraft, type EvaluationCohort, type EvaluationPreview, type EvaluationSpec } from '../api/evaluation';
 import { datasetVersionLabel, versionLabelText } from '../lib/versionLabels';
@@ -12,13 +12,16 @@ import { reportEditorValidity } from '../components/NumericField';
 import { CohortSample, CohortStats, DistributionBars } from '../components/ProtocolExploration';
 import PredictionTargetEditor from '../components/PredictionTargetEditor';
 import FreezeVersionDialog from '../components/FreezeVersionDialog';
-import { ConditionEditor } from './LocalProtocol';
+import { ConditionEditor } from '../components/ConditionEditor';
+import { conditionFields, describeCondition } from '../lib/conditions';
 import { inferTargetSettings, newDevelopmentSplit } from '../lib/protocol';
 import { scientificReviewInvalidated } from '../lib/scientificReview';
 import { taskLabel, unitLabel } from '../lib/labels';
-import { StageLibrary, StageLibraryToolbar, StageRecordManageButton, StagePage, StageSteps, useStageLibrary } from '../components/StageWorkflow';
+import { StageCreateButton, StageBackButton, StageContinueButton, StageLibrary, StageLibraryToolbar, StageRecordManageButton, StagePage, StageSteps, useStageLibrary } from '../components/StageWorkflow';
 import './protocol-workflow.css';
 import './LocalEvaluationSetup.css';
+import { readEditorRecovery, recoveredStep, useEditorRecoveryBackup, type EditorRecovery } from '../lib/editorRecovery';
+import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 
 const newTestTarget = (): ProtocolSpec['target'] => ({ field: '', task: '', unit: 'patient', classes: [], labels: {}, missing: 'block', unmapped: 'block' });
 
@@ -29,14 +32,7 @@ export const newEvaluationSpec = (): EvaluationSpec => ({
     device: 'auto', precision: 'float32', patientAggregation: 'mean', decisionThreshold: 0.5 },
 });
 
-export function evaluationConditionValue(text: string, op: Condition['op'], type?: AttributeMapping['type']): ConditionValue {
-  const numeric = ['lt', 'lte', 'gt', 'gte'].includes(op) || ['integer', 'decimal'].includes(type ?? '');
-  const scalar = (value: string) => numeric && value.trim() !== '' && Number.isFinite(Number(value)) ? Number(value) : value;
-  if (op === 'in' || op === 'not_in') return text.split('|').map((value) => scalar(value.trim()));
-  if (op === 'regex') return text;
-  if (type === 'boolean' && (text === 'true' || text === 'false')) return text === 'true';
-  return scalar(text);
-}
+export { parseConditionValue as evaluationConditionValue } from '../lib/conditions';
 
 function SlideIds({ label, ids }: { label: string; ids: string[] }) {
   return ids.length > 0 ? <details className="evaluation-slide-ids"><summary>{label} · {ids.length.toLocaleString()}</summary><pre>{ids.join('\n')}</pre></details> : null;
@@ -64,15 +60,28 @@ export function EvaluationTargetMapping({ rows, classes, onChange }: {
 
 export { EvaluationInferenceFields } from '../components/EvaluationInputSettings';
 
+export function cohortIdentityNote(preview: Pick<EvaluationPreview, 'findings' | 'memberships'>): string {
+  const rows = preview.memberships;
+  if (rows?.length) {
+    const supplied = new Set(rows.filter((row) => row.patientId && ['source', 'crosswalk'].includes(row.patientIdSource ?? '')).map((row) => row.patientId));
+    const fallback = new Set(rows.filter((row) => row.patientId && row.patientIdSource === 'slide_fallback').map((row) => row.patientId));
+    const unknown = rows.filter((row) => !row.patientId || !['source', 'crosswalk', 'slide_fallback'].includes(row.patientIdSource ?? '')).length;
+    return `${supplied.size.toLocaleString()} supplied patient IDs · ${fallback.size.toLocaleString()} acknowledged slide / case groups${unknown ? ` · ${unknown.toLocaleString()} slides with unresolved or unrecorded patient-ID provenance` : ''}`;
+  }
+  if (preview.findings.some((finding) => finding.code === 'SLIDE_ID_FALLBACK_GROUPING')) return 'Includes acknowledged slide / case groups. Patient independence is unverified.';
+  return 'Distinct recorded grouping IDs. Patient-ID provenance counts are unavailable in this saved summary.';
+}
+
 export function EvaluationEvidence({ preview }: { preview: EvaluationPreview }) {
   const { summary, coverage } = preview;
   return <div className="evaluation-evidence">
     <div className="evaluation-counts">
       <div><strong>{summary.includedSlides.toLocaleString()}</strong><span>Selected slides</span></div>
-      <div><strong>{summary.includedPatients.toLocaleString()}</strong><span>Patient groups</span></div>
+      <div><strong>{summary.includedPatients.toLocaleString()}</strong><span>Patient / slide groups</span></div>
       <div><strong>{summary.labeledSlides.toLocaleString()}</strong><span>Labeled slides</span></div>
       <div><strong>{summary.excludedSlides.toLocaleString()}</strong><span>Excluded slides</span></div>
     </div>
+    <p className="muted">{cohortIdentityNote(preview)}</p>
     <Findings findings={preview.findings} />
     <div className="grid-2">
       <div><h3>Exact feature coverage</h3><p>{coverage.missingFeatureSlideIds.length === 0 ? 'Every selected slide has a feature file.' : `${coverage.missingFeatureSlideIds.length.toLocaleString()} selected slides are missing feature files.`}</p>
@@ -98,12 +107,6 @@ export function cohortDatasetIds(spec: EvaluationSpec): string[] {
 export function independentCohortSpec(spec: EvaluationSpec): EvaluationSpec {
   return { ...newEvaluationSpec(), datasetId: spec.datasetId, datasetIds: spec.datasetIds,
     target: spec.target, eligibility: spec.eligibility };
-}
-
-function describeTestCondition(condition: Condition) {
-  if (condition.op === 'exists') return `${condition.field} ${condition.value ? 'is present' : 'is missing'}`;
-  const labels = { eq: 'equals', ne: 'does not equal', in: 'is one of', not_in: 'is not one of', regex: 'matches', lt: 'is less than', lte: 'is at most', gt: 'is greater than', gte: 'is at least' };
-  return `${condition.field} ${labels[condition.op]} ${Array.isArray(condition.value) ? condition.value.join(' | ') : String(condition.value)}`;
 }
 
 export function mergeTestDistributions(results: ProtocolExploration[]) {
@@ -146,12 +149,12 @@ function useTestExploration(project: string, ids: string[], eligibility: Conditi
     loading: enabled && ids.length > 0 && (changing || query.isPending) };
 }
 
-export function TestCohortSummary({ preview }: { preview: Pick<EvaluationPreview, 'summary' | 'findings'> & { coverage: { selectedSlideIds: string[] } } }) {
+export function TestCohortSummary({ preview }: { preview: Pick<EvaluationPreview, 'summary' | 'findings' | 'memberships'> & { coverage: { selectedSlideIds: string[] } } }) {
   const summary = preview.summary;
   return <div className="stack">
     <div className="science-metrics protocol-metrics">
       <Metric label="Selected test slides" value={summary.includedSlides.toLocaleString()} />
-      <Metric label="Patient groups" value={summary.includedPatients.toLocaleString()} />
+      <Metric label="Patient / slide groups" value={summary.includedPatients.toLocaleString()} note={cohortIdentityNote(preview)} />
       <Metric label="Labeled slides" value={summary.labeledSlides.toLocaleString()} />
       <Metric label="Excluded slides" value={summary.excludedSlides.toLocaleString()} />
     </div>
@@ -171,10 +174,15 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
   const [librarySearch, setLibrarySearch] = useState('');
   const [libraryStatus, setLibraryStatus] = useState('all');
   const [librarySort, setLibrarySort] = useState('recent');
+  // Unsaved cohort input from this tab is retained across a module change or a
+  // reload. The module still opens on its library; Return to current test cohort
+  // reopens the work.
+  const [recovered] = useState(() => readEditorRecovery<EvaluationSpec, EvaluationDraft>(project, 'test-cohort'));
+  const [resumeStep] = useState<0 | 1 | 2>(recoveredStep(recovered?.step, 2) as 0 | 1 | 2);
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
-  const [spec, setSpec] = useState<EvaluationSpec>(newEvaluationSpec);
-  const [name, setName] = useState(`${workspace.project.name} test cohort`);
-  const [draft, setDraft] = useState<EvaluationDraft | null>(null);
+  const [spec, setSpec] = useState<EvaluationSpec>(() => recovered?.spec ?? newEvaluationSpec());
+  const [name, setName] = useState(recovered?.name ?? `${workspace.project.name} test cohort`);
+  const [draft, setDraft] = useState<EvaluationDraft | null>(recovered?.draft ?? null);
   const [savedCohort, setSavedCohort] = useState<EvaluationCohort | null>(null);
   const [preview, setPreview] = useState<EvaluationPreview | null>(null);
   const [distributionField, setDistributionField] = useState('');
@@ -182,7 +190,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
   const [freezeReview, setFreezeReview] = useState<{ draft: EvaluationDraft; preview: EvaluationPreview; operationId: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(recovered ? 'Unsaved test cohort input was recovered in this tab. Choose Return to current test cohort to continue, or save it as a draft in your project folder.' : '');
   const pending = useRef(false);
   const targetRequest = useRef(0);
   const editor = useRef<HTMLFieldSetElement>(null);
@@ -190,13 +198,27 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
   const selectedDatasets = (datasets.data?.datasets ?? []).filter((item) => ids.includes(item.id));
   const dictionary = [...new Map(selectedDatasets.flatMap((item) => item.manifest.dictionary ?? []).map((item) => [item.key, item])).values()];
   const columns = dictionary.map((item) => item.key);
-  const fieldContext = { project, datasetId: spec.datasetId, dictionary };
+  const fieldContext = { project, datasetId: spec.datasetId, datasetIds: ids, dictionary };
   const activeField = step === 2 ? spec.target?.field ?? '' : distributionField || spec.target?.field || columns[0] || '';
   const live = useTestExploration(project, ids, spec.eligibility, activeField, step === 1 || step === 2);
   const targetValues = live.data ? mergeTestDistributions(live.data) : undefined;
   const rawValues = (targetValues?.valueCounts ?? []).map((item) => item.value).filter((value): value is string => value !== null && value.trim() !== '');
   const dirty = !draft || draft.name !== name.trim() || !sameJSON(draft.payload.spec, spec);
   const editable = !savedCohort && draft?.status !== 'frozen';
+  // A pristine new cohort is not work worth recovering; a saved draft is, as soon
+  // as it differs from its saved revision.
+  const unsaved = editable && (draft
+    ? dirty
+    : name !== `${workspace.project.name} test cohort` || !sameJSON(spec, newEvaluationSpec()));
+  const recovery: EditorRecovery<EvaluationSpec, EvaluationDraft> | null = unsaved
+    ? { version: 1, name, spec, draft, step: step === 0 ? 0 : step }
+    : null;
+  const backup = useEditorRecoveryBackup(project, 'test-cohort', recovery);
+  useWorkspaceNavigationGuard(busy
+    ? 'A test cohort request is still pending. Leaving now may hide its outcome.'
+    : recovery && backup.error
+      ? 'Unsaved test cohort input cannot be recovered in this browser. Save the draft before leaving Test cohorts.'
+      : null);
   const targetReady = spec.target === null || Boolean(spec.target.field && spec.target.task && spec.target.classes.length >= 2 && (spec.target.task !== 'binary_classification' || spec.target.positiveClass));
   const dataReady = ids.length > 0 && selectedDatasets.length === ids.length;
   const datasetNames = (value: EvaluationSpec) => cohortDatasetIds(value).map((id) => {
@@ -255,6 +277,10 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
       if (requestId === targetRequest.current) setError(reason instanceof Error ? reason : new Error('Target values could not be read.'));
     }
   }
+  /** Never discard entered input to start or open another record: save it first. */
+  async function keepCurrentWork() {
+    if (unsaved) await save();
+  }
   async function openDraft(id: string) {
     const saved = await evaluation.draft(project, id);
     reset(independentCohortSpec(saved.payload.spec), saved.name);
@@ -280,27 +306,31 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
     && `${item.name} ${item.record.id} ${datasetNames(item.spec)} ${item.spec.target?.field ?? ''} ${item.kind === 'configuration' ? item.record.versionLabel?.note ?? '' : ''}`.toLowerCase().includes(librarySearch.trim().toLowerCase()))
     .sort((a, b) => (librarySort === 'name' ? a.name.localeCompare(b.name) : librarySort === 'oldest' ? a.created.localeCompare(b.created) : b.updated.localeCompare(a.updated)) || a.record.id.localeCompare(b.record.id));
   function resetLibraryFilters() { setLibrarySearch(''); setLibraryStatus('all'); setLibrarySort('recent'); }
-  function openLibrary() { if (busy || freezeReview) return; void run(async () => { if (step !== 0 && editable && dirty) await save(); showStep(0); }); }
+  // Returning to the library saves real work; an untouched new cohort leaves no record.
+  function openLibrary() { if (busy || freezeReview) return; void run(async () => { if (step !== 0 && unsaved) await save(); showStep(0); }); }
   useStageLibrary(openLibrary);
 
   return <div className="clinical-workspace protocol-workspace evaluation-setup" id="test-cohort-page" tabIndex={-1}>
     <PageHeader eyebrow="03 EVALUATE · TEST COHORTS" title={step === 0 ? 'Test cohorts' : savedCohort ? name : 'Create test cohort'}
       description={step === 0 ? 'Open a test cohort or create one from your datasets.' : 'Select test data, define prediction targets, then review and freeze your cohort.'}
-      actions={step === 0 ? <button type="button" className="btn btn-primary" disabled={busy} onClick={() => reset()}><Icon name="plus" />Create test cohort</button> : <button type="button" className="btn btn-secondary" disabled={busy || Boolean(freezeReview)} onClick={openLibrary}>Back to test cohorts</button>} />
+      actions={step === 0 ? <StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create test cohort</StageCreateButton> : <StageBackButton disabled={busy || Boolean(freezeReview)} onClick={openLibrary}>Back to test cohorts</StageBackButton>} />
     <ErrorNotice error={error ?? datasets.error ?? drafts.error ?? frozen.error} />
     {error && draft && editable && step !== 0 ? <button type="button" className="btn btn-secondary science-fit" disabled={busy} onClick={() => void run(() => openDraft(draft.id))}>Reload saved draft</button> : null}
     <SavedNotice>{message}</SavedNotice>
     <StagePage pageKey={step === 0 ? 'library' : savedCohort?.id ?? step}>
     {step === 0 ? <StageLibrary project={project} title="Test cohorts">
       <StageLibraryToolbar search={librarySearch} onSearch={setLibrarySearch} searchLabel="Search test cohorts" placeholder="Name, ID, dataset or target" count={drafts.isPending || frozen.isPending ? undefined : visibleRows.length} total={libraryRows.length}
-        actions={<button type="button" className="btn btn-secondary btn-small" disabled={drafts.isFetching || frozen.isFetching} onClick={() => void refresh()}>Refresh</button>}
+        actions={<>
+          {unsaved ? <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={() => showStep(resumeStep || 1)}>Return to current test cohort</button> : null}
+          <button type="button" className="btn btn-secondary btn-small" disabled={drafts.isFetching || frozen.isFetching} onClick={() => void refresh()}>Refresh</button>
+        </>}
         onReset={librarySearch || libraryStatus !== 'all' || librarySort !== 'recent' ? resetLibraryFilters : undefined}>
         <label className="label">Status<select className="field" aria-label="Test cohort status" value={libraryStatus} onChange={(event) => setLibraryStatus(event.target.value)}><option value="all">All statuses</option><option value="planned">Planned</option><option value="frozen">Frozen</option><option value="review">Needs review</option></select></label>
         <label className="label">Sort<select className="field" aria-label="Sort test cohorts" value={librarySort} onChange={(event) => setLibrarySort(event.target.value)}><option value="recent">Last updated</option><option value="oldest">Oldest first</option><option value="name">Name</option></select></label>
       </StageLibraryToolbar>
       {drafts.isPending || frozen.isPending ? <p className="muted" role="status">Loading test cohorts…</p> : visibleRows.length ? <div className="table-wrap"><table className="test-cohort-registry"><thead><tr><th scope="col">Cohort</th><th scope="col">Status</th><th scope="col">Datasets</th><th scope="col">Slides</th><th scope="col">Prediction target</th><th scope="col">Actions</th></tr></thead><tbody>
-        {visibleRows.map((item) => <tr key={`${item.kind}:${item.record.id}`}><th scope="row"><button type="button" className="text-button stage-record-name" disabled={busy} onClick={() => void run(() => item.kind === 'draft' ? openDraft(item.record.id) : openCohort(item.record.id))}>{item.name}</button>{item.kind === 'draft' ? <small>Revision {item.record.revision}</small> : item.record.versionLabel?.note ? <small>{item.record.versionLabel.note}</small> : null}</th><td><Badge tone={item.status === 'frozen' ? 'green' : 'orange'}>{item.status === 'planned' ? 'Planned' : item.status === 'frozen' ? 'Frozen' : 'Needs review'}</Badge></td><td>{datasetNames(item.spec)}</td><td>{item.kind === 'draft' ? 'Pending review' : item.record.manifest.summary.includedSlides.toLocaleString()}</td><td>{item.spec.target?.field || (item.spec.target === null ? 'Unlabeled predictions' : 'Not selected')}</td><td><StageRecordManageButton type={item.kind} id={item.record.id} name={item.name} /></td></tr>)}
-      </tbody></table></div> : libraryRows.length ? <EmptyState title="No matching test cohorts" description="Try another search or clear the filters." /> : <EmptyState title="No test cohorts yet" description="Create a cohort to select test records and define its prediction target." />}
+        {visibleRows.map((item) => <tr key={`${item.kind}:${item.record.id}`}><th scope="row"><button type="button" className="text-button stage-record-name" disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); await (item.kind === 'draft' ? openDraft(item.record.id) : openCohort(item.record.id)); })}>{item.name}</button>{item.kind === 'draft' ? <small>Revision {item.record.revision}</small> : item.record.versionLabel?.note ? <small>{item.record.versionLabel.note}</small> : null}</th><td><Badge tone={item.status === 'frozen' ? 'frozen' : 'orange'}>{item.status === 'planned' ? 'Planned' : item.status === 'frozen' ? 'Frozen' : 'Needs review'}</Badge></td><td>{datasetNames(item.spec)}</td><td>{item.kind === 'draft' ? 'Pending review' : item.record.manifest.summary.includedSlides.toLocaleString()}</td><td>{item.spec.target?.field || (item.spec.target === null ? 'Unlabeled predictions' : 'Not selected')}</td><td><StageRecordManageButton type={item.kind} id={item.record.id} name={item.name} /></td></tr>)}
+      </tbody></table></div> : libraryRows.length ? <EmptyState icon="folder" title="No matching test cohorts" description="Try another search or clear the filters." action={<button type="button" className="btn btn-secondary" onClick={resetLibraryFilters}>Clear filters</button>} /> : <EmptyState icon="folder" title="No test cohorts yet" description="Create a cohort to select test records and define its prediction target." action={<StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create test cohort</StageCreateButton>} />}
     </StageLibrary> : <>
       {!savedCohort ? <StageSteps label="Test cohort stages" current={String(step)} disabled={busy || Boolean(freezeReview)} steps={[
         { id: '1', title: 'Test Data', description: 'Select datasets and test records', complete: dataReady },
@@ -325,7 +355,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
             </fieldset>
             {ids.length > 1 ? <p className="muted">Conditions apply to every selected dataset. Slide IDs must be unique across datasets; shared patient IDs are treated as the same patient.</p> : null}
             {dataReady ? <>
-              <ConditionEditor title="Which test slides should be included?" description="A slide is included when it matches every condition below." emptyMessage="All selected dataset slides are included. Add a condition to narrow the test cohort." conditions={spec.eligibility} columns={columns} fieldContext={fieldContext} onChange={(eligibility) => edit({ eligibility })} />
+              <ConditionEditor title="Which test slides should be included?" description="Choose values directly, then combine conditions using all or any." emptyMessage="All selected dataset slides are included. Add a condition to narrow the test cohort." conditions={spec.eligibility} columns={columns} fieldContext={fieldContext} onChange={(eligibility) => edit({ eligibility })} />
               <label className="label test-cohort-distribution-field">Show distribution by<select className="field" value={activeField} onChange={(event) => setDistributionField(event.target.value)}><option value="">Choose an attribute</option>{columns.map((column) => <option key={column}>{column}</option>)}</select></label>
               <ErrorNotice error={live.error} />
               {live.loading ? <p className="protocol-live-status" role="status">Updating selected test slides and distributions…</p> : live.data ? <div className="stack" aria-live="polite">
@@ -333,7 +363,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
                 {targetValues && activeField ? <DistributionBars values={targetValues.valueCounts} caption={`${activeField} · selected test slides${targetValues.valuesTruncated ? ' (most frequent values per dataset)' : ''}`} /> : null}
                 {live.data.map((item) => <div className="stack test-cohort-population" key={item.datasetId}>
                   {ids.length > 1 ? <h3>{datasetNames({ ...spec, datasetId: item.datasetId, datasetIds: undefined })}</h3> : null}
-                  {item.cohort ? <><CohortStats stats={item.cohort} total={item.dataset.totalSlides} /><CohortSample stats={item.cohort} fields={[...spec.eligibility.map((condition) => condition.field), activeField]} /></> : null}
+                  {item.cohort ? <><CohortStats stats={item.cohort} total={item.dataset.totalSlides} /><CohortSample stats={item.cohort} fields={[...conditionFields(spec.eligibility), activeField]} /></> : null}
                   <Findings findings={item.findings} />
                 </div>)}
                 <p className="muted">These counts apply the conditions above. Label exclusions and patient consistency are checked in Review and Freeze.</p>
@@ -352,19 +382,19 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
           <dl className="protocol-review-facts">
             <div><dt>Cohort name</dt><dd>{name}</dd></div><div><dt>Test Data</dt><dd>{datasetNames(spec)}</dd></div>
             <div><dt>Prediction target</dt><dd>{spec.target?.field || (spec.target === null ? 'Unlabeled predictions' : 'Not selected')}{spec.target?.task ? ` · ${taskLabel(spec.target.task)} · ${unitLabel(spec.target.unit)}` : ''}</dd></div>
-            <div><dt>Included records</dt><dd>{spec.eligibility.length ? spec.eligibility.map(describeTestCondition).join('; ') : 'All slides in the selected datasets'}</dd></div>
+            <div><dt>Included records</dt><dd>{spec.eligibility.length ? spec.eligibility.map(describeCondition).join(' AND ') : 'All slides in the selected datasets'}</dd></div>
             {spec.target ? <><div><dt>Class order</dt><dd>{spec.target.classes.join(' → ') || 'Not selected'}</dd></div><div><dt>Positive class</dt><dd>{spec.target.positiveClass || 'Not selected'}</dd></div><div><dt>Label mapping</dt><dd>{Object.entries(spec.target.labels).map(([raw, mapped]) => `${raw} → ${mapped}`).join('; ') || 'Not configured'}</dd></div><div><dt>Missing / unmapped labels</dt><dd>{spec.target.missing} / {spec.target.unmapped}</dd></div></> : null}
           </dl>
-          {preview ? <TestCohortSummary preview={preview} /> : savedCohort ? <TestCohortSummary preview={{ summary: savedCohort.manifest.summary, coverage: savedCohort.manifest.coverage ?? { selectedSlideIds: [] }, findings: savedCohort.findings ?? savedCohort.manifest.findings }} /> : <p className="callout">Review the cohort to check selected records, labels and patient consistency before freezing.</p>}
+          {preview ? <TestCohortSummary preview={preview} /> : savedCohort ? <TestCohortSummary preview={{ summary: savedCohort.manifest.summary, coverage: savedCohort.manifest.coverage ?? { selectedSlideIds: [] }, findings: savedCohort.findings ?? savedCohort.manifest.findings, memberships: savedCohort.manifest.memberships }} /> : <p className="callout">Review the cohort to check selected records, labels and patient consistency before freezing.</p>}
           {!savedCohort ? <div className="inline-actions evaluation-actions"><button type="button" className="btn btn-secondary" disabled={!name.trim() || !dataReady || !targetReady} onClick={() => void run(review, true)}><Icon name="check" />{preview ? 'Review cohort again' : 'Review cohort'}</button><button type="button" className="btn btn-primary" disabled={!preview?.canFreeze || dirty || !draft} onClick={() => { if (preview && draft) setFreezeReview({ draft, preview, operationId: `evaluation:${crypto.randomUUID()}` }); }}><Icon name="lock" />Freeze test cohort</button></div> : null}
         </Panel></section> : null}
       </fieldset>
-      {savedCohort ? <div className="inline-actions"><button type="button" className="btn btn-secondary" disabled={busy} onClick={copyCohort}>Copy into a new draft</button><a className="btn btn-primary" href={`#evaluation?cohort=${encodeURIComponent(savedCohort.id)}`}>Evaluate models <Icon name="arrow" /></a></div> : <div className="protocol-step-actions test-cohort-step-actions">
+      {savedCohort ? <div className="inline-actions"><button type="button" className="btn btn-secondary" disabled={busy} onClick={copyCohort}>Copy into a new draft</button><StageContinueButton href={`#evaluation?cohort=${encodeURIComponent(savedCohort.id)}`}>Continue to model evaluation</StageContinueButton></div> : <div className="protocol-step-actions test-cohort-step-actions">
         <p>{step === 1 ? 'Select test records before defining the prediction target.' : step === 2 ? 'Review the class mapping and positive class before continuing.' : 'The frozen cohort can be selected later in Evaluate models.'}</p>
         <div className="inline-actions">
-          {step > 1 ? <button type="button" className="btn btn-secondary" disabled={busy || Boolean(freezeReview)} onClick={() => showStep((step - 1) as 1 | 2)}>Back</button> : null}
+          {step > 1 ? <StageBackButton disabled={busy || Boolean(freezeReview)} onClick={() => showStep((step - 1) as 1 | 2)}>Back</StageBackButton> : null}
           <button type="button" className="btn btn-secondary" disabled={busy || Boolean(freezeReview) || !name.trim()} onClick={() => void run(async () => { await save(); setMessage('Test cohort draft saved.'); }, true)}>Save draft</button>
-          {step < 3 ? <button type="button" className="btn btn-primary" disabled={busy || !name.trim() || !dataReady || (step === 2 && !targetReady)} onClick={() => void run(async () => { if (step === 2) await review(); else { await save(); showStep(2); } }, true)}>Continue to {step === 1 ? 'Prediction Targets' : 'Review and Freeze'} <Icon name="arrow" /></button> : null}
+          {step < 3 ? <StageContinueButton disabled={busy || !name.trim() || !dataReady || (step === 2 && !targetReady)} onClick={() => void run(async () => { if (step === 2) await review(); else { await save(); showStep(2); } }, true)}>Continue to {step === 1 ? 'prediction targets' : 'review and freeze'}</StageContinueButton> : null}
         </div>
       </div>}
     </>}
@@ -379,6 +409,6 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
         if (scientificReviewInvalidated(reason)) { setFreezeReview(null); setPreview(null); setError(new Error(`${reason.message} Review the cohort again before freezing. Your tag and note have been kept.`)); }
         throw reason;
       }
-    }}><p><strong>{name}</strong></p><p>{freezeReview.preview.summary.includedSlides.toLocaleString()} selected test slides · {freezeReview.preview.summary.includedPatients.toLocaleString()} patient groups</p></FreezeVersionDialog> : null}
+    }}><p><strong>{name}</strong></p><p>{freezeReview.preview.summary.includedSlides.toLocaleString()} selected test slides · {freezeReview.preview.summary.includedPatients.toLocaleString()} patient / slide groups</p><p>{cohortIdentityNote(freezeReview.preview)}</p></FreezeVersionDialog> : null}
   </div>;
 }

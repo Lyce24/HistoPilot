@@ -4,7 +4,6 @@ import csv
 import hashlib
 import io
 import json
-import math
 import os
 import re
 import signal
@@ -20,7 +19,13 @@ from pydantic import ValidationError
 
 from histopilot.adapters import trident
 from histopilot.adapters.trident.progress import build_progress
+from histopilot.application.slide_lists import (
+    SlideListError,
+    read_slide_list_source,
+    resolve_slide_selection,
+)
 from histopilot.schemas.extractions import ExtractionSpec
+from histopilot.schemas.slide_lists import SlideListSource
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
@@ -33,7 +38,7 @@ from histopilot.storage.project_lock import (
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.extraction_process import TmuxExtractionExecutor
 
-ACTIVE = {"starting", "running", "cancelling"}
+ACTIVE = {"queued", "starting", "running", "cancelling"}
 JOB_ID = re.compile(r"^extraction-[a-f0-9]{32}$")
 MAX_JSON = 8 * 1024 * 1024
 MAX_LOG_BYTES = 64 * 1024
@@ -148,56 +153,117 @@ class ExtractionService:
             raise StorageError("Extraction metadata is inconsistent.", "EXTRACTION_CORRUPT")
         return job
 
-    def _select_csv(self, records: list[dict], value: str) -> tuple[list[dict], str]:
-        path = self._path(value, exists=True)
-        content = ScientificStore._read_file(path, 2 * 1024 * 1024)
+    def _slide_root(self, dataset: dict) -> Path | None:
+        """The folder the dataset was imported from; slide lists are written relative to it."""
+        manifest = dataset.get("manifest", {})
+        declared = manifest.get("provenance", {}).get("mapping", {}).get(
+            "slideRoot"
+        ) or manifest.get("spec", {}).get("slideRoot")
+        if not declared:
+            return None
         try:
-            table = csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
-            if "wsi" not in (table.fieldnames or []):
-                raise ValueError("CSV needs a wsi column and optionally mpp")
-            available = [row for row in records if row.get("slidePath")]
-            common = (
-                Path(os.path.commonpath([str(Path(row["slidePath"]).parent) for row in available]))
-                if available
-                else None
-            )
-            selected, seen = [], set()
-            for item in table:
-                name = item.get("wsi", "").strip()
-                matches = [
-                    row
-                    for row in available
-                    if name
-                    in {
-                        row["slidePath"],
-                        Path(row["slidePath"]).name,
-                        str(Path(row["slidePath"]).relative_to(common)),
-                    }
-                ]
-                if len(matches) != 1 or matches[0]["slideId"] in seen:
-                    raise ValueError(
-                        f"CSV slide {name!r} is missing, ambiguous, duplicated or outside the frozen dataset"
-                    )
-                row = dict(matches[0])
-                seen.add(row["slideId"])
-                if item.get("mpp", "").strip():
-                    mpp = float(item["mpp"])
-                    if not math.isfinite(mpp) or mpp <= 0:
-                        raise ValueError("mpp must be a positive finite number")
-                    row["customMpp"] = mpp
-                selected.append(row)
-            if not selected:
-                raise ValueError("CSV contains no selected slides")
-            return selected, hashlib.sha256(content).hexdigest()
-        except (ValueError, TypeError, UnicodeError, csv.Error) as error:
+            return self._path(str(declared), exists=True, directory=True)
+        except StorageError:
+            # An imported root can be renamed or unmounted; fall back to the linked slides.
+            return None
+
+    def _select_slides(self, spec, values, dataset, records, finding):
+        """One source, then one optional cohort filter.
+
+        The source is the slide list when the options name one, the slide folder when one is
+        chosen, and otherwise the dataset's own linked slide files. A dataset, when given
+        alongside a list or folder, narrows that selection to the slides it claims.
+        """
+        list_path = values.get("custom_list_of_wsis")
+        content = None
+        list_label = list_path
+        if spec.slideList is not None or list_path:
+            source = spec.slideList or SlideListSource(path=list_path)
+            try:
+                content, list_label = read_slide_list_source(
+                    source, lambda path: self._path(path, exists=True)
+                )
+            except SlideListError as error:
+                raise StorageError(str(error), "INVALID_SLIDE_LIST", 422) from error
+            list_path = list_label if source.path else None
+        root = None
+        if spec.slideRoot is not None:
+            root = self._path(spec.slideRoot, exists=True, directory=True)
+        elif content is not None and dataset is not None:
+            root = self._slide_root(dataset)
+        if content is None and root is None:
+            if records is None:
+                raise StorageError("Choose a slide folder or a slide list.", "INVALID_SLIDES", 422)
+            rows = self._dataset_slides(records, finding)
+            # The dataset is the source here; report it the same way as any other selection.
+            return rows, {
+                "source": "dataset",
+                "listPath": None,
+                "sha256": None,
+                "root": str(self._slide_root(dataset) or ""),
+                "initialCount": len(records),
+                "selectedCount": len(rows),
+                "declaresMpp": False,
+                "datasetFiltered": False,
+                "outside": [],
+                "outsideCount": 0,
+                "outsideExamples": [],
+                "unlisted": [],
+                "unlistedCount": len(records) - len(rows),
+                "unlistedExamples": [],
+            }
+        if root is None:
             raise StorageError(
-                f"Invalid TRIDENT slide CSV: {error}", "INVALID_SLIDE_LIST", 422
+                "A slide list needs the slide folder its paths are relative to.",
+                "SLIDE_ROOT_REQUIRED",
+                422,
+            )
+        try:
+            selection = resolve_slide_selection(
+                root,
+                list_content=content,
+                list_path=str(list_path) if list_path else None,
+                records=records,
+                wsi_ext=values.get("wsi_ext"),
+                recursive=spec.recursive,
+                context=f"Slide list {Path(list_label).name}" if list_label else "The slide folder",
+            )
+        except SlideListError as error:
+            raise StorageError(
+                f"Invalid slide selection: {error}", "INVALID_SLIDE_LIST", 422
             ) from error
+        rows = [
+            {"slideId": entry.slideId, "path": str(entry.path), "mpp": entry.mpp}
+            for entry in selection["slides"]
+        ]
+        return rows, {key: value for key, value in selection.items() if key != "slides"} | {
+            "outsideCount": len(selection["outside"]),
+            "outsideExamples": selection["outside"][:5],
+            "unlistedCount": len(selection["unlisted"]),
+            "unlistedExamples": selection["unlisted"][:5],
+            **(
+                {"filename": spec.slideList.filename}
+                if spec.slideList and spec.slideList.filename
+                else {}
+            ),
+        }
+
+    def _dataset_slides(self, records, finding):
+        """Without a list or folder the dataset is the source: its own linked slide files."""
+        rows = []
+        for row in records:
+            if not row.get("slidePath"):
+                finding("SLIDE_MISSING", f"{row['slideId']}: no slide file is linked.")
+                continue
+            rows.append({"slideId": row["slideId"], "path": row["slidePath"], "mpp": None})
+        return rows
 
     def _prepare(self, spec: ExtractionSpec) -> tuple[dict, list[dict]]:
-        dataset = self.store.get_dataset(spec.datasetId)
-        if dataset["manifest"].get("kind") != "dataset":
-            raise StorageError("Select a frozen imported dataset.", "INVALID_DATASET", 422)
+        dataset = None
+        if spec.datasetId is not None:
+            dataset = self.store.get_dataset(spec.datasetId)
+            if dataset["manifest"].get("kind") != "dataset":
+                raise StorageError("Select a frozen imported dataset.", "INVALID_DATASET", 422)
         try:
             options = trident.TridentOptions.model_validate(spec.options)
         except ValidationError as error:
@@ -254,17 +320,17 @@ class ExtractionService:
         def finding(code, message):
             findings.append({"severity": "error", "code": code, "message": message})
 
-        records = json.loads(self.store.read_artifact(spec.datasetId, "records.json"))
-        csv_hash = None
-        if values.get("custom_list_of_wsis"):
-            records, csv_hash = self._select_csv(records, values["custom_list_of_wsis"])
+        records = (
+            json.loads(self.store.read_artifact(spec.datasetId, "records.json"))
+            if dataset is not None
+            else None
+        )
+        rows, slide_list = self._select_slides(spec, values, dataset, records, finding)
         slides = []
         names = set()
-        for row in records:
-            if not row.get("slidePath"):
-                finding("SLIDE_MISSING", f"{row['slideId']}: no slide file is linked.")
-                continue
-            path = self._path(row["slidePath"], exists=True)
+        physical_slides = {}
+        for row in rows:
+            path = self._path(row["path"], exists=True)
             if not self.filesystem._contains(path) or not path.is_file():
                 raise StorageError(
                     "Slide input is outside configured source roots.", "INVALID_SLIDE", 403
@@ -280,6 +346,15 @@ class ExtractionService:
                     f"{row['slideId']}: filename stem {name} must match Slide_ID for native TRIDENT output binding.",
                 )
             info = path.stat()
+            physical = (info.st_dev, info.st_ino)
+            if physical in physical_slides:
+                finding(
+                    "DUPLICATE_SLIDE_ALIAS",
+                    f"{row['slideId']} and {physical_slides[physical]} refer to the same physical "
+                    "slide file. Select one identity for that slide.",
+                )
+            else:
+                physical_slides[physical] = row["slideId"]
             slides.append(
                 {
                     "slideId": row["slideId"],
@@ -290,11 +365,11 @@ class ExtractionService:
                     "ctimeNs": info.st_ctime_ns,
                     "deviceId": info.st_dev,
                     "inode": info.st_ino,
-                    **({"mpp": row["customMpp"]} if "customMpp" in row else {}),
+                    **({"mpp": row["mpp"]} if row.get("mpp") is not None else {}),
                 }
             )
         if not slides:
-            finding("NO_SLIDES", "No readable slides are linked to this dataset.")
+            finding("NO_SLIDES", "The slide selection contains no readable slide.")
         if any(Path(row["path"]).is_relative_to(output) for row in slides):
             raise StorageError(
                 "The output folder cannot contain source slides.", "INVALID_OUTPUT", 422
@@ -411,7 +486,12 @@ class ExtractionService:
                 "This TRIDENT CSV loader requires max_workers of at least 1. Leave it automatic or choose a positive count.",
             )
         normalized = ExtractionSpec(
-            datasetId=spec.datasetId, outputPath=str(output), options=values
+            datasetId=spec.datasetId,
+            slideRoot=spec.slideRoot,
+            slideList=spec.slideList,
+            recursive=spec.recursive,
+            outputPath=str(output),
+            options=values,
         )
         layout = trident.output_layout(options, str(output))
         if values["task"] in {"coords", "feat"}:
@@ -453,7 +533,8 @@ class ExtractionService:
             "runtime": runtime,
             "outputLayout": layout,
             "command": command,
-            "customListSha256": csv_hash,
+            "customListSha256": slide_list["sha256"] if slide_list else None,
+            "slideList": slide_list,
             "inputFiles": input_files,
         }
         result["previewHash"] = _hash({**result, "slides": slides})
@@ -528,13 +609,22 @@ class ExtractionService:
             root = Path(os.path.commonpath([str(Path(row["path"]).parent) for row in slides]))
             stream = io.StringIO()
             writer = csv.writer(stream)
-            has_mpp = any("mpp" in row for row in slides)
+            # TRIDENT compacts the mpp column before pairing it with slides, so an
+            # all-or-nothing column is the only one that keeps each value on its own slide.
+            declared = sum("mpp" in row for row in slides)
+            if declared and declared != len(slides):
+                raise StorageError(
+                    "Every selected slide needs a declared MPP, or none may have one.",
+                    "INVALID_SLIDE_LIST",
+                    422,
+                )
+            has_mpp = bool(declared)
             writer.writerow(["wsi", "mpp"] if has_mpp else ["wsi"])
             writer.writerows(
                 [
                     [
                         str(Path(row["path"]).relative_to(root)),
-                        *([row.get("mpp", "")] if has_mpp else []),
+                        *([row["mpp"]] if has_mpp else []),
                     ]
                     for row in slides
                 ]
@@ -579,6 +669,8 @@ class ExtractionService:
                 "updatedAt": _now(),
             }
             _write(folder / "job.json", job)
+            from histopilot.workers.resource_reservation import preparation_resources
+
             _write(
                 folder / "plan.json",
                 {
@@ -587,6 +679,7 @@ class ExtractionService:
                     "logPath": job["logPath"],
                     "cancelPath": str(folder / "cancelled"),
                     "processPath": str(folder / "process.json"),
+                    "resources": preparation_resources("extraction", options.model_dump()),
                     "validationCommand": [
                         sys.executable,
                         "-m",
@@ -655,6 +748,12 @@ class ExtractionService:
                     )
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 job["error"] = f"Cannot inspect worker status: {error}"
+        if job["state"] in {"starting", "running", "queued"} and (folder / "resources.json").exists():
+            reservation = _read(folder / "resources.json")
+            job["resourceReservation"] = reservation
+            if reservation.get("status") == "queued":
+                job["state"] = "queued"
+                job["waitingReason"] = reservation.get("waitingReason")
         # Old workers need no restart: derive progress from their existing log.
         # Polling never opens slide tensors or rescans the output directory.
         log_warning = None

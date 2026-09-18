@@ -20,8 +20,8 @@
 .dataset-workspace .dataset-steps button[aria-current='step'] {
   border-color: var(--theme-line-strong);
   background: #fff;
-  box-shadow: 0 2px 5px #4e362908;
-  color: var(--brand-red);
+  box-shadow: 0 2px 5px rgb(var(--theme-shadow-rgb) / 3%);
+  color: var(--brand-primary);
 }
 .dataset-workspace .dataset-steps button > span {
   width: 32px;
@@ -32,11 +32,11 @@
   background: var(--theme-soft);
 }
 .dataset-workspace .dataset-steps button[aria-current='step'] > span {
-  background: var(--brand-red);
+  background: var(--brand-primary);
   color: white;
 }
 .dataset-workspace .dataset-steps button.is-complete > span {
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   background: var(--theme-soft-hover);
 }
 .dataset-workspace .dataset-steps button > small {
@@ -86,7 +86,7 @@
   height: 38px;
   border-radius: 9px;
   background: var(--theme-soft);
-  color: var(--brand-red);
+  color: var(--brand-primary);
 }
 .dataset-file-heading h3,
 .dataset-subsection-heading h3 {
@@ -105,7 +105,7 @@
 }
 .dataset-requirement {
   margin-top: 3px;
-  color: var(--brand-red);
+  color: var(--brand-primary);
   font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
@@ -150,7 +150,7 @@
   display: grid;
   place-items: center;
   border-radius: 9px;
-  color: var(--brand-brown);
+  color: var(--theme-ink);
   background: var(--theme-accent-soft);
 }
 .dataset-workspace .dataset-identity-fields {
@@ -213,14 +213,14 @@
 .dataset-workspace .patient-table-help {
   border-color: var(--theme-line-strong);
   border-radius: 12px;
-  box-shadow: 0 14px 40px #4e36291c;
+  box-shadow: 0 14px 40px rgb(var(--theme-shadow-rgb) / 11%);
   padding: 22px;
   margin-bottom: 8px;
   color: var(--theme-ink);
 }
 .dataset-workspace .patient-table-help pre {
   background: var(--theme-soft);
-  color: var(--brand-brown);
+  color: var(--theme-ink);
 }
 .dataset-workspace .dataset-freeze-bar {
   border-color: var(--theme-line-strong);
@@ -228,14 +228,14 @@
   margin-top: 28px;
 }
 .dataset-workspace .dataset-freeze-bar strong {
-  color: var(--brand-brown);
+  color: var(--theme-ink);
 }
 .dataset-workspace .dataset-freeze-bar .btn-primary {
-  background: var(--brand-red);
-  border-color: var(--brand-red);
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
 }
 .dataset-workspace .dataset-freeze-bar .btn-primary:not(:disabled):hover {
-  background: var(--brand-red-hover);
+  background: var(--brand-primary-hover);
 }
 @media (max-width: 1160px) {
   .dataset-workspace .dataset-file-layout {

@@ -3,6 +3,7 @@
 import json
 import math
 
+from histopilot.application.training_patience import patience_summary
 from histopilot.storage.project_lock import StorageError, _reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 
@@ -54,6 +55,10 @@ def training_history(store, batch_id: str, run_id: str) -> dict:
         raise StorageError("The frozen run has no valid epoch budget.", "TRAINING_RUN_INVALID", 409)
     path = store.folder / "training" / batch_id / "runs" / run_id / "history.json"
     response = {"runId": run_id, "rows": [], "totalRows": 0, "truncated": False}
+    # Older records without stopping configuration retain their original shape.
+    report_stopping = "earlyStopping" in recipe or "patience" in recipe
+    if report_stopping:
+        response["stopping"] = patience_summary(store, manifest, run, recipe)
     try:
         _reject_symlink_components(path)
         if not path.exists():
@@ -98,6 +103,11 @@ def training_history(store, batch_id: str, run_id: str) -> dict:
             "rows": displayed,
             "totalRows": len(rows),
             "truncated": len(rows) > DISPLAY_HISTORY_ROWS,
+            **(
+                {"stopping": patience_summary(store, manifest, run, recipe, rows)}
+                if report_stopping
+                else {}
+            ),
         }
     except (OSError, ValueError, TypeError, OverflowError, RecursionError):
         return {

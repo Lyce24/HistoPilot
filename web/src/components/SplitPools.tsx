@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { changeValidationSource } from '../lib/split';
+import { conditionFields } from '../lib/conditions';
 import type { ProtocolExploration, ProtocolSpec } from '../api/scientific';
 import { ErrorNotice, Icon } from './ui';
 import { Findings } from './ScientificUI';
@@ -37,10 +38,10 @@ export function SplitPools({
     <section className="stack split-pools" aria-label={development ? 'Development data sources' : 'Training and test sources'}>
       <div className="split-strategy-heading">
         <span className="split-section-caption">A · DATA SELECTION</span>
-        <h3>{development ? 'Select the development data' : 'Set aside test data first'}</h3>
+        <h3>{development ? 'Training and validation' : 'Set aside test data first'}</h3>
         <p className="muted">
           {development
-            ? 'Use all eligible groups or select training records using conditions or source column values. Only selected groups enter this protocol.'
+            ? 'Use all shared dataset and bundle slides, or filter the training pool by cohort and other values. Patients stay together.'
             : 'The remaining eligible groups become your training pool. You can also use your own training conditions.'}
         </p>
       </div>
@@ -100,7 +101,7 @@ export function SplitPools({
       ) : null}
       {roles.map((role) => (
         <div className={`stack split-pool-card split-pool-${role}`} key={role}>
-          <div className="split-pool-heading">
+          {!(development && role === 'train') ? <div className="split-pool-heading">
             <span className="split-pool-symbol">
               <Icon
                 name={role === 'test' ? 'lock' : role === 'train' ? 'features' : 'clock'}
@@ -123,8 +124,8 @@ export function SplitPools({
                     : 'A separate set for early stopping.'}
               </p>
             </div>
-          </div>
-          {role === 'train' && pools.source === 'rules' ? (
+          </div> : null}
+          {role === 'train' && pools.source === 'rules' && !development ? (
             <>
               <label className="label">
                 Training set selection
@@ -152,7 +153,7 @@ export function SplitPools({
             </>
           ) : null}
           {pools.source === 'rules' &&
-          !(role === 'train' && pools.trainSelection === 'remaining')
+          !(role === 'train' && pools.trainSelection === 'remaining' && !development)
             ? renderConditions(role)
             : null}
           {live.loading ? (
@@ -171,7 +172,7 @@ export function SplitPools({
                     : 'fixed validation set'
               }
               fields={[
-                ...pools.rules[role].map((item) => item.field),
+                ...conditionFields(pools.rules[role]),
                 ...(pools.imported?.partitionField ? [pools.imported.partitionField] : []),
                 targetField,
               ]}
@@ -183,7 +184,7 @@ export function SplitPools({
         </div>
       ))}
       <div className="split-validation-control">
-        <div className="split-pool-heading">
+        {!development ? <div className="split-pool-heading">
           <span className="split-pool-symbol">
             <Icon name="clock" size={19} />
           </span>
@@ -191,7 +192,7 @@ export function SplitPools({
             <h4>Early stopping</h4>
             <p>A validation set helps decide when training should stop.</p>
           </div>
-        </div>
+        </div> : null}
         {fixedValidation ? (
           <p className="muted">
             {development

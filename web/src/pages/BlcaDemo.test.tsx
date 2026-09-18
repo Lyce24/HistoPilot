@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { renderLoadedPage } from '../testFixtures/renderLoadedPage';
 import type { DemoPipeline, DemoRecord } from '../api/demo';
 import type { Workspace } from '../api/types';
 import type { Roadmap } from './ProjectRoadmap';
@@ -71,19 +72,20 @@ describe('BLCA synthetic walkthrough', () => {
     for (const module of ROADMAP_MODULES) expect(html).toContain(`href="#${module.id}"`);
   });
 
-  it('routes BLCA modules and old tool links without any live query provider', () => {
+  it('routes BLCA modules and old tool links without any live query provider', async () => {
     const modules = buildRoadmap(workspace);
     const roadmap = { modules } as Roadmap;
     for (const page of ['system', 'explorer', 'provenance', 'example-results', 'cleanup'] as const) {
-      const html = renderToStaticMarkup(<Content page={page} workspace={workspace} roadmap={roadmap} />);
+      const html = await renderLoadedPage(<Content page={page} workspace={workspace} roadmap={roadmap} />);
       expect(html).toContain('BLCA demo');
       expect(html).toContain('Explore each stage');
       expect(html).not.toContain('CRC');
     }
     for (const module of ROADMAP_MODULES) {
-      const html = renderToStaticMarkup(<Content page={module.id} workspace={workspace} roadmap={roadmap} />);
+      const html = await renderLoadedPage(<Content page={module.id} workspace={workspace} roadmap={roadmap} />);
       expect(html).toContain('Synthetic · Read-only');
-      expect(html).toContain('Filter by tag');
+      // Every module opens on its record library; filters appear once it holds records.
+      expect(html).toContain('class="stage-library card"');
     }
   });
 

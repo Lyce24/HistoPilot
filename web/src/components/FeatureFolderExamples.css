@@ -7,7 +7,7 @@
 .pfm-content .feature-folder-examples > summary,
 .feature-packing .feature-folder-examples > summary {
   padding: 14px 18px;
-  color: var(--brand-red);
+  color: var(--brand-primary);
   font-size: 13px;
   font-weight: 650;
   cursor: pointer;
@@ -51,7 +51,7 @@
   overflow-x: auto;
 }
 .feature-folder-example pre strong {
-  color: var(--brand-red);
+  color: var(--brand-primary);
 }
 .feature-folder-example-path {
   display: grid;
@@ -68,7 +68,7 @@
   padding-top: 12px;
 }
 .feature-file-example summary {
-  color: var(--brand-red);
+  color: var(--brand-primary);
   font-weight: 600;
   cursor: pointer;
 }

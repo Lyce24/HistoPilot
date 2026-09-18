@@ -3,6 +3,8 @@ import { Icon } from './ui';
 import { RecordManageButton, RecordManagementScope, useHasRecordManagementScope } from './RecordManagement';
 import './StageWorkflow.css';
 
+export { StageCreateButton, StageBackButton, StageContinueButton } from './StageActions';
+
 export interface StageStep {
   id: string;
   title: string;
@@ -107,6 +109,14 @@ export function StageLibraryToolbar({ search, onSearch, searchLabel, placeholder
   onReset?: () => void;
 }) {
   const searchId = useId();
+  // Nothing saved and no filter applied: searching and filtering an empty library
+  // is noise, and the empty state below already says what to do next. Library
+  // actions stay, because resuming or refreshing still applies to an empty list.
+  if (total === 0 && !onReset) {
+    return actions ? <div className="stage-library-tools stage-library-tools-empty">
+      <div className="stage-library-tool-actions inline-actions">{actions}</div>
+    </div> : null;
+  }
   return <div className="stage-library-tools">
     <div className="stage-library-toolbar">
       <label className="label stage-library-search" htmlFor={searchId}>Search

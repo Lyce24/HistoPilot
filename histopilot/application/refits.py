@@ -19,7 +19,9 @@ from histopilot.application.predictors import (
     reference,
 )
 from histopilot.schemas.development import ResourcePolicy
+from histopilot.schemas.nnmil import resolve_nnmil_recipe
 from histopilot.schemas.predictors import PredictorSelection
+from histopilot.schemas.training_controls import sampling_memberships
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
@@ -30,6 +32,11 @@ def _best_epoch(checkpoint, folder, recipe):
     run_folder = folder / "runs" / checkpoint["runId"]
     receipt = read_evidence(run_folder / "result.json", run_folder)
     epoch = receipt.get("bestEpoch")
+    if recipe.get("model", "abmil").lower() == "nnmil":
+        epoch = receipt.get("selectedEpoch")
+        if epoch is None:
+            raise StorageError("nnMIL refit requires its selected checkpoint epoch.",
+                               "REFIT_EPOCH_INVALID", 409)
     if epoch is not None:
         if type(epoch) is not int or not 1 <= epoch <= recipe["maxEpochs"]:
             raise StorageError("The best checkpoint epoch is invalid.", "REFIT_EPOCH_INVALID", 409)
@@ -37,7 +44,10 @@ def _best_epoch(checkpoint, folder, recipe):
             raise StorageError(
                 "The best epoch exceeds completed training.", "REFIT_EPOCH_INVALID", 409
             )
-        return {"runId": checkpoint["runId"], "bestEpoch": epoch, "source": "checkpoint_receipt"}
+        return {"runId": checkpoint["runId"], "bestEpoch": epoch, "source": "checkpoint_receipt",
+                **({"checkpointSelection": receipt["checkpointSelection"],
+                    "validationBestEpoch": receipt.get("bestEpoch")}
+                   if recipe.get("model", "abmil").lower() == "nnmil" else {})}
     path = run_folder / "history.json"
     # Use the same bounded, regular, in-run file policy as all checkpoint evidence.
     from histopilot.application.predictors import _file_path
@@ -130,6 +140,16 @@ def prepare_refit(evidence, plan, folder):
         "earlyStopping": False,
         "warmupEpochs": min(source_recipe.get("warmupEpochs", 0), epochs - 1),
     }
+    # A refit has no validation stream. Freeze this substitution in the reviewed
+    # recipe while retaining the original candidate recipe as source evidence.
+    adjustments = {}
+    if recipe.get("lrScheduler") == "plateau":
+        recipe["lrScheduler"] = "none"
+        adjustments["lrScheduler"] = (
+            "Plateau requires validation; refit uses a constant learning rate."
+        )
+    for key in ("minValidationPositives", "fixedEpochBudget"):
+        recipe.pop(key, None)
     budget = {
         "percentile": percentile,
         "epochs": epochs,
@@ -138,7 +158,18 @@ def prepare_refit(evidence, plan, folder):
         "rounding": "ceil",
         "epochIndexing": "one_based",
     }
-    rows = sorted(members.values(), key=lambda row: row["slideId"])
+    rows = sampling_memberships(
+        sorted(members.values(), key=lambda row: row["slideId"]),
+        recipe,
+        plan["data"].get("cohortValues", {}),
+    )
+    try:
+        effective_recipe, nnmil_planning = resolve_nnmil_recipe(
+            recipe, rows, plan["data"]["featureFiles"]
+        )
+    except ValueError as error:
+        raise StorageError(str(error), "REFIT_BAG_PLANNING_INVALID", 422) from error
+    resolution = {"effectiveRecipe": effective_recipe, "nnmilPlanning": nnmil_planning} if nnmil_planning else {}
     return {
         **evidence,
         "kind": "predictor-refit",
@@ -147,7 +178,9 @@ def prepare_refit(evidence, plan, folder):
         "checkpoints": [],
         "sourceRecipe": source_recipe,
         "recipe": recipe,
+        **resolution,
         "epochBudget": budget,
+        **({"recipeAdjustments": adjustments} if adjustments else {}),
         "trainingSlideCount": len(rows),
         "trainingPatientCount": len({row["patientId"] for row in rows}),
         "resources": ResourcePolicy.model_validate(
@@ -172,6 +205,7 @@ def prepare_refit(evidence, plan, folder):
             "checkpoints": evidence["checkpoints"],
             "target": evidence["target"],
             "recipe": recipe,
+            **resolution,
             "trainingSeed": evidence["trainingSeed"],
             "data": {**deepcopy(plan["data"]), "memberships": rows},
             "epochBudget": budget,
@@ -254,13 +288,16 @@ class RefitService:
     def launch(self, identity, request, *, resume=False):
         with lifecycle_guard(self.store.folder):
             record = self.get(identity)
-            self.predictors.require_work_open(record["manifest"]["experimentId"])
-            self._verify_sources(record)
             resources = (
                 request.resources.model_dump()
                 if request.resources is not None
                 else record["manifest"]["resources"]
             )
+            replay = self.jobs.replay_launch(identity, request.operationId, resume=resume, resources=resources)
+            if replay is not None:
+                return replay
+            self.predictors.require_work_open(record["manifest"]["experimentId"])
+            self._verify_sources(record)
             owner = record["manifest"].get("experimentId", "")
             if owner and not owner.startswith("legacy-"):
                 submission = self.store.get_draft(owner)["payload"].get("submission") or {}
@@ -338,12 +375,25 @@ class RefitService:
                 or plan.get("recordContentHash") != record["contentHash"]
                 or _hash(plan) != status.get("planHash")
                 or any(plan.get(key) != value for key, value in manifest["planTemplate"].items())
+                or any(receipt.get(key) != manifest[key]
+                       for key in ("effectiveRecipe", "nnmilPlanning") if key in manifest)
             ):
                 raise StorageError(
                     "Refit output does not match the reviewed plan.",
                     "REFIT_PROVENANCE_CHANGED",
                     409,
                 )
+            from histopilot.clinical_features import clinical_fields, fit_clinical_preprocessor
+
+            fields = clinical_fields(manifest["recipe"])
+            clinical_preprocessing = None
+            if fields:
+                clinical_preprocessing = fit_clinical_preprocessor(
+                    plan["data"]["memberships"], plan["data"].get("clinicalValues", {}), fields
+                )
+                if receipt.get("clinicalPreprocessing") != clinical_preprocessing:
+                    raise StorageError("Refit clinical preprocessing differs from development patients.",
+                                       "REFIT_CLINICAL_PROVENANCE_CHANGED", 409)
             checkpoint = checkpoint_snapshot(receipt["bestCheckpointPath"], folder)
             published = {
                 key: value
@@ -362,6 +412,7 @@ class RefitService:
                         "runPlanHash": _hash(plan),
                         "bestEpoch": receipt["epochsCompleted"],
                         "epochsCompleted": receipt["epochsCompleted"],
+                        **({"clinicalPreprocessing": clinical_preprocessing} if clinical_preprocessing else {}),
                     }
                 ],
                 executionPlanHash=_hash(plan),

@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
 import type { Workspace } from '../api/types';
 import type { useRoadmap } from '../components/useRoadmap';
+import { suggestedRoadmapModule } from '../lib/roadmap';
 import { Icon } from '../components/ui';
-import { ROADMAP_CONNECTIONS } from '../lib/roadmap';
 
 export type Roadmap = ReturnType<typeof useRoadmap>;
 type Module = Roadmap['modules'][number];
@@ -21,112 +20,119 @@ export function ModuleStatus({ status, completedLabel = 'Complete & frozen' }: {
   </span>;
 }
 
-type NodeBounds = Pick<DOMRect, 'top' | 'left' | 'right' | 'bottom' | 'width' | 'height'>;
-export function roadmapConnectionPath(start: NodeBounds, end: NodeBounds, bounds: Pick<DOMRect, 'left' | 'top'>): string {
-  if (Math.abs(start.top - end.top) < 1 && end.left > start.right) {
-    const x1 = start.right - bounds.left;
-    const y1 = start.top + start.height / 2 - bounds.top;
-    const x2 = end.left - bounds.left - 6;
-    const y2 = end.top + end.height / 2 - bounds.top;
-    const mid = (x1 + x2) / 2;
-    return `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`;
-  }
-  const x1 = start.left + start.width / 2 - bounds.left;
-  const y1 = start.bottom - bounds.top;
-  const x2 = end.left + end.width / 2 - bounds.left;
-  const y2 = end.top - bounds.top - 6;
-  const mid = (y1 + y2) / 2;
-  return `M ${x1} ${y1} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y2}`;
+const phases = [
+  { id: 'prepare', title: 'Prepare', step: '01' },
+  { id: 'develop', title: 'Develop', step: '02' },
+  { id: 'evaluate', title: 'Evaluate', step: '03' },
+] as const;
+
+/** Modules a project must complete; the optional analyses are not counted. */
+const requiredModules = (modules: Module[]) => modules.filter((module) => !module.optional);
+
+/** The modules this one is still waiting for, named, or null when it can proceed. */
+function missingInputs(module: Module, modules: Module[]): string | null {
+  const inputs = module.blockers.map((id) => modules.find((item) => item.id === id)?.shortTitle).filter(Boolean);
+  return inputs.length ? inputs.join(' and ') : null;
 }
 
-export function RoadmapGraph({ modules }: { modules: Module[] }) {
-  const board = useRef<HTMLDivElement>(null);
-  const [lines, setLines] = useState<{ id: string; path: string; complete: boolean }[]>([]);
-  useEffect(() => {
-    const element = board.current;
-    if (!element) return;
-    let frame = 0;
-    const measure = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const bounds = element.getBoundingClientRect();
-        const nodes = new Map(Array.from(element.querySelectorAll<HTMLElement>('[data-module]'))
-          .map((node) => [node.dataset.module, node.getBoundingClientRect()]));
-        const paths = ROADMAP_CONNECTIONS.flatMap(({ from, to }) => {
-          const start = nodes.get(from);
-          const end = nodes.get(to);
-          if (!start || !end) return [];
-          return [{ id: `${from}-${to}`, complete: modules.find((item) => item.id === from)?.status === 'complete',
-            path: roadmapConnectionPath(start, end, bounds) }];
-        });
-        setLines(paths);
-      });
-    };
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    element.querySelectorAll('[data-module]').forEach((node) => observer.observe(node));
-    measure();
-    return () => { observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [modules]);
-  return <div className="roadmap-board" ref={board}>
-    <svg className="roadmap-connections" aria-hidden="true">
-      <defs>
-        <marker id="roadmap-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="var(--theme-line-strong)" /></marker>
-        <marker id="roadmap-arrow-done" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="none" stroke="var(--brand-brown)" /></marker>
-      </defs>
-      {lines.map((line) => <path key={line.id} d={line.path} className={line.complete ? 'is-complete' : ''} markerEnd={`url(#roadmap-arrow${line.complete ? '-done' : ''})`} />)}
-    </svg>
-    <div className="roadmap-phase phase-prepare"><span>01</span><h3>Prepare</h3><p>Establish your data,<br />targets and representations.</p></div>
-    <div className="roadmap-phase phase-develop"><span>02</span><h3>Develop</h3><p>Manage experiments,<br />then freeze their predictors.</p></div>
-    <div className="roadmap-phase phase-evaluate"><span>03</span><h3>Evaluate</h3><p>Prepare test data,<br />and track predictor evaluations.</p></div>
-    <div className="roadmap-phase phase-insights"><span>04</span><h3>Clinical insights</h3><p>Assess clinical utility,<br />then inspect model attention.</p></div>
-    {modules.map((module, index) => {
-      const blockers = module.blockers.map((id) => modules.find((item) => item.id === id)?.shortTitle).join(' + ');
-      const contents = <>
-        <div className="roadmap-node-top"><span className="roadmap-node-icon"><Icon name={moduleIcons[module.id]} size={19} /></span><ModuleStatus status={module.status} completedLabel={completedModuleLabel(module.id)} /></div>
-        <h3>{module.title}</h3>
-        <p>{module.description}</p>
-        {module.id === 'test-data' ? <p className="roadmap-prerequisite-note">Create test cohorts before model development or feature extraction. Compatibility is checked in Evaluate models.</p> : null}
-        {module.id === 'interpretation' ? <p className="roadmap-prerequisite-note">Use any compatible slides with a saved predictor, or continue from a clinical analysis.</p> : null}
-        <div className="roadmap-node-bottom">
-          <span>{!module.unlocked ? <><Icon name="lock" size={12} /> {blockers ? `Requires ${blockers}` : 'Review compatible inputs'}</> : module.status === 'complete' ? completedModuleAction(module.id) : module.id === 'experiments' ? 'Open experiments' : module.status === 'draft' ? 'Continue module' : 'Open module'}</span>
-          {module.unlocked ? <Icon name="arrow" size={15} /> : null}
-        </div>
-      </>;
-      const className = `roadmap-node node-${module.id} node-${module.status}${module.unlocked ? '' : ' is-locked'}`;
-      return module.unlocked ? <a key={module.id} href={`#${module.id}`} className={className} data-module={module.id} aria-label={`${module.title}: ${module.status === 'complete' ? completedModuleLabel(module.id).toLowerCase() : module.status === 'draft' ? 'saved work' : 'not started'}. Open module.`}>{contents}</a>
-        : <article key={module.id} className={className} data-module={module.id} aria-label={`${module.title}, locked`}>
-            {contents}{module.compatibilityIssue ? <p className="roadmap-compatibility">{module.compatibilityIssue}</p> : null}
-            <span className="sr-only">Module {index + 1}. Complete its prerequisites to unlock.</span>
-          </article>;
-    })}
-  </div>;
+/**
+ * One row per module: what it is, what this project already has in it, and what
+ * it is still waiting for. Saved evidence replaces a generic "Saved outputs"
+ * label because it answers the reader's actual question in the same line.
+ * Module explanations and artifact totals stay off these rows.
+ */
+function LauncherItem({ module, modules, demo, next }: { module: Module; modules: Module[]; demo: boolean; next?: boolean }) {
+  const complete = module.unlocked && !demo && module.status === 'complete';
+  // A finished module reports what it produced. Unfinished work names what it is
+  // still waiting for, keeping any evidence it has already saved.
+  const missing = complete || demo ? null : missingInputs(module, modules);
+  const evidence = module.status === 'not-started' ? null : module.evidence;
+  const status = demo ? 'Example'
+    : missing ? evidence ? `${evidence} · needs ${missing}` : `Needs ${missing}`
+      : evidence ?? 'Not started';
+  const state = missing ? 'is-blocked' : `status-${module.status}`;
+  // The row stays one line; the full compatibility explanation belongs on the
+  // element itself, where a pointer or assistive technology can read it.
+  const detail = module.compatibilityIssue ?? status;
+  const contents = <>
+    <span className={`roadmap-item-icon${complete ? ' is-complete' : ''}`} aria-hidden="true">
+      <Icon name={moduleIcons[module.id]} size={17} />
+    </span>
+    <span className="roadmap-item-copy">
+      <strong>{module.shortTitle}</strong>
+      <span className={`roadmap-item-status ${state}`}>{status}</span>
+    </span>
+    <span className="roadmap-item-action">{module.unlocked ? 'Open' : 'Locked'}</span>
+  </>;
+  const className = `roadmap-item${module.unlocked ? '' : ' is-locked'}${next ? ' is-next' : ''}`;
+  return <li>{module.unlocked
+    ? <a className={className} data-module={module.id} href={`#${module.id}`} title={module.compatibilityIssue} aria-label={`Open ${module.shortTitle}. ${detail}.`}>{contents}</a>
+    : <div className={className} data-module={module.id} aria-disabled="true" aria-label={`${module.shortTitle}. ${detail}.`} title={detail}>{contents}</div>}
+  </li>;
+}
+
+/**
+ * How far the project has come and the one step that can be taken next. Progress
+ * counts required modules only, so an optional analysis never reads as missing
+ * work. A project with every required module complete is told so plainly.
+ */
+export function RoadmapProgress({ modules, demo = false }: { modules: Module[]; demo?: boolean }) {
+  const required = requiredModules(modules);
+  const done = required.filter((module) => module.status === 'complete');
+  const next = demo ? undefined : suggestedRoadmapModule(modules);
+  return <section className="roadmap-state" aria-labelledby="roadmap-state-title">
+    <h2 id="roadmap-state-title" className="sr-only">Project progress</h2>
+    <div className="roadmap-state-bar">
+      <ol className="roadmap-state-steps" aria-hidden="true">
+        {required.map((module) => <li key={module.id} className={module.status === 'complete' ? 'is-complete' : module.status === 'draft' ? 'is-draft' : ''} />)}
+      </ol>
+      <p className="roadmap-state-count">{demo
+        ? 'Every stage below holds an illustrative record.'
+        : <><strong>{done.length} of {required.length}</strong> required steps complete</>}</p>
+    </div>
+    {demo ? null : next
+      ? <a className="roadmap-state-next" href={`#${next.id}`} data-next={next.id} aria-label={`Continue with ${next.shortTitle}. ${next.description}`}>
+        <span className="roadmap-state-next-icon" aria-hidden="true"><Icon name={moduleIcons[next.id]} size={20} /></span>
+        <span className="roadmap-state-next-copy">
+          <small>{next.status === 'draft' ? 'Continue where you left off' : 'Next step'}</small>
+          <strong>{next.shortTitle}</strong>
+          <span>{next.description}</span>
+        </span>
+        <span className="roadmap-state-next-action">Open<Icon name="arrow" size={15} /></span>
+      </a>
+      : <p className="roadmap-state-done"><Icon name="check" size={16} />Every required step is complete. Review your saved outputs, or continue with an optional analysis.</p>}
+  </section>;
+}
+
+export function RoadmapLauncher({ modules, demo = false }: { modules: Module[]; demo?: boolean }) {
+  const next = demo ? undefined : suggestedRoadmapModule(modules);
+  return <>
+    <div className="roadmap-launcher">
+      {phases.map((phase) => <section key={phase.id} className="roadmap-section" data-phase={phase.id} aria-labelledby={`roadmap-${phase.id}`}>
+        {/* The step number is decoration drawn by CSS, so the heading's own text
+            stays the phase name for assistive technology and tests. */}
+        <h2 id={`roadmap-${phase.id}`} data-step={phase.step}>{phase.title}</h2>
+        <ul>{modules.filter((module) => module.phase === phase.id).map((module) => <LauncherItem key={module.id} module={module} modules={modules} demo={demo} next={module.id === next?.id} />)}</ul>
+      </section>)}
+    </div>
+    <section className="roadmap-analysis" aria-labelledby="roadmap-analysis-title">
+      <h2 id="roadmap-analysis-title">Optional analyses</h2>
+      <ul>{modules.filter((module) => module.phase === 'insights').map((module) => <LauncherItem key={module.id} module={module} modules={modules} demo={demo} />)}</ul>
+    </section>
+  </>;
 }
 
 export default function ProjectRoadmap({ workspace, roadmap }: { workspace: Workspace; roadmap: Roadmap }) {
-  const complete = roadmap.modules.filter((module) => module.status === 'complete').length;
-  const drafts = roadmap.modules.filter((module) => module.status === 'draft').length;
-  const available = roadmap.modules.filter((module) => module.unlocked && module.status !== 'complete');
-  const next = available.find((module) => module.status === 'draft') ?? available[0];
-  const allComplete = complete === roadmap.modules.length;
-  const blocked = roadmap.modules.find((module) => module.status !== 'complete');
-  const prerequisite = blocked?.prerequisites.map((id) => roadmap.byId[id]).find((module) => module?.unlocked);
   return <div className="project-roadmap">
-    <header className="roadmap-heading">
-      <div><div className="eyebrow">PROJECT WORKFLOW</div><h1>Your research roadmap</h1><p>Prepare data, develop predictors, evaluate performance, and investigate clinical utility and model attention.</p></div>
-      <div className="roadmap-progress"><strong>{roadmap.hasData ? complete : '—'}<span> / {roadmap.modules.length}</span></strong><span>modules complete</span><div role="progressbar" aria-label="Completed modules" aria-valuemin={0} aria-valuemax={roadmap.modules.length} aria-valuenow={roadmap.hasData ? complete : undefined}><span style={{ width: `${roadmap.hasData ? complete / roadmap.modules.length * 100 : 0}%` }} /></div></div>
-    </header>
-    {workspace.mode === 'synthetic-demo' ? <div className="callout roadmap-demo">Synthetic demonstration. Sample records and illustrative results are separate from real model execution.</div> : null}
-    {roadmap.error && roadmap.hasData ? <div className="callout callout-warning roadmap-refresh-warning" role="status"><span>Showing the last loaded progress. Some project records could not refresh.</span><button className="text-button" onClick={() => void roadmap.refetch()}>Retry</button></div> : null}
-    {roadmap.isLoading && !roadmap.hasData ? <div className="roadmap-loading" role="status"><Icon name="clock" size={28} /><h2>Reading your project progress</h2><p>Checking saved drafts and frozen versions…</p></div>
-      : roadmap.error && !roadmap.hasData ? <div className="roadmap-loading" role="alert"><h2>Project progress could not be loaded</h2><p>{roadmap.error.message}</p><button className="btn btn-primary" onClick={() => void roadmap.refetch()}>Try again</button><a className="btn btn-secondary" href="#dataset">Open data module</a></div>
+    {/* The next-step card below states what to open, so the heading does not repeat it. */}
+    <header className="roadmap-heading"><h1>Project roadmap</h1></header>
+    {workspace.mode === 'synthetic-demo' ? <div className="callout roadmap-demo">Synthetic demo. These are illustrative records.</div> : null}
+    {roadmap.error && roadmap.hasData ? <div className="callout callout-warning roadmap-refresh-warning" role="status"><span>Some saved records could not refresh.</span><button className="text-button" onClick={() => void roadmap.refetch()}>Retry</button></div> : null}
+    {roadmap.isLoading && !roadmap.hasData ? <div className="roadmap-loading" role="status"><Icon name="clock" size={24} /><p>Loading workflow…</p></div>
+      : roadmap.error && !roadmap.hasData ? <div className="roadmap-loading" role="alert"><h2>Could not load the workflow</h2><p>{roadmap.error.message}</p><button className="btn btn-primary" onClick={() => void roadmap.refetch()}>Retry</button><a className="btn btn-secondary" href="#dataset">Open datasets</a></div>
       : <>
-        <div className="roadmap-next"><div className="roadmap-next-symbol"><Icon name={next ? moduleIcons[next.id] : allComplete ? 'check' : 'lock'} size={23} /></div><div><span>{drafts ? 'PICK UP WHERE YOU LEFT OFF' : 'YOUR NEXT STEP'}</span><h2>{next?.title ?? (allComplete ? 'Your roadmap is complete' : 'Review workflow prerequisites')}</h2><p>{next ? `${available.length} module${available.length === 1 ? '' : 's'} available. ${complete ? 'Continue this branch or choose another available module below.' : 'Start with your source data. You can also review later test-data requirements.'}` : allComplete ? 'Open any module to review its saved evidence.' : `${roadmap.modules.length - complete} module${roadmap.modules.length - complete === 1 ? '' : 's'} still need completed evidence. ${blocked?.compatibilityIssue ?? 'Review the required inputs shown below to continue.'}`}</p></div>{next ? <a className="btn btn-primary" href={`#${next.id}`}>{next.status === 'draft' ? 'Continue module' : 'Start module'}<Icon name="arrow" size={16} /></a> : !allComplete && prerequisite ? <a className="btn btn-primary" href={`#${prerequisite.id}`}>Review {prerequisite.shortTitle}<Icon name="arrow" size={16} /></a> : null}</div>
-        <section className="roadmap-map" aria-label="Project module dependencies">
-          <div className="roadmap-map-heading"><div><Icon name="branch" size={18} /><h2>From data to evidence</h2></div><div className="roadmap-legend" aria-label="Module status legend"><ModuleStatus status="complete" completedLabel="Complete" /><ModuleStatus status="draft" /><ModuleStatus status="not-started" /><span><Icon name="lock" size={12} /> Prerequisites required</span></div></div>
-          <RoadmapGraph modules={roadmap.modules} />
-          <div className="roadmap-map-note"><Icon name="info" size={15} /><p>Arrows show the main workflow; cards list additional prerequisites and whether work is saved or complete. Evaluate models requires both a ready predictor and prepared test data.</p></div>
-        </section>
+        <RoadmapProgress modules={roadmap.modules} demo={workspace.mode === 'synthetic-demo'} />
+        <RoadmapLauncher modules={roadmap.modules} demo={workspace.mode === 'synthetic-demo'} />
       </>}
   </div>;
 }

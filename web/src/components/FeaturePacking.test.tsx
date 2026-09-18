@@ -38,6 +38,21 @@ describe('feature preparation presentation', () => {
     expect(html).toContain('1 slide still lacks features');
   });
 
+  it('validates slide embeddings without offering patch packing or coordinate requirements', () => {
+    const slideConfiguration = { ...configuration, manifest: { ...configuration.manifest, spec: { ...configuration.manifest.spec, featureKind: 'slide' } } } as Configuration;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['feature-packs', 'project'], { jobs: [], artifacts: [], tmuxAvailable: true, formatAvailable: true, defaultOutputRoot: '/packs' });
+    client.setQueryData(['feature-packs', 'project', 'validation', 'features'], null);
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeaturePacking project="project" configuration={slideConfiguration} configurations={[slideConfiguration]} onSelectVersion={() => {}} selectedPackIds={[]} onSelectedPackIdsChange={() => {}} /></QueryClientProvider>);
+    expect(html).toContain('Validate slide embeddings');
+    expect(html).toContain('No patch coordinates are required');
+    expect(html).not.toContain('Optional packing');
+    expect(html).not.toContain('Existing pack folder');
+    expect(html).not.toContain('Destination folder');
+    expect(html).not.toContain('Create a new training pack');
+    client.clear();
+  });
+
   it('distinguishes header inspection, tensor validation and incomplete provenance', () => {
     const unvalidated = renderToStaticMarkup(<FeatureValidationSummary report={null} />);
     expect(unvalidated).toContain('Headers inspected only');
@@ -190,13 +205,17 @@ describe('feature preparation presentation', () => {
   it('distinguishes matching structure from verified contents and explains unequal container sizes', () => {
     const preview: FeaturePackPreview = {
       spec: { featureSetId: 'features', action: 'attach', dtype: 'preserve', existingPath: '/mmap/blca' }, previewHash: 'hash', canRun: true, findings: [], slideCount: 2, patchCount: 1024, dimensions: 768, sourceDtype: 'float32', outputDtype: 'float32', estimatedBytes: null, availableBytes: null, outputPath: null, tmuxAvailable: true, matchesFeatures: true,
-      packInspection: { format: 'oceanpath', formatVariant: 'legacy', slideCount: 2, totalPatches: 1024, dimensions: 768, outputDtype: 'float32', featureBytes: 3145728, coordinateBytes: 8192, totalBytes: 3155000, expectedFeatureBytes: 3145728, expectedCoordinateBytes: 8192, sourceContainerBytes: 3210000, sourcePatchCount: 1024, missingSlideCount: 0, extraSlideCount: 0, mismatchedSlideCount: 0, missingSlides: [], extraSlides: [], mismatchedSlides: [] },
+      packInspection: { format: 'oceanpath', formatVariant: 'legacy', slideCount: 2, totalPatches: 1024, dimensions: 768, sourceDtype: 'float32', precision: 'exact', outputDtype: 'float32', featureBytes: 3145728, coordinateBytes: 8192, totalBytes: 3155000, expectedFeatureBytes: 3145728, expectedCoordinateBytes: 8192, sourceContainerBytes: 3210000, sourcePatchCount: 1024, missingSlideCount: 0, extraSlideCount: 0, mismatchedSlideCount: 0, missingSlides: [], extraSlides: [], mismatchedSlides: [] },
     };
     const html = renderToStaticMarkup(<ExistingPackComparison preview={preview} />);
     expect(html).toContain('Structure matches · full verification pending');
     expect(html).toContain('HDF5 metadata and compression affect file size');
     expect(html).toContain('every feature row and coordinate');
     expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain('reduced precision');
+    const reduced = renderToStaticMarkup(<ExistingPackComparison preview={{ ...preview, packInspection: { ...preview.packInspection!, precision: 'reduced', outputDtype: 'float16' } }} />);
+    expect(reduced).toContain('float16 · reduced precision');
+    expect(reduced).toContain('converted to float16');
     const mismatch = renderToStaticMarkup(<ExistingPackComparison preview={{ ...preview, matchesFeatures: false, packInspection: { ...preview.packInspection!, mismatchedSlideCount: 1 } }} />);
     expect(mismatch).toContain('Pack differs from source features');
     expect(mismatch).toContain('1 slides with different patch counts');

@@ -96,7 +96,7 @@ def test_bag_size_whole_bag_is_explicit_null_and_default_remains_4096():
         {"accumulateGradBatches": 0},
         {"accumulateGradBatches": 1.5},
         {"lrScheduler": "unknown"},
-        {"finalLrFraction": 0},
+        {"finalLrFraction": -0.1},
         {"finalLrFraction": 1.1},
         {"warmupEpochs": 1},
         {"lrScheduler": "cosine", "maxEpochs": 2, "warmupEpochs": 2},

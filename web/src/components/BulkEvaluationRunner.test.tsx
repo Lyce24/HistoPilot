@@ -25,7 +25,7 @@ describe('evaluation source selection', () => {
     expect(html).not.toContain('Test cohort for selected experiments');
     expect(html).not.toContain('Review experiment evaluation');
     expect(html).not.toContain('Configuration candidate-1');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Continue to evaluation inputs/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*><span>Continue to evaluation inputs/);
   });
   it('scopes a linked experiment and supports several selected experiments', () => {
     const linked = render(undefined, 'one');
@@ -34,7 +34,7 @@ describe('evaluation source selection', () => {
     expect(linked).not.toContain('Configuration candidate-1');
     expect(linked).not.toContain('Configuration candidate-2');
     expect(linked).toContain('1 ensemble / 1 refit ready');
-    expect(linked).not.toMatch(/<button[^>]*disabled=""[^>]*>Continue to evaluation inputs/);
+    expect(linked).not.toMatch(/<button[^>]*disabled=""[^>]*><span>Continue to evaluation inputs/);
     const multiple = render(['one', 'two']);
     expect(multiple).toContain('3 predictors to evaluate from 2 selected experiments');
     expect(multiple).toMatch(/aria-label="Evaluate experiment two \(two\)"[^>]*checked=""/);
@@ -56,6 +56,6 @@ describe('evaluation source selection', () => {
     expect(html).not.toMatch(/<option[^>]*value="standalone"[^>]*disabled/);
     expect(html).not.toContain('Test features and inference');
     expect(html).not.toContain('Test cohort for selected experiments');
-    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Continue to evaluation inputs/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*><span>Continue to evaluation inputs/);
   });
 });

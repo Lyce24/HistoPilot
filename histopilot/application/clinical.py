@@ -16,6 +16,8 @@ from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import finding, lifecycle_document, reference
 from histopilot.schemas.clinical import ClinicalSelection
+from histopilot.scoring import class_ranking_score
+from histopilot.scoring import logsumexp as _logsumexp
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 
@@ -52,11 +54,6 @@ def _divide(numerator, denominator):
 
 def _number(value):
     return type(value) in (int, float) and math.isfinite(value)
-
-
-def _logsumexp(values):
-    maximum = max(values)
-    return maximum + math.log(math.fsum(math.exp(value - maximum) for value in values))
 
 
 def _validate_records(rows, classes, *, patient=False):
@@ -100,7 +97,7 @@ def _validate_records(rows, classes, *, patient=False):
     return rows
 
 
-def _patient_records(slides, patients, classes):
+def _patient_records(slides, patients, classes, aggregation="mean"):
     _validate_records(patients, classes, patient=True)
     groups = defaultdict(list)
     for row in slides:
@@ -120,6 +117,28 @@ def _patient_records(slides, patients, classes):
         )
     for patient in patients:
         group = groups[patient["patientId"]]
+        expected_probabilities = [
+            math.fsum(row["probabilities"][index] for row in group) / len(group)
+            for index in range(len(classes))
+        ]
+        expected_logs = None
+        if all(row.get("logProbabilities") is not None for row in group):
+            if aggregation == "mean_logits":
+                average = [
+                    math.fsum(row["logProbabilities"][index] for row in group) / len(group)
+                    for index in range(len(classes))
+                ]
+                normalizer = _logsumexp(average)
+                expected_logs = [value - normalizer for value in average]
+                expected_probabilities = [math.exp(value) for value in expected_logs]
+            else:
+                expected_logs = [
+                    _logsumexp([row["logProbabilities"][index] for row in group])
+                    - math.log(len(group))
+                    for index in range(len(classes))
+                ]
+        elif aggregation == "mean_logits":
+            raise _invalid("Mean-logit patient scoring requires saved slide log probabilities.")
         labels = {row["labelIndex"] for row in group if row["labelIndex"] is not None}
         identities = patient.get("slideIds")
         if (
@@ -132,22 +151,26 @@ def _patient_records(slides, patients, classes):
             or any(
                 not math.isclose(
                     patient["probabilities"][index],
-                    math.fsum(row["probabilities"][index] for row in group) / len(group),
+                    expected_probabilities[index],
                     abs_tol=1e-6,
                 )
                 for index in range(len(classes))
             )
         ):
             raise _invalid(
-                "Saved patient predictions must preserve labels, slide groups, and mean probabilities."
+                "Saved patient predictions must preserve labels, slide groups, and "
+                + (
+                    "mean-logit probabilities."
+                    if aggregation == "mean_logits"
+                    else "mean probabilities."
+                )
             )
-        if all(row.get("logProbabilities") is not None for row in group) and (
+        if expected_logs is not None and (
             patient.get("logProbabilities") is None
             or any(
                 not math.isclose(
                     patient["logProbabilities"][index],
-                    _logsumexp([row["logProbabilities"][index] for row in group])
-                    - math.log(len(group)),
+                    expected_logs[index],
                     abs_tol=1e-6,
                 )
                 for index in range(len(classes))
@@ -227,7 +250,7 @@ def _wilson(successes, denominator):
     return {"lower": max(0.0, center - half), "upper": min(1.0, center + half)}
 
 
-def _ranking_curves(labels, scores):
+def _ranking_curves(labels, scores, probabilities=None):
     """Exact tied-score ROC AUC and non-interpolated average precision."""
     positive, negative = sum(labels), len(labels) - sum(labels)
     roc = [
@@ -239,6 +262,9 @@ def _ranking_curves(labels, scores):
     ]
     pr = [{"threshold": None, "recall": 0.0 if positive else None, "precision": 1.0}]
     groups = defaultdict(lambda: [0, 0])
+    probability_thresholds = (
+        dict(zip(scores, probabilities, strict=True)) if probabilities is not None else None
+    )
     for label, score in zip(labels, scores, strict=True):
         groups[score][0 if label else 1] += 1
     tp = fp = 0
@@ -250,15 +276,22 @@ def _ranking_curves(labels, scores):
         tp, fp = tp + new_tp, fp + new_fp
         if positive:
             ap += new_tp / positive * tp / (tp + fp)
+        display_threshold = (
+            probability_thresholds[threshold] if probability_thresholds is not None else threshold
+        )
         roc.append(
             {
-                "threshold": threshold,
+                "threshold": display_threshold,
                 "falsePositiveRate": _divide(fp, negative),
                 "truePositiveRate": _divide(tp, positive),
             }
         )
         pr.append(
-            {"threshold": threshold, "recall": _divide(tp, positive), "precision": tp / (tp + fp)}
+            {
+                "threshold": display_threshold,
+                "recall": _divide(tp, positive),
+                "precision": tp / (tp + fp),
+            }
         )
     # Bound report size without approximating the summary statistics.
     if len(roc) > 2001:
@@ -321,12 +354,17 @@ def clinical_report(predictions, target, inference, selection):
         )
     positive_index = classes.index(positive_class)
     rows = (
-        _patient_records(slides, predictions.get("patientRecords"), classes)
+        _patient_records(
+            slides,
+            predictions.get("patientRecords"),
+            classes,
+            inference.get("patientAggregation", "mean"),
+        )
         if unit == "patient"
         else slides
     )
-    if inference.get("patientAggregation") != "mean":
-        raise _invalid("Clinical reports require the frozen mean-probability patient rule.")
+    if inference.get("patientAggregation") not in {"mean", "mean_logits"}:
+        raise _invalid("Clinical reports require the frozen patient aggregation rule.")
     labeled = [row for row in rows if row["labelIndex"] is not None]
     if not labeled:
         raise StorageError(
@@ -336,6 +374,7 @@ def clinical_report(predictions, target, inference, selection):
         )
     labels = [row["labelIndex"] == positive_index for row in labeled]
     scores = [row["probabilities"][positive_index] for row in labeled]
+    ranking_scores = [class_ranking_score(row, positive_index) for row in labeled]
     count, positive = len(labels), sum(labels)
     prevalence = positive / count
     threshold = (
@@ -374,7 +413,7 @@ def clinical_report(predictions, target, inference, selection):
                 -math.log(max(row["probabilities"][row["labelIndex"]], 1e-300))
             )
         losses.append(max(0.0, loss))
-    roc, pr, auc, ap = _ranking_curves(labels, scores)
+    roc, pr, auc, ap = _ranking_curves(labels, ranking_scores, scores)
     calibration = _calibration(labels, scores, selection.bins)
     delta = (selection.thresholdMax - selection.thresholdMin) / (selection.thresholdSteps - 1)
     thresholds = [
@@ -510,16 +549,17 @@ def clinical_report(predictions, target, inference, selection):
         "rocCurve": roc,
         "precisionRecallCurve": pr,
         "curveSampling": {
-            "distinctScores": len(set(scores)),
+            "distinctScores": len(set(ranking_scores)),
             "maximumPoints": 2001,
             "returnedPoints": len(roc),
-            "downsampled": len(set(scores)) > 2000,
+            "downsampled": len(set(ranking_scores)) > 2000,
             "summaryStatistics": "exact",
             "csv": "same_points_as_report",
         },
         "calibration": calibration,
         "warnings": warnings,
         "definitions": {
+            "rankingScores": "AUROC and average precision use one-versus-rest log odds from saved log probabilities to preserve ordering near zero and one. Curve thresholds display the corresponding probabilities and may round to the same value. Calibration and decision thresholds use probabilities.",
             "brierScore": "Mean (probability of selected class - observed binary outcome)^2; range 0 to 1; lower is better.",
             "brierReference": "Observed cohort prevalence × (1 - prevalence), the constant-risk reference on this cohort; not a development-fitted comparator.",
             "brierSkillScore": "1 - Brier / reference Brier; null when the reference is zero.",
@@ -611,7 +651,9 @@ class ClinicalService:
                     "unit": manifest["target"]["unit"],
                     "positiveClass": manifest["target"].get("positiveClass"),
                     "decisionThreshold": manifest["inference"]["decisionThreshold"],
-                    "patientAggregation": "mean_probabilities",
+                    "patientAggregation": "mean_logits"
+                    if manifest["inference"]["patientAggregation"] == "mean_logits"
+                    else "mean_probabilities",
                 }.items()
             ):
                 raise _invalid("Saved metrics differ from the frozen evaluation settings.")

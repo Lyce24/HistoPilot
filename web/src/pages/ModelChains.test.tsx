@@ -196,7 +196,7 @@ describe('model development predictor and evaluation chains', () => {
     const html = render('evaluate', { hash: '#evaluation?predictor=deleted', predictors: [deleted, active], cohorts: [cohort('active', active)] });
     expect(html).toContain('<option value="deleted" disabled="" selected="">Linked predictor unavailable');
     expect(html).toContain('Predictors appear automatically');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Review evaluation/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*><span>Review evaluation/);
     expect(html).not.toContain('class target grade');
   });
 
@@ -213,13 +213,16 @@ describe('model development predictor and evaluation chains', () => {
   });
 
   it('requires acknowledgement and clearly separates uncertain-save retry from a fresh publication', () => {
-    const props = { busy: false, uncertain: false, acknowledged: false, onAcknowledge: () => {}, onConfirm: () => {}, onReset: () => {}, label: 'Freeze predictor' };
+    const props = { busy: false, uncertain: false, acknowledged: false, onAcknowledge: () => {}, onConfirm: () => {}, label: 'Freeze predictor' };
     const initial = renderToStaticMarkup(<PublicationConfirmation {...props} />);
     expect(initial).toMatch(/<button[^>]*disabled=""[^>]*>Freeze predictor/);
     const uncertain = renderToStaticMarkup(<PublicationConfirmation {...props} uncertain />);
     expect(uncertain).toContain('record may already exist');
     expect(uncertain).toContain('identical reviewed request');
     expect(uncertain).toContain('Retry this save');
+    expect(uncertain.match(/<button/g)).toHaveLength(1);
+    expect(uncertain).not.toMatch(/Back to|Return to/);
+    expect(uncertain).toContain('Resolve this save before changing its inputs');
     expect(uncertain).not.toContain('>Freeze predictor</button>');
   });
 });

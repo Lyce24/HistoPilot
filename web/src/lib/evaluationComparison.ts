@@ -1,6 +1,6 @@
 import type { FrozenPredictor, ModelEvaluation } from '../api/predictors';
 
-export type EvaluationMetric = 'auroc' | 'accuracy';
+export type EvaluationMetric = 'auroc' | 'auprc' | 'accuracy';
 export function evaluationMetric(item: ModelEvaluation, key: EvaluationMetric): number | null {
   const metrics = item.execution?.result?.metrics?.selected;
   const value = metrics?.[key];

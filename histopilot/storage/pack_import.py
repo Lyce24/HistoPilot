@@ -18,6 +18,7 @@ from histopilot.storage.packed import (
     PackedStoreError,
     _cancel,
     _check_sources,
+    _configuration,
     _digest,
     _no_links,
     _progress,
@@ -125,8 +126,22 @@ def _layout(path: Path) -> dict:
     return {"meta": meta, "slides": slides, "manifest": manifest, "packStamps": before}
 
 
+def _reduces(source_dtype: str, pack_dtype: str) -> bool:
+    """A pack may hold the source at lower float precision, verified against the cast source."""
+    try:
+        source, packed = np.dtype(source_dtype), np.dtype(pack_dtype)
+    except TypeError:
+        return False
+    return (
+        source.kind == packed.kind == "f"
+        and packed.itemsize < source.itemsize
+        and packed.name in {"float16", "float32"}
+    )
+
+
 def inspect_existing_pack(configuration: dict, path: Path) -> dict:
     """Compare metadata with the entire frozen inventory; do not read tensor data."""
+    _configuration(configuration)
     try:
         layout = _layout(path)
     except (AttributeError, KeyError, TypeError, ValueError, OSError) as error:
@@ -171,14 +186,20 @@ def inspect_existing_pack(configuration: dict, path: Path) -> dict:
             "PACK_DIMENSION_MISMATCH",
             f"Feature dimensions differ: source {dimension}, pack {meta['feat_dim']}.",
         )
-    if dtypes != {meta["feat_dtype"]}:
+    reduced = (
+        len(dtypes) == 1 and source_dtype is not None and _reduces(source_dtype, meta["feat_dtype"])
+    )
+    if dtypes != {meta["feat_dtype"]} and not reduced:
         finding(
             "PACK_DTYPE_MISMATCH",
-            f"Feature precision differs: source {source_dtype}, pack {meta['feat_dtype']}. Existing packs must preserve source precision for exact verification.",
+            f"Feature precision differs: source {source_dtype}, pack {meta['feat_dtype']}. "
+            "A pack may store the source at the same or lower float precision, never higher.",
         )
     summary = {
         "format": FORMAT,
         "formatVariant": "histopilot" if layout["manifest"] else "oceanpath-legacy",
+        "sourceDtype": source_dtype,
+        "precision": "reduced" if reduced else "exact",
         "slideCount": len(packed),
         "totalPatches": meta["total_patches"],
         "dimensions": meta["feat_dim"],
@@ -222,10 +243,16 @@ def verify_existing_pack(
         )
     if not inspection["matchesFeatures"]:
         raise PackedStoreError(" ".join(item["message"] for item in inspection["findings"]))
-    validation = validate_features(
-        configuration, progress=progress, cancelled=cancelled, chunk_bytes=chunk_bytes
-    )
     meta, strong = inspection["meta"], inspection["manifest"]
+    reduced = inspection["summary"]["precision"] == "reduced"
+    validation = validate_features(
+        configuration,
+        cast_dtype=meta["feat_dtype"] if reduced else None,
+        progress=progress,
+        cancelled=cancelled,
+        chunk_bytes=chunk_bytes,
+    )
+    digest_key = "featureTensorCastSha256" if reduced else "featureTensorSha256"
     source = {item["slideId"]: item for item in validation["files"]}
     feature_digest, coord_digest = hashlib.sha256(), hashlib.sha256()
     completed = 0
@@ -257,9 +284,14 @@ def verify_existing_pack(
                     progress, "comparing-pack", completed, meta["total_patches"], slide["slideId"]
                 )
             expected = source[slide["slideId"]]
-            if fhash.hexdigest() != expected["featureTensorSha256"]:
+            if fhash.hexdigest() != expected[digest_key]:
                 raise PackedStoreError(
-                    f"{slide['slideId']}: packed feature values differ from the selected source, despite matching shape."
+                    f"{slide['slideId']}: packed feature values differ from the selected source"
+                    + (
+                        f" at {meta['feat_dtype']} precision, despite matching shape."
+                        if reduced
+                        else ", despite matching shape."
+                    )
                 )
             if chash.hexdigest() != expected["coordinateTensorSha256"]:
                 raise PackedStoreError(
@@ -307,11 +339,11 @@ def verify_existing_pack(
         "origin": "existing",
         "format": FORMAT,
         "formatVariant": inspection["summary"]["formatVariant"],
-        "verification": "exact-source-values",
-        "dtypePolicy": "preserve",
+        "verification": "exact-cast-source-values" if reduced else "exact-source-values",
+        "dtypePolicy": meta["feat_dtype"] if reduced else "preserve",
         "sourceDtype": validation["sourceDtype"],
         "outputDtype": meta["feat_dtype"],
-        "preservesSourcePrecision": True,
+        "preservesSourcePrecision": not reduced,
         "slideCount": meta["n_slides"],
         "totalPatches": meta["total_patches"],
         "dimensions": meta["feat_dim"],

@@ -33,7 +33,7 @@ describe('experiment predictor planning counts', () => {
   });
   it('deduplicates default-equivalent explicit recipes like backend expansion', () => {
     const { dropout: _dropout, ...implicit } = defaultRecipe();
-    expect(plannedConfigurationCount({ ...spec, mode: 'explicit', configurations: [defaultRecipe(), implicit, { ...defaultRecipe(), learningRate: 0.0001 }] })).toBe(2);
+    expect(plannedConfigurationCount({ ...spec, mode: 'explicit', configurations: [defaultRecipe(), implicit, { ...defaultRecipe(), learningRate: 0.0002 }] })).toBe(2);
   });
   it('counts the frozen manifest once even when submission retains editable recipe history', () => {
     const submitted = { ...record, configurationLocked: true, submission: {}, batches: [{ state: 'active', manifest: { summary: { configurationCount: 15, trainingSeedCount: 3, runCount: 225 }, splitPlans: Array.from({ length: 5 }, (_, fold) => ({ fold, seed: 42 })) } }] } as unknown as ModelExperiment;

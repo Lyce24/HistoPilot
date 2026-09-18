@@ -13,10 +13,12 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
+from histopilot.application.feature_bundles import _hash  # noqa: E402
 from histopilot.application.predictors import checkpoint_snapshot  # noqa: E402
 from histopilot.storage.packed import _stamp  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.inference import (  # noqa: E402
+    MILTrainModule,
     _decisions,
     evaluate,
     evaluation_metrics,
@@ -62,6 +64,7 @@ def plan(tmp_path):
 
 
 def test_refit_and_ensemble_predict_exact_whole_bags_and_preserve_unlabeled_rows(plan, tmp_path):
+    plan["analysis"] = {"bootstrapResamples": 200, "oneSlideSeed": 19}
     plan["data"]["memberships"][0]["patientIdSource"] = "crosswalk"
     first = evaluate(plan, tmp_path / "refit")
     ensemble = {**plan, "method": "ensemble", "checkpoints": plan["checkpoints"] * 2}
@@ -78,6 +81,11 @@ def test_refit_and_ensemble_predict_exact_whole_bags_and_preserve_unlabeled_rows
     assert one["records"][0]["patientIdSource"] == "crosswalk"
     assert first["metrics"]["slide"]["count"] == 3
     assert first["metrics"]["slide"]["unlabeledCount"] == 1
+    analysis = first["metrics"]["patientAnalysis"]
+    assert analysis["policy"]["oneSlideSeed"] == 19
+    assert len(analysis["oneSlidePerPatient"]["slideIds"]) == first["patientCount"]
+    assert analysis["uncertainty"]["patientCount"] == first["metrics"]["patient"]["count"]
+    assert analysis == second["metrics"]["patientAnalysis"]
     assert (tmp_path / "refit/slide-predictions.csv").read_text().count("\n") == 5
     # A completed-member restart reuses the same deterministic output.
     assert evaluate(plan, tmp_path / "refit")["artifacts"] == first["artifacts"]
@@ -92,6 +100,35 @@ def test_changed_checkpoint_and_feature_sources_block_inference(plan, tmp_path):
     np.save(path, np.zeros((7, 4), dtype=np.float32))
     with pytest.raises(ValueError, match="changed"):
         evaluate(plan, tmp_path / "source-changed")
+
+
+def test_external_bag_policy_matches_validation_sampling_and_invalidates_member_cache(plan, tmp_path, monkeypatch):
+    from histopilot.datasets.mil import SlideDataset, stable_seed
+
+    observed = []
+
+    class ObservedDataset(SlideDataset):
+        def __getitem__(self, index):
+            item = super().__getitem__(index)
+            observed.append(item["features"].numpy().copy())
+            return item
+
+    monkeypatch.setattr("histopilot.training.inference.SlideDataset", ObservedDataset)
+    whole = evaluate(plan, tmp_path / "evaluation")
+    assert [len(values) for values in observed] == [5, 6, 5, 6]
+    observed.clear()
+    plan["bagPolicy"] = {"evalBagSize": 2, "trainingSeed": 37}
+    capped = evaluate(plan, tmp_path / "evaluation")
+    assert capped["inputHash"] != whole["inputHash"]
+    assert [len(values) for values in observed] == [2] * 4
+    for values, row in zip(observed, plan["data"]["memberships"], strict=True):
+        source = np.load(plan["data"]["featureFiles"][row["slideId"]]["path"])
+        rng = np.random.default_rng(stable_seed(37, 0, row["slideId"]))
+        selected = np.sort(rng.choice(len(source), size=2, replace=False))
+        np.testing.assert_array_equal(values, source[selected])
+    observed.clear()
+    assert evaluate(plan, tmp_path / "evaluation")["artifacts"] == capped["artifacts"]
+    assert not observed  # A matching frozen sampling policy reuses the member predictions.
 
 
 def test_threshold_uses_frozen_positive_class_and_patient_mean_with_unlabeled_slides():
@@ -229,3 +266,50 @@ def test_ensemble_averages_probabilities_and_preserves_extreme_finite_loss(plan,
         {**plan, "checkpoints": [checkpoint_snapshot(path, tmp_path)]}, tmp_path / "extreme"
     )
     assert result["metrics"]["slide"]["loss"] == pytest.approx(2000 / 3)
+
+
+@pytest.mark.parametrize("damage", ["another_member", "legacy", "malformed", "invalid_values"])
+def test_resume_recomputes_only_cache_without_valid_member_evidence(
+    plan, tmp_path, monkeypatch, damage
+):
+    checkpoints = []
+    for index, bias in enumerate(([2.0, -2.0], [-1.0, 1.0])):
+        value = torch.load(plan["checkpoints"][0]["path"], map_location="cpu", weights_only=True)
+        value["state_dict"]["model.classifier.weight"].zero_()
+        value["state_dict"]["model.classifier.bias"] = torch.tensor(bias)
+        path = tmp_path / f"resume-member-{index}.ckpt"
+        torch.save(value, path)
+        checkpoints.append(checkpoint_snapshot(path, tmp_path))
+    ensemble = {**plan, "method": "ensemble", "checkpoints": checkpoints}
+    output = tmp_path / "resume"
+    expected = evaluate(ensemble, output)
+    destination = output / "members/member-1.json"
+    cached = json.loads(destination.read_text())
+    if damage == "another_member":
+        # A valid cache from this same ensemble passes both the old input and
+        # content checks, but must never stand in for a different checkpoint.
+        destination.write_bytes((output / "members/member-0.json").read_bytes())
+    elif damage == "legacy":
+        del cached["memberHash"]
+        destination.write_text(json.dumps(cached))
+    elif damage == "malformed":
+        destination.write_text('{"probabilities":')
+    else:
+        cached["probabilities"] = [[0.9, 0.9] for _ in cached["slideIds"]]
+        cached["sha256"] = _hash(
+            {key: cached[key] for key in ("probabilities", "logProbabilities")}
+        )
+        destination.write_text(json.dumps(cached))
+
+    original = MILTrainModule.load_from_checkpoint
+    loaded = []
+
+    def load(path, *args, **kwargs):
+        loaded.append(path)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(MILTrainModule, "load_from_checkpoint", staticmethod(load))
+    resumed = evaluate(ensemble, output)
+    assert loaded == [checkpoints[1]["path"]]
+    assert resumed["artifacts"] == expected["artifacts"]
+    assert resumed["metrics"] == expected["metrics"]

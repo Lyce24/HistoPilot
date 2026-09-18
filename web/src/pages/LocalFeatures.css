@@ -14,7 +14,7 @@
 .pfm-workflow-steps > li > div { display: grid; gap: 5px; }
 .pfm-workflow-steps > li.is-current { background: var(--theme-accent-soft); }
 .pfm-workflow-steps > li.is-current > span { color: white; background: var(--accent); border-color: var(--accent); }
-.pfm-workflow-steps > li.is-complete > span { color: var(--brand-brown); background: var(--theme-soft); border-color: var(--theme-line-strong); }
+.pfm-workflow-steps > li.is-complete > span { color: var(--theme-ink); background: var(--theme-soft); border-color: var(--theme-line-strong); }
 .pfm-workflow-steps strong { font-size: 12px; }
 .pfm-workflow-steps small { font-size: 11px; color: var(--muted); }
 .pfm-back { margin: 0 0 15px; }
@@ -27,7 +27,7 @@
 .pfm-library-heading h2 { margin: 0; font-size: 14px; }
 .pfm-library-heading small { color: var(--muted); font-size: 11px; }
 .pfm-version-card { display: grid; gap: 7px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: white; color: inherit; text-align: left; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
-.pfm-version-card:hover { border-color: var(--brand-red); }
+.pfm-version-card:hover { border-color: var(--brand-primary); }
 .pfm-version-card.is-selected { border-color: var(--accent); background: var(--theme-accent-soft); box-shadow: inset 3px 0 var(--accent); }
 .pfm-version-card strong { font-size: 13px; }
 .pfm-version-card > span { font-size: 12px; }

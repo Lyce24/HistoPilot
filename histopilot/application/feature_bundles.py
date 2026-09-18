@@ -72,7 +72,10 @@ class FeatureBundleService:
         report = artifact.get("validation", {})
         if (
             resolved.get("current") is not True
-            or artifact.get("verification") not in {"exact-source-values", "validated-source-copy"}
+            # Every kind here means the packed values were compared with the source, whole.
+            # "exact-cast-source-values" compares at the pack's own declared precision.
+            or artifact.get("verification")
+            not in {"exact-source-values", "exact-cast-source-values", "validated-source-copy"}
             or report.get("valid") is not True
             or report.get("tensorValidationComplete") is not True
             or not source_hash
@@ -94,6 +97,7 @@ class FeatureBundleService:
             raise StorageError("Select a feature inventory.", "INVALID_FEATURE_SET", 422)
         validation = self.packing.validation_for(spec.featureSetId)
         findings = self.packing._source_findings(configuration)
+        feature_kind = manifest.get("spec", {}).get("featureKind", "patch")
         if (
             validation is None
             or validation.get("current") is not True
@@ -103,7 +107,9 @@ class FeatureBundleService:
             findings.append(
                 _finding(
                     "FULL_FEATURE_VALIDATION_REQUIRED",
-                    "Validate every feature value and coordinate before freezing this bundle. "
+                    "Validate every slide embedding value before freezing this bundle."
+                    if feature_kind == "slide"
+                    else "Validate every feature value and coordinate before freezing this bundle. "
                     "Creating or verifying a pack also performs this validation.",
                 )
             )
@@ -111,11 +117,20 @@ class FeatureBundleService:
         feature = {
             "id": configuration["id"],
             "contentHash": configuration["contentHash"],
-            "datasetId": manifest["datasetId"],
+            # Selection provenance only. Protocols choose their own dataset and intersect
+            # its slide IDs with the verified feature inventory.
+            "datasetId": manifest.get("datasetId"),
             "sourceContentHash": source_hash,
             "validation": _validation_snapshot(validation),
         }
         packs = []
+        if feature_kind == "slide" and spec.packArtifactIds:
+            findings.append(
+                _finding(
+                    "SLIDE_PACKING_UNSUPPORTED",
+                    "Slide embeddings are read directly; this bundle cannot include patch packs.",
+                )
+            )
         for identity in spec.packArtifactIds:
             try:
                 snapshot, pack_findings = self._pack(spec.featureSetId, identity, source_hash)

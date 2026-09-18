@@ -45,33 +45,34 @@ function frozen(datasetId = 'dataset', tag = 'UNI features only'): FeatureBundle
 }
 
 describe('feature bundle stage entry', () => {
-  it('scopes saved bundle records to the linked protocol dataset', () => {
+  it('keeps every bundle available when a dataset is linked', () => {
     vi.stubGlobal('window', { location: { hash: '#features?dataset=older&protocol=protocol-old&saved=protocol' } });
     const html = render([version], [frozen(), frozen('older', 'Older dataset bundle')]);
     expect(html).toContain('Older dataset bundle');
-    expect(html).not.toContain('UNI features only');
-    expect(html).toContain('Development protocol saved. Prepare or reuse a feature bundle for its dataset.');
-    expect(html).toContain('Show all project features');
+    expect(html).toContain('UNI features only');
+    expect(html).toContain('Development protocol saved with its dataset and feature bundle.');
+    expect(html).toContain('All project bundles are available.');
     expect(html).toContain('Search feature bundles');
     expect(html).not.toContain('Stage 0 · Saved records');
   });
 
-  it('keeps the linked dataset at an empty library without using unrelated sources', () => {
+  it('shows reusable bundles prepared with another dataset', () => {
     vi.stubGlobal('window', { location: { hash: '#features?dataset=older&protocol=protocol-old' } });
     const html = render([version], [frozen()]);
-    expect(html).toContain('No feature bundles yet');
+    expect(html).not.toContain('No feature bundles yet');
     expect(html).toContain('Create feature bundle');
     expect(html).not.toContain('UNI baseline');
-    expect(html).not.toContain('UNI features only');
+    expect(html).toContain('UNI features only');
   });
 
   it.each([{ sources: [] }, { sources: [version] }])('always opens the library, even with no bundles and available sources $sources.length', ({ sources }) => {
     const html = render(sources);
-    expect(html).toContain('Search feature bundles');
+    expect(html).toContain('class="stage-library card"');
+    expect(html).not.toContain('Search feature bundles');
     expect(html).toContain('No feature bundles yet');
     expect(html).toContain('Create feature bundle');
     expect(html).toContain('>Slide features</h1>');
-    expect(html.match(/> Create feature bundle</g)).toHaveLength(1);
+    expect(html.match(/data-stage-action="create"/g)).toHaveLength(1);
     expect(html).not.toContain('Stage 0 · Saved records');
     expect(html).not.toContain('aria-label="Add features"');
     expect(html).not.toContain('aria-label="Prepare feature bundle"');

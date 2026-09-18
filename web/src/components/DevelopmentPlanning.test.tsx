@@ -50,7 +50,7 @@ describe('editable experiment batch plans', () => {
     expect(html).toContain('Parameter grid · 15 configurations');
     expect(html).toContain('42, 43, 44');
     expect(html).toContain('ABMIL · Shared training settings');
-    expect(html).toContain('Lowest validation loss');
+    expect(html).toContain('Highest validation AUROC');
     expect(html).toContain('Patience 8');
     expect(html).not.toContain('225 predictors');
   });

@@ -2,7 +2,7 @@
 
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.feature_packs import FeaturePackService
-from histopilot.application.protocols import pack_binding_snapshot
+from histopilot.application.protocols import pack_binding_snapshot, protocol_bundle_findings
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
@@ -26,6 +26,7 @@ class MILInputService:
             "resolvedLoadingPolicy": None,
             "packArtifactId": None,
             "featureSetId": None,
+            "featureKind": "patch",
             "bundleId": spec.featureBundleId,
             "executionImplemented": False,
         }
@@ -47,17 +48,13 @@ class MILInputService:
                 "Bundle inputs changed. Prepare and freeze a current bundle in PFM & features.",
             )
             findings.extend(bundle["findings"])
-        if protocol["datasetId"] != manifest["datasetId"]:
-            error(
-                "BUNDLE_DATASET_MISMATCH",
-                "The protocol and feature bundle belong to different dataset versions.",
-            )
+        findings.extend(protocol_bundle_findings(protocol, bundle))
         protocol_spec = protocol["spec"]
         if protocol_spec.get("predictors"):
-            error(
-                "TABULAR_PREDICTORS_UNSUPPORTED",
-                "The current ABMIL runtime uses slide image features only and cannot train with extra spreadsheet inputs. Create a protocol revision with no extra spreadsheet inputs before planning this model.",
-            )
+            findings.append({
+                "severity": "info", "code": "CLINICAL_INPUTS_AVAILABLE",
+                "message": "Clinical fields are declared. Choose image-only, clinical-only, or combined inputs in each training recipe; all arms share this feature-covered cohort.",
+            })
         if protocol_spec.get("featureSetId") not in (None, "", feature_id):
             error(
                 "BUNDLE_FEATURE_MISMATCH",
@@ -68,6 +65,9 @@ class MILInputService:
         except StorageError as failure:
             error(failure.code, str(failure))
             return result
+        # Which extraction output this bundle holds decides which architectures can
+        # read it. Records frozen before slide encoders were supported hold patches.
+        result["featureKind"] = feature["manifest"].get("spec", {}).get("featureKind", "patch")
         present = {row["slideId"] for row in feature["manifest"].get("files", [])}
         required = {row["slideId"] for row in protocol.get("memberships", [])}
         if required - present:

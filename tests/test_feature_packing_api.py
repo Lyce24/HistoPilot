@@ -139,6 +139,32 @@ def test_frozen_features_worker_receipt_preflight_and_reopen(tmp_path, monkeypat
         assert preflight["scope"] == "protocol-and-feature-contents"
         assert not preflight["executionReady"]
         assert not preflight["fullFeatureValidationComplete"]
+        bundle_spec = {"featureSetId": feature_id}
+        bundle_preview = post(client, base + "/feature-bundles/preview", bundle_spec)
+        bundle = post(
+            client,
+            base + "/feature-bundles/freeze",
+            {
+                **bundle_spec,
+                "previewHash": bundle_preview["previewHash"],
+                "operationId": "bundle",
+                "versionLabel": {"tag": "Reusable features"},
+            },
+            201,
+        )
+        bundle_protocol = store.publish_configuration(
+            manifest={
+                **protocol["manifest"],
+                "spec": {"featureBundleId": bundle["id"]},
+                "featureBundle": {"id": bundle["id"], "contentHash": bundle["contentHash"]},
+            },
+            operation_id="bundle-protocol",
+        )
+        bundle_preflight = client.get(base + f"/protocols/{bundle_protocol['id']}/preflight").json()
+        assert bundle_preflight["featureBundleId"] == bundle["id"]
+        assert bundle_preflight["featureSource"]["featureSetId"] == feature_id
+        assert bundle_preflight["headerInputsReady"]
+        assert bundle_preflight["tensorValidationComplete"]
         if action == "pack":
             artifact = completed["artifact"]
             destination = Path(artifact["outputPath"])

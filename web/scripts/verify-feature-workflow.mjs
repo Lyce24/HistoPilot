@@ -1,7 +1,7 @@
 /** Run with node scripts/verify-feature-workflow.mjs. Uses local Chromium and file://; starts no server. */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,6 +11,8 @@ import react from '@vitejs/plugin-react';
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = await mkdtemp(join(tmpdir(), 'histopilot-feature-workflow-'));
 const fixture = join(output, 'fixture.tsx');
+const artifacts = resolve(web, '../docs/dev-review/2026-09-14-dataset-bundle-workflow-assets');
+await mkdir(artifacts, { recursive: true });
 const source = (path) => JSON.stringify(join(web, 'src', path));
 await writeFile(fixture, `
 import React from ${JSON.stringify(join(web, 'node_modules/react/index.js'))};
@@ -118,20 +120,37 @@ async function waitFor(expression, description = expression) {
   throw new Error('Timed out: ' + description + '\n' + await evaluate('document.body.innerText'));
 }
 const button = (text) => '[...document.querySelectorAll("button")].find(el => !el.closest("[hidden]") && el.textContent.trim() === ' + JSON.stringify(text) + ')';
-const field = (text, selector = 'input,select,textarea') => '[...document.querySelectorAll("label")].find(el => el.textContent.trim().startsWith(' + JSON.stringify(text) + '))?.querySelector(' + JSON.stringify(selector) + ')';
+const field = (text, selector = 'input,select,textarea') => '[...document.querySelectorAll("label")].find(el => el.checkVisibility() && el.textContent.trim().startsWith(' + JSON.stringify(text) + '))?.querySelector(' + JSON.stringify(selector) + ')';
 async function click(text) {
+  if (text === 'Create feature bundle') await verifyHeader(true);
   await waitFor(button(text) + ' && !' + button(text) + '.matches(":disabled")', 'enabled button ' + text);
   await evaluate(button(text) + '.click()');
+  if (text === 'Back to feature bundles') {
+    await waitFor('document.querySelector(".stage-library")');
+    await verifyHeader(true);
+  } else if (text === 'Create feature bundle') {
+    await waitFor('document.querySelector(".page-header [data-stage-action=back]")');
+    await verifyHeader(false);
+  }
 }
 async function fill(text, value, selector = 'input,select,textarea') {
   const element = field(text, selector);
   await waitFor(element, 'field ' + text);
   await evaluate('(() => { const el = ' + element + '; const prototype = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype, "value").set.call(el, ' + JSON.stringify(value) + '); el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true })); })()');
 }
+async function verifyHeader(library) {
+  const header = await evaluate(`({
+    library: Boolean(document.querySelector('.stage-library')),
+    actions: [...document.querySelectorAll('.page-header [data-stage-action]')].filter(el=>el.checkVisibility()).map(el=>({kind:el.dataset.stageAction,text:el.textContent.trim()}))
+  })`);
+  assert.equal(header.library, library, 'New bundles must start from their library');
+  assert.deepEqual(header.actions, [{kind: library ? 'create' : 'back', text: library ? 'Create feature bundle' : 'Back to feature bundles'}], 'Header must have one Create or Back action');
+}
 async function screenshot(name) {
-  await new Promise(resolve => setTimeout(resolve, 220));
+  await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+  await evaluate('Promise.allSettled(document.getAnimations().filter(animation=>animation.effect?.getTiming().iterations !== Infinity).map(animation=>animation.finished))');
   const { data } = await cdp('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
-  await writeFile(join(output, name + '.png'), Buffer.from(data, 'base64'));
+  await writeFile(join(artifacts, 'features-' + name + '.png'), Buffer.from(data, 'base64'));
 }
 async function step(label, title) {
   const element = '[...document.querySelectorAll("nav")].find(el => !el.closest("[hidden]") && el.getAttribute("aria-label") === ' + JSON.stringify(label) + ')';
@@ -147,6 +166,7 @@ try {
   await cdp('Page.navigate', { url: pathToFileURL(join(dist, 'index.html')).href });
   await waitFor('document.body?.innerText.includes("Baseline bundle")');
   assert.equal(await evaluate('document.querySelector(".feature-packing") === null'), true);
+  await verifyHeader(true);
   await screenshot('00-library');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await screenshot('00-library-mobile');
@@ -183,6 +203,7 @@ try {
   await click('Baseline bundle');
   await waitFor('document.body.innerText.includes("No pack is included in this bundle.")');
   assert.equal(await evaluate('document.querySelector(".stage-library") === null'), true);
+  await verifyHeader(false);
   await evaluate("window.dispatchEvent(new Event('histopilot:stage-library'))");
   await waitFor('document.querySelector(".stage-library") !== null');
   assert.equal(await evaluate('document.querySelector("input[type=search]").value'), 'Baseline');
@@ -205,12 +226,30 @@ try {
   await waitFor('document.body.innerText.includes("Choose a feature source")');
   await click('Add feature source');
   await evaluate('[...document.querySelectorAll("button")].find(el => el.querySelector("strong")?.textContent === "Extract with a PFM").click()');
+  await waitFor(field('Slide folder'));
+  assert.equal(await evaluate(field('Dataset filter (optional)', 'select') + '.value'), '');
+  await fill('Slide folder', '/slides/all');
   await click('Preview extraction');
   await waitFor('document.body.innerText.includes("Extraction preflight")');
+  assert.deepEqual(await evaluate('window.workflow.calls.filter(call => call.method === "extractionPreview").at(-1).spec.datasetId'), null);
+  assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "extractionPreview").at(-1).spec.recursive'), true);
   assert.equal(await evaluate('document.body.innerText.includes("TRIDENT output directory")'), false);
-  await click('← Back to extraction settings');
+  assert.equal(await evaluate(button('Back to extraction settings') + '?.dataset.stageAction'), 'back');
+  await click('Back to extraction settings');
   assert.equal(await evaluate(field('TRIDENT output directory') + '.value'), '/project/trident');
+  await fill('Slide selection', 'upload', 'select');
+  await evaluate(`(() => {
+    const input = [...document.querySelectorAll('input[type="file"]')].find(el => el.checkVisibility());
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([${JSON.stringify('wsi,mpp\ncohort/A.svs,0.25\ncohort/B.svs,0.5\n')}], 'slides.csv', {type:'text/csv'}));
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', {bubbles:true}));
+  })()`);
+  await waitFor(button('Preview extraction') + ' && !' + button('Preview extraction') + '.matches(":disabled")');
+  await screenshot('01-extraction-selection');
   await click('Preview extraction');
+  assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "extractionPreview").at(-1).spec.slideList.filename'), 'slides.csv');
+  assert.equal(await evaluate('atob(window.workflow.calls.filter(call => call.method === "extractionPreview").at(-1).spec.slideList.contentBase64)'), 'wsi,mpp\ncohort/A.svs,0.25\ncohort/B.svs,0.5\n');
   await click('Start extraction');
   await waitFor('document.body.innerText.includes("Extraction complete")');
   assert.equal(await evaluate('document.body.innerText.includes("Extraction preflight")'), false);
@@ -219,17 +258,22 @@ try {
   await click('Inspect & review features');
   await waitFor('document.body.innerText.includes("Review feature coverage")');
   assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "sourcePreview").at(-1).spec.sourceExtractionJobId'), 'extraction');
-  await click('← Back to feature settings');
+  await click('Back to feature settings');
   await fill('Feature directory or TRIDENT job root', '/features/new');
+  assert.equal(await evaluate(field('Dataset filter (optional)', 'select') + '.value'), '');
+  await fill('Slide selection', 'server', 'select');
+  await fill('Slide list CSV path', '/slides/reusable-selection.csv');
   await click('Inspect & review features');
+  assert.deepEqual(await evaluate('window.workflow.calls.filter(call => call.method === "sourcePreview").at(-1).spec.slideList'), {path:'/slides/reusable-selection.csv'});
   await waitFor('document.body.innerText.includes("Review feature coverage")');
   assert.equal(await evaluate('document.body.innerText.includes("Choose your existing features")'), false);
+  await verifyHeader(false);
   await screenshot('01-coverage');
-  await click('← Back to feature settings');
+  await click('Back to feature settings');
   assert.equal(await evaluate(field('Feature directory or TRIDENT job root') + '.value'), '/features/new');
   assert.equal(await evaluate('document.body.innerText.includes("Review feature coverage")'), false);
   await click('Inspect & review features');
-  await click('Save source & prepare bundle');
+  await click('Continue to validation & packs');
   await waitFor('document.body.innerText.includes("Features only — skip packing")');
   await click('Validate feature contents');
   await waitFor('document.body.innerText.includes("Review content validation")');
@@ -242,7 +286,7 @@ try {
   await waitFor('document.body.innerText.includes("Name & freeze bundle")');
   assert.equal(await evaluate('document.body.innerText.includes("Choose what to include")'), false);
   assert.equal(await evaluate('document.body.innerText.includes("Content validation complete")'), false);
-  await click('← Back to validation & packs');
+  await click('Back to validation & packs');
   await step('Feature validation and packing steps', 'Contents & validation');
   await evaluate('[...document.querySelectorAll("button")].find(el => el.querySelector("strong")?.textContent === "Features + existing pack").click()');
   await click('Add pack to bundle');
@@ -251,6 +295,8 @@ try {
   await click('Review bundle');
   await waitFor('document.body.innerText.includes("Name & freeze bundle")');
   assert.deepEqual(await evaluate('window.workflow.calls.filter(call => call.method === "bundlePreview").at(-1).spec.packArtifactIds'), ['pack']);
+  await verifyHeader(false);
+  assert.equal(await evaluate(button('Back to validation & packs') + '?.dataset.stageAction'), 'back');
   await screenshot('03-bundle-review');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await screenshot('03-bundle-review-mobile');
@@ -262,15 +308,18 @@ try {
   await waitFor('window.workflow.calls.some(call => call.method === "bundleFreeze")');
   assert.deepEqual(await evaluate('window.workflow.calls.find(call => call.method === "bundleFreeze").spec.packArtifactIds'), ['pack']);
   assert.equal(await evaluate('window.workflow.calls.find(call => call.method === "sourceFreeze").spec.path'), '/features/new');
+  await waitFor('window.location.hash.startsWith("#cohort?")');
+  assert.equal(await evaluate('new URLSearchParams(window.location.hash.split("?")[1]).get("bundle")'), 'new-bundle');
+  assert.equal(await evaluate('new URLSearchParams(window.location.hash.split("?")[1]).has("dataset")'), false);
   assert.deepEqual(await evaluate('window.workflow.errors'), []);
   assert.deepEqual(exceptions, []);
-  await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'React and Chromium with mocked feature APIs. No HistoPilot server started.', steps: ['clean library', 'search and clear', 'combined search and readiness filters', 'recent/oldest/name sorting', 'exact Manage record key', 'open/back retains library filters', 'create', 'source settings', 'extraction preflight', 'extraction activity', 'attach extraction outputs', 'coverage', 'back preserves settings', 'register source', 'job review', 'validation activity', 'bundle review', 'back preserves pack selection', 'tagged freeze'], calls: await evaluate('window.workflow.calls') }, null, 2));
+  await writeFile(join(artifacts, 'features-verification.json'), JSON.stringify({ passed: true, scope: 'React and Chromium with mocked feature APIs. No HistoPilot server started.', steps: ['dataset-independent folder extraction', 'CSV upload with exact MPP values', 'shared server slide list input', 'named bundle handoff to targets and splits', 'one Create action in library header', 'one Back action with no competing Create in editors/details', 'return to library before creating another bundle', 'clean library', 'search and clear', 'combined search and readiness filters', 'recent/oldest/name sorting', 'exact Manage record key', 'open/back retains library filters', 'create', 'source settings', 'extraction preflight', 'extraction activity', 'attach extraction outputs', 'coverage', 'back preserves settings', 'register source', 'job review', 'validation activity', 'bundle review', 'back preserves pack selection', 'tagged freeze'], calls: await evaluate('window.workflow.calls') }, null, 2));
   console.log('PASS: feature bundle library, source coverage, job and bundle page transitions, preserved settings, validation, pack inclusions, and tagged freeze.');
-  console.log('Artifacts: ' + output);
+  console.log('Artifacts: ' + artifacts);
 } catch (error) {
-  try { await writeFile(join(output, 'failure.txt'), await evaluate('document.body.innerText')); await screenshot('failure'); } catch { /* Browser launch may have failed. */ }
+  try { await writeFile(join(artifacts, 'features-failure.txt'), await evaluate('document.body.innerText')); await screenshot('failure'); } catch { /* Browser launch may have failed. */ }
   if (exceptions.length) console.error(JSON.stringify(exceptions, null, 2));
-  console.error('Artifacts: ' + output);
+  console.error('Artifacts: ' + artifacts);
   throw error;
 } finally {
   browser.kill();

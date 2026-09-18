@@ -2,9 +2,9 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { bundles } from '../api/bundles';
 import { scientific } from '../api/scientific';
-import { development, developmentPollInterval } from '../api/development';
+import { development, developmentPollInterval, trainingActive } from '../api/development';
 import { evaluation } from '../api/evaluation';
-import { modelEvaluations, predictors } from '../api/predictors';
+import { computePollInterval, modelEvaluations, predictors } from '../api/predictors';
 import { clinicalAnalyses } from '../api/clinicalUtility';
 import { interpretations } from '../api/interpretation';
 import type { Workspace } from '../api/types';
@@ -19,12 +19,14 @@ export function useRoadmap(workspace: Workspace) {
   const protocols = useQuery({ queryKey: ['scientific', project, 'configurations', 'protocol'], queryFn: () => scientific.configurations(project, 'protocol'), enabled });
   const features = useQuery({ queryKey: ['scientific', project, 'configurations', 'feature'], queryFn: () => scientific.configurations(project, 'feature'), enabled });
   const featureBundles = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project), enabled });
-  const batches = useQuery({ queryKey: ['development-batches', project], queryFn: () => development.list(project), enabled, refetchInterval: (query) => developmentPollInterval(query.state.data) });
+  const batches = useQuery({ queryKey: ['development-batches', project], queryFn: () => development.list(project), enabled, refetchIntervalInBackground: false, refetchInterval: (query) => developmentPollInterval(query.state.data) });
   const evaluationCohorts = useQuery({ queryKey: ['evaluation-cohorts', project], queryFn: () => evaluation.list(project), enabled });
-  const frozenPredictors = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), enabled, refetchInterval: 10000 });
+  // Predictors are published by finished training and by the predictor coordinator,
+  // so they only need a fast refresh while a development batch is running.
+  const frozenPredictors = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), enabled, refetchIntervalInBackground: false, refetchInterval: () => batches.data?.executions?.some(trainingActive) ? 10000 : 60000 });
   const evaluationRecords = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), enabled });
   const clinicalRecords = useQuery({ queryKey: ['clinical-analyses', project], queryFn: () => clinicalAnalyses.list(project), enabled });
-  const interpretationRecords = useQuery({ queryKey: ['interpretations', project], queryFn: () => interpretations.list(project), enabled, refetchInterval: 10000 });
+  const interpretationRecords = useQuery({ queryKey: ['interpretations', project], queryFn: () => interpretations.list(project), enabled, refetchIntervalInBackground: false, refetchInterval: (query) => computePollInterval(query.state.data?.items) });
   const modules = useMemo(() => buildRoadmap(workspace, {
     drafts: drafts.data?.drafts ?? [],
     datasets: datasets.data?.datasets ?? [],
@@ -51,7 +53,7 @@ export function useRoadmap(workspace: Workspace) {
   const inputQueries = [datasets, protocols, featureBundles];
   const checksById = Object.fromEntries(modules.map(({ id, retainedWork }) => {
     const result = check(
-    id === 'dataset' || (enabled && ['experiments', 'test-data', 'evaluation', 'clinical-utility', 'interpretation'].includes(id))
+    id === 'dataset' || (enabled && ['cohort', 'features', 'experiments', 'test-data', 'evaluation', 'clinical-utility', 'interpretation'].includes(id))
       ? []
       : id === 'evaluation'
         ? [batches, evaluationCohorts]

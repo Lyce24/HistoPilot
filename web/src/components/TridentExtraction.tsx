@@ -1,4 +1,5 @@
 import { useId, useRef, useState } from 'react';
+import { StageBackButton } from './StageActions';
 import type { FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
@@ -12,12 +13,15 @@ import {
 import type {
   ExtractionJob,
   ExtractionPreview,
+  SlideListSummary,
   TridentOption,
   TridentOutputLayout,
 } from '../api/trident';
 import { DatasetSelect, Findings } from './ScientificUI';
 import { Badge, EmptyState, ErrorNotice, Icon, Panel } from './ui';
 import ServerFolderPicker from './ServerFolderPicker';
+import SlideListField from './SlideListField';
+import { slideListReady, type SlideListSource } from '../api/slideLists';
 import ExtractionProgress, { extractionModelLabel, extractionStateLabel, extractionTaskLabel } from './ExtractionProgress';
 import { StagePage, StageSteps } from './StageWorkflow';
 import './TridentExtraction.css';
@@ -28,7 +32,7 @@ const stages = [
   { value: 'coords', label: 'Patch coordinates', description: 'Sample tissue regions', icon: 'overview' },
   { value: 'feat', label: 'Extract features', description: 'Encode existing patches', icon: 'experiments' },
 ];
-const basicNames = new Set(['task', 'segmenter', 'patch_encoder', 'mag', 'patch_size']);
+const basicNames = new Set(['task', 'segmenter', 'patch_encoder', 'mag', 'patch_size', 'custom_list_of_wsis', 'search_nested']);
 const groupLabels = {
   execution: 'Compute & execution',
   slides: 'Slide reading & selection',
@@ -57,11 +61,13 @@ const jobTone = (job: ExtractionJob) =>
 export default function TridentExtraction({
   workspace: w,
   datasets,
+  initialDatasetId,
   onAttach,
 }: {
   workspace: Workspace;
   datasets: DatasetVersion[];
-  onAttach: (input: { datasetId: string; path: string; encoderId?: string; sourceExtractionJobId?: string }) => void;
+  initialDatasetId?: string;
+  onAttach: (input: { datasetId: string | null; path: string; encoderId?: string; featureKind?: 'patch' | 'slide'; sourceExtractionJobId?: string }) => void;
 }) {
   const project = w.project.id;
   const client = useQueryClient();
@@ -76,7 +82,10 @@ export default function TridentExtraction({
     queryFn: () => trident.jobs(project),
     refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 3000 : false,
   });
-  const [datasetId, setDatasetId] = useState(w.dataset.id);
+  const [datasetId, setDatasetId] = useState<string | null>(initialDatasetId ?? null);
+  const [slideList, setSlideList] = useState<SlideListSource | null>(null);
+  const [slideRoot, setSlideRoot] = useState(w.sources.find((source) => source.role === 'slides')?.path ?? '');
+  const [recursive, setRecursive] = useState(true);
   const [outputPath, setOutputPath] = useState(`${w.project.storagePath.replace(/\/$/, '')}/trident`);
   const [overrides, setOverrides] = useState<Record<string, unknown>>({});
   const [preview, setPreview] = useState<ExtractionPreview | null>(null);
@@ -102,7 +111,8 @@ export default function TridentExtraction({
   const job = jobDetail.data;
   const advanced = catalog.data?.options.filter((option) => !basicNames.has(option.name)) ?? [];
   const datasetById = new Map(datasets.map((dataset) => [dataset.id, dataset]));
-  const datasetLabel = (identity: string) => {
+  const datasetLabel = (identity: string | null | undefined) => {
+    if (!identity) return 'No dataset filter';
     const dataset = datasetById.get(identity);
     return dataset ? datasetVersionLabel(dataset) : versionLabelText({ id: identity }, 'Dataset');
   };
@@ -132,7 +142,9 @@ export default function TridentExtraction({
     if (!catalog.data) return;
     const options = normalizeTridentOptions(catalog.data.options, values);
     void run('preview', async () => {
-      const next = await trident.preview(project, { datasetId, outputPath: outputPath.trim(), options });
+      const next = await trident.preview(project, {
+        datasetId, slideRoot: slideRoot.trim() || null, slideList, recursive, outputPath: outputPath.trim(), options,
+      });
       setPreview(next);
       operationId.current = null;
       setPage('review');
@@ -164,10 +176,30 @@ export default function TridentExtraction({
           <form onSubmit={inspect}>
             <fieldset className="science-fieldset trident-form" disabled={busy !== null}>
               <div className="trident-inputs">
+                <div className="trident-output-input">
+                  <label className="label">
+                    Slide folder
+                    <input
+                      className="field mono"
+                      value={slideRoot}
+                      placeholder="/path/to/slides"
+                      onChange={(event) => { setSlideRoot(event.target.value); invalidatePreview(); }}
+                    />
+                    <small>Scan eligible slides here, or resolve the paths named in a slide list. A dataset is optional.</small>
+                  </label>
+                  <ServerFolderPicker
+                    label="Browse slide folders"
+                    onSelect={(path) => { setSlideRoot(path); invalidatePreview(); }}
+                  />
+                </div>
+                <SlideListField value={slideList} onChange={(next) => { setSlideList(next); invalidatePreview(); }} />
                 <DatasetSelect
+                  label="Dataset filter (optional)"
                   versions={datasets}
-                  value={datasetId}
-                  onChange={(value) => { setDatasetId(value); invalidatePreview(); }}
+                  value={datasetId ?? ''}
+                  allowEmpty
+                  emptyLabel="No dataset filter"
+                  onChange={(value) => { setDatasetId(value || null); invalidatePreview(); }}
                 />
                 <div className="trident-output-input">
                   <label className="label">
@@ -187,6 +219,10 @@ export default function TridentExtraction({
                   />
                 </div>
               </div>
+              <label className="science-check">
+                <input type="checkbox" checked={recursive} disabled={Boolean(slideList)} onChange={(event) => { setRecursive(event.target.checked); invalidatePreview(); }} />
+                <span>Include subfolders<small>A slide list selects its named paths directly.</small></span>
+              </label>
               <fieldset className="trident-stage-fieldset">
                 <legend>Pipeline stage</legend>
                 <div className="trident-stages">
@@ -244,7 +280,7 @@ export default function TridentExtraction({
                   ) : null;
                 })}
                 <p className="trident-help">
-                  The selected dataset supplies <code>--wsi_dir</code> and the output directory supplies <code>--job_dir</code>.
+                  The slide selection supplies <code>--wsi_dir</code> and the output directory supplies <code>--job_dir</code>.
                   {' '}<a className="text-button" href={catalog.data.source} target="_blank" rel="noreferrer">TRIDENT CLI reference</a>
                 </p>
                 <button type="button" className="btn btn-secondary btn-small" onClick={() => { setOverrides({}); invalidatePreview(); }}>
@@ -256,7 +292,7 @@ export default function TridentExtraction({
                   <strong>Review before extraction</strong>
                   <p>Check slide paths, runtime availability, and the exact output layout before launching a job.</p>
                 </div>
-                <button type="submit" className="btn btn-primary" disabled={!datasetId || !outputPath.trim()}>
+                <button type="submit" className="btn btn-primary" disabled={(!slideRoot.trim() && !datasetId) || !outputPath.trim() || !slideListReady(slideList)}>
                   {busy === 'preview' ? 'Checking extraction…' : 'Preview extraction'} <Icon name="arrow" size={17} />
                 </button>
               </div>
@@ -269,15 +305,16 @@ export default function TridentExtraction({
 
       {page === 'review' && preview ? (
         <div className="trident-preview">
-          <button type="button" className="btn btn-secondary pfm-back" disabled={busy !== null} onClick={() => setPage('settings')}>← Back to extraction settings</button>
+          <StageBackButton className="pfm-back" disabled={busy !== null} onClick={() => setPage('settings')}>Back to extraction settings</StageBackButton>
           <Panel
             title="Extraction preflight"
             subtitle={`${preview.slideCount.toLocaleString()} slides · ${stages.find((stage) => stage.value === preview.spec.options.task)?.label ?? 'TRIDENT pipeline'}`}
             actions={<Badge tone={preview.canRun ? 'green' : 'orange'}>{preview.canRun ? 'Ready to launch' : 'Review findings'}</Badge>}
           >
             <dl className="trident-run-settings">
-              <div><dt>Dataset version</dt><dd title={preview.spec.datasetId}>{datasetLabel(preview.spec.datasetId)}</dd></div>
+              <div><dt>Dataset filter</dt><dd title={preview.spec.datasetId ?? ''}>{datasetLabel(preview.spec.datasetId)}</dd></div>
             </dl>
+            {preview.slideList ? <SlideListReview list={preview.slideList} /> : null}
             <Findings findings={preview.findings} />
             <OutputLayout layout={preview.outputLayout} />
             <details className="trident-command">
@@ -337,13 +374,16 @@ export default function TridentExtraction({
             {job ? (
               <JobDetail
                 job={job}
-                dataset={datasetById.get(job.spec.datasetId)}
+                dataset={job.spec.datasetId ? datasetById.get(job.spec.datasetId) : undefined}
                 busy={busy !== null}
                 onCancel={() => void run('cancel', async () => updateJob(await trident.cancel(project, job.id)))}
                 onUseSettings={() => {
                   setDatasetId(job.spec.datasetId);
+                  setSlideRoot(job.spec.slideRoot ?? '');
+                  setRecursive(job.spec.recursive ?? true);
                   setOutputPath(job.spec.outputPath);
-                  setOverrides(job.spec.options);
+                  setSlideList(job.spec.slideList ?? (job.spec.options.custom_list_of_wsis ? { path: String(job.spec.options.custom_list_of_wsis) } : null));
+                  setOverrides({ ...job.spec.options, custom_list_of_wsis: null });
                   invalidatePreview();
                 }}
                 onAttach={onAttach}
@@ -371,7 +411,7 @@ function ExtractionJobButton({ job, selected, datasetLabel, onSelect }: {
       <span>
         <strong>{extractionTaskLabel(job)}</strong>
         <span className="trident-job-model">{extractionModelLabel(job)}</span>
-        <small title={job.spec.datasetId}>Dataset: {datasetLabel}</small>
+        <small title={job.spec.datasetId ?? ''}>Dataset filter: {datasetLabel}</small>
         {extractionActive(job) && job.progress?.label ? <span className="trident-job-stage">{job.progress.label}</span> : null}
         <small>{new Date(job.createdAt).toLocaleString()}</small>
       </span>
@@ -456,6 +496,50 @@ function shellDisplay(value: string) {
   return /^[a-zA-Z0-9_./:=+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+function SlideListReview({ list }: { list: SlideListSummary }) {
+  const name = list.filename ?? list.listPath?.split('/').pop() ?? 'uploaded CSV';
+  return (
+    <div className="trident-layout">
+      <div><Icon name="cohort" size={18} /><strong>Slide selection</strong></div>
+      <dl>
+        {list.root ? <div><dt>Slide folder</dt><dd className="mono">{list.root}</dd></div> : null}
+        <div>
+          <dt>Initial slides</dt>
+          <dd>
+            {list.initialCount.toLocaleString()}{' '}
+            {list.source === 'list' ? <>from <span className="mono" title={list.listPath ?? ''}>{name}</span></>
+              : list.source === 'dataset' ? 'linked to this dataset version' : 'found in the folder'}
+          </dd>
+        </div>
+        <div>
+          <dt>Selected</dt>
+          <dd>{list.selectedCount.toLocaleString()} slides{list.datasetFiltered ? ' after the dataset filter' : ' \u2014 no dataset filter'}</dd>
+        </div>
+        <div>
+          <dt>Source MPP</dt>
+          <dd>{list.declaresMpp ? 'Declared for every selected slide' : 'Read from each slide\u2019s own metadata'}</dd>
+        </div>
+        {list.outsideCount ? (
+          <div>
+            <dt>Not in this dataset version</dt>
+            <dd title={list.outsideExamples.join(', ')}>
+              {list.outsideCount.toLocaleString()} selected slides are not extracted
+            </dd>
+          </div>
+        ) : null}
+        {list.unlistedCount ? (
+          <div>
+            <dt>Not selected</dt>
+            <dd title={list.unlistedExamples.join(', ')}>
+              {list.unlistedCount.toLocaleString()} dataset slides stay without features
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+    </div>
+  );
+}
+
 function OutputLayout({ layout }: { layout: TridentOutputLayout }) {
   const paths = [
     ['Output root', layout.jobDir],
@@ -485,7 +569,7 @@ function JobDetail({
   busy: boolean;
   onCancel: () => void;
   onUseSettings: () => void;
-  onAttach: (input: { datasetId: string; path: string; encoderId?: string; sourceExtractionJobId?: string }) => void;
+  onAttach: (input: { datasetId: string | null; path: string; encoderId?: string; featureKind?: 'patch' | 'slide'; sourceExtractionJobId?: string }) => void;
 }) {
   const layout = job.result?.outputLayout ?? job.outputLayout;
   const featurePath = job.result?.featurePath ?? job.result?.featureDirectory;
@@ -496,7 +580,8 @@ function JobDetail({
         <Badge tone={jobTone(job)}>{extractionStateLabel[job.state]}</Badge>
       </div>
       <dl className="trident-run-settings">
-        <div><dt>Dataset version</dt><dd title={job.spec.datasetId}>{dataset ? datasetVersionLabel(dataset) : versionLabelText({ id: job.spec.datasetId }, 'Dataset')}</dd></div>
+        <div><dt>Dataset filter</dt><dd title={job.spec.datasetId ?? ''}>{dataset ? datasetVersionLabel(dataset) : job.spec.datasetId ? versionLabelText({ id: job.spec.datasetId }, 'Dataset') : 'No dataset filter'}</dd></div>
+        {job.spec.slideRoot ? <div><dt>Slide folder</dt><dd className="mono">{job.spec.slideRoot}</dd></div> : null}
         <div><dt>{job.spec.options.task === 'seg' ? 'Tissue model' : 'Model'}</dt><dd>{extractionModelLabel(job)}</dd></div>
         {job.spec.options.task !== 'seg' ? <>
           <div><dt>Magnification</dt><dd>{job.spec.options.mag !== undefined ? `${job.spec.options.mag}×` : 'Automatic'}</dd></div>
@@ -511,13 +596,12 @@ function JobDetail({
         <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={onUseSettings}><Icon name="reset" size={15} /> {extractionActive(job) || job.state === 'succeeded' ? 'Reuse settings' : 'Review & resume'}</button>
         {extractionActive(job) ? <button type="button" className="btn btn-secondary btn-small" disabled={busy || job.state === 'cancelling'} onClick={onCancel}><Icon name="close" size={15} /> {job.state === 'cancelling' ? 'Cancelling…' : 'Cancel job'}</button> : null}
       </div>
-      {job.state === 'succeeded' && featurePath && layout?.featureKind !== 'slide' ? (
+      {job.state === 'succeeded' && featurePath ? (
         <div className="trident-completion">
-          <div><strong>Features are ready to review</strong><p>Inspect coverage, choose whether to include an existing or new pack, then name and freeze the bundle.</p></div>
-          <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={() => onAttach({ datasetId: job.spec.datasetId, path: featurePath, encoderId: String(job.spec.options.patch_encoder || '') || undefined, sourceExtractionJobId: job.id })}>Inspect features for a bundle <Icon name="arrow" size={15} /></button>
+          <div><strong>Features are ready to review</strong><p>{layout?.featureKind === 'slide' ? 'One embedding per slide. Inspect coverage, then name and freeze the bundle. Slide embeddings train a slide probe; they carry no patch grid, so they have no attention to show and are not packed.' : 'Inspect coverage, choose whether to include an existing or new pack, then name and freeze the bundle.'}</p></div>
+          <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={() => onAttach({ datasetId: job.spec.datasetId ?? null, path: featurePath, encoderId: String((layout?.featureKind === 'slide' ? job.spec.options.slide_encoder : job.spec.options.patch_encoder) || '') || undefined, featureKind: layout?.featureKind ?? 'patch', sourceExtractionJobId: job.id })}>Inspect features for a bundle <Icon name="arrow" size={15} /></button>
         </div>
       ) : null}
-      {job.state === 'succeeded' && layout?.featureKind === 'slide' ? <p className="trident-help">Slide embeddings are saved in the output directory. Feature configurations for MIL currently require patch embeddings with coordinates.</p> : null}
       {layout ? <details className="trident-run-details"><summary>Output folders</summary><OutputLayout layout={layout} /></details> : null}
       <details className="trident-run-details">
         <summary>Troubleshooting</summary>

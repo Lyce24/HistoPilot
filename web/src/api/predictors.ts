@@ -4,6 +4,7 @@ import type { LifecycleState } from './lifecycle';
 import type { Finding, ProtocolSpec } from './scientific';
 import type { MILExperimentSpec } from './mil';
 import type { EvaluationInference, EvaluationPreview } from './evaluation';
+import type { PatientComparison } from './statistics';
 
 export interface PredictorChoice {
   experimentId: string; experimentName: string; batchId: string; batchName: string;
@@ -26,9 +27,9 @@ export interface PredictorManifest extends PredictorSelection {
   sourceCheckpoints?: { runId: string; path: string; sha256: string; bytes: number }[];
   target: ProtocolSpec['target']; recipe: TrainingRecipe;
   inputs: { protocol: { id: string; contentHash: string }; features: { bundle: { id: string; contentHash: string }; [key: string]: unknown }; loading: MILExperimentSpec; resolvedLoading?: { policy?: string; packArtifactId?: string | null; packPath?: string | null } };
-  aggregation: 'mean_probability' | 'single_model';
+  aggregation: 'mean_probability' | 'mean_logit' | 'single_model';
   experiment?: { id: string; name: string };
-  epochBudget?: { percentile: number; epochs: number; foldBestEpochs: { runId: string; bestEpoch: number; source?: string }[]; rounding: string; interpolation: string };
+  epochBudget?: { percentile: number; epochs: number; foldBestEpochs: { runId: string; bestEpoch: number; source?: string; checkpointSelection?: 'best_validation' | 'latest' | 'final_epoch'; validationBestEpoch?: number }[]; rounding: string; interpolation: string };
   trainingSlideCount?: number; trainingPatientCount?: number;
   refitId?: string;
 }
@@ -53,6 +54,12 @@ export interface ComputeExecution {
   progress?: { epoch?: number; maxEpochs?: number; trainingLoss?: number | null; completedModels?: number; totalModels?: number; slideCount?: number; completedPairs?: number; totalPairs?: number; currentSlide?: string; completedSlides?: number; totalSlides?: number } | null;
 }
 export const computeActive = (job?: ComputeExecution) => Boolean(job && ['queued', 'running'].includes(job.status));
+/**
+ * Poll only as fast as a list's own jobs change. A project with nothing running
+ * should not keep the control service reading its records every few seconds.
+ */
+export const computePollInterval = (items?: readonly { execution?: ComputeExecution }[]) =>
+  items?.some((item) => computeActive(item.execution)) ? 5000 : 30000;
 export const computeStatusLabel = (job?: ComputeExecution) => job?.cancellationRequested && computeActive(job) ? 'Cancelling' : ({ not_started: 'Ready to run', completed: 'Completed', queued: 'Queued', running: 'Running', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted' }[job?.status ?? 'not_started']);
 export interface RefitBuild {
   id: string; createdAt: string; contentHash: string; lifecycleState: LifecycleState;
@@ -82,6 +89,7 @@ export const predictors = {
   publishRefit: (project: string, id: string, operationId: string) => request<FrozenPredictor>(`${base(project)}/predictors/refits/${encodeURIComponent(id)}/publish`, post({ operationId })),
 };
 export const modelEvaluations = {
+  compare: (project: string, leftEvaluationId: string, rightEvaluationId: string, signal?: AbortSignal) => request<PatientComparison>(`${base(project)}/evaluation-runs/compare`, { ...post({ leftEvaluationId, rightEvaluationId }), signal }),
   list: (project: string) => request<{ items: ModelEvaluation[]; executionEnabled: boolean }>(`${base(project)}/evaluation-runs?include_inactive=true`),
   preview: (project: string, selection: EvaluationSelection) => request<ModelEvaluationPreview>(`${base(project)}/evaluation-runs/preview`, post(selection)),
   save: (project: string, selection: EvaluationSelection, previewHash: string, operationId: string) => request<ModelEvaluation>(`${base(project)}/evaluation-runs`, post({ ...selection, previewHash, operationId })),

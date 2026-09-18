@@ -40,6 +40,7 @@ class ImportSpec(RequestModel):
     slideIdColumn: str = Field(min_length=1, max_length=256)
     patientIdColumn: str | None = Field(default=None, min_length=1, max_length=256)
     patientIdFallback: Literal["unresolved", "slide_id"] = "unresolved"
+    slidePathColumn: str | None = Field(default=None, min_length=1, max_length=256)
     slideRoot: str | None = Field(default=None, min_length=1, max_length=4096)
     recursive: bool = True
     includeMissingSlides: bool = False
@@ -50,6 +51,16 @@ class ImportSpec(RequestModel):
     patientSourceSlideIdColumn: str = Field(default="Slide_ID", min_length=1, max_length=256)
     patientSourcePatientIdColumn: str = Field(default="Patient_ID", min_length=1, max_length=256)
     patientAttributes: list[AttributeMapping] = Field(default_factory=list, max_length=128)
+
+    @model_validator(mode="after")
+    def slide_path_column_is_not_an_identity(self):
+        # Slide_ID must stay the file stem: TRIDENT names every output from it.
+        if self.slidePathColumn is not None and self.slidePathColumn in {
+            self.slideIdColumn,
+            self.patientIdColumn,
+        }:
+            raise ValueError("The slide path column must differ from the identity columns.")
+        return self
 
     @model_validator(mode="after")
     def patient_attributes_need_source(self):

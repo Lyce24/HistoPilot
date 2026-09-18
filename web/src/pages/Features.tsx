@@ -156,7 +156,7 @@ export default function Features({ workspace: w }: { workspace: Workspace }) {
         subtitle={
           w.mode === 'synthetic-demo'
             ? 'Synthetic metadata illustrating the future feature store'
-            : 'Features associated with this experiment'
+            : 'Features associated with this project'
         }
         actions={
           <Badge>

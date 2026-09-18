@@ -1,3 +1,4 @@
+import { StageBackButton } from './StageActions';
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { cleanupPollInterval, lifecycle, lifecycleLabel } from '../api/lifecycle';
@@ -52,7 +53,7 @@ function RecordManagementPage({ project, record, backLabel, locked, onClose, onL
   }, [record.recordKey]);
   return <div className="clinical-workspace record-management-page" data-record-management ref={page} tabIndex={-1}>
       <PageHeader eyebrow="RECORD MANAGEMENT" title={`Manage ${item?.name ?? record.name}`} description="Archive this record, restore it, or move it to Trash."
-        actions={<button type="button" className="btn btn-secondary" disabled={locked} onClick={onClose}>{backLabel}</button>} />
+        actions={<StageBackButton type="button" disabled={locked} onClick={onClose}>{backLabel}</StageBackButton>} />
       <ErrorNotice error={inventory.error} />
       {inventory.isPending ? <p role="status">Loading record status…</p> : item ? <>
         <div className="record-management-identity"><Badge tone={item.state === 'active' ? 'green' : 'neutral'}>{lifecycleLabel[item.state]}</Badge><span className="muted">{item.kind.replaceAll('-', ' ')}</span><code>{item.id}</code></div>

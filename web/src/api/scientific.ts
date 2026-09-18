@@ -1,4 +1,5 @@
 import { request, requestScientificSave } from './client';
+import type { SlideListSource } from './slideLists';
 
 export interface Finding {
   severity: 'error' | 'warning' | 'info';
@@ -27,6 +28,7 @@ export interface ImportSpec {
   slideIdColumn: string;
   patientIdColumn?: string;
   patientIdFallback?: 'unresolved' | 'slide_id';
+  slidePathColumn?: string;
   slideRoot?: string;
   recursive: boolean;
   includeMissingSlides: boolean;
@@ -172,12 +174,18 @@ export interface DatasetQueryResult extends RecordsPage {
     unlinkedSlideCount?: number;
   } | null;
 }
-export type ConditionValue = string | number | boolean | null | (string | number)[];
-export interface Condition {
+export type ConditionScalar = string | number | boolean | null;
+export type ConditionValue = ConditionScalar | ConditionScalar[];
+export interface ScalarCondition {
   field: string;
   op: 'eq' | 'ne' | 'in' | 'not_in' | 'regex' | 'lt' | 'lte' | 'gt' | 'gte' | 'exists';
   value: ConditionValue;
 }
+export interface ConditionGroup {
+  op: 'all' | 'any';
+  conditions: Condition[];
+}
+export type Condition = ScalarCondition | ConditionGroup;
 export interface ProtocolCohortStats {
   totalSlides: number;
   patientCount: number;
@@ -195,9 +203,18 @@ export interface ProtocolExploreRequest {
   datasetId: string;
   targetField?: string;
   eligibility: Condition[];
+  featureBundleId?: string;
+  featureSetId?: string;
+  featureCoverage?: 'require' | 'restrict';
   rules: { train: Condition[]; val: Condition[]; test: Condition[] };
   splitMode: ProtocolSpec['split']['mode'];
   split?: ProtocolSpec['split'];
+}
+export interface ProtocolBundleReference {
+  id: string;
+  contentHash: string;
+  featureSetId: string;
+  sourceContentHash: string;
 }
 export interface ProtocolExploration {
   selectionBasis?: 'pools';
@@ -206,6 +223,12 @@ export interface ProtocolExploration {
   valid: boolean;
   dataset: ProtocolCohortStats;
   cohort: ProtocolCohortStats | null;
+  /** Eligible slides dropped because the selected feature version does not cover them. */
+  featureExclusions?: number;
+  populationSource?: 'dataset_and_features' | 'dataset_and_bundle';
+  bundleSlides?: number;
+  matchedSlides?: number;
+  featureBundle?: ProtocolBundleReference;
   partitions: Record<'train' | 'val' | 'test', ProtocolPartitionStats> | null;
   unassigned: ProtocolCohortStats | null;
   target: {
@@ -270,7 +293,11 @@ export interface ProtocolSpec {
     };
   };
   constraints: { minPatientsPerClass: number; minPatientsPerPartition: number };
+  /** Named bundle pinned by this protocol; the population is its intersection with the dataset. */
+  featureBundleId?: string | null;
   featureSetId?: string | null;
+  /** "restrict" defines the population as the eligible slides that have features. */
+  featureCoverage?: 'require' | 'restrict';
   featurePackId?: string | null;
 }
 export interface PartitionCounts {
@@ -281,6 +308,7 @@ export interface PartitionCounts {
   classes: Record<string, number>;
 }
 export interface ProtocolPreview {
+  featureBundle?: ProtocolBundleReference;
   previewHash: string;
   canFreeze: boolean;
   findings: Finding[];
@@ -294,6 +322,11 @@ export interface ProtocolPreview {
     fallbackSlideCount?: number;
     unlinkedSlideCount?: number;
     excludedSlides: number;
+    /** Eligible slides dropped because the selected feature version does not cover them. */
+    featureExclusions?: number;
+    populationSource?: 'dataset' | 'dataset_and_features' | 'dataset_and_bundle';
+    bundleSlides?: number;
+    matchedSlides?: number;
     classCounts: Record<string, number>;
     patientClassCounts: Record<string, number>;
     grouping: string;
@@ -346,7 +379,11 @@ export interface ExecutionPreflight {
   findings: Finding[];
 }
 export interface FeatureSpec {
-  datasetId: string;
+  /** Optional wsi[,mpp] list naming the slides this feature set covers. */
+  slideListPath?: string | null;
+  slideList?: SlideListSource | null;
+  /** Empty scopes the feature set to its whole slide store rather than one frozen cohort. */
+  datasetId: string | null;
   path: string;
   encoderId?: string;
   fileSuffix: '.h5' | '.hdf5';
@@ -354,6 +391,8 @@ export interface FeatureSpec {
   recursive: boolean;
   layout?: 'auto' | 'flat' | 'trident';
   coordinatesPath?: string | null;
+  /** Patch bags carry coordinates; a slide encoder writes one embedding per slide. */
+  featureKind?: 'patch' | 'slide';
   sourceExtractionJobId?: string | null;
 }
 export interface FeaturePreview {
@@ -369,6 +408,7 @@ export interface FeaturePreview {
     jobDirectory: string | null;
   };
   summary: {
+    scope?: 'dataset' | 'list' | 'store';
     slideCount: number;
     matchedSlides: number;
     missingSlides: number;

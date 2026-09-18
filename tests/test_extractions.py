@@ -305,22 +305,24 @@ def test_custom_csv_subset_mpp_cache_and_stage_prerequisites(extraction):
     csv_path.write_text("wsi,mpp\nslide.1.svs,0.5\n")
     selected = spec.model_copy(
         update={
+            "slideRoot": str(service.filesystem.roots[1]),
             "options": {
                 "task": "seg",
                 "custom_list_of_wsis": str(csv_path),
                 "wsi_cache": str(service.filesystem.roots[1] / "cache"),
-            }
+            },
         }
     )
     preview = service.preview(selected)
     assert preview["slideCount"] == 1
+    assert preview["slideList"]["source"] == "list"
     job = submit(service, selected)
     assert (service.folder / job["id"] / "slides.csv").read_text().splitlines() == [
         "wsi,mpp",
         "slide.1.svs,0.5",
     ]
     assert job["spec"]["options"]["wsi_cache"].endswith("/cache")
-    csv_path.write_text("wsi,mpp\nnot-in-dataset.svs,0.5\n")
+    csv_path.write_text("wsi,mpp\nnot-on-disk.svs,0.5\n")
     with pytest.raises(StorageError) as error:
         service.preview(selected)
     assert error.value.code == "INVALID_SLIDE_LIST"
@@ -332,6 +334,194 @@ def test_custom_csv_subset_mpp_cache_and_stage_prerequisites(extraction):
         )
         assert not preview["canRun"]
         assert any(item["code"] == "STAGE_INPUT_MISSING" for item in preview["findings"])
+
+
+@pytest.fixture
+def cohort_extraction(tmp_path, monkeypatch):
+    """One slide root with per-cohort subfolders, as a multi-cohort study is imported."""
+    folder = tmp_path / "experiment"
+    folder.mkdir()
+    root = tmp_path / "drive-d" / "slides" / "colon"
+    slides = []
+    for cohort, name in (("rih", "SL-1.svs"), ("rih", "SL-2.svs"), ("TCGA", "TCGA-A6.svs")):
+        slide = root / cohort / name
+        slide.parent.mkdir(parents=True, exist_ok=True)
+        slide.write_bytes(b"fixture slide")
+        slides.append({"slideId": slide.stem, "patientId": slide.stem, "slidePath": str(slide)})
+    excluded = root / "SURGEN" / "SR386.tiff"
+    excluded.parent.mkdir(parents=True, exist_ok=True)
+    excluded.write_bytes(b"fixture slide")
+    store = ScientificStore(folder, "project-cohort")
+    draft = store.create_draft("import", "test", {})
+    store.publish_dataset(
+        draft["id"],
+        expected_revision=1,
+        manifest={"kind": "dataset", "provenance": {"mapping": {"slideRoot": str(root)}}},
+        artifacts={"records.json": json.dumps(slides).encode()},
+        operation_id="dataset",
+    )
+    executor = FakeExecutor()
+    service = ExtractionService(store, LocalFilesystem((tmp_path / "drive-d",)), executor)
+    monkeypatch.setattr(
+        "histopilot.adapters.trident.discover_runtime",
+        lambda: {
+            "available": True,
+            "pythonPath": "/usr/bin/python3",
+            "tridentRoot": str(tmp_path / "runtime"),
+        },
+    )
+    monkeypatch.setattr(
+        "histopilot.adapters.trident.build_command",
+        lambda options, **kwargs: [kwargs["wsi_dir"], kwargs["custom_list_of_wsis"]],
+    )
+    dataset = store.list_datasets()[0]
+    spec = ExtractionSpec(
+        datasetId=dataset["id"], outputPath=str(folder / "trident"), options={"task": "seg"}
+    )
+    return service, spec, root
+
+
+def test_cohort_manifest_selects_nested_slides_and_pins_each_source_mpp(cohort_extraction):
+    service, spec, root = cohort_extraction
+    manifest = service.store.folder / "colon_ready_wsi_mpp.csv"
+    # A study-wide manifest: extra columns, and rows for cohorts this version excludes.
+    manifest.write_text(
+        "wsi,mpp,cohort\n"
+        "rih/SL-1.svs,0.5016,RIH\n"
+        "TCGA/TCGA-A6.svs,0.252,TCGA\n"
+        "SURGEN/SR386.tiff,0.25,SurGen\n"
+    )
+    selected = spec.model_copy(
+        update={"options": {"task": "seg", "custom_list_of_wsis": str(manifest)}}
+    )
+    preview = service.preview(selected)
+    assert preview["canRun"], preview["findings"]
+    assert preview["slideCount"] == 2
+    assert preview["slideList"] == {
+        "source": "list",
+        "listPath": str(manifest),
+        "sha256": preview["customListSha256"],
+        "root": str(root),
+        "initialCount": 3,
+        "selectedCount": 2,
+        "declaresMpp": True,
+        "datasetFiltered": True,
+        "outside": ["SURGEN/SR386.tiff"],
+        "outsideCount": 1,
+        "outsideExamples": ["SURGEN/SR386.tiff"],
+        "unlisted": ["SL-2"],
+        "unlistedCount": 1,
+        "unlistedExamples": ["SL-2"],
+    }
+    job = submit(service, selected)
+    # TRIDENT names outputs from the file stem and reads wsi paths relative to --wsi_dir.
+    assert (service.folder / job["id"] / "slides.csv").read_text().splitlines() == [
+        "wsi,mpp",
+        "rih/SL-1.svs,0.5016",
+        "TCGA/TCGA-A6.svs,0.252",
+    ]
+    assert job["command"][0] == str(root)
+
+
+def test_a_dataset_alone_is_a_slide_source_and_reports_itself_as_one(cohort_extraction):
+    """With no list and no folder the dataset's own linked files are the selection."""
+    service, spec, _root = cohort_extraction
+    preview = service.preview(spec)
+    assert preview["canRun"], preview["findings"]
+    assert preview["slideCount"] == 3
+    assert preview["slideList"]["source"] == "dataset"
+    assert preview["slideList"]["initialCount"] == 3
+    assert preview["slideList"]["declaresMpp"] is False
+    assert preview["slideList"]["datasetFiltered"] is False
+
+
+def test_a_slide_folder_extracts_without_any_dataset(cohort_extraction):
+    """Encoding depends on slide files; a dataset only narrows what was already selected."""
+    service, spec, root = cohort_extraction
+    folder = spec.model_copy(update={"datasetId": None, "slideRoot": str(root)})
+    preview = service.preview(folder)
+    assert preview["canRun"], preview["findings"]
+    # Every slide under the root, including the one no dataset version claims.
+    assert preview["slideCount"] == 4
+    assert preview["slideList"]["source"] == "folder"
+    assert preview["slideList"]["datasetFiltered"] is False
+    job = submit(service, folder)
+    assert (service.folder / job["id"] / "slides.csv").read_text().splitlines() == [
+        "wsi",
+        "rih/SL-1.svs",
+        "rih/SL-2.svs",
+        "SURGEN/SR386.tiff",
+        "TCGA/TCGA-A6.svs",
+    ]
+
+
+def test_the_same_folder_narrowed_by_a_dataset_selects_only_its_slides(cohort_extraction):
+    service, spec, root = cohort_extraction
+    both = spec.model_copy(update={"slideRoot": str(root)})
+    preview = service.preview(both)
+    assert preview["slideCount"] == 3
+    assert preview["slideList"]["initialCount"] == 4
+    assert preview["slideList"]["datasetFiltered"] is True
+    assert preview["slideList"]["outsideExamples"] == ["SURGEN/SR386.tiff"]
+
+
+def test_extraction_rejects_selected_physical_slide_aliases(cohort_extraction):
+    service, spec, root = cohort_extraction
+    alias = root / "copied-identity.svs"
+    alias.hardlink_to(root / "rih" / "SL-1.svs")
+    independent = spec.model_copy(update={"datasetId": None, "slideRoot": str(root)})
+    reviewed = service.preview(independent)
+    assert not reviewed["canRun"]
+    assert any(row["code"] == "DUPLICATE_SLIDE_ALIAS" for row in reviewed["findings"])
+    with pytest.raises(StorageError, match="preflight"):
+        service.submit(independent, reviewed["previewHash"], "duplicate-source")
+    assert service.executor.launches == []
+    # A dataset restriction excludes the alias, so it still selects a valid source.
+    selected = service.preview(spec.model_copy(update={"slideRoot": str(root)}))
+    assert selected["canRun"], selected["findings"]
+    assert selected["slideCount"] == 3
+
+
+def test_a_slide_list_needs_the_folder_its_paths_are_relative_to(cohort_extraction):
+    service, spec, _root = cohort_extraction
+    listing = service.store.folder / "list.csv"
+    listing.write_text("wsi\nrih/SL-1.svs\n")
+    with pytest.raises(StorageError) as error:
+        service.preview(
+            spec.model_copy(
+                update={
+                    "datasetId": None,
+                    "options": {"task": "seg", "custom_list_of_wsis": str(listing)},
+                }
+            )
+        )
+    assert error.value.code == "SLIDE_ROOT_REQUIRED"
+
+
+def test_changing_a_declared_mpp_cannot_reuse_an_existing_output(cohort_extraction):
+    service, spec, _root = cohort_extraction
+    manifest = service.store.folder / "list.csv"
+    manifest.write_text("wsi,mpp\nrih/SL-1.svs,0.5016\n")
+    selected = spec.model_copy(
+        update={"options": {"task": "seg", "custom_list_of_wsis": str(manifest)}}
+    )
+    submit(service, selected)
+    manifest.write_text("wsi,mpp\nrih/SL-1.svs,0.25\n")
+    preview = service.preview(selected)
+    assert not preview["canRun"]
+    assert any(item["code"] == "OUTPUT_CONFIG_CHANGED" for item in preview["findings"])
+
+
+def test_a_partly_declared_mpp_column_never_reaches_trident(cohort_extraction):
+    service, spec, _root = cohort_extraction
+    manifest = service.store.folder / "list.csv"
+    manifest.write_text("wsi,mpp\nrih/SL-1.svs,0.5016\nTCGA/TCGA-A6.svs,\n")
+    selected = spec.model_copy(
+        update={"options": {"task": "seg", "custom_list_of_wsis": str(manifest)}}
+    )
+    with pytest.raises(StorageError) as error:
+        service.preview(selected)
+    assert error.value.code == "INVALID_SLIDE_LIST"
 
 
 def test_result_polling_reads_saved_validation_without_reopening_artifacts(extraction, monkeypatch):
@@ -529,3 +719,108 @@ def test_generated_project_features_attach_without_external_data_root(tmp_path):
             base + "/features/preview", json={**spec, "path": str(settings.workspace)}
         )
         assert rejected.status_code == 403
+
+
+def test_uploaded_slide_list_extracts_without_dataset_and_preserves_mpp(cohort_extraction):
+    import base64
+
+    service, original, root = cohort_extraction
+    content = b"wsi,mpp\nrih/SL-1.svs,0.5016\nSURGEN/SR386.tiff,0.25\n"
+    spec = ExtractionSpec(
+        slideRoot=str(root),
+        slideList={
+            "filename": "selection.csv",
+            "contentBase64": base64.b64encode(content).decode(),
+        },
+        outputPath=original.outputPath,
+        options={"task": "seg"},
+    )
+    preview = service.preview(spec)
+    assert preview["canRun"], preview["findings"]
+    assert preview["slideCount"] == 2
+    assert preview["spec"]["datasetId"] is None
+    assert preview["spec"]["slideList"] == spec.slideList.model_dump()
+    assert preview["slideList"]["filename"] == "selection.csv"
+    assert preview["slideList"]["datasetFiltered"] is False
+    # The normalized API preview must round-trip and produce an identical run request.
+    reviewed_spec = ExtractionSpec.model_validate(preview["spec"])
+    job = service.submit(reviewed_spec, preview["previewHash"], "uploaded-selection")
+    assert (service.folder / job["id"] / "slides.csv").read_bytes() == content.replace(
+        b"\n", b"\r\n"
+    )
+
+
+def test_uploaded_slide_list_can_be_narrowed_by_a_dataset(cohort_extraction):
+    import base64
+
+    service, original, root = cohort_extraction
+    spec = ExtractionSpec(
+        datasetId=original.datasetId,
+        slideRoot=str(root),
+        slideList={
+            "filename": "selection.csv",
+            "contentBase64": base64.b64encode(b"wsi\nrih/SL-1.svs\nSURGEN/SR386.tiff\n").decode(),
+        },
+        outputPath=original.outputPath,
+        options={"task": "seg"},
+    )
+    preview = service.preview(spec)
+    assert preview["canRun"]
+    assert preview["slideCount"] == 1
+    assert preview["slideList"]["outsideCount"] == 1
+    assert preview["slideList"]["datasetFiltered"] is True
+
+
+def test_uploaded_slide_list_rejects_invalid_encoding_and_conflicting_sources(cohort_extraction):
+    from pydantic import ValidationError
+
+    service, original, root = cohort_extraction
+    spec = ExtractionSpec(
+        slideRoot=str(root),
+        slideList={"filename": "selection.csv", "contentBase64": "not-base64!"},
+        outputPath=original.outputPath,
+        options={"task": "seg"},
+    )
+    with pytest.raises(StorageError, match="not valid base64"):
+        service.preview(spec)
+    with pytest.raises(ValidationError, match="Choose one slide list"):
+        ExtractionSpec.model_validate(
+            {**spec.model_dump(), "options": {"custom_list_of_wsis": "/another.csv"}}
+        )
+
+
+def test_legacy_extraction_preview_and_retry_keep_their_hashes(extraction):
+    from histopilot.application.extractions import _hash
+
+    service, spec, executor, _slides = extraction
+    legacy_spec = {
+        "datasetId": spec.datasetId,
+        "slideRoot": None,
+        "recursive": True,
+        "outputPath": spec.outputPath,
+        "options": {"task": "seg"},
+    }
+    request = ExtractionSpec.model_validate({**legacy_spec, "slideList": None})
+    assert request.model_dump(mode="json") == legacy_spec
+    assert json.loads(request.model_dump_json()) == legacy_spec
+    preview, slides = service._prepare(request)
+    assert "slideList" not in preview["spec"]
+    legacy_preview_hash = _hash(
+        {
+            **{key: value for key, value in preview.items() if key != "previewHash"},
+            "spec": {key: value for key, value in preview["spec"].items() if key != "slideList"},
+            "slides": slides,
+        }
+    )
+    assert preview["previewHash"] == legacy_preview_hash
+    job = service.submit(request, legacy_preview_hash, "legacy-extraction-submit")
+    path = service.folder / job["id"] / "job.json"
+    recorded = json.loads(path.read_text())
+    assert recorded["requestHash"] == _hash(legacy_spec)
+    # Replay persisted old metadata rather than relying on this version's serializer.
+    recorded["requestHash"] = _hash(legacy_spec)
+    recorded["spec"].pop("slideList", None)
+    _write(path, recorded)
+    replay = service.submit(request, legacy_preview_hash, "legacy-extraction-submit")
+    assert replay["id"] == job["id"]
+    assert len(executor.launches) == 1

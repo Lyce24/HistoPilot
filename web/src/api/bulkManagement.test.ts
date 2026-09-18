@@ -100,3 +100,17 @@ describe('reviewed bulk predictor and evaluation API contracts', () => {
     expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[2][1].body);
   });
 });
+
+describe('evaluation batch polling', () => {
+  it('refreshes quickly only while a batch or one of its items is still running', async () => {
+    const { bulkEvaluationActive, bulkEvaluationPollInterval } = await import('./bulkEvaluations');
+    const batch = (status: string, itemStatus: string) => ({ id: 'batch', status, cohortId: 'cohort', items: [{ predictorId: 'p', status: itemStatus }] });
+    expect(bulkEvaluationPollInterval(undefined)).toBe(30000);
+    expect(bulkEvaluationPollInterval({ items: [] })).toBe(30000);
+    expect(bulkEvaluationActive(batch('completed', 'completed'))).toBe(false);
+    expect(bulkEvaluationPollInterval({ items: [batch('completed', 'completed')] })).toBe(30000);
+    expect(bulkEvaluationPollInterval({ items: [batch('running', 'completed')] })).toBe(5000);
+    expect(bulkEvaluationPollInterval({ items: [batch('completed', 'queued')] })).toBe(5000);
+    expect(bulkEvaluationPollInterval({ items: [batch('cancelling', 'completed')] })).toBe(5000);
+  });
+});

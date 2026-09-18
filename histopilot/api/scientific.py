@@ -10,7 +10,11 @@ from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.features import FeatureService
 from histopilot.application.imports import ImportService
 from histopilot.application.project_workspace import ProjectWorkspace
-from histopilot.application.protocols import ProtocolService, pack_binding_snapshot
+from histopilot.application.protocols import (
+    ProtocolService,
+    pack_binding_snapshot,
+    protocol_bundle_findings,
+)
 from histopilot.schemas.extractions import ExtractionSpec, SubmitExtractionRequest
 from histopilot.schemas.feature_bundles import FeatureBundleSpec, FreezeFeatureBundleRequest
 from histopilot.schemas.feature_packs import (
@@ -261,15 +265,18 @@ def scientific_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -
         store.get_dataset(protocol["datasetId"])
         feature_id = protocol["spec"].get("featureSetId")
         findings = []
+        bundle_id = protocol["spec"].get("featureBundleId")
+        if bundle_id:
+            bundle = bundles(identity).get(bundle_id)
+            findings.extend(bundle["findings"])
+            findings.extend(protocol_bundle_findings(protocol, bundle))
+            feature_id = bundle["manifest"]["spec"]["featureSetId"]
         if feature_id:
             feature = store.get_configuration(feature_id)
-            if (
-                feature["manifest"].get("kind") != "feature"
-                or feature["manifest"].get("datasetId") != protocol["datasetId"]
-            ):
+            if feature["manifest"].get("kind") != "feature":
                 raise StorageError(
-                    "The feature binding belongs to a different dataset.",
-                    "FEATURE_DATASET_MISMATCH",
+                    "The feature binding is not a feature inventory.",
+                    "INVALID_FEATURE_SET",
                     422,
                 )
             eligible = {row["slideId"] for row in protocol["memberships"]}
@@ -364,6 +371,7 @@ def scientific_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -
             )
         return {
             "protocolId": configuration_id,
+            "featureBundleId": bundle_id,
             "featurePackId": pack_id,
             "featureSource": {"type": "pack", **protocol.get("featurePack", {})}
             if pack_id

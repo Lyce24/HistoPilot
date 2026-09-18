@@ -157,28 +157,48 @@ export function Panel({
     </section>
   );
 }
-export function EmptyState({ title, description }: { title: string; description: string }) {
+/**
+ * One empty state everywhere: what is missing, why, and the action that fills it.
+ * `action` belongs here rather than only in the page header, so the next step is
+ * where the reader is already looking.
+ */
+export function EmptyState({ title, description, icon = 'folder', action }: {
+  title: string;
+  description: string;
+  icon?: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="empty-state">
-      <Icon name="folder" size={28} />
+      <span className="empty-state-icon" aria-hidden="true"><Icon name={icon} size={22} /></span>
       <h3>{title}</h3>
       <p>{description}</p>
+      {action ? <div className="empty-state-action">{action}</div> : null}
     </div>
   );
 }
+/**
+ * A metric card presents one measurement. A value carrying no digits is a state
+ * ("Sampled from training", "Unavailable"), not a measurement, so it is set as
+ * readable text rather than in the numeric display size. Pass `variant` to
+ * override the inference.
+ */
 export function Metric({
   label,
   value,
   note,
+  variant,
 }: {
   label: string;
   value: ReactNode;
   note?: ReactNode;
+  variant?: 'value' | 'text';
 }) {
+  const kind = variant ?? (typeof value === 'string' && !/\d/.test(value) ? 'text' : 'value');
   return (
     <article className="card metric-card">
       <div className="metric-label">{label}</div>
-      <div className="metric-value">{value}</div>
+      <div className={`metric-value${kind === 'text' ? ' metric-value-text' : ''}`}>{value}</div>
       <div className="metric-note">{note}</div>
     </article>
   );

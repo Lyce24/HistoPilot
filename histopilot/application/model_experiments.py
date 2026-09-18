@@ -51,6 +51,25 @@ def presented_batch_plans(payload):
     ]
 
 
+def matching_published_batch(publication, batches):
+    """Reuse exact reviewed contents already pinned by this submission.
+
+    An older planning workflow may have frozen a batch while retaining its
+    editable recipe. Its tag is metadata and must not trigger a second freeze.
+    Verify the complete preview digest as well as the saved specification.
+    """
+    for batch in batches:
+        manifest = batch["manifest"]
+        if (
+            manifest.get("spec") == publication["spec"]
+            and manifest.get("previewHash") == publication["previewHash"]
+            and _hash({key: value for key, value in manifest.items() if key != "previewHash"})
+            == publication["previewHash"]
+        ):
+            return batch
+    return None
+
+
 def input_snapshot(store, inputs, *, include_inactive=False):
     """Small exact specifications and immutable hashes, never feature tensors."""
     values = inputs.model_dump() if isinstance(inputs, MILInputSpec) else inputs
@@ -60,12 +79,11 @@ def input_snapshot(store, inputs, *, include_inactive=False):
         raise StorageError("Choose a target and split protocol.", "INVALID_PROTOCOL", 422)
     if bundle["manifest"].get("kind") != "feature-bundle":
         raise StorageError("Choose a frozen feature bundle.", "INVALID_FEATURE_BUNDLE", 422)
-    if protocol["manifest"]["datasetId"] != bundle["manifest"]["datasetId"]:
-        raise StorageError(
-            "The protocol and features belong to different dataset versions.",
-            "BUNDLE_DATASET_MISMATCH",
-            422,
-        )
+    from histopilot.application.protocols import protocol_bundle_findings
+
+    findings = protocol_bundle_findings(protocol["manifest"], bundle)
+    if findings:
+        raise StorageError(findings[0]["message"], findings[0]["code"], 422)
     dataset = store.get_dataset(
         protocol["manifest"]["datasetId"], include_inactive=include_inactive
     )
@@ -121,6 +139,7 @@ def experiment_stage(batches, submission=None, *, legacy=False):
     stage_batches = [row for row in batches if row["id"] in expected] if submission else batches
     finished = (
         bool(stage_batches)
+        and (not submission or submission.get("status") == "submitted")
         and complete_intent
         and expected <= actual
         and all(row["status"] in {"completed", "cancelled"} for row in stage_batches)
@@ -494,9 +513,10 @@ class ModelExperimentService:
                     predictor_policy=record["payload"].get("predictorPolicy"),
                 )
                 states = self.store.lifecycle.read()["records"]
+                owned_batches = self._owned_batches(identity)
                 batches = [
                     batch
-                    for batch in self._owned_batches(identity)
+                    for batch in owned_batches
                     if states.get(f"configuration:{batch['id']}", {}).get("state", "active")
                     == "active"
                 ]
@@ -538,6 +558,18 @@ class ModelExperimentService:
                         for key, value in preview.items()
                         if key not in {"canFreeze", "findings"}
                     }
+                    for existing in owned_batches:
+                        existing_state = states.get(f"configuration:{existing['id']}", {}).get(
+                            "state", "active"
+                        )
+                        if existing_state != "active" and existing["manifest"] == manifest:
+                            raise StorageError(
+                                f"Batch '{spec.batchName}' already exists in the {existing_state} "
+                                "state with these exact settings. Restore that batch to Active "
+                                "or change this plan before submitting the experiment.",
+                                "EXPERIMENT_BATCH_INACTIVE",
+                                409,
+                            )
                     _plan, freshness = self.training._prepare(
                         {
                             "id": "submission-preflight",
@@ -603,21 +635,26 @@ class ModelExperimentService:
                 self._save_submission(identity, submission)
             try:
                 development = DevelopmentService(self.store, self.filesystem)
+                pinned_batches = [
+                    self.store.get_configuration(batch_id) for batch_id in submission["batchIds"]
+                ]
                 for publication in submission["publications"]:
                     if publication["batchId"]:
                         continue
-                    frozen = development._freeze(
-                        DevelopmentBatchSpec.model_validate(
-                            publication["spec"], context={"legacy": True}
-                        ),
-                        publication["previewHash"],
-                        publication["operationId"],
-                        {
-                            "tag": "Batch " + publication["operationId"][-12:],
-                            "note": "Submitted with " + submission["experiment"]["name"],
-                        },
-                        experiment_record=submission["experiment"],
-                    )
+                    frozen = matching_published_batch(publication, pinned_batches)
+                    if frozen is None:
+                        frozen = development._freeze(
+                            DevelopmentBatchSpec.model_validate(
+                                publication["spec"], context={"legacy": True}
+                            ),
+                            publication["previewHash"],
+                            publication["operationId"],
+                            {
+                                "tag": "Batch " + publication["operationId"][-12:],
+                                "note": "Submitted with " + submission["experiment"]["name"],
+                            },
+                            experiment_record=submission["experiment"],
+                        )
                     publication["batchId"] = frozen["id"]
                     if frozen["id"] not in submission["batchIds"]:
                         submission["batchIds"].append(frozen["id"])
@@ -833,11 +870,22 @@ class ModelExperimentService:
             }:
                 stage = "running"
         status_rows = batches
+        if submission and submission.get("status") != "submitted":
+            # A completed batch cannot hide an unresolved submission receipt.
+            # Keep acknowledgement recovery visible even if all runs finished
+            # while the final launch response was being lost.
+            status_rows = [
+                *status_rows,
+                {
+                    "state": "active",
+                    "status": "failed" if submission.get("status") == "attention" else "queued",
+                },
+            ]
         if predictor_execution:
             predictor_status = {"waiting": "queued", "attention": "failed"}.get(
                 predictor_execution["status"], predictor_execution["status"]
             )
-            status_rows = [*batches, {"state": "active", "status": predictor_status}]
+            status_rows = [*status_rows, {"state": "active", "status": predictor_status}]
         public_submission = (
             None
             if not submission

@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import type { ProtocolExploration } from '../api/scientific';
 import type { EvaluationPreview } from '../api/evaluation';
-import LocalEvaluationSetup, { EvaluationEvidence, EvaluationInferenceFields, EvaluationTargetMapping, evaluationConditionValue, evaluationLabelProblem, newEvaluationSpec, TestCohortSummary, cohortDatasetIds, mergeTestDistributions, independentCohortSpec } from './LocalEvaluationSetup';
+import LocalEvaluationSetup, { EvaluationEvidence, EvaluationInferenceFields, EvaluationTargetMapping, evaluationConditionValue, evaluationLabelProblem, newEvaluationSpec, TestCohortSummary, cohortDatasetIds, mergeTestDistributions, independentCohortSpec, cohortIdentityNote } from './LocalEvaluationSetup';
 
 const preview: EvaluationPreview = {
   spec: newEvaluationSpec(),
@@ -32,7 +32,9 @@ describe('later test cohort setup', () => {
     expect(current).not.toContain('value="max"');
     const legacy = renderToStaticMarkup(<EvaluationInferenceFields value={{ ...newEvaluationSpec().inference, patientAggregation: 'max' }} target={preview.target!} onChange={() => {}} />);
     expect(legacy).toMatch(/<option value="max" disabled="" selected="">Maximum probabilities · unsupported; choose mean/);
-    expect(legacy).toContain('match the patient aggregation used by frozen predictors');
+    expect(legacy).toContain('Match the patient scoring rule saved with the predictor');
+    expect(legacy).toContain('value="mean_logits"');
+    expect(legacy).toContain('value="predictor"');
   });
 
   it('starts with only a cohort registry and create action, without development prerequisites', () => {
@@ -70,12 +72,35 @@ describe('later test cohort setup', () => {
     const html = renderToStaticMarkup(<TestCohortSummary preview={{ ...preview, findings: [] }} />);
     expect(html).toContain('Selected test slides');
     expect(html).toContain('Prediction target · selected test slides by class');
-    expect(html).toContain('Patient groups');
+    expect(html).toContain('Patient / slide groups');
     expect(html).toContain('Excluded slides');
     expect(html).toContain('test-1');
     expect(html).not.toContain('Exact feature coverage');
     expect(html).not.toContain('Overlap with development');
     expect(html).not.toContain('Missing pack slide IDs');
+  });
+
+  it('counts supplied patient IDs separately from acknowledged slide groups using frozen provenance', () => {
+    const memberships: NonNullable<EvaluationPreview['memberships']> = [
+      { slideId: 's1', patientId: 'p1', patientIdSource: 'source' },
+      { slideId: 's2', patientId: 'p1', patientIdSource: 'crosswalk' },
+      { slideId: 's3', patientId: 's3', patientIdSource: 'slide_fallback' },
+      { slideId: 's4', patientId: 'legacy-id' },
+      { slideId: 's5', patientId: null, patientIdSource: 'unresolved' },
+    ];
+    const value = { ...preview, memberships, findings: [] };
+    const html = renderToStaticMarkup(<TestCohortSummary preview={value} />);
+    expect(html).toContain('1 supplied patient IDs · 1 acknowledged slide / case groups · 2 slides with unresolved or unrecorded patient-ID provenance');
+    expect(html).not.toContain('Verified patients');
+    expect(renderToStaticMarkup(<EvaluationEvidence preview={value} />)).toContain('1 supplied patient IDs');
+  });
+
+  it('never calls fallback or legacy grouping IDs verified patients or infers counts from warning prose', () => {
+    const findings = [{ code: 'SLIDE_ID_FALLBACK_GROUPING', severity: 'warning' as const, message: '76 slides use fallback.' }];
+    expect(cohortIdentityNote({ findings })).toBe('Includes acknowledged slide / case groups. Patient independence is unverified.');
+    expect(cohortIdentityNote({ findings: [] })).toContain('provenance counts are unavailable');
+    const memberships = [{ slideId: 's1', patientId: 's1', patientIdSource: 'slide_fallback' as const }];
+    expect(cohortIdentityNote({ findings, memberships })).toBe('0 supplied patient IDs · 1 acknowledged slide / case groups');
   });
 
   it('preserves single-dataset drafts and combines multi-dataset distributions with truncation evidence', () => {

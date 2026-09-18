@@ -7,6 +7,7 @@ from pathlib import Path
 
 import h5py
 import pytest
+from test_worker_process_ownership import isolated_worker_tree as _worker_tree
 
 from histopilot.application.training import TrainingService, membership_plan_id
 from histopilot.schemas.development import DevelopmentBatchSpec
@@ -16,6 +17,7 @@ from histopilot.workers.train_batch import _run_plan, available_device, collect_
 from histopilot.workers.training_process import process_identity, read_json, save_state
 
 support = runpy.run_path(str(Path(__file__).with_name("test_development_batches.py")))
+isolated_worker_tree = _worker_tree
 
 
 class FakeExecutor:
@@ -274,6 +276,73 @@ def test_orphan_cancellation_signals_only_verified_child_identity(execution, mon
     assert signals[0][0] == child["pid"]
     service.cancel(frozen["id"], "cancel-orphan")
     assert len(signals) == 1
+
+
+@pytest.mark.parametrize("saved_status", ["running", "failed", "completed"])
+def test_orphan_loader_blocks_resume_and_accepts_cancellation(
+    execution,
+    isolated_worker_tree,
+    saved_status,
+):
+    from histopilot.workers.training_process import confirmed_process_alive
+
+    service, frozen, executor, _ = execution
+    state = service.launch(frozen["id"], "first")
+    leader, identity, child = isolated_worker_tree()
+    leader.kill()
+    leader.wait(timeout=5)
+    state.update(status=saved_status)
+    state["runs"][0].update(status=saved_status, process=identity)
+    save_state(Path(state["outputPath"]), state)
+    executor.sessions.clear()
+    assert service.execution(frozen["id"])["status"] == "running"
+    with pytest.raises(StorageError) as error:
+        service.launch(frozen["id"], "resume-orphan", resume=True)
+    assert error.value.code == "TRAINING_ACTIVE"
+    cancelled = service.cancel(frozen["id"], "cancel-orphan")
+    assert cancelled["cancelRequested"]
+    assert not confirmed_process_alive(child)
+    assert len(executor.launches) == 1
+
+
+def test_orphan_cleanup_failure_does_not_skip_later_workers(execution, monkeypatch):
+    import signal
+
+    service, frozen, executor, _ = execution
+    state = service.launch(frozen["id"], "first")
+    children = [
+        {"pid": 2147483000 + index, "startTicks": 123, "bootId": "fixture-boot"}
+        for index in range(2)
+    ]
+    state.update(status="failed")
+    for run, process in zip(state["runs"], children):
+        run.update(status="failed", process=process)
+    save_state(Path(state["outputPath"]), state)
+    executor.sessions.clear()
+    monkeypatch.setattr(
+        "histopilot.application.training.process_alive", lambda value: value in children
+    )
+    events = []
+    monkeypatch.setattr(
+        "histopilot.application.training.os.killpg",
+        lambda pid, signum: events.append(("signal", pid, signum)),
+    )
+
+    def stop(process):
+        events.append(("drain", process["pid"]))
+        if process == children[0]:
+            raise StorageError("Injected unkillable process", "TRAINING_CLEANUP_FAILED")
+
+    monkeypatch.setattr("histopilot.application.training.stop_owned_processes", stop)
+    with pytest.raises(StorageError, match="every orphan worker"):
+        service.cancel(frozen["id"], "cancel-orphans")
+    assert events == [
+        ("signal", children[0]["pid"], signal.SIGTERM),
+        ("signal", children[1]["pid"], signal.SIGTERM),
+        ("drain", children[0]["pid"]),
+        ("drain", children[1]["pid"]),
+    ]
+    assert (Path(state["outputPath"]) / "cancel.json").exists()
 
 
 @pytest.mark.parametrize(
