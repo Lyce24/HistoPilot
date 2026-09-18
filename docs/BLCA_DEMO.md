@@ -16,6 +16,43 @@ These are aggregate reference counts. Synthetic rows are created to match them; 
 
 Patient identity is unverified in the reference workflow: its slide/case identifier is not evidence of a patient identifier. The demo therefore uses **slide fallback groups** and slide-level evaluation. Its 138 slide records must not be described as 138 independent patients, and the grouping does not establish patient-disjoint development and test populations.
 
+## Visual tour
+
+**Current interface · Synthetic BLCA example.** These screenshots use the current React interface and packaged demo. Records, scores, learning curves and resource histories are illustrative; they contain no real clinical rows or slide pixels. Click an image to open the full-size capture.
+
+| Project overview | Dataset review |
+| :---: | :---: |
+| [![HistoPilot project overview with the synthetic BLCA cohort and workflow navigation](assets/blca/overview.png)](assets/blca/overview.png) | [![BLCA dataset review showing synthetic development and test cohort counts](assets/blca/dataset.png)](assets/blca/dataset.png) |
+| Follow the project from preparation through evaluation. | Review source records, grade fields and cohort structure. |
+
+| Targets and development membership | Feature validation |
+| :---: | :---: |
+| [![BLCA target definition separating WHO 2022 labels from development eligibility](assets/blca/targets.png)](assets/blca/targets.png) | [![UNI feature validation with coverage, dimensions and synthetic bundle evidence](assets/blca/features.png)](assets/blca/features.png) |
+| Check the development population and positive class. | Inspect feature coverage and bundle validation. |
+
+| Training evidence | Resources and predictors |
+| :---: | :---: |
+| [![Selected BLCA fold run with synthetic training and validation loss curves](assets/blca/training.png)](assets/blca/training.png) | [![Synthetic BLCA resource history and fold ensemble and P75 refit outputs](assets/blca/predictors.png)](assets/blca/predictors.png) |
+| Inspect epochs, losses and checkpoint evidence. | Follow resource history and ensemble/refit creation. |
+
+| Test-cohort evaluation | Clinical utility |
+| :---: | :---: |
+| [![Synthetic BLCA ROC curve, classification metrics and confusion matrix](assets/blca/evaluation.png)](assets/blca/evaluation.png) | [![Synthetic BLCA decision curve showing net benefit across operating thresholds](assets/blca/clinical-utility.png)](assets/blca/clinical-utility.png) |
+| Review discrimination and false-positive/false-negative counts. | Explore threshold-dependent net benefit. |
+
+<details>
+<summary><strong>Reproduce the screenshots</strong></summary>
+
+From the repository root, with frontend dependencies and a Playwright Chromium headless shell installed:
+
+```bash
+node web/scripts/verify-blca-demo.mjs --readme
+```
+
+The [capture script](../web/scripts/verify-blca-demo.mjs) builds an offline fixture from the current React source, verifies the BLCA walkthrough on desktop and mobile, then refreshes [the screenshot gallery](assets/blca/). It starts no HistoPilot server and reads no research project. Set `HISTOPILOT_CHROMIUM` to use a different Chromium executable. [Capture metadata](assets/blca/captures.json) records the source, routes and captured regions.
+
+</details>
+
 ## Walk through the pipeline
 
 Each module opens a Stage 0 record library. Search or filter the examples, open a record, then use Back and Next to review one step at a time. The demo is read-only: it explains completed work without creating projects, changing records or launching compute jobs.
@@ -49,7 +86,7 @@ Development OOF predictions assess held-out development folds. They can support 
 
 The distributed demo includes generated metadata and illustrative numerical results. It excludes real clinical rows, patient/case/slide identifiers, source filesystem paths, whole-slide images, image crops, extracted embeddings, model weights, trained checkpoints and real run logs. Artifact references describe the example and do not provide access to local research files.
 
-Model interpretation is an explanatory view only. There are no patient slide pixels or computed model-attention maps in this demo. Actual interpretation in a local project uses compatible slides, validated feature coordinates and verified ABMIL predictors.
+Model interpretation is an explanatory view only. There are no patient slide pixels or computed model-attention maps in this demo. Actual interpretation in a local project uses compatible slides, validated feature coordinates and verified ABMIL or nnMIL predictors.
 
 The BLCA view does not expose record mutation, training, filesystem browsing or local system controls. Available exports contain synthetic records and remain labeled as examples. Opening it does not import, modify or publish the reference Bladder project. Earlier CRC demo links using `synthetic-v1` remain compatible; **Open BLCA demo** is the default example entry point.
 
@@ -85,7 +122,7 @@ uv run python scripts/bundle_web.py
 Then start the service manually:
 
 ```bash
-uv run histopilot serve --no-browser
+bash serve.sh
 ```
 
 Open `http://127.0.0.1:8787` and choose **Open BLCA demo**. No research-data roots, downloaded weights, training environment or GPU are required. Build and verification commands do not start or restart the server. See [deployment](deployment.md) for Vite development, custom ports, packaging and SSH forwarding.

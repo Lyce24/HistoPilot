@@ -72,7 +72,10 @@ def recovery(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "_training_stopped", lambda *args: True)
     monkeypatch.setattr(helper, "_predictor_stopped", lambda *args: True)
     monkeypatch.setattr(helper, "_open_pidfd", lambda _: helper.os.open("/dev/null", helper.os.O_RDONLY))
-    monkeypatch.setattr(helper.signal, "pidfd_send_signal", lambda fd, sig, info, flags: signals.append((fd, sig)))
+    # Standalone Python builds may omit this optional Linux API. These tests
+    # mock the process boundary and must never depend on real signal delivery.
+    monkeypatch.setattr(helper.signal, "pidfd_send_signal",
+                        lambda fd, sig, info, flags: signals.append((fd, sig)), raising=False)
     return study, training, work, folder, calls, signals
 
 

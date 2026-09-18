@@ -16,10 +16,20 @@ uv run python scripts/bundle_web.py
 Then start the server yourself in a normal terminal:
 
 ```bash
-uv run histopilot serve --no-browser
+bash serve.sh
 ```
 
 Open `http://127.0.0.1:8787`. Choose **Open BLCA demo** for the bundled synthetic walkthrough, or create/load your own project. The demo requires no source data, model weights, training environment or GPU. Its direct link is `http://127.0.0.1:8787/?project=blca-demo-v1#overview`; see [BLCA demo](BLCA_DEMO.md).
+
+The repository's [`serve.sh`](../serve.sh) checks for `uv`, a prepared Python environment and the built frontend, then runs the service in the foreground. It neither installs dependencies nor builds assets. Missing prerequisites produce setup instructions. `bash serve.sh --help` works before setup and does not start a server.
+
+Pass normal service options through the launcher:
+
+```bash
+bash serve.sh --data-root /path/to/research-data --port 8788
+```
+
+From another directory, use `bash /path/to/HistoPilot/serve.sh`. Relative option paths resolve from the repository root. The launcher defaults to `--no-browser`; pass `--browser` to open the URL automatically. It honors `UV_PROJECT_ENVIRONMENT` and uses the existing environment without syncing or downloading. The direct command `uv run histopilot serve --no-browser` remains available.
 
 Server startup and restart are manual. Builds and verification do not launch or restart HistoPilot, and the server is not hosted in tmux. After updating source, rebuild and bundle the frontend, then stop the existing service in its terminal and start it again when ready. Refresh the browser afterward. Avoid starting a second service against the same workspace.
 
@@ -28,7 +38,7 @@ Server startup and restart are manual. Builds and verification do not launch or 
 For hot reload, use the same installed dependencies and start the backend in Terminal A:
 
 ```bash
-uv run histopilot serve --dev --no-browser
+bash serve.sh --dev
 ```
 
 Terminal B:

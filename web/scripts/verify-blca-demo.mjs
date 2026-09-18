@@ -1,7 +1,7 @@
-/** Verify the full BLCA demo in Chromium with the packaged synthetic workspace; starts no server. */
+/** Verify the full BLCA demo without a server. Add --readme to refresh documentation screenshots. */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -41,8 +41,12 @@ const dist=join(output,'dist');
 const css=(await readdir(dist)).filter(name=>name.endsWith('.css'));
 await writeFile(join(dist,'index.html'),'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'+css.map(name=>'<link rel="stylesheet" href="'+name+'">').join('')+'</head><body><div id="app"></div><script src="fixture.js"></script></body></html>');
 const cache = join(homedir(), '.cache/ms-playwright');
-const candidate = (await readdir(cache)).filter((name) => name.startsWith('chromium_headless_shell-')).sort().at(-1);
-const executable = process.env.HISTOPILOT_CHROMIUM ?? join(cache, candidate ?? '', 'chrome-headless-shell-linux64/chrome-headless-shell');
+let executable = process.env.HISTOPILOT_CHROMIUM;
+if (!executable) {
+  const candidate = (await readdir(cache).catch(() => [])).filter((name) => name.startsWith('chromium_headless_shell-')).sort().at(-1);
+  if (!candidate) throw new Error('Install a Playwright Chromium headless shell or set HISTOPILOT_CHROMIUM to a Chromium executable.');
+  executable = join(cache, candidate, 'chrome-headless-shell-linux64/chrome-headless-shell');
+}
 const browser = spawn(executable, ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--remote-debugging-pipe', '--user-data-dir=' + join(output, 'browser-profile')],
   { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
 let stderr = '';
@@ -201,6 +205,57 @@ try {
   assert.equal(JSON.stringify(exported).includes('/home/'),false);
   assert.deepEqual(await evaluate('window.demoVerification.errors'),[]);
   assert.deepEqual(exceptions,[]);
+  if (process.argv.includes('--readme')) {
+    const assets = join(web, '../docs/assets/blca');
+    await mkdir(assets, { recursive: true });
+    // Keep the content width stable when capturing regions beyond the viewport.
+    await cdp('Emulation.setScrollbarsHidden', { hidden: true });
+    const captures = [];
+    async function captureReadme(name, selector, overview = false) {
+      await waitFor(`document.querySelector(${JSON.stringify(selector)})`);
+      await evaluate('document.activeElement?.blur(); window.scrollTo(0, 0); document.fonts.ready');
+      await delay(300);
+      const clip = await evaluate(`(() => {
+        const regions = [...document.querySelectorAll(${JSON.stringify(selector)})].map(element => element.getBoundingClientRect());
+        const x = Math.min(...regions.map(rect => rect.x));
+        const y = Math.min(...regions.map(rect => rect.y));
+        const right = Math.max(...regions.map(rect => rect.right));
+        const bottom = Math.max(...regions.map(rect => rect.bottom));
+        const rect = {x, y, bottom, width: right - x, height: bottom - y};
+        return ${overview ? '{x: 0, y: 0, width: document.documentElement.clientWidth, height: Math.ceil(rect.bottom + 24), scale: 1}' : '{x: Math.floor(rect.x) - 16, y: Math.floor(rect.y) - 16, width: Math.ceil(rect.width) + 32, height: Math.ceil(rect.height) + 32, scale: 1}'};
+      })()`);
+      assert.ok(clip.width > 0 && clip.height > 0, 'Visible screenshot region: ' + name);
+      const { data } = await cdp('Page.captureScreenshot', { format: 'png', clip, captureBeyondViewport: true });
+      await writeFile(join(assets, name + '.png'), Buffer.from(data, 'base64'));
+      captures.push({ file: name + '.png', route: await evaluate('location.hash'), selector, width: clip.width, height: clip.height });
+    }
+    await evaluate('location.hash = "overview"');
+    await captureReadme('overview', '.blca-demo-summary', true);
+    const tour = [
+      ['dataset', 'blca-dataset', 'Source', 'dataset', '.blca-demo-record-view'],
+      ['cohort', 'blca-protocol', 'Target', 'targets', '.blca-demo-record-view'],
+      ['features', 'blca-features', 'Validation', 'features', '.blca-demo-record-view'],
+      ['experiments', 'blca-baseline-v2', 'Runs', 'training', '.experiment-run-detail'],
+      ['experiments', 'blca-baseline-v2', 'Runs', 'predictors', '.blca-demo-resources, .blca-demo-table-section'],
+      ['evaluation', 'blca-evaluation', 'Metrics', 'evaluation', '.blca-demo-record-view'],
+      ['clinical-utility', 'blca-clinical-utility', 'Thresholds', 'clinical-utility', '.blca-demo-record-view'],
+    ];
+    for (const [module, recordId, title, name, selector] of tour) {
+      await navigate(module);
+      await click(workspace.demoPipeline.records.find(record => record.id === recordId).name);
+      await step(title);
+      if (name === 'training') await waitFor('document.querySelector(".experiment-history-charts svg")');
+      await captureReadme(name, selector);
+    }
+    assert.deepEqual(await evaluate('window.demoVerification.errors'), []);
+    assert.deepEqual(exceptions, []);
+    await writeFile(join(assets, 'captures.json'), JSON.stringify({
+      command: 'node web/scripts/verify-blca-demo.mjs --readme',
+      source: 'Current React UI with histopilot/resources/blca_demo_workspace.json',
+      synthetic: true, seed: workspace.demoPipeline.seed, serverStarted: false,
+      captures,
+    }, null, 2) + '\n');
+  }
   const result={passed:true,scope:'Full application UI + packaged deterministic synthetic workspace; no live server or project data',visited,requests:[...initialRequests,...await evaluate('window.demoVerification.calls')],output};
   await writeFile(join(output,'verification.json'),JSON.stringify(result,null,2));
   console.log(JSON.stringify(result,null,2));

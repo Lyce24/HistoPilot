@@ -119,7 +119,9 @@ def metrics(rows: list[dict], threshold: float = 0.5) -> dict:
         seen += len(group)
         hits += new_hits
         average_precision += new_hits / len(positive) * hits / seen
-    loss = -sum(
+    # Python's built-in float summation changed in 3.12. Keep the packaged
+    # synthetic fixture identical across supported interpreter versions.
+    loss = -math.fsum(
         math.log(row["probability"] if row["label"] else 1 - row["probability"]) for row in rows
     ) / len(rows)
     f1_high = 2 * tp / (2 * tp + fp + fn) if 2 * tp + fp + fn else 0
@@ -894,11 +896,11 @@ def generate_demo() -> dict:
                 [
                     f"{lower:.1f}–{lower + 0.2:.1f}",
                     len(selected),
-                    sum(row["probability"] for row in selected) / len(selected),
+                    math.fsum(row["probability"] for row in selected) / len(selected),
                     sum(row["label"] for row in selected) / len(selected),
                 ]
             )
-    brier = sum((row["probability"] - row["label"]) ** 2 for row in test_scores) / len(test_scores)
+    brier = math.fsum((row["probability"] - row["label"]) ** 2 for row in test_scores) / len(test_scores)
     records.append(
         record(
             "blca-clinical-utility",

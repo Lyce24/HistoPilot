@@ -1,0 +1,65 @@
+{
+  "command": "node web/scripts/verify-blca-demo.mjs --readme",
+  "source": "Current React UI with histopilot/resources/blca_demo_workspace.json",
+  "synthetic": true,
+  "seed": 20260912,
+  "serverStarted": false,
+  "captures": [
+    {
+      "file": "overview.png",
+      "route": "#overview",
+      "selector": ".blca-demo-summary",
+      "width": 1440,
+      "height": 655
+    },
+    {
+      "file": "dataset.png",
+      "route": "#dataset?record=blca-dataset&step=source",
+      "selector": ".blca-demo-record-view",
+      "width": 1152,
+      "height": 767
+    },
+    {
+      "file": "targets.png",
+      "route": "#cohort?record=blca-protocol&step=target",
+      "selector": ".blca-demo-record-view",
+      "width": 1152,
+      "height": 671
+    },
+    {
+      "file": "features.png",
+      "route": "#features?record=blca-features&step=validation",
+      "selector": ".blca-demo-record-view",
+      "width": 1152,
+      "height": 721
+    },
+    {
+      "file": "training.png",
+      "route": "#experiments?record=blca-baseline-v2&step=runs",
+      "selector": ".experiment-run-detail",
+      "width": 1094,
+      "height": 849
+    },
+    {
+      "file": "predictors.png",
+      "route": "#experiments?record=blca-baseline-v2&step=runs",
+      "selector": ".blca-demo-resources, .blca-demo-table-section",
+      "width": 1094,
+      "height": 719
+    },
+    {
+      "file": "evaluation.png",
+      "route": "#evaluation?record=blca-evaluation&step=metrics",
+      "selector": ".blca-demo-record-view",
+      "width": 1152,
+      "height": 1277
+    },
+    {
+      "file": "clinical-utility.png",
+      "route": "#clinical-utility?record=blca-clinical-utility&step=thresholds",
+      "selector": ".blca-demo-record-view",
+      "width": 1152,
+      "height": 1486
+    }
+  ]
+}

@@ -1,418 +1,79 @@
-# HistoPilot
+<p align="center">
+  <img src="web/public/favicon.svg" width="56" height="56" alt="HistoPilot compass" />
+</p>
 
-**Interactive PFM–MIL Workflows for Computational Pathology**
+<h1 align="center">HistoPilot</h1>
+<p align="center"><strong>From pathology slides to model evidence.</strong></p>
+<p align="center">
+  <a href="#get-started">Get started</a> ·
+  <a href="#your-first-project">Your first project</a> ·
+  <a href="docs/BLCA_DEMO.md">BLCA walkthrough</a> ·
+  <a href="#guides">Guides</a>
+</p>
 
-HistoPilot is a **local-first, self-hosted web application** for constructing, auditing, comparing, and interpreting pathology foundation model (PFM) and multiple instance learning (MIL) experiments. The browser is the interface; a local Python service owns projects and scientific configuration; isolated workers execute feature preparation and ABMIL training jobs; large artifacts stay on the local filesystem.
+A local research workspace for computational pathology. Prepare slide data and foundation-model features, train multiple instance learning (MIL) models, and explore their predictions. Your data and compute stay on your infrastructure.
 
-See the [current development verdict](docs/CURRENT_DEV_VERDICT.md) for the backend, scientific workflow and UI assessment, implemented reliability fixes, verification, and remaining priorities. The [Experiments workflow update](docs/dev-review/2026-09-12-experiments-workflow.md) covers planning and recovery. The [interface update](docs/dev-review/2026-09-13-interface-consistency.md) simplifies the roadmap, introduces the new logo, and standardizes creation and navigation across stages. The [robustness verdict](docs/dev-review/2026-09-13-robustness-verdict.md) retains unsaved editor input across navigation and reload, stops accidental empty records, separates project from experiment wording, and cuts idle polling. The [interface clarity pass](docs/dev-review/2026-09-13-interface-clarity.md) makes saved records read as openable destinations, gives every empty module its next action instead of filter controls, and fixes clipped disk measurements. The [roadmap redesign](docs/dev-review/2026-09-13-roadmap-redesign.md) adds project progress and one suggested next step, puts each module's saved evidence and unmet inputs on its row, and makes every module state what it is waiting for on arrival. The latest [identity pass](docs/dev-review/2026-09-13-brown-health-identity.md) moves the palette onto Brown University Health's colours and introduces the compass mark.
+![HistoPilot workspace showing the synthetic BLCA demo](docs/assets/blca/overview.png)
 
-Start with **Open BLCA demo** to explore the full pipeline using synthetic bladder records and results. The example follows the current Bladder project's aggregate cohort structure and ABMIL workflow, with newly generated identifiers, labels, predictions and monitoring curves. It includes no real clinical rows, slide images, embeddings or trained checkpoints. [Read the demo walkthrough and its limits](docs/BLCA_DEMO.md).
+## Get started
 
-![BLCA demo with synthetic records and illustrative workflow stages](docs/assets/blca-demo.png)
+**Requirements:** Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 24, and npm.
 
-Local projects support dataset import, frozen targets and splits, TRIDENT feature extraction, verified feature bundles and optional portable packs, CPU/CUDA ABMIL training, ensemble/refit predictors, independent test cohorts, evaluation, clinical utility and ABMIL attention. Saved-record libraries use a consistent layout with search, filters and record management; creation and review progress through separate pages. The palette follows Brown University Health — slate-teal chrome, a green action colour, mint surfaces and an amber attention colour — with every combination contrast-checked by `web/scripts/verify-palette.mjs`. Dataset partition and attention colours are data encodings and keep their own scales. See the [current architecture](docs/ARCHITECTURE.md) and [Clinical insights guide](docs/CLINICAL_INSIGHTS.md) for implemented contracts and limitations.
-
-## Run locally
-
-Local projects now also include case/error review, visual quality and morphology
-exploration, matched clinical/image/combined models, and verified study archives.
-See [the research workspace guide](docs/RESEARCH_WORKSPACE.md) for where to find
-each feature, its evidence contracts and current limits.
-
-Requirements for source development: **Python 3.11+**, **uv**, **Node.js 24**, and **npm**. Build the UI and prepare the Python environment from the repository root:
+One-time setup:
 
 ```bash
+git clone https://github.com/Lyce24/HistoPilot.git
+cd HistoPilot
 uv sync --locked
 npm --prefix web ci
 npm --prefix web run build
 uv run python scripts/bundle_web.py
 ```
 
-Then start HistoPilot manually in your terminal:
+Start HistoPilot:
 
 ```bash
-uv run histopilot serve --no-browser
+bash serve.sh
 ```
 
-Open **http://127.0.0.1:8787** and choose **Open BLCA demo**, **Start a new project**, or **Load an existing project**. The demo needs no research data folders or training runtime. Builds do not start or restart the server. After an update, rebuild and bundle the UI, then restart the service yourself when ready and refresh the browser.
+Open **http://127.0.0.1:8787** → **Open BLCA demo**. No research data, weights, or GPU are needed to explore it.
 
-For frontend development with hot reload, start the Python service manually with development mode:
+Run `bash serve.sh` for each subsequent start; stop with **Ctrl+C**. Use `bash serve.sh --help` for options. After an update, repeat the setup commands from `uv sync` onward, then restart manually. See [deployment](docs/deployment.md) for Vite development, packaged installation, and SSH forwarding.
+
+## Your first project
+
+Allow the folders containing your metadata, slides, and features when starting:
 
 ```bash
-uv run histopilot serve --dev --no-browser
+bash serve.sh --data-root /path/to/research-data
 ```
 
-Run Vite in a second terminal:
+Choose **Start a new project** and select a dedicated new or empty project folder. The folder picker browses the machine running HistoPilot; source files are referenced in place.
 
-```bash
-npm --prefix web run dev
-```
+1. **Prepare:** import a CSV/XLSX dataset, attach or extract features, and freeze targets and development splits.
+2. **Train:** create an experiment, choose models and batches, review the plan, and follow runs and predictors.
+3. **Evaluate:** define a separate test cohort, inspect predictions and errors, then explore clinical utility and compatible slide attention.
 
-Open **http://127.0.0.1:5173**. Vite proxies `/api` to the local service at **127.0.0.1:8787**. Use one service process per workspace. Saved local project records survive refresh and service restarts; the BLCA demo is a separate read-only example.
+Models include ABMIL, nnMIL, mean/max pooling, slide-embedding probes, and clinical/image comparisons. Real extraction and training require their compute environments; clinical comparisons require verified patient identities. Follow the [workflow guide](docs/WORKFLOW_GUIDE.md) for setup and input requirements.
 
-A built Python wheel includes the compiled React application. After installing that wheel, an end user runs only:
+## A look inside
 
-```bash
-histopilot serve --no-browser
-```
+The **BLCA demo** follows 138 synthetic slides: 62 for development and 76 for testing. All displayed records, scores, and curves are illustrative. It includes no real slide images or attention maps; slide counts do not establish independent patients.
 
-Then open **http://127.0.0.1:8787**. Node.js is needed to develop/build the UI, not to run the packaged application. See [deployment and development](docs/deployment.md) for wheel building, configuration, and SSH forwarding.
+| Prepare data | Follow training |
+| :---: | :---: |
+| [![Synthetic BLCA dataset and cohort counts](docs/assets/blca/dataset.png)](docs/assets/blca/dataset.png) | [![Synthetic BLCA training and validation curves](docs/assets/blca/training.png)](docs/assets/blca/training.png) |
 
-## Workspace and data access
+| Evaluate predictions | Explore clinical utility |
+| :---: | :---: |
+| [![Synthetic BLCA ROC curve and confusion matrix](docs/assets/blca/evaluation.png)](docs/assets/blca/evaluation.png) | [![Synthetic BLCA decision curve and threshold tradeoffs](docs/assets/blca/clinical-utility.png)](docs/assets/blca/clinical-utility.png) |
 
-The default application workspace is `~/.histopilot/workspace`; configuration is read from `~/.histopilot/config.toml`. Use an explicit workspace and grant directory access when needed:
+Click an image to enlarge it. See the [full BLCA walkthrough](docs/BLCA_DEMO.md) for feature validation, targets, and predictor details.
 
-```bash
-histopilot serve --workspace /path/to/histopilot-workspace \
-  --data-root /path/to/research-data --no-browser
-```
+## Guides
 
-Creating a project requires a name and an exact storage folder. Choose a new folder whose parent exists, or an existing empty folder, within the application workspace or a configured data root. Optional data, slide, and feature folders must be under configured data roots. Define labels and development membership in **Targets & splits**; configure training recipes and training seeds in **Experiments**. The chosen folder's `histopilot-project.json` owns the project setup.
+- [Workflow](docs/WORKFLOW_GUIDE.md) — data, features, training, and recovery.
+- [Deployment](docs/deployment.md) — installation, configuration, and remote access.
+- [Experiments](docs/EXPERIMENT_LIFECYCLE.md) · [Evaluation](docs/MODEL_DEVELOPMENT.md) · [Clinical insights](docs/CLINICAL_INSIGHTS.md).
 
-The folder picker browses the **Python service's filesystem**, including when the browser is on another computer. Storage browsing includes the application workspace; source browsing includes only explicitly configured data roots, with none allowed by default. Source selection records a read-only path reference without uploading, copying, modifying, or importing its contents. Load a saved project from the recent list or its folder. Its `?project=<id>#overview` URL restores the selected project on refresh; the active-project button returns to the start page. See [example configuration](examples/config.toml) and the [workspace layout](docs/workspace.md).
-
-To create a destination in any folder picker, browse to its existing parent, click **New folder**, enter a child name, and click **Create folder**. The picker opens the new empty folder; choose **Use this folder** to select it. For example, open `/path/to/research-data/features` and create `blca`. Creation requires write permission within a configured root and never replaces an existing file or folder.
-
-If **Choose data folder** or **Choose slide folder** has no available locations, the service was started without source roots. Stop that service with **Ctrl+C** in its terminal and restart it with your containing directory allowed. Replace these example paths with folders on your server:
-
-```bash
-uv run histopilot serve --data-root /path/to/research-data --no-browser
-```
-
-Add `--dev` if using Vite on port 5173. Refresh the browser, reopen the picker, and choose your metadata or slide folder. Repeat `--data-root` to allow additional directories. The service prints its configured roots at startup. Project storage can also be selected within its workspace even when no source roots are configured. None of these source-root settings are needed for the BLCA demo.
-
-To keep source access across restarts, add or update the following setting in `~/.histopilot/config.toml` (merge it into an existing `[storage]` section rather than adding that section twice):
-
-```toml
-[storage]
-data_roots = ["/path/to/research-data"]
-```
-
-Then restart with `uv run histopilot serve --no-browser`. Explicit `--data-root` arguments override the configured list.
-
-The service binds to loopback by default and rejects non-loopback bindings until authenticated server deployment is implemented. For a remote workstation, use SSH or VS Code port forwarding. This is currently a single-user local service.
-
-## Personal version tags
-
-After reviewing a dataset or cohort/protocol, choose **Name & freeze version**. For features, review coverage, choose optional packs, then choose **Name & freeze bundle**. The final save dialog asks for a required **Version tag** and an optional **Commit note**, then freezes the version and saves its name together. If a tag is already taken, the dialog keeps your entries so you can choose another name; the draft remains editable. You can also tag or rename existing saved versions from their details. Tags such as `curated-v2` or `encoder-baseline` appear in selectors, feature tables, extraction input references, and the MIL experiment planning view. A saved cohort currently includes its target and split protocol, so these share one tag.
-
-Tags are unique among versions of the same kind within a project, ignoring case. They can contain up to 80 characters; notes can contain up to 2,000. Clearing both fields removes the tag and note. Concurrent edits are detected so another tab cannot silently overwrite your changes. Tags and notes live in the project folder, separate from scientific content: renaming a tag preserves the version ID, frozen data, memberships, feature bindings, and existing references. Untagged versions retain a descriptive fallback and a short ID.
-
-Freezing identical content reuses the existing scientific version. If it already has a different tag or note, open that version to edit its label; creating a distinct scientific version requires a change to the data or settings. Interrupted saves recover the original tag together with the version. Retrying a completed save preserves any later label edits. After updating HistoPilot, restart the local server and reload the browser so the interface and save API use the same version; an older running server is detected before a tag or freeze request is sent.
-
-## Linking slide files to a dataset
-
-By default a dataset import scans the chosen slide folder and links each row by matching `Slide_ID` to a file name without its extension. A stem that appears in more than one subfolder is ambiguous, so that row links no file — which is what happens when canonical slides sit beside superseded, repaired or quarantined copies of the same names.
-
-When the metadata table already names its files, map that column as **Slide file column** in the slide-images step. Each row's path is then read from the table, relative to the slide folder (an absolute path works without one), and no folder is scanned:
-
-| Slide_ID | Slide_Path | … |
-| --- | --- | --- |
-| `SL-145` | `rih/SL-145.svs` | |
-| `TCGA-3L-AA1B-01Z-00-DX1` | `TCGA/TCGA-3L-AA1B-01Z-00-DX1.svs` | |
-
-`Slide_ID` must stay the file name without its extension, because TRIDENT names every output from it. Cohorts in separate subfolders resolve exactly, copies elsewhere in the tree are never consulted, and the 10,000-file scan limit does not apply. Rows with an empty path, a missing file, an unsupported extension, a path leaving the slide folder, or two rows naming one file are each reported in the preview before the version is frozen. Columns named `Slide_Path`, `slidePath` or `wsi` are detected automatically when the table is read.
-
-## TRIDENT PFM extraction
-
-In **Slide features**, choose **Extract with TRIDENT**, select a frozen dataset with linked slide files, and preview a dedicated output folder. The stage selector runs segmentation, patch coordinates, feature extraction, or the full pipeline. **Advanced Options** exposes every other setting in TRIDENT's batch CLI: segmentation and artifact removal, tissue thresholds, patch overlap and image dumping, readers, custom MPP metadata/CSV selection, cache, GPU selection, workers/batches, checkpoint paths, and slide encoders. Source and output directories are derived from the dataset and selected output folder. Options are checked against the installed TRIDENT parser before submission.
-
-### Choosing which slides run
-
-A slide selection has one source and one optional filter, and the same two steps apply to an extraction run and to registering existing features.
-
-| | |
-| --- | --- |
-| **Source** | The **slide folder** by default: every slide under it, including subfolders. A **slide list** replaces that scan when one is given. With neither, a chosen dataset's own linked slide files are the source. |
-| **Filter** | A **dataset**, when chosen, narrows whatever the source produced to the slides that cohort claims. Without one the source stands. |
-
-The preview names all of it: the source, how many slides it produced, how many survived the filter, whether every selected slide declares a source MPP, and how many selected slides the dataset does not claim.
-
-Two slides may never share a file name, however different their folders, because TRIDENT names every output from the stem. A folder holding canonical slides beside repaired or quarantined copies of the same names is refused with the whole set of collisions listed at once — narrow the folder, or give a slide list that names one of each pair.
-
-### Slide lists and exact source MPP
-
-Set **Custom list of wsis** (Advanced Options → *Slide reading & selection* → *Browse slide lists*) to a server-side CSV to choose which slides are extracted and to declare each slide's source microns per pixel:
-
-```csv
-wsi,mpp
-rih/SL-1.svs,0.5016
-TCGA/TCGA-A6-2672.svs,0.252
-SURGEN/SR386_40X_HE_T019_01.tiff,0.25
-```
-
-`wsi` paths are relative to the chosen slide folder, so cohorts in separate subfolders are selected in one list. Every listed slide must exist under that folder. Extra columns are ignored, so a readiness inventory (`wsi,mpp,output_id,cohort,status,…`) works unchanged. A list covering more slides than one cohort is normal: choose a dataset as well and the preflight reports how many selected slides that cohort does not claim, and how many of its slides the selection leaves without features.
-
-An `mpp` column must give every listed slide a positive, finite value. TRIDENT drops empty MPP cells and then pairs the remaining values with slides positionally, which silently gives one slide another slide's pixel size, so a partly filled column is refused before a job starts. Without the column, each slide's own metadata is used, optionally through **Custom mpp keys**. Declared MPP values are part of a run's slide identity: changing one requires a new output folder instead of resuming an earlier run.
-
-TRIDENT stays in its own environment. Configure its interpreter and checkout on the service process:
-
-```bash
-export HISTOPILOT_TRIDENT_PYTHON=/path/to/trident-environment/bin/python
-export HISTOPILOT_TRIDENT_ROOT=/path/to/TRIDENT
-uv run histopilot serve --data-root /path/to/research-data --no-browser
-```
-
-The common `~/miniconda3/envs/trident` environment and an ignored `.local/TRIDENT` checkout are detected automatically. Install TRIDENT using its [official instructions](https://github.com/mahmoodlab/TRIDENT). Checkpoint access and model dependencies are checked inside the worker; gated models require access and authentication in that environment, or a supported local checkpoint. Runtime discovery never imports Torch into the control service.
-
-Jobs run in named tmux sessions (`histopilot-pfm-<run-id>`) and survive browser/service disconnections. The job panel shows pipeline stages, progress, the current slide, elapsed time, and an estimated time remaining for the current stage when TRIDENT reports it. Cached batches and parallel workers show their local progress explicitly; processed slide counts can include skips and errors, and output validation determines success. The dashboard also reads existing jobs' logs, so workers do not need restarting. Raw log output, job identifiers, and `tmux attach -t <session>` remain available under **Troubleshooting**. Each project's `extractions/<run-id>/` stores the exact command, selected-slide CSV, input stamps, settings, process/result records, and `worker.log`. A successful process exit is followed by native artifact validation; missing/corrupt outputs or unfinished locks fail the run. Cancelled/failed jobs retain their outputs for inspection and a compatible resume. Cache settings name a parent directory: HistoPilot passes a unique disposable child to TRIDENT. A restart can reconnect to live jobs; tmux cannot survive a workstation reboot.
-
-Outputs preserve TRIDENT's native structure, including the Bladder layout:
-
-```text
-output/
-  contours/                    contours_geojson/             thumbnails/
-  _config_segmentation.json    _logs_segmentation.txt
-  20x_256px_0px_overlap/
-    patches/<slide>_patches.h5
-    features_uni_v1/<slide>.h5
-    visualization/
-    _config_coords.json        _config_feats_uni_v1.json
-```
-
-Use **Attach existing features** with `/path/to/research-data/features/blca`, its geometry folder, or its precise `features_uni_v1` directory. Auto-detection keeps encoders separate and preserves coordinate attributes and nearby TRIDENT configuration provenance. Both embedded feature coordinates and separate `patches/*_patches.h5` are supported. Header/coverage validation does not scan every tensor value. Slide encoders write native `slide_features_<encoder>` artifacts; current MIL feature binding accepts patch embeddings.
-
-## Prepare and freeze feature bundles
-
-### Cohort scope or store scope
-
-A feature source is inspected either against one frozen dataset or against nothing at all. Leave **Dataset version** on *Every slide in this folder — no dataset* and the folder itself defines the feature set: every readable slide is kept, nothing is reported missing, and nothing is discarded as an orphan. This is the right scope for an encoded slide store that deliberately covers more slides than any single cohort claims — the usual case when encoding runs ahead of, or independently of, clinical curation.
-
-A store-scoped feature set binds to a cohort later, where it matters. A protocol accepts it when the feature set **covers** every included slide, and still reports `MISSING_FEATURE_COVERAGE` when it does not; the same coverage rule replaces the old requirement that features and protocol name the identical dataset version. One feature set and one pack per encoder can therefore serve every dataset version in a project. Choosing a dataset keeps the original behaviour, reporting matched, missing and orphan counts against that cohort. Slide interpretation still needs a dataset, because slide files are resolved through it.
-
-**Slide features** opens a saved-bundle library. Open a bundle to review it, or create one from an inspected feature source, an existing feature folder, or extraction with a PFM. Preparation proceeds through separate pages: review coverage, choose optional packing, then name and freeze the complete bundle. Extraction settings, command, runtime and validation evidence follow the source into its bundle. Manually attached folders retain their available HDF5 attributes and TRIDENT configuration evidence.
-
-Each source offers three choices: **Features only — skip packing**, **Features + existing pack**, or **Features + new pack**. Features only validates all tensor contents without copying them. Existing pack lets you include previously verified packs or verify another folder. New pack starts with the destination, then reviews precision, estimated size and available space before building and verifying. Precision conversion is under Advanced; preserving source precision is the default. Include the completed pack in the bundle when ready. A bundle may include zero, one, or multiple verified packs. Partial feature coverage remains visible and is not repaired by packing. Current jobs stay visible; older jobs and provenance are available in collapsible details.
-
-If you already have a pack, select its folder beside the saved feature version. The interface includes example HistoPilot and OceanPath folder structures. The first review compares exact slide IDs, per-slide and total patch counts, dimensions, dtype, and expected dense payload lengths. Source HDF5 files and a packed folder usually have different total sizes because their metadata and coordinate storage differ. Matching sizes/counts do not prove matching features: an isolated verification job reads and compares every feature value and coordinate before the pack becomes selectable. Mismatches show warnings and prevent using an incompatible pack. HistoPilot's manifest and checksum files must both be present; incomplete verification metadata is rejected. Genuine four-file OceanPath packs remain supported through full content comparison. A pack may also store its source at a **lower float precision** — a float16 pack of float32 features is a common space optimization. Such a pack is labelled *reduced precision*, and verification compares every packed value with the source converted to the pack's own dtype, so rounding is accepted and any other difference is not; a source value with no representation at that precision is rejected rather than rounded to infinity. Higher precision than the source is never accepted, because it would invent detail the source never had. Verification references the existing folder without modifying or copying it, and permits relocated source folders.
-
-Freezing records an immutable feature source and exact pack identities, paths, precision and validation evidence. It references the source and pack folders in place; it does not copy them into an archive. Changing included packs requires another bundle. Renaming a bundle changes only its display label. Freeze rechecks source and pack freshness immediately before publication; changed or missing inputs appear as warnings and block MIL planning. Older job receipts without freshness evidence need a one-time verification. Current external-pack attachment requires matching feature dtype; explicit float16 conversion remains available when creating a new pack.
-
-**MIL experiments** owns loading policy. Choose a frozen target/split protocol and feature bundle, then choose **Auto**, original per-slide files, or a bundled memory-mapped pack. Auto uses original files for a features-only bundle and a sole pack that preserves precision; multiple packs or precision changes require an explicit choice. Planning checks dataset, feature source, eligible slide coverage and current bundle evidence. Save this choice as a MIL draft without changing the bundle. Older protocols that already pin a pack retain that binding and require a matching choice or a new protocol revision. ABMIL training reads the resolved loading policy directly. Memory mapping does not load the entire pack into RAM; whole-pack RAM/GPU preloading is not implemented.
-
-The default preserves float16 or float32 source precision. Explicit float16 conversion rounds higher precision values; overflow fails instead of clipping. Packs require consistent feature dimensions/dtype, nonempty finite tensors, and matching nonnegative integer coordinates representable as int32. Native validation accepts int64 coordinates without imposing the packed int32 limit. The original files stay in place. Packing preserves tensor data and recorded metadata, rather than creating a byte-for-byte archive of the HDF5 containers.
-
-Jobs run on CPU in `histopilot-pack-<run-id>` tmux sessions. Progress, cancellation, error details and saved artifacts appear below the selected version. Each project's `packing/<run-id>/` retains the immutable plan, worker log, progress and completion receipt; the interface reconnects after service/browser restarts. Failed or cancelled jobs can be reviewed and retried as new jobs. A pack is published only after validation and checksum readback, into a new or empty folder. Completed packs cannot be overwritten or used as another pack's output parent. Default destinations are inside the project's `feature-packs/` folder.
-
-```text
-feature-pack/
-  features.bin      # Contiguous little-endian float16 or float32 patch rows
-  coords.bin        # Corresponding little-endian int32 coordinate pairs
-  index.parquet     # Exact slide IDs, row offsets and patch counts
-  meta.json         # OceanPath schema-v1 tensor layout
-  manifest.json     # HistoPilot identity, source evidence and validation
-  checksums.json    # SHA-256 payload and manifest checksums
-```
-
-The pack remains independently verifiable after relocation or loss of the source folder. Historical pack contents remain valid when live sources change; validation of the live feature binding becomes stale and requires a new inspection/version. Tensor validation does not authenticate the model checkpoint or establish complete encoder provenance, and it does not launch training; explicitly launch a frozen development batch.
-
-The CLI submits the same reviewed job requests as the browser. Use the project and feature version IDs from the saved version details:
-
-```bash
-histopilot pack-features FEATURE_VERSION_ID --project PROJECT_ID --validate-only
-histopilot pack-features FEATURE_VERSION_ID --project PROJECT_ID --preview
-histopilot pack-features FEATURE_VERSION_ID --project PROJECT_ID --output /allowed/new-pack
-histopilot pack-features FEATURE_VERSION_ID --project PROJECT_ID --existing-pack /allowed/existing-pack
-histopilot feature-jobs --project PROJECT_ID
-histopilot feature-jobs --project PROJECT_ID --job PACKING_JOB_ID --cancel
-histopilot verify-feature-pack /path/to/relocated-pack
-```
-
-Submission needs the running local service and tmux; add `--url http://127.0.0.1:PORT` for a different service port. Standalone verification needs neither. OceanPath's native schema-v1 reader can consume the arrays on little-endian hosts. Its legacy live-directory fingerprint is different from HistoPilot's content identity in `meta.json`; use `verify-feature-pack` for integrity verification and open the OceanPath reader without its optional live-source comparison.
-
-For reproducible loader measurements, run `scripts/benchmark_feature_loading.py --help` using OceanPath's Python environment. The benchmark refuses unmatched tensors or non-float32 inputs, compares identical loader settings and row selections, and records warm-cache and file-cache-eviction timings separately. Packing accelerates data loading; it is optional and does not imply the same speedup for a complete training run.
-
-## Explore the application
-
-| View | Current behavior |
-| --- | --- |
-| Start | Create a folder-backed project, load saved setup, or open the read-only BLCA demo |
-| Project roadmap | Progress across the six required steps, one suggested next step, and eight modules grouped into Prepare, Develop and Evaluate with their saved evidence and unmet inputs on each row |
-| Datasets | CSV/XLSX source and patient-crosswalk mapping, attribute dictionary, reconciliation, frozen versions and exploration |
-| Targets & splits | Select development rows and labels; freeze one of five patient-grouped [development strategies](docs/split-strategies.md), with no final test cohort |
-| Slide features | Extract or attach features, validate contents, and freeze features alone or with verified packs as named bundles |
-| Experiments | Frozen inputs and organized batch settings, CPU/CUDA k-fold training, live tracking, and automatic Skip/Refit/Ensemble/Both predictor choices with percentile epoch budgets |
-| Test cohorts | List planned and frozen cohorts; select datasets and conditions, define prediction targets, then review and freeze independently of model development and features |
-| Evaluate models | Select development predictors and a test cohort, review target compatibility and extracted/packed slide coverage, then run and inspect/export each result |
-| Clinical utility | Verified evaluation predictions, Brier score, calibration, operating curves, decision-curve net benefit, clinical impact and exports |
-| Model interpretation | Searchable slide thumbnails, shared feature bundles/packs, single and batch refit/ensemble ABMIL attention, member maps and bounded slide views |
-| BLCA demo | Eight-stage walkthrough with synthetic records, predictions, loss/resource history, evaluation and clinical-utility examples; interpretation is explanatory only |
-
-**System & storage** shows CPU, RAM, GPU, VRAM and disk measurements alongside service/runtime information. Measurements identify unavailable probes rather than substituting zero usage. A global compute jobs tray shows local development batches, refit training, evaluation and attention jobs; extraction and packing jobs also appear in **Slide features**. The registry lists planned backend choices; an entry does not mean a model, checkpoint, or GPU is available.
-
-See the [Clinical insights guide](docs/CLINICAL_INSIGHTS.md) and [implementation review with screenshots](docs/verification/2026-09-11-clinical-insights/verification.md) for clinical metrics, attention input contracts, checks and limitations.
-
-The **BLCA demo** (`blca-demo-v1`) follows a 138-slide example: 62 development slides and 76 grade-2 test slides. Every row and result is synthetic; the aggregate structure and pipeline choices come from the reference Bladder workflow. It uses slide fallback groups and makes no claim of verified patient independence. Browse from each module's saved-record list through its review pages; no real jobs or source data are accessed. Synthetic exports remain labeled. See [BLCA demo](docs/BLCA_DEMO.md) for generation, cohort counts and interpretation limits. Legacy `synthetic-v1` URLs remain compatible with the earlier CRC demo.
-
-The saved workspace is a **project**. Model-development experiments contain named batches; a batch contains resolved configurations, each repeated across training seeds and existing split plans. Existing `?experiment=<project-id>` links remain supported. The older `/experiments` endpoints describe synthetic model-run drafts.
-
-## Workflow
-
-Creating or opening a project lands on its roadmap. Module cards distinguish completed evidence, saved work and modules not yet started; prerequisite locks explain what is needed next. Experiments is complete when submitted work and its required outputs are complete. Other modules require their corresponding frozen or verified outputs. Registries stay accessible for planning and historical records; individual actions enforce their prerequisites. Existing completed outputs remain available when new work is started.
-
-**Development data can be defined as the intersection.** In **Targets & splits**, selecting a feature version offers *Develop on slides that have these features*. Off, the feature version is a check: every eligible slide must have features or the protocol cannot be frozen. On, it is part of the definition — the population becomes the eligible dataset slides that version covers, decided before pools, labels and splits, so every count, class balance and fold describes slides the model can actually read. The preview reports how many eligible slides were dropped for having no features, separately from label exclusions, and the frozen protocol records which of the two rules produced its population.
-
-**Slide features start on their own.** Encoding and registering features depend on slide files, not on a frozen table, so **Slide features** has no prerequisite and sits between **Datasets** and **Targets & splits** in the roadmap. A long encoding run can proceed while the clinical table is still being curated, and a bundle scoped to a slide store stays usable as datasets are added or revised. **Targets & splits** and **Test cohorts** still require a dataset, because a cohort is defined over one. Training therefore still needs both a protocol and a bundle that covers its slides; the roadmap keeps naming the dataset as the next required step until one exists.
-
-Data completion unlocks development target design independently in **01 Prepare**. New development protocols use split version 4: they select development data only, then assign internal fitting, early-stopping, and assessment roles. There is no final test pool or final-test plan. Legacy frozen protocols retain their original content; clone them into a development-only version for new batch or test-cohort setup.
-
-**Datasets, Targets & splits, Slide features, Experiments, Test cohorts, Evaluate models, and Clinical utility** all open with a Stage 0 saved-record library. Search, filters and sorting help locate a record; open one to review or continue, or use the main creation action for a new record. Subsequent steps transition between pages, with Back navigation retaining the current work. Model interpretation has its own slide-focused workflow.
-
-Unsaved input in **Datasets**, **Targets & splits** and **Test cohorts** is retained for the browser tab. Leaving for another module, or reloading the browser, returns you to that module's library with a notice and a **Return to current …** action that restores exactly what you entered. Review and freeze steps are not restored, because they depend on a server check against your current files; a recovered dataset import reopens at the file step so the table is read again. Creating another record, or opening a different one, saves your current input as a draft in the project folder first. If the browser cannot store a recovery copy, leaving the module asks for confirmation instead. A recovery copy is never a saved record: the project folder still owns every draft and frozen version. Slide features acquisition settings are not yet retained this way.
-
-Preparation uses short guided steps. **Data** imports and maps slide/patient IDs. **Targets & splits** proceeds through development data, target, splits, and review. **Features** proceeds through acquisition, coverage, and saving a verified bundle; packing is optional. Each module names its input and saved output. Extra mappings and source details are collapsible, while blocking findings stay visible.
-
-The roadmap opens each project with its progress, the one step that can be taken next, and a row per module showing what it holds (`1 frozen dataset`) or what it is waiting for (`Needs Experiments and Test cohorts`). A module whose inputs are not ready stays open for planning and review, and says what it is waiting for when you arrive, with a link to that input.
-
-Every saved-record library reads the same way. A record name is an openable destination with a chevron; its badge states whether the record is frozen, still a draft, or needs attention. A module with nothing saved hides its search and filters and offers its create action directly, so the next step is where you are already looking. The roadmap reports what each module actually holds, such as `1 frozen dataset` or `3/15 training runs completed`.
-
-Use a record's **Manage** action to archive it, move it to recoverable Trash, or restore it directly from its library. The same dependency review protects referenced inputs and active work. **Workspace cleanup** under Project tools remains available for managing related records together, including datasets, protocols, feature inventories/bundles, experiments, batches, predictors, evaluation plans, test cohorts and extraction/packing jobs. Review the dependency report before confirming an action. Required records are added only after an explicit selection. Active jobs must finish stopping before cleanup; **Cancel job** keeps logs, completed work and available checkpoints. These management actions apply to local projects; the bundled BLCA demo is read-only.
-
-The start page separates **Active**, **Archived**, and **Trash** projects. Whole-project cleanup changes project visibility and preserves each child's state. Reopening a folder does not undo its lifecycle state. Source files, slides, features, packs, checkpoints and other outputs remain on disk: record cleanup does not reclaim disk space or recursively delete project folders. Reviews are checked again at confirmation, changes are audited, and retries cannot resurrect deleted records. See [workspace cleanup rules](docs/WORKSPACE_CLEANUP.md).
-
-Experiments opens a registry with search, stage/status filters, Active/Archived/Trash views and input/configuration comparisons. **Create experiment** asks for a name, tags and notes, then opens **Inputs**. Choose an existing experiment as a template to copy its saved inputs, batch recipes and predictor choices into an independent editable plan.
-
-The workspace follows **Planning → Running → Finished**. During Planning, **Check inputs & continue** saves compatible protocol and feature-bundle inputs; **Batches** lets you add, edit, duplicate or remove recipes. Quick templates include an ABMIL baseline, a five-epoch check and a learning-rate comparison. Save all edits, then use **Review & submit → Freeze & submit experiment** to freeze the whole plan and start training. Inputs, batch settings and predictor choices stay locked after submission. **Runs** orders batch/status, searchable runs and selected-run details, resource usage, then predictor creation. Run details provide loss curves, checkpoints, diagnostics and artifacts; recorded CPU/GPU/RAM/VRAM charts sit below them with worker/device/runtime information. **Results** opens when submitted batches and planned predictor jobs finish or are cancelled. It summarizes complete development OOF groups and provides ready predictors for evaluation. Failed or interrupted work retains its exact-plan recovery controls. To change a submitted configuration, create a new experiment using it as a template. See [experiment lifecycle](docs/EXPERIMENT_LIFECYCLE.md).
-
-Each frozen batch retains its experiment identity, input/configuration snapshots and split memberships. Earlier unowned batches and drafts remain read-only legacy records. Grid mode expands combinations; explicit rows preserve each row's parameter pairing. For example, 3 LRs × 2 WDs × 2 epoch budgets × 3 training seeds × 5 saved folds produce 12 configurations and 180 planned runs. Every run uses its saved training, validation and development assessment memberships; training seeds never redraw splits. Nested-CV planning remains blocked until its per-outer-fold search/selection dependencies are connected. Predictor creation belongs to Experiments, which connects directly to Evaluate models; see [experiment and predictor ownership](docs/MODEL_DEVELOPMENT.md).
-
-### Running ABMIL k-fold batches
-
-Install the optional training runtime separately from the lightweight control service:
-
-```bash
-uv venv .venv-training --python 3.13
-uv pip install --python .venv-training/bin/python -e '.[training]'
-```
-
-A checkout automatically discovers `.venv-training/bin/python`. For another environment, set `HISTOPILOT_TRAINING_PYTHON` on the control service. The runtime panel checks dependencies and CUDA in a separate process; FastAPI does not import Torch or own a CUDA model.
-
-1. Freeze a development-only k-fold protocol and a verified feature bundle.
-2. Configure ABMIL dimensions, gated attention, dropout, optimizer, training bag, epoch budget, training seeds, and a single/grid/explicit batch. Type numbers directly into fields, including maximum epochs and early-stopping patience. Choose **Sample patches per bag** with a positive patch limit, or **Use whole bag for training** to train with every available patch in each slide.
-3. Choose GPU or CPU, concurrent runs, and runs per GPU. The capacity summary shows the effective configured limit and current host headroom. GPU IDs, CPU threads, loader workers, and RAM reservations are under advanced resource settings.
-4. Save each batch to the editable plan, then choose **Review & submit → Freeze & submit experiment**. Follow progress, loss curves and resource samples in **Runs**. Once finished, open **Results** for completed OOF metrics.
-
-ABMIL supports binary and multiclass classification. Sampled training selects patches deterministically from each slide by training seed and epoch. Whole-bag training uses all available patches without sampling and requires more memory for larger slides; its saved recipe contains `bagSize: null`. Validation and assessment use full bags by default; explicit evaluation patch caps are frozen with the recipe. For patient targets, slide losses give each patient equal expected weight and validation averages slide probabilities within patient. Only validation selects the best checkpoint and controls early stopping. Held-out development folds are predicted afterward; OOF exports require exactly one prediction per assessment-eligible slide for each configuration, training seed, and split seed. Comparing configurations on these OOF scores does not create an independent final-test estimate.
-
-**Advanced model & training settings** includes FP32/FP16/BF16 precision, gradient accumulation and clipping, cosine learning-rate decay with optional warmup, a relative final LR, minimum training epochs, and early-stopping minimum improvement. New standard recipes use 40 maximum epochs and early-stopping patience 8; existing saved recipes retain their original values. The epoch floor delays patience-based stopping while retaining checkpoint selection from the first epoch. Every resolved grid recipe is checked against its epoch budget. Nonfinite losses, logits, or gradients fail the run; an undefined AUROC selection criterion is rejected before fitting. Results include AUPRC alongside AUROC and accuracy metrics. See the [OceanPath comparison and remaining gaps](docs/kfold-comparison.md).
-
-**New patient-level defaults** use stratified patient-grouped 5-fold CV, equal expected patient training weight, mean slide probabilities, and patient validation AUROC for checkpoint and configuration selection. The best validation configuration proceeds to predictor construction. Results include patient AUROC/AUPRC with 95% bootstrap intervals, paired patient comparisons, and a seeded one-slide-per-patient sensitivity analysis. External evaluations inherit frozen aggregation, threshold and evaluation bag settings. New recipes default to LR `3e-4` and WD `1e-4`, following the nnMIL classification setup; saved and running recipes retain their values. See [Patient MIL defaults](docs/PATIENT_MIL_DEFAULTS.md) for exact settings, preserved historical behavior, and statistical limitations.
-
-**nnMIL** is an editable training template with sampled feature-coordinate attention, full-dimensional pooling, automatic fitting-fold patch counts, configurable task-aware samplers and best/latest checkpoint selection. Validation and testing use the same deterministic feature-window policy. The template preserves the patient protocol and LR/WD defaults; an explicit action applies the paper's optimizer and schedule settings. Frozen fold/refit evidence, external predictions and attention interpretation support nnMIL. See [nnMIL training and testing](docs/NNMIL.md).
-
-**Suggested runtime settings** appear automatically in a batch's **Compute & parallelism** step. Detection combines current CPU/RAM/GPU capacity, the largest planned fitting and evaluation bags, and compatible recorded per-run GPU peaks. Use **Apply suggested settings** to copy concurrency, device, CPU threads, data workers and RAM reservations into the editable batch. Suggestions stay adjustable and label measured versus estimated evidence; they are starting points, not benchmarked throughput optima. Existing jobs keep their frozen settings. See [Runtime recommendations](docs/RUNTIME_RECOMMENDATIONS.md).
-
-**Patient and slide results** are directly selectable in the experiment OOF table. Each completed configuration/seed group offers patient and slide prediction CSV downloads, with frozen fold, identity, checkpoint and aggregation checks. See the [complete dataset-to-experiment audit](docs/dev-review/2026-09-15-pipeline-audit.md).
-
-Each batch runs in its own `hp-train-*` tmux session, with isolated subprocesses per fold. Logs, `best.ckpt`, `last.ckpt`, epoch progress, validation/assessment predictions, and OOF summaries live under `<project>/training/<batch-id>/`. Resource reservations coordinate HistoPilot training batches across projects; extraction and unrelated workloads use separate scheduling. RAM requests reserve scheduling headroom and are not operating-system memory limits.
-
-For one GPU, **Concurrent runs = 6** and **Runs per GPU = 1** permit only one simultaneous GPU run. Six require six GPU slots as well as CPU/RAM headroom; slots do not prove that six whole-bag workloads fit in VRAM. CPU reservations include both persistent training and validation worker pools. Workers are cached across epochs, prefetch one batch per worker, and close explicitly when fitting finishes or fails. Durable resource samples, per-run CUDA allocator peaks, and boot/driver provenance support diagnosis. Fatal CUDA/device-loss errors halt new dispatch and leave unfinished runs resumable. Host/GPU samples occur every 15 seconds and can miss short peaks; GPU totals include unrelated processes and process-tree RAM can count shared pages repeatedly.
-
-Run resource charts display recorded samples and retain gaps for missing measurements. Finished runs show their last recorded measurements. CPU history requires a worker version that records it; updating the UI cannot recover measurements that an older worker never collected. Updating the service and starting a new execution makes new telemetry available without altering already-running training.
-
-The selected-run **Patience** tile shows how many non-improving validation epochs remain. It uses the complete saved history, the chosen metric and minimum improvement, and the effective fixed-budget policy. Minimum-epoch floors are shown separately. After a fold completes, the tile becomes **Stopped epoch** and shows the actual number of training epochs completed, which can differ from the best checkpoint epoch. Checkpoint files remain in the Checkpoints and Artifacts tabs.
-
-**Cancel** stops pending work and requests active workers to exit. **Resume unfinished runs** keeps completed folds and resumes from the last completed epoch, replaying an interrupted epoch. Initialization checkpoints also cover interruption during the first epoch. New executions archive their exact Python worker package and retain the original plan, allowing compatible resume after app updates. Resume checks the archive, inputs, plan, execution location, and dependency versions; a changed or unavailable original setup requires a new batch. Older executions can use a verified copy of their original worker source, but retain that code's original behavior. New training features and telemetry apply to new executions. Checkpoints and logs survive browser/service disconnections; a workstation crash can still lose work since the last completed checkpoint. HistoPilot server startup remains manual.
-
-The CLI uses the same API and frozen batch:
-
-```bash
-histopilot train-batch <batch-id> --project <project-id>
-histopilot training-status <batch-id> --project <project-id>
-histopilot training-status <batch-id> --project <project-id> --cancel
-histopilot train-batch <batch-id> --project <project-id> --resume
-histopilot training-status <batch-id> --project <project-id> --results
-```
-
-**Test cohorts** sits beside **Evaluate models** in **03 Evaluate** and can be prepared before a development protocol, feature extraction or model training is ready. The overview lists planned drafts and frozen cohorts with one **Create test cohort** action. Creation has three separate pages: **Test Data**, **Prediction Targets**, and **Review and Freeze**. Select one or more frozen datasets, filter their records with conditions, and inspect live counts, distributions and sample rows. The prediction target uses the same editor as Targets & splits, including class mapping and positive-class selection; unlabeled prediction cohorts are also supported. Review checks cohort membership, duplicate slide IDs, labels and patient consistency. It does not require features or a development model.
-
-Model-dependent settings belong to **Evaluate models**: choose the development predictors and frozen cohort, then select test features, loading/packing, patient identifier conventions and inference settings. Review checks task, class order, positive class, development overlap, encoder compatibility and exact extracted/packed slide coverage. Automatic feature selection requires an unambiguous compatible inventory, and saved evaluation plans pin the reviewed inputs. Existing frozen cohort records retain their original evidence; copying one or resuming an older draft creates an independent cohort definition.
-
-**Experiments → Inputs** selects and verifies a protocol and feature bundle. **Batches → Add a training batch** orders templates, name, search/repeats, seeds, settings, compute, then predictor choices. Each batch independently chooses **Skip**, **Refit**, **Ensemble**, or **Both**, applied to its configuration/training-seed/split-seed groups. An experiment can contain multiple batches with different choices. Refit choices require a saved epoch percentile. With one split seed, 3 training seeds × 15 configurations × 5 folds yields 225 fold runs; Both yields 90 predictors (45 ensembles and 45 refits). Predictor identity includes experiment, batch, configuration, training seed, split seed and method. Refit plans train on all development slides for the selected percentile of best fold epochs, through a persistent experiment coordinator that trains and publishes automatically, with explicit recovery and cancellation. Existing active records are reused; archived or trashed identities require restoration.
-
-**Evaluate models** starts by selecting one or more experiments and their ensemble/refit methods, then runs their ready predictors against an explicit test cohort. Individual predictor selection remains available. Results compare matched ensemble/refit source groups on the same cohort and scoring unit, with incomplete pairs shown explicitly. Review fixes the predictor list and shows incompatible selections before any jobs start; later predictors are not added silently. Each job has independent results, and retry receipts prevent duplicates after partial submission. Cancelling a batch stops pending submissions and requests cancellation of running jobs while retaining completed results. Completed evaluations expose slide/patient metrics and CSV/JSON predictions. See [predictor methods, epoch policy and evaluation batches](docs/MODEL_DEVELOPMENT.md).
-
-```mermaid
-flowchart TD
-    D[Datasets] --> P[Targets and splits]
-    D --> F[QC, PFMs and representations]
-    P --> M[Experiments]
-    F --> M
-    D --> T[Test cohorts]
-    T --> E[Evaluate models and reports]
-    M --> E
-```
-
-**No orphan results.** Every metric, prediction, and future attention region must resolve to its run, experiment, dataset version, cohort, split, features, checkpoints, seed/fold, and code/environment record. Patch coordinates must resolve to slide, specimen, patient, and ground-truth source. Feature tensor and pack verification are implemented. Training plans record source identities, exact memberships, recipes, environment versions and compute code hashes; OOF collection verifies exact held-out coverage, class order and labels.
-
-## Architecture
-
-```mermaid
-flowchart TD
-    Browser[1 · Browser UI<br/>React / TypeScript / Vite] -->|REST; SSE planned| Control[2 · Python control service<br/>FastAPI / Pydantic / SQLAlchemy<br/>No CUDA model state]
-    Control -->|Frozen execution plan| Workers[3 · Isolated Python workers<br/>WSI / PFM / MIL adapters]
-    Control --> Storage[4 · Local storage<br/>SQLite metadata / filesystem]
-    Workers -. artifacts .-> Storage
-    External[External WSIs · read-only references] -. worker reads .-> Workers
-```
-
-Five architectural rules govern implementation:
-
-1. **FastAPI never owns CUDA models.** GPU work runs in isolated workers.
-2. **Original WSIs are referenced, never silently copied or mutated.**
-3. **Every scientific object is versioned and every result has complete lineage.**
-4. **GUI and CLI use the same experiment manifest and API contract.**
-5. **TRIDENT, CLAM, TorchMIL, SLURM, and other backends are adapters; none defines HistoPilot's core domain.**
-
-The domain remains independent of the UI, ORM, and compute frameworks. SQLite with WAL stores application metadata. Native HDF5 features and verified memory-mapped packs are supported; broader analytical queries with DuckDB remain planned. Level-0 WSI pixels are the canonical scientific coordinate system. See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for contracts, state ownership, and implementation boundaries.
-
-```text
-HistoPilot/
-├── histopilot/
-│   ├── api/             # Local REST API and validated request schemas
-│   ├── domain/          # Dataset, cohort, split, feature, experiment/run/result records
-│   ├── application/     # Scientific workflows, validation and synthetic demo generation
-│   ├── ports/           # Compute, WSI, and execution contracts
-│   ├── adapters/        # Optional backend integration points
-│   ├── storage/         # SQLite metadata and local storage boundaries
-│   ├── datasets/        # Feature bags, padded collation and LightningDataModule
-│   ├── models/          # Native masked, gated ABMIL classifier
-│   ├── training/        # Lightning fitting, validation, checkpoints and prediction
-│   ├── workers/         # Persistent scheduling and isolated compute entrypoints
-│   ├── resources/       # Packaged synthetic workspace seed
-│   └── static/          # Built React assets included in the wheel
-├── web/                 # React + TypeScript + Vite source
-├── tests/
-├── examples/            # Configuration and legacy synthetic CRC/KRAS examples
-├── docs/                # Deployment, workspace, OceanPath, and implementation roadmap
-├── pyproject.toml
-└── uv.lock
-```
-
-## Implemented and planned
-
-| Implemented foundation | Planned |
-| --- | --- |
-| React/Tailwind UI, FastAPI REST API and explicit CSV/XLSX identifier mapping | Full slide metadata/pixel validation |
-| Project creation, dataset mapping/freeze, development-only targets and grouped splits | Additional supervised task families |
-| Versioned batch plans, parameter grids, explicit configurations and monitored runs | Adaptive search and nested-CV execution |
-| Experiment registry, ensemble/refit predictors, independent test cohorts, inference workers, clinical utility reports and ABMIL slide attention | Prospective clinical validation and additional model interpretation methods |
-| Folder-local drafts, immutable datasets/protocols/feature bindings and interruption recovery | Resumable workers for large imports and full feature validation |
-| SQLite WAL persistence for synthetic cohorts, drafts, registry, and source references | Analytical cohort queries with DuckDB/Parquet and complete scientific audits |
-| Loopback Host/Origin checks, local session token, bounded root-restricted directory browsing | Authenticated multiuser/server deployment |
-| TRIDENT and ABMIL tmux workers, CPU/GPU scheduling, cancellation, checkpoint resume and persistent logs | Distributed cluster scheduling and SSE progress |
-| CPU/RAM/GPU/VRAM/disk monitoring, saved run histories and isolated runtime checks without loading CUDA models into FastAPI | Broader hardware/platform telemetry support |
-| TRIDENT extraction, verified features, native ABMIL and development OOF predictions | Additional MIL models, CLAM/TorchMIL, OpenSlide tiles |
-| Vite build packaged as Python static assets | Full Plotly, OpenSeadragon, and TanStack Table integration |
-
-The native ABMIL architecture and data/training design were reviewed against **OceanPath-colon-development**. HistoPilot implements them in its own compute packages, without importing OceanPath or bundling its weights or data. The [integration plan](docs/oceanpath.md) maps inspected source modules to isolated adapters and records the observed license status.
-
-The [BLCA demo](docs/BLCA_DEMO.md) explains the connected path from data and targets to predictors, test evaluation and clinical utility. The [Bladder priority review](docs/bladder-priority-review.md) and [earlier roadmap](docs/roadmap.md) record the original reference-data findings and implementation sequence; use the [current architecture](docs/ARCHITECTURE.md) for present capabilities. Patient identity in the reference Bladder data remains unverified.
-
-The [P0 project/import and target/split design](docs/p0-project-import-target-split-design.md) records earlier generic contracts. The [`HistoPilot-dev` review](docs/DEV_REVIEW.md) covers subsequent reliability and workflow work. [V2_INTEGRATION_REVIEW.md](docs/V2_INTEGRATION_REVIEW.md) and [HP_V2_DESIGN.md](docs/HP_V2_DESIGN.md) preserve the earlier branch comparison and proposal.
-
-## License
-
-A project license has not been selected. Third-party backends and model checkpoints retain their own licensing and access requirements.
-
-The [P0.1/P0.2 implementation notes](docs/p0-import-protocol-implementation.md) describe the current UI, split semantics, tested Bladder path and remaining boundaries.
+<sub>No project license has been selected. Third-party models and backends retain their own licenses.</sub>
