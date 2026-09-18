@@ -52,6 +52,8 @@ def job(tmp_path):
             "versions": {},
             "cudaAvailable": False,
             "gpuCount": 0,
+            # The fake executor must not inherit the CI runner's resource limits.
+            "host": {"cpuCount": 8, "totalRamGb": 16},
         }
 
     service = ComputeJobService(store, executor=executor, runtime=runtime)

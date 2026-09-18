@@ -3,8 +3,11 @@
 Local verification passed on September 17, 2026. The reported
 [GitHub Actions failure](https://github.com/Lyce24/HistoPilot/actions/runs/35299152589)
 failed during `uv run pytest` collection with `ModuleNotFoundError: scripts`.
-Remote GitHub verification remains pending the next push; these results do not
-claim that the remote run is green.
+The [first follow-up run](https://github.com/Lyce24/HistoPilot/actions/runs/35304561074)
+passed collection and linting, then exposed four tests that depended on the
+runner's actual CPU/RAM capacity (2,300 passed, 36 skipped). Their fake runtimes
+now declare their own capacity. See [Check and package](https://github.com/Lyce24/HistoPilot/actions/workflows/checks.yml)
+for subsequent remote results.
 
 ## Corrections
 
@@ -19,6 +22,11 @@ claim that the remote run is green.
   `signal.pidfd_send_signal` with `raising=False`. Standalone Python builds may
   omit that Linux API; the tests still exercise recovery without signaling real
   workers. No tests were excluded to resolve these failures.
+- **Portable resource fixtures:** compute replay, refit, and shared interpretation
+  fixtures now supply CPU/RAM capacity alongside their fake executors and runtime.
+  This keeps lifecycle and resource-change tests independent of the host running
+  pytest. Production resource validation and the requested test resources remain
+  unchanged.
 - **Manual launcher:** `bash serve.sh` uses the prepared environment and bundled
   frontend, forwards serve options, runs in the foreground, and gives setup
   instructions when inputs are missing. It does not install, build, or restart
@@ -36,9 +44,13 @@ claim that the remote run is green.
 | Frontend with **Node.js 24.21.0** | `npm ci`, 673 tests across 92 files, TypeScript and Vite production build passed |
 | Bundled wheel in an isolated checkout | Frontend `index.html`, both packaged demos and exclusion of research scripts verified |
 | Launcher checks | 7 tests using executable stubs, Bash syntax and help passed |
+| Four hosted-runner failures with a simulated 2-CPU / 7-GiB host fallback | 4 passed after explicit fake-runtime capacity was supplied |
+| Compute and refit modules after the resource-fixture correction | 46 passed on Python 3.11 |
+| Shared interpretation/attention fixture consumers with two-core CPU affinity | 100 passed on Python 3.11; 10 additional BLCA analysis checks passed |
 | Final source checksums and `git diff --check` | Passed |
 
-The full Python run retained optional-dependency/runtime skips as skips. Its two
+The full local Python run preceded the resource-fixture correction; targeted
+checks above verify that correction. The full run retained optional-dependency/runtime skips as skips. Its two
 warnings are upstream Starlette TestClient deprecations for `httpx` and the
 AnyIO `BlockingPortal` alias. The clean-source check omitted local virtual
 environments, private project files and the prebuilt frontend; its one skip was

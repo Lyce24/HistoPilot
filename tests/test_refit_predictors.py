@@ -189,7 +189,8 @@ def test_accepted_refit_retry_skips_evidence_scan_but_rejects_changed_resources(
     executor = job_support["Executor"]()
     jobs = ComputeJobService(service.store, executor=executor, runtime=lambda: {
         "available": True, "python": sys.executable, "versions": {},
-        "cudaAvailable": False, "gpuCount": 0})
+        "cudaAvailable": False, "gpuCount": 0,
+        "host": {"cpuCount": 8, "totalRamGb": 16}})
     refits, record, _ = create(service, selection, jobs)
     request = LaunchRefit(operationId="launch-refit", resources=ResourcePolicy(gpuIds=[]))
     first = refits.launch(record["id"], request)

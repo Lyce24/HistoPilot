@@ -113,6 +113,8 @@ def study(tmp_path):
             "versions": {},
             "cudaAvailable": False,
             "gpuCount": 0,
+            # The executor is fake; reservation checks must use a fixed host too.
+            "host": {"cpuCount": 8, "totalRamGb": 16},
         },
     )
     return service, selection, executor
