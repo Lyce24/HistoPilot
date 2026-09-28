@@ -7,7 +7,7 @@ from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.development import development_plans
-from histopilot.application.feature_bundles import FeatureBundleService, _hash
+from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.mil_inputs import MILInputService
 from histopilot.application.protocols import FilterEvaluator, ProtocolService
@@ -20,13 +20,13 @@ from histopilot.schemas.training_controls import (
     validate_selection_metric,
     validate_training_controls,
 )
+from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError, ensure_managed_directory, writer_lock
 from histopilot.taskcenter import ids as task_ids
 from histopilot.taskcenter.model import ACTIVE as TASK_ACTIVE
 from histopilot.taskcenter.model import LIVE as TASK_LIVE
 from histopilot.workers.compute_archive import prepare_compute_archive
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import (
     ACTIVE,
     append_event,
@@ -34,9 +34,7 @@ from histopilot.workers.training_process import (
     cpu_slots_per_run,
     gpu_snapshot,
     host_snapshot,
-    now,
     owned_processes,
-    read_json,
     read_progress,
     save_state,
     stop_owned_processes,
@@ -53,7 +51,7 @@ def membership_plan_id(row: dict) -> str:
         if key in row
     }
     metadata.setdefault("planId", f"seed:{row.get('seed', 0)}/fold:{row.get('fold')}")
-    return _hash(metadata)
+    return content_hash(metadata)
 
 
 def run_processes(run: dict) -> list:
@@ -137,7 +135,7 @@ class TrainingService:
         )
         if not (folder / "state.json").exists():
             return None
-        state = read_json(folder / "state.json")
+        state = read_json_bounded(folder / "state.json")
         if state.get("executor") != MANAGED:
             return self._legacy_execution(folder, state, include_progress=include_progress)
         # The task store says whether work is still queued or running. Unknown task state
@@ -245,7 +243,7 @@ class TrainingService:
         state = self.execution(identity)
         path = self._folder(identity) / "results.json"
         if path.exists():
-            return {**read_json(path), "status": state["status"] if state else "planned"}
+            return {**read_json_bounded(path), "status": state["status"] if state else "planned"}
         return {"status": state["status"] if state else "planned", "candidates": [], "oof": []}
 
     def _prepare(self, batch):
@@ -725,7 +723,7 @@ class TrainingService:
     @staticmethod
     def _operation(folder, operation_id, action):
         path = folder / "operations.json"
-        operations = read_json(path) if path.exists() else {}
+        operations = read_json_bounded(path) if path.exists() else {}
         if operation_id in operations and operations[operation_id] != action:
             raise StorageError(
                 "This operation ID was already used for another training action.",
@@ -803,13 +801,13 @@ class TrainingService:
                 )
             plan, freshness = self._prepare(batch)
             prepared_runtime = plan["runtime"]
-            provenance = {"at": now(), "host": host_snapshot(), **gpu_snapshot()}
-            original_plan = read_json(folder / "plan.json") if resume else None
+            provenance = {"at": utc_now(), "host": host_snapshot(), **gpu_snapshot()}
+            original_plan = read_json_bounded(folder / "plan.json") if resume else None
             session = session_name(folder)
             if resume:
                 if original_plan.get("executionMode") != MANAGED:
                     refuse_legacy()
-                if _hash(original_plan) != previous.get("planHash"):
+                if content_hash(original_plan) != previous.get("planHash"):
                     raise StorageError(
                         "The saved execution plan changed after launch; it cannot be resumed.",
                         "TRAINING_PLAN_CHANGED",
@@ -880,12 +878,12 @@ class TrainingService:
                 "sessionName": session,
                 "outputPath": str(folder),
                 "logPath": str(folder / "batch.log"),
-                "createdAt": previous["createdAt"] if previous else now(),
+                "createdAt": previous["createdAt"] if previous else utc_now(),
                 "runs": runs,
                 "findings": [],
                 "cancelRequested": False,
                 "runtime": plan["runtime"],
-                "planHash": _hash(plan),
+                "planHash": content_hash(plan),
                 "provenance": provenance,
                 "provenancePath": str(folder / "attempts.jsonl"),
                 "computePath": str(package_root),
@@ -929,7 +927,7 @@ class TrainingService:
                     )
             (folder / "cancel.json").unlink(missing_ok=True)
             if not resume:
-                write_json(folder / "plan.json", plan)
+                write_json_atomic(folder / "plan.json", plan)
             append_event(
                 folder / "attempts.jsonl",
                 {
@@ -961,10 +959,10 @@ class TrainingService:
                         "TRAINING_LAUNCH_FAILED",
                     ) from error
                 operations[operation_id] = action
-                write_json(path, operations)
+                write_json_atomic(path, operations)
                 return self.execution(identity)
             operations[operation_id] = action
-            write_json(path, operations)
+            write_json_atomic(path, operations)
             self._wake_runner()
             return state
 
@@ -985,7 +983,7 @@ class TrainingService:
                     refuse_legacy()
                 self._cancel_managed(identity, folder, state, operation_id)
             operations[operation_id] = "cancel"
-            write_json(path, operations)
+            write_json_atomic(path, operations)
         return self.execution(identity, include_inactive=True)
 
     def _cancel_managed(self, identity, folder, state, operation_id):
@@ -1000,7 +998,7 @@ class TrainingService:
             return
         # The marker precedes every stop request: stopped folds are then classified as
         # cancelled and queued folds are never started.
-        write_json(folder / "cancel.json", {"requestedAt": now(), "operationId": operation_id})
+        write_json_atomic(folder / "cancel.json", {"requestedAt": utc_now(), "operationId": operation_id})
         cancelled = set()
         if group is not None:
             try:
@@ -1035,8 +1033,8 @@ class TrainingService:
     def _record_cancelled_before_start(folder, tasks) -> None:
         """Queued runs whose fold tasks (by id) will not start are recorded as cancelled."""
         key_folder = task_folder(folder)
-        state = read_json(folder / "state.json")
-        at, changed = now(), False
+        state = read_json_bounded(folder / "state.json")
+        at, changed = utc_now(), False
         for run in state["runs"]:
             if run["status"] == "queued" and task_ids.fold_task_id(key_folder, run["id"]) in tasks:
                 run.update(status="cancelled", finishedAt=at, error="Cancelled before start.")
@@ -1063,7 +1061,7 @@ class TrainingService:
         digest = hashlib.sha256("\0".join(sorted(run_ids)).encode()).hexdigest()[:16]
         action = f"cancel-runs:{digest}"
         with writer_lock(folder, timeout=5):
-            state = read_json(folder / "state.json")
+            state = read_json_bounded(folder / "state.json")
             if state.get("executor") != MANAGED:
                 refuse_legacy()
             path, operations, replay = self._operation(folder, operation_id, action)
@@ -1078,7 +1076,7 @@ class TrainingService:
                     )
                 self._cancel_managed_runs(folder, run_ids)
                 operations[operation_id] = action
-                write_json(path, operations)
+                write_json_atomic(path, operations)
         return self.execution(identity, include_inactive=True)
 
     def _cancel_managed_runs(self, folder, run_ids):

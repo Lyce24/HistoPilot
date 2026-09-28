@@ -8,8 +8,9 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import UTC, datetime
 from pathlib import Path
+
+from histopilot.storage.io import utc_now
 
 _GPU_FIELDS = (
     "index",
@@ -267,7 +268,7 @@ class ComputeSampler:
             load = None
         uptime = _read(proc / "uptime").split()
         return {
-            "sampledAt": datetime.now(UTC).isoformat(),
+            "sampledAt": utc_now(),
             "sampleIntervalSeconds": interval,
             "host": {
                 "hostname": platform.node(),

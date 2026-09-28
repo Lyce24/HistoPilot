@@ -11,9 +11,8 @@ from support.training import runtime
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.schemas.predictors import EvaluationRunSelection, SaveEvaluationRun
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
 
 
 @pytest.fixture
@@ -145,7 +144,7 @@ def test_artifact_exports_require_completed_verified_output(evaluation, task_cen
     content = b"slideId,prediction\nslide-1,class-0\n"
     path.write_bytes(content)
     # The worker records its verified outputs, then its task concludes.
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     state.update(
         status="completed",
         result={
@@ -160,8 +159,8 @@ def test_artifact_exports_require_completed_verified_output(evaluation, task_cen
             },
         },
     )
-    write_json(folder / "result.json", state["result"])
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "result.json", state["result"])
+    write_json_atomic(folder / "state.json", state)
     task_center.finish(task_id, "succeeded")
     assert service.artifact(identity, path.name) == content
     path.write_bytes(content + b"tampered")

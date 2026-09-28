@@ -14,10 +14,9 @@ from histopilot.application.interpretation import InterpretationService
 from histopilot.application.predictors import checkpoint_snapshot
 from histopilot.schemas.interpretation import InterpretationSelection, SaveInterpretation
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter.model import LIVE
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
 from support.training import runtime
 
 
@@ -33,7 +32,7 @@ def compute_tasks(center, **filters):
 
 def compute_task(service, identity, center):
     """The Task Center task of one interpretation's compute job."""
-    return center.task(read_json(service.jobs.folder(identity) / "state.json")["taskId"])
+    return center.task(read_json_bounded(service.jobs.folder(identity) / "state.json")["taskId"])
 
 
 def launches(center):
@@ -50,9 +49,9 @@ def complete(service, identity, result, center):
     Rewriting the receipts of an already concluded job leaves the task as it is.
     """
     folder = service.jobs.folder(identity)
-    state = read_json(folder / "state.json")
-    write_json(folder / "state.json", {**state, "status": "completed", "result": result})
-    write_json(folder / "result.json", result)
+    state = read_json_bounded(folder / "state.json")
+    write_json_atomic(folder / "state.json", {**state, "status": "completed", "result": result})
+    write_json_atomic(folder / "result.json", result)
     if center.state(state["taskId"]) in LIVE:
         center.finish(state["taskId"], "succeeded")
 

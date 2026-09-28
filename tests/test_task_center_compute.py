@@ -19,15 +19,16 @@ from support.training import runtime
 
 from histopilot.application import compute_jobs as compute_module
 from histopilot.application.compute_jobs import ComputeJobService
+from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter import ids, leases, procs
-from histopilot.taskcenter.adapters.compute import ComputeJobAdapter, plan_hash
+from histopilot.taskcenter.adapters.compute import ComputeJobAdapter
 from histopilot.taskcenter.adapters.coordinator import CoordinatorAdapter
-from histopilot.taskcenter.model import TERMINAL, normalize_request, utc_now_iso
+from histopilot.taskcenter.model import TERMINAL, normalize_request
 from histopilot.workers import compute_job as compute_worker
-from histopilot.workers.packing_process import output_lock, write_json
-from histopilot.workers.training_process import process_identity, read_json
+from histopilot.workers.packing_process import output_lock
+from histopilot.workers.training_process import process_identity
 
 UID = os.getuid()
 
@@ -288,7 +289,7 @@ def test_cancel_while_queued_is_cancelled_and_never_starts(job, center):
     assert result["status"] == "cancelled" and result["cancellationRequested"]
     assert center.state(state["taskId"]) == "cancelled"
     folder = service.folder(identity)
-    assert read_json(folder / "state.json")["status"] == "queued"  # derived, never saved
+    assert read_json_bounded(folder / "state.json")["status"] == "queued"  # derived, never saved
     assert service.cancel(identity, "cancel")["status"] == "cancelled"
     runner = center.runner()
     runner.tick()
@@ -354,7 +355,9 @@ def test_resume_waits_for_a_stopping_attempt_and_requeues_a_normalized_task(job,
     folder = service.folder(identity)
     # The worker recorded its outcome and exited; the runner has not concluded the task.
     center.store.transition(task_id, from_states="queued", to_state="running")
-    write_json(folder / "state.json", {**read_json(folder / "state.json"), "status": "interrupted"})
+    write_json_atomic(
+        folder / "state.json", {**read_json_bounded(folder / "state.json"), "status": "interrupted"}
+    )
     before = (folder / "state.json").read_bytes()
     assert service.status(identity)["status"] == "interrupted"
     with pytest.raises(StorageError) as caught:
@@ -400,7 +403,7 @@ def test_a_compute_job_that_ran_out_of_memory_is_requeued_once(job, center):
     assert task["request"]["vramGb"] == 3.0
     reasons = [(event["detail"] or {}).get("reason") for event in center.store.events(task_id)]
     assert "oom-backoff" in reasons
-    saved = read_json(folder / "state.json")
+    saved = read_json_bounded(folder / "state.json")
     assert (saved["status"], saved["attempt"], saved["taskAttempt"]) == ("completed", 2, 2)
 
 
@@ -412,8 +415,8 @@ def test_cancel_signals_a_live_worker_whose_task_already_finished(job, center):
         [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
     )
     try:
-        saved = read_json(folder / "state.json")
-        write_json(
+        saved = read_json_bounded(folder / "state.json")
+        write_json_atomic(
             folder / "state.json",
             {
                 **saved,
@@ -474,18 +477,18 @@ def test_managed_worker_fences_foreign_records_and_reports_busy_output(job, cent
     assert (result["state"], result["exitReason"]) == ("interrupted", "interrupted")
 
     # The fence never re-runs a record its own task already completed ...
-    completed = {**read_json(folder / "state.json"), "status": "completed"}
-    write_json(folder / "state.json", completed)
+    completed = {**read_json_bounded(folder / "state.json"), "status": "completed"}
+    write_json_atomic(folder / "state.json", completed)
     finished = (folder / "state.json").read_bytes()
     again = worker(folder, state["taskId"])
     assert again.returncode == 0 and "not assigned" in again.stdout
     assert (folder / "state.json").read_bytes() == finished
     # ... and a queued record whose cancellation was requested ends cancelled, unstarted.
-    write_json(folder / "state.json", {**completed, "status": "queued"})
-    write_json(folder / "cancel.requested", {"at": "now"})
+    write_json_atomic(folder / "state.json", {**completed, "status": "queued"})
+    write_json_atomic(folder / "cancel.requested", {"at": "now"})
     stopped = worker(folder, state["taskId"])
     assert stopped.returncode == 0, stopped.stderr
-    saved = read_json(folder / "state.json")
+    saved = read_json_bounded(folder / "state.json")
     assert (saved["status"], saved["result"]) == ("cancelled", None)
     assert "gpu" not in saved  # it stopped before choosing a device
 
@@ -512,7 +515,7 @@ def test_managed_worker_waits_out_a_busy_workspace(tmp_path, monkeypatch):
     with pytest.raises(StorageError):
         compute_worker._verify_inputs({}, tmp_path, managed=False)
     calls.clear()
-    write_json(tmp_path / "cancel.requested", {"at": "now"})
+    write_json_atomic(tmp_path / "cancel.requested", {"at": "now"})
     with pytest.raises(KeyboardInterrupt):
         compute_worker._verify_inputs({}, tmp_path, managed=True)
     # Other failures are never retried.
@@ -538,12 +541,12 @@ def compute_task(folder, task_id="task-compute", attempt=1):
 
 def saved(folder, task_id="task-compute", **state):
     plan = {"kind": "refit", "recordId": "record"}
-    write_json(folder / "plan.json", plan)
-    write_json(
+    write_json_atomic(folder / "plan.json", plan)
+    write_json_atomic(
         folder / "state.json",
         {
             "recordId": "record",
-            "planHash": plan_hash(plan),
+            "planHash": content_hash(plan),
             "taskId": task_id,
             "attempt": 1,
             "process": {"pid": 4321, "startTicks": 1, "bootId": "x"},
@@ -588,7 +591,7 @@ def test_compute_adapter_classifies_saved_outcomes_not_exit_codes(tmp_path, cent
         "requeue",
         "paused",
     )
-    write_json(folder / "cancel.requested", {"at": "now"})
+    write_json_atomic(folder / "cancel.requested", {"at": "now"})
     assert outcome_of(adapter, task, ctx, returncode=-9) == ("cancelled", "cancelled")
     (folder / "cancel.requested").unlink()
     saved(folder, task_id="task-other", status="completed")
@@ -601,10 +604,10 @@ def test_compute_adapter_classifies_saved_outcomes_not_exit_codes(tmp_path, cent
     saved(folder, status="queued")
     assert adapter.prepare(task, ctx) is None
     # progress.json outlives attempts: a snapshot older than this attempt is not its progress.
-    write_json(folder / "progress.json", {"epoch": 3, "maxEpochs": 9})
+    write_json_atomic(folder / "progress.json", {"epoch": 3, "maxEpochs": 9})
     started = {
         **task,
-        "startedAt": utc_now_iso(),
+        "startedAt": utc_now(),
         "command": {**task["command"], "progress": str(folder / "progress.json")},
     }
     earlier = time.time() - 3600
@@ -623,17 +626,17 @@ def test_compute_adapter_requeues_only_its_own_resumable_record(tmp_path, center
     saved(folder, status="running", waitingReason="stale", error="stale")
     assert adapter.can_requeue(task, ctx)
     adapter.on_requeue(task, ctx)
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     assert (state["status"], state["attempt"], state["taskAttempt"]) == ("queued", 2, 4)
     assert state["autoResumedAt"] and state["error"] is None and "waitingReason" not in state
-    write_json(folder / "cancel.requested", {"at": "now"})
+    write_json_atomic(folder / "cancel.requested", {"at": "now"})
     assert not adapter.can_requeue(task, ctx)
     (folder / "cancel.requested").unlink()
     for status in ("completed", "failed", "cancelled"):
         saved(folder, status=status)
         assert not adapter.can_requeue(task, ctx)
     saved(folder, status="interrupted")
-    write_json(folder / "plan.json", {"kind": "refit", "changed": True})
+    write_json_atomic(folder / "plan.json", {"kind": "refit", "changed": True})
     assert not adapter.can_requeue(task, ctx)
     saved(folder, task_id="task-other", status="interrupted")
     assert not adapter.can_requeue(task, ctx)
@@ -650,7 +653,7 @@ def test_coordinator_adapter_reads_the_coordinator_state(tmp_path, center):
     task = {"id": "task-coordinator", "adapterData": {"coordinatorFolder": str(folder)}}
 
     def with_status(status, **extra):
-        write_json(folder / "state.json", {"status": status, "taskId": task["id"], **extra})
+        write_json_atomic(folder / "state.json", {"status": status, "taskId": task["id"], **extra})
 
     with_status("completed")
     assert outcome_of(adapter, task, ctx) == ("succeeded", "ok")
@@ -668,7 +671,7 @@ def test_coordinator_adapter_reads_the_coordinator_state(tmp_path, center):
     )
     assert outcome_of(adapter, task, ctx, returncode=None, lost=True) == ("interrupted", "lost")
     assert adapter.can_requeue(task, ctx)
-    write_json(folder / "cancel.requested", {"at": "now"})
+    write_json_atomic(folder / "cancel.requested", {"at": "now"})
     assert outcome_of(adapter, task, ctx, returncode=-15) == ("cancelled", "cancelled")
     assert not adapter.can_requeue(task, ctx)
 
@@ -682,7 +685,7 @@ def test_a_coordinator_that_found_the_project_busy_runs_again(tmp_path, center):
         "adapterData": {"coordinatorFolder": str(folder)},
         "command": {"log": str(log)},
     }
-    write_json(folder / "state.json", {"status": "queued", "taskId": task["id"]})
+    write_json_atomic(folder / "state.json", {"status": "queued", "taskId": task["id"]})
     busy = (
         "histopilot.storage.project_lock.StorageError: Another operation is changing this "
         "workspace. Retry after it finishes.\n"
@@ -719,7 +722,7 @@ def test_a_busy_attention_is_requeued_and_reopened_not_failed(tmp_path, center):
     waiting = {"status": "waiting", "error": None}
 
     def attention(error, *items):
-        write_json(
+        write_json_atomic(
             folder / "state.json",
             {"status": "attention", "taskId": task["id"], "error": error, "items": list(items)},
         )
@@ -729,7 +732,7 @@ def test_a_busy_attention_is_requeued_and_reopened_not_failed(tmp_path, center):
     assert outcome_of(adapter, task, ctx, returncode=None, lost=True) == ("requeue", "busy")
     assert adapter.can_requeue(task, ctx)
     adapter.on_requeue(task, ctx)
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     assert (state["status"], state["error"]) == ("queued", None)
     assert [item["status"] for item in state["items"]] == ["completed", "waiting"]
 
@@ -737,7 +740,7 @@ def test_a_busy_attention_is_requeued_and_reopened_not_failed(tmp_path, center):
     attention(busy, done, {"status": "failed", "error": busy})
     assert outcome_of(adapter, task, ctx, returncode=0) == ("requeue", "busy")
     adapter.on_requeue(task, ctx)
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     assert state["status"] == "queued"
     assert [item["status"] for item in state["items"]] == ["completed", "waiting"]
 
@@ -750,7 +753,7 @@ def test_a_busy_attention_is_requeued_and_reopened_not_failed(tmp_path, center):
     attention(busy, {"status": "failed", "error": busy}, {"status": "failed", "error": real})
     assert outcome_of(adapter, task, ctx, returncode=0) == ("requeue", "busy")
     adapter.on_requeue(task, ctx)
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     assert state["status"] == "attention"
     assert [item["status"] for item in state["items"]] == ["waiting", "failed"]
 
@@ -760,7 +763,7 @@ def test_a_busy_attention_is_requeued_and_reopened_not_failed(tmp_path, center):
         "cancelled",
         "cancelled",
     )
-    write_json(folder / "cancel.requested", {"at": "now"})
+    write_json_atomic(folder / "cancel.requested", {"at": "now"})
     assert outcome_of(adapter, task, ctx, returncode=0) == ("cancelled", "cancelled")
     assert not adapter.can_requeue(task, ctx)
 
@@ -880,7 +883,7 @@ def refit(tmp_path, center, monkeypatch):
 
 
 def saved_status(jobs, identity):
-    return read_json(jobs.folder(identity) / "state.json")["status"]
+    return read_json_bounded(jobs.folder(identity) / "state.json")["status"]
 
 
 @pytest.mark.slow
@@ -906,7 +909,7 @@ def test_real_managed_refit_runs_through_the_runner_without_worker_leases(refit,
     assert center.state(task_id) == "succeeded", center.store.get(task_id)
     final = jobs.status(identity)
     assert (final["status"], final["executor"]) == ("completed", "task-center")
-    saved = read_json(jobs.folder(identity) / "state.json")
+    saved = read_json_bounded(jobs.folder(identity) / "state.json")
     assert "waitingReason" not in saved and saved["taskId"] == task_id
     # The runner held the only lease; the worker never touched the registry.
     assert not [lease for lease in leases.read_leases() if lease.get("taskId") == task_id]
@@ -959,7 +962,7 @@ def test_real_managed_refit_is_auto_resumed_after_a_lost_runner(refit, center):
     task = center.store.get(task_id)
     assert (task["state"], task["attempt"]) == ("queued", 2)
     assert center.store.events(task_id)[-1]["detail"]["autoResumed"] is True
-    saved = read_json(jobs.folder(identity) / "state.json")
+    saved = read_json_bounded(jobs.folder(identity) / "state.json")
     assert (saved["status"], saved["attempt"], saved["taskAttempt"]) == ("queued", 2, 2)
     assert saved["autoResumedAt"]
     assert jobs.status(identity)["status"] == "queued"
@@ -1008,7 +1011,7 @@ def batch_tasks(service, identity, center, tmp_path, *, failing=None):
     store = service.store
     batch = store.get_draft(identity)["payload"]["submission"]["batchIds"][0]
     folder = store.folder / "training" / batch
-    runs = read_json(folder / "plan.json")["runs"]
+    runs = read_json_bounded(folder / "plan.json")["runs"]
 
     def spec(task_id, kind, order, **extra):
         log = tmp_path / "batch-tasks" / f"{order}.log"
@@ -1368,14 +1371,14 @@ def legacy_compute_record(service, identity, plan, status):
     """A job launched before the Task Center: its state names no executor or task."""
     service.launch(identity, plan, "launch")
     folder = service.folder(identity)
-    saved = read_json(folder / "state.json")
+    saved = read_json_bounded(folder / "state.json")
     for key in ("executor", "taskId", "taskAttempt"):
         saved.pop(key)
     saved.update(status=status, sessionName="hp-evaluation-0123456789abcdef")
     if status == "completed":
         saved["result"] = {"runId": identity, "state": "succeeded"}
-        write_json(folder / "result.json", saved["result"])
-    write_json(folder / "state.json", saved)
+        write_json_atomic(folder / "result.json", saved["result"])
+    write_json_atomic(folder / "state.json", saved)
     return folder, saved
 
 
@@ -1403,7 +1406,7 @@ def test_a_compute_job_from_before_the_task_center_is_read_only(job, center, sta
             "CREATED_BEFORE_TASK_CENTER",
             409,
         )
-    assert read_json(folder / "state.json") == saved
+    assert read_json_bounded(folder / "state.json") == saved
     assert not (folder / "cancel.requested").exists()
     assert [task["attempt"] for task in center.tasks(kind="compute-job")] == [1]
 
@@ -1429,13 +1432,13 @@ def test_a_coordinator_archive_pinned_before_the_task_center_is_refused(
     task_id = ids.coordinator_task_id(str(service.folder(identity)))
     center.store.cancel_pending([task_id])
     state_path = service.folder(identity) / "state.json"
-    state = read_json(state_path)
-    write_json(state_path, {**state, "status": "attention"})
+    state = read_json_bounded(state_path)
+    write_json_atomic(state_path, {**state, "status": "attention"})
     monkeypatch.setattr(experiment_predictors, "archive_protocol", lambda _path: None)
     with pytest.raises(StorageError) as refused:
         service.launch(identity, "resume", resume=True)
     assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
-    assert read_json(state_path) == {**state, "status": "attention"}
+    assert read_json_bounded(state_path) == {**state, "status": "attention"}
     assert center.state(task_id) == "cancelled"
 
 
@@ -1446,11 +1449,11 @@ def test_a_coordinator_from_before_the_task_center_is_read_only(coordinator, cen
     task_id = ids.coordinator_task_id(str(service.folder(identity)))
     center.store.cancel_pending([task_id])
     state_path = service.folder(identity) / "state.json"
-    saved = read_json(state_path)
+    saved = read_json_bounded(state_path)
     for key in ("executor", "taskId"):
         saved.pop(key)
     saved["status"] = status
-    write_json(state_path, saved)
+    write_json_atomic(state_path, saved)
     view = service.status(identity)
     assert "executor" not in view
     assert not view["retryable"] and not view["cancellable"]
@@ -1466,4 +1469,4 @@ def test_a_coordinator_from_before_the_task_center_is_read_only(coordinator, cen
         with pytest.raises(StorageError) as refused:
             action()
         assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
-    assert read_json(state_path) == saved
+    assert read_json_bounded(state_path) == saved

@@ -15,17 +15,16 @@ import pytest
 
 from histopilot.application.development import development_plans
 from histopilot.application.experiment_predictors import ExperimentPredictorService
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.model_experiments import execution_contract
 from histopilot.application.predictors import PredictorService
 from histopilot.application.refits import RefitService
 from histopilot.application.training import membership_plan_id
 from histopilot.schemas.development import TrainingRecipe
 from histopilot.schemas.predictors import FreezePredictor, PredictorSelection
+from histopilot.storage.io import content_hash, read_json_bounded, write_json_atomic
 from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import execute_plan
-from histopilot.workers.training_process import compute_snapshot, read_json
+from histopilot.workers.training_process import compute_snapshot
 from support.projects import draft, setup
 
 
@@ -89,11 +88,11 @@ def candidate(
     recipe = TrainingRecipe(model=model).model_dump()
     if checkpoint_metric is not None:
         recipe["checkpointMetric"] = checkpoint_metric
-    candidate_id = "candidate-" + _hash(recipe)
+    candidate_id = "candidate-" + content_hash(recipe)
     splits = development_plans(protocol["manifest"])
     runs = [
         {
-            "id": "run-" + _hash(split),
+            "id": "run-" + content_hash(split),
             "candidateId": candidate_id,
             "trainingSeed": 11,
             "splitPlanId": split["id"],
@@ -167,12 +166,17 @@ def candidate(
             "bestValidationScore": 0.7,
             "epochsCompleted": 2,
         }
-        write_json(run_folder / "result.json", result)
-        write_json(run_folder / "plan.json", execute_plan(plan, run, None))
+        write_json_atomic(run_folder / "result.json", result)
+        write_json_atomic(run_folder / "plan.json", execute_plan(plan, run, None))
         states.append({**run, "status": "completed", "result": result})
-    state = {"batchId": batch["id"], "status": "completed", "planHash": _hash(plan), "runs": states}
-    write_json(folder / "plan.json", plan)
-    write_json(folder / "state.json", state)
+    state = {
+        "batchId": batch["id"],
+        "status": "completed",
+        "planHash": content_hash(plan),
+        "runs": states,
+    }
+    write_json_atomic(folder / "plan.json", plan)
+    write_json_atomic(folder / "state.json", state)
     selection = PredictorSelection(
         experimentId=f"legacy-{batch['id']}" if legacy else experiment["id"],
         batchId=batch["id"],
@@ -218,8 +222,12 @@ class FakeJobs:
         self.task_options = task  # Task Center owner/title; the fake never queues anything.
         folder = self.folder(identity)
         folder.mkdir(parents=True, exist_ok=True)
-        write_json(folder / "plan.json", plan)
-        self.states[identity] = {"status": "running", "planHash": _hash(plan), "result": None}
+        write_json_atomic(folder / "plan.json", plan)
+        self.states[identity] = {
+            "status": "running",
+            "planHash": content_hash(plan),
+            "result": None,
+        }
         return self.states[identity]
 
     def complete(self, identity):
@@ -233,7 +241,7 @@ class FakeJobs:
             "bestCheckpointPath": str(checkpoint),
             "epochsCompleted": plan["epochBudget"]["epochs"],
         }
-        write_json(folder / "result.json", result)
+        write_json_atomic(folder / "result.json", result)
         self.states[identity].update(status="completed", result=result)
 
 
@@ -250,15 +258,15 @@ def refit_candidate(service, *, epochs=(3, 10), percentile=50, legacy_history=Fa
         if not legacy_history:
             result["bestEpoch"] = epoch
         else:
-            write_json(
+            write_json_atomic(
                 folder / "runs" / run["id"] / "history.json",
                 [
                     {"epoch": i, "validation": {"loss": 0.7 if i + 1 == epoch else 1.0}}
                     for i in range(12)
                 ],
             )
-        write_json(folder / "runs" / run["id"] / "result.json", result)
-    write_json(folder / "state.json", state)
+        write_json_atomic(folder / "runs" / run["id"] / "result.json", result)
+    write_json_atomic(folder / "state.json", state)
     return (
         PredictorSelection(
             **{**selection.model_dump(), "method": "refit", "refitPercentile": percentile}
@@ -286,13 +294,13 @@ def two_seeds(service):
     manifest = copy.deepcopy(original["manifest"])
     originals = manifest["runs"]
     manifest["runs"] = [
-        {**row, "id": "run-" + _hash([row["id"], seed]), "trainingSeed": seed}
+        {**row, "id": "run-" + content_hash([row["id"], seed]), "trainingSeed": seed}
         for seed in (11, 22)
         for row in originals
     ]
     batch = service.store.publish_configuration(manifest=manifest, operation_id=uuid4().hex)
     plan = {
-        **read_json(original_folder / "plan.json"),
+        **read_json_bounded(original_folder / "plan.json"),
         "batchId": batch["id"],
         "batchContentHash": batch["contentHash"],
         "runs": manifest["runs"],
@@ -309,13 +317,18 @@ def two_seeds(service):
             "runId": run["id"],
             "bestCheckpointPath": str(checkpoint),
         }
-        write_json(run_folder / "result.json", result)
-        write_json(run_folder / "plan.json", execute_plan(plan, run, None))
+        write_json_atomic(run_folder / "result.json", result)
+        write_json_atomic(run_folder / "plan.json", execute_plan(plan, run, None))
         states.append({**run, "status": "completed", "result": result})
-    write_json(folder / "plan.json", plan)
-    write_json(
+    write_json_atomic(folder / "plan.json", plan)
+    write_json_atomic(
         folder / "state.json",
-        {"batchId": batch["id"], "status": "completed", "planHash": _hash(plan), "runs": states},
+        {
+            "batchId": batch["id"],
+            "status": "completed",
+            "planHash": content_hash(plan),
+            "runs": states,
+        },
     )
     return [
         source.model_copy(update={"batchId": batch["id"], "trainingSeed": seed})
@@ -333,7 +346,7 @@ class Training:
         self.folder = folder
 
     def execution(self, identity, **_kwargs):
-        return read_json(self.folder / "training" / identity / "state.json")
+        return read_json_bounded(self.folder / "training" / identity / "state.json")
 
 
 class Jobs(FakeJobs):
@@ -361,17 +374,17 @@ def submitted(registry):
     store = predictors.store
     identity = selections[0].experimentId
     runtime = {"available": True, "python": sys.executable, "versions": {"torch": "fixture"}}
-    plan = read_json(folder / "plan.json")
+    plan = read_json_bounded(folder / "plan.json")
     plan.update(runtime=runtime, code=compute_snapshot())
-    state = read_json(folder / "state.json")
-    state["planHash"] = _hash(plan)
-    write_json(folder / "plan.json", plan)
-    write_json(folder / "state.json", state)
+    state = read_json_bounded(folder / "state.json")
+    state["planHash"] = content_hash(plan)
+    write_json_atomic(folder / "plan.json", plan)
+    write_json_atomic(folder / "state.json", state)
     for run in plan["runs"]:
         path = folder / "runs" / run["id"] / "plan.json"
-        run_plan = read_json(path)
+        run_plan = read_json_bounded(path)
         run_plan.update(runtime=runtime, code=plan["code"])
-        write_json(path, run_plan)
+        write_json_atomic(path, run_plan)
     record = store.get_draft(identity)
     policy = {"method": "both", "refitPercentile": 75.0}
     submission = {

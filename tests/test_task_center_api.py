@@ -15,10 +15,11 @@ from fastapi.testclient import TestClient
 
 from histopilot.api import create_app
 from histopilot.config import Settings
+from histopilot.storage.io import utc_now
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter import default_client, leases
-from histopilot.taskcenter.model import LIVE, utc_now_iso
+from histopilot.taskcenter.model import LIVE
 from histopilot.taskcenter.runner import code_hash
 from histopilot.taskcenter.service import derived_operation_id
 from histopilot.workers.training_process import process_identity
@@ -116,7 +117,7 @@ def start(identity, gpu=0):
         identity,
         from_states=("queued",),
         to_state="running",
-        started_at=utc_now_iso(),
+        started_at=utc_now(),
         gpu=gpu,
         process={"pid": 1, "startTicks": 1, "bootId": "none"},
     )
@@ -150,7 +151,7 @@ def test_summary_reports_runner_capacity_counts_eta_and_foreign_leases(api, regi
         boot_id=me["bootId"],
         code_hash=code_hash(),
         protocol=1,
-        heartbeat_at=utc_now_iso(),
+        heartbeat_at=utc_now(),
         state="running",
     )
     response = api.get(f"{API}/summary")
@@ -203,7 +204,7 @@ def test_summary_prefers_a_fresh_runner_sample_to_probing_the_host(api):
     sample_host = {key: value for key, value in HOST.items() if key != "gpus"}
     gpus = [{**HOST["gpus"][0], "index": 1, "name": "Sampled GPU"}]
     default_client().store.write_runner(
-        sample={"host": {**sample_host, "cpuCount": 32}, "gpus": gpus, "at": utc_now_iso()}
+        sample={"host": {**sample_host, "cpuCount": 32}, "gpus": gpus, "at": utc_now()}
     )
     summary = api.get(f"{API}/summary").json()
     assert summary["capacity"]["cpu"]["logical"] == 32
@@ -1114,7 +1115,7 @@ def conclude_lost(identity):
         to_state="interrupted",
         stop_request=None,
         exit={"reason": "lost", "lost": True},
-        follow_up={"hook": "requeue_intent", "reason": "auto-resume", "since": utc_now_iso()},
+        follow_up={"hook": "requeue_intent", "reason": "auto-resume", "since": utc_now()},
     )
     assert outcome == "concluded"
 
@@ -1865,7 +1866,7 @@ def _single_run_cancel():
 @pytest.mark.skipif(not _single_run_cancel(), reason="TrainingService cannot cancel single runs")
 def test_real_single_fold_cancel_is_recorded_as_cancelled_by_its_batch(api, tmp_path, monkeypatch):
     from histopilot.application.training import TrainingService
-    from histopilot.workers.training_process import read_json
+    from histopilot.storage.io import read_json_bounded
 
     store, filesystem, frozen, runtime = _launched_batch(api, tmp_path, monkeypatch)
     tasks = default_client().store.list(kinds=("mil-fold",), limit=None)
@@ -1875,7 +1876,7 @@ def test_real_single_fold_cancel_is_recorded_as_cancelled_by_its_batch(api, tmp_
     assert response.json()["state"] == "cancelled"
     folder = store.folder / "training" / frozen["id"]
     run_id = target["adapterData"]["runId"]
-    [run] = [run for run in read_json(folder / "state.json")["runs"] if run["id"] == run_id]
+    [run] = [run for run in read_json_bounded(folder / "state.json")["runs"] if run["id"] == run_id]
     assert (run["status"], run["error"]) == ("cancelled", "Cancelled before start.")
     # The batch itself continues: no batch cancel marker, the other folds stay queued.
     assert not (folder / "cancel.json").exists()
@@ -1956,7 +1957,7 @@ def test_real_cancelled_batch_resumes_while_its_final_collection_waits(api, tmp_
 @pytest.mark.skipif(not _single_run_cancel(), reason="TrainingService cannot cancel single runs")
 def test_real_cancel_of_a_fold_awaiting_its_auto_resume(api, tmp_path, monkeypatch):
     from histopilot.application.training import TrainingService
-    from histopilot.workers.training_process import read_json
+    from histopilot.storage.io import read_json_bounded
 
     store, filesystem, frozen, runtime = _launched_batch(api, tmp_path, monkeypatch)
     api.app.state.task_center.services = {
@@ -1977,5 +1978,5 @@ def test_real_cancel_of_a_fold_awaiting_its_auto_resume(api, tmp_path, monkeypat
     assert response.json()["actions"]["cancel"] is False
     folder = store.folder / "training" / frozen["id"]
     run_id = target["adapterData"]["runId"]
-    [run] = [run for run in read_json(folder / "state.json")["runs"] if run["id"] == run_id]
+    [run] = [run for run in read_json_bounded(folder / "state.json")["runs"] if run["id"] == run_id]
     assert (run["status"], run["error"]) == ("cancelled", "Cancelled before start.")

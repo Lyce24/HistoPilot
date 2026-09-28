@@ -11,13 +11,14 @@ import h5py
 import numpy as np
 
 from histopilot.application.evaluations import EvaluationService
-from histopilot.application.feature_bundles import FeatureBundleService, _hash
+from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.features import FeatureService
 from histopilot.schemas.feature_bundles import FeatureBundleSpec
 from histopilot.schemas.feature_packs import FeaturePackSpec
 from histopilot.schemas.features import FeatureSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import content_hash
 from histopilot.taskcenter.client import default_client
 from support.workers import run_pack
 
@@ -123,7 +124,7 @@ def lifecycle(store, document, state):
     store.lifecycle.apply(
         {f"configuration:{document['id']}": state},
         operation_id=uuid4().hex,
-        request_hash=_hash({"id": document["id"], "state": state}),
+        request_hash=content_hash({"id": document["id"], "state": state}),
         expected_revision=store.lifecycle.read()["revision"],
     )
 

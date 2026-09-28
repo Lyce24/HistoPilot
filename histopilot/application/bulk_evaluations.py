@@ -11,11 +11,11 @@ from pathlib import Path
 
 from histopilot.application.compute_jobs import host_gpu_argv, wake_runner
 from histopilot.application.evaluation_runs import EvaluationRunService
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import finding, lifecycle_document, reference
 from histopilot.application.task_records import LEGACY_CODE
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
 from histopilot.schemas.predictors import EvaluationRunSelection
+from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
@@ -23,11 +23,9 @@ from histopilot.storage.project_lock import (
     reject_symlink_components,
     writer_lock,
 )
-from histopilot.storage.scientific import MAX_CONFIGURATION_BYTES, _json
+from histopilot.storage.scientific import MAX_CONFIGURATION_BYTES, encode_document
 from histopilot.taskcenter import ids
 from histopilot.taskcenter.model import LIVE, TERMINAL
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import now, read_json
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -134,7 +132,7 @@ class BulkEvaluationService:
                 row.update(
                     eligible=True,
                     selection=choice.model_dump(exclude_none=True),
-                    evaluationPreviewHash=_hash(manifest),
+                    evaluationPreviewHash=content_hash(manifest),
                     evaluationManifest=manifest,
                 )
             except StorageError as error:
@@ -159,7 +157,7 @@ class BulkEvaluationService:
             "blockedCount": len(items) - count,
             "canRun": count > 0 and not deleted_selection,
         }
-        return {**payload, "previewHash": _hash(payload)}
+        return {**payload, "previewHash": content_hash(payload)}
 
     def preview(self, selection):
         with lifecycle_guard(self.store.folder):
@@ -200,7 +198,7 @@ class BulkEvaluationService:
                         "EVALUATION_BATCH_BLOCKED",
                         422,
                     )
-                token = _hash(request.operationId)
+                token = content_hash(request.operationId)
                 members = []
                 for index, item in enumerate(preview["items"]):
                     member = {
@@ -213,7 +211,7 @@ class BulkEvaluationService:
                             "batchRequestId": token,
                         }
                         digest = hashlib.sha256(
-                            _json(manifest, MAX_CONFIGURATION_BYTES)
+                            encode_document(manifest, MAX_CONFIGURATION_BYTES)
                         ).hexdigest()
                         member.update(
                             evaluationId=f"configuration-{digest}",
@@ -253,7 +251,7 @@ class BulkEvaluationService:
         folder = self._folder(batch["id"])
         ensure_managed_directory(folder)
         path = folder / "state.json"
-        state = read_json(path) if path.exists() else {}
+        state = read_json_bounded(path) if path.exists() else {}
         if state.get("submitted") or state.get("cancelRequested"):
             return
         name = batch["manifest"]["name"]
@@ -330,13 +328,13 @@ class BulkEvaluationService:
         with lifecycle_guard(self.store.folder), writer_lock(folder):
             path = folder / "state.json"
             state = (
-                read_json(path)
+                read_json_bounded(path)
                 if path.exists()
                 else {"items": {}, "cancelRequested": False, "submitted": False}
             )
             if not state["cancelRequested"]:
-                state.update(submitted=True, updatedAt=now())
-                write_json(path, state)
+                state.update(submitted=True, updatedAt=utc_now())
+                write_json_atomic(path, state)
 
     def _submit_member(self, batch, member):
         # Release both locks between members so a separate cancellation request
@@ -345,7 +343,7 @@ class BulkEvaluationService:
         with lifecycle_guard(self.store.folder), writer_lock(folder):
             path = folder / "state.json"
             state = (
-                read_json(path)
+                read_json_bounded(path)
                 if path.exists()
                 else {"items": {}, "cancelRequested": False, "submitted": False}
             )
@@ -381,15 +379,15 @@ class BulkEvaluationService:
                     "error": str(error),
                     "code": getattr(error, "code", "EVALUATION_SUBMISSION_FAILED"),
                 }
-            state["updatedAt"] = now()
-            write_json(path, state)
+            state["updatedAt"] = utc_now()
+            write_json_atomic(path, state)
             return True
 
     def get(self, identity, *, include_inactive=False):
         record = self._record(identity, include_inactive=include_inactive)
         folder = self._folder(identity)
         state = (
-            read_json(folder / "state.json")
+            read_json_bounded(folder / "state.json")
             if (folder / "state.json").exists()
             else {"items": {}, "cancelRequested": False, "submitted": False}
         )
@@ -503,21 +501,23 @@ class BulkEvaluationService:
             ensure_managed_directory(folder)
             with writer_lock(folder):
                 path = folder / "state.json"
-                state = read_json(path) if path.exists() else {"items": {}, "submitted": False}
-                state.update(cancelRequested=True, updatedAt=now())
-                write_json(path, state)
+                state = (
+                    read_json_bounded(path) if path.exists() else {"items": {}, "submitted": False}
+                )
+                state.update(cancelRequested=True, updatedAt=utc_now())
+                write_json_atomic(path, state)
                 for member in record["manifest"]["items"]:
                     if not member["eligible"]:
                         continue
                     try:
                         self.evaluations.jobs.cancel(
-                            member["evaluationId"], f"bulk-cancel-{_hash(operation_id)}"
+                            member["evaluationId"], f"bulk-cancel-{content_hash(operation_id)}"
                         )
                     except StorageError as error:
                         # Members from before the Task Center have nothing left to cancel.
                         if error.code not in {"CONFIGURATION_NOT_FOUND", LEGACY_CODE}:
                             state["items"][member["predictorId"]] = {"error": str(error)}
-                            write_json(path, state)
+                            write_json_atomic(path, state)
             # A queued submission never needs to start; a running one stops at its next
             # member because cancelRequested is already saved.
             try:

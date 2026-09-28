@@ -11,12 +11,10 @@ import signal
 import subprocess
 import time
 from collections import Counter
-from datetime import UTC, datetime
 from pathlib import Path
 
+from histopilot.storage.io import read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.project_lock import StorageError, reject_symlink_components
-from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.packing_process import write_json
 
 ACTIVE = {"queued", "running"}
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
@@ -168,6 +166,8 @@ def compute_snapshot() -> dict:
         root / "storage" / "attention_packs.py",
         root / "storage" / "packed.py",
         root / "storage" / "pack_import.py",
+        # Content hashes, timestamps and the JSON files the modules above read and write.
+        root / "storage" / "io.py",
     ]
     files = {
         str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -179,52 +179,13 @@ def compute_snapshot() -> dict:
     }
 
 
-def now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def read_json(path: Path) -> dict:
-    content = ScientificStore._read_file(path, 64 * 1024 * 1024)
-
-    def finite_number(value):
-        number = float(value)
-        if not math.isfinite(number):
-            raise ValueError("Metadata numbers must be finite.")
-        return number
-
-    try:
-        value = json.loads(content, parse_float=finite_number, parse_constant=finite_number)
-        if not isinstance(value, dict):
-            raise ValueError("Expected a JSON object.")
-        # The decoder may accept nesting that later exhausts FastAPI's recursive
-        # response encoder. Inspect iteratively, keeping only one iterator per
-        # level so wide metadata arrays do not create another large work list.
-        pending = [(iter(value.values()), 1)]
-        while pending:
-            children, depth = pending[-1]
-            try:
-                child = next(children)
-            except StopIteration:
-                pending.pop()
-                continue
-            if isinstance(child, (dict, list)):
-                if depth >= 64:
-                    raise ValueError("Metadata exceeds its nesting limit.")
-                pending.append(
-                    (iter(child.values() if isinstance(child, dict) else child), depth + 1)
-                )
-        return value
-    except (ValueError, UnicodeError, RecursionError) as error:
-        raise StorageError("Invalid training metadata.", "TRAINING_STATE_INVALID") from error
-
-
 def read_progress(path: Path) -> tuple[dict | None, str | None]:
     """Optional telemetry must not hide a job's durable state or prevent cancellation."""
     try:
         reject_symlink_components(path)
         if not path.exists():
             return None, None
-        value = read_json(path)
+        value = read_json_bounded(path)
         if not value:
             return None, None  # An empty snapshot has no reported progress yet.
         _validate_progress(value)
@@ -437,6 +398,6 @@ def counts(runs: list[dict]) -> dict:
 
 
 def save_state(folder: Path, state: dict) -> None:
-    state["updatedAt"] = now()
+    state["updatedAt"] = utc_now()
     state["runCounts"] = counts(state["runs"])
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "state.json", state)

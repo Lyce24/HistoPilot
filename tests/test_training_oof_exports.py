@@ -11,13 +11,11 @@ from fastapi.testclient import TestClient
 from support.training import synthetic_results, tc_execution
 
 from histopilot.api import create_app
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.training_exports import training_oof_csv
 from histopilot.config import Settings
+from histopilot.storage.io import content_hash, read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import execute_plan
-from histopilot.workers.training_process import read_json
 
 __all__ = ["tc_execution"]
 
@@ -27,19 +25,19 @@ def _write_exports(service, frozen, split_unit=None):
     if split_unit:
         plan["splitUnit"] = split_unit
     folder = service._folder(frozen["id"])
-    write_json(folder / "plan.json", plan)
+    write_json_atomic(folder / "plan.json", plan)
     records = []
     for run in state["runs"]:
         run_folder = folder / "runs" / run["id"]
-        write_json(run_folder / "plan.json", execute_plan(plan, run, None))
+        write_json_atomic(run_folder / "plan.json", execute_plan(plan, run, None))
         path = Path(run["result"]["predictions"]["assessment"])
-        prediction = read_json(path)
+        prediction = read_json_bounded(path)
         run["result"]["bestCheckpointPath"] = str(run_folder / "best.ckpt")
         prediction["checkpointPath"] = run["result"]["bestCheckpointPath"]
-        write_json(path, prediction)
-        write_json(run_folder / "result.json", run["result"])
+        write_json_atomic(path, prediction)
+        write_json_atomic(run_folder / "result.json", run["result"])
         records.extend(prediction["records"])
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "state.json", state)
     candidate = plan["configurations"][0]
     training_seed = plan["runs"][0]["trainingSeed"]
     split_seed = plan["splitPlans"][0]["seed"]
@@ -50,9 +48,9 @@ def _write_exports(service, frozen, split_unit=None):
                 "trainingSeed": training_seed, "splitSeed": split_seed,
                 "protocolId": plan["protocolId"], "classOrder": plan["target"]["classes"],
                 "records": records, "purpose": "development_assessment",
-                "analysisInputHash": _hash(scoring)}
+                "analysisInputHash": content_hash(scoring)}
     path = folder / f"oof-{key}.json"
-    write_json(path, document)
+    write_json_atomic(path, document)
     arguments = (frozen["id"], candidate["id"], training_seed, split_seed)
     return service, arguments, folder, path
 
@@ -104,7 +102,7 @@ def test_slide_level_design_exports_each_slides_own_fold(tc_execution, monkeypat
                                     "run_recipe", "run_membership", "checkpoint", "hash", "source"])
 def test_damaged_or_incomplete_oof_evidence_cannot_be_exported(exports, tmp_path, damage):
     service, arguments, folder, path = exports
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     first = state["runs"][0]
     if damage == "missing_state":
         state["runs"].pop(0)
@@ -113,27 +111,27 @@ def test_damaged_or_incomplete_oof_evidence_cannot_be_exported(exports, tmp_path
     elif damage == "duplicate_state":
         state["runs"].append(deepcopy(first))
     elif damage == "receipt":
-        write_json(folder / "runs" / first["id"] / "result.json", {"state": "failed"})
+        write_json_atomic(folder / "runs" / first["id"] / "result.json", {"state": "failed"})
     elif damage == "path":
         outside = tmp_path / "outside.json"
         outside.write_bytes(Path(first["result"]["predictions"]["assessment"]).read_bytes())
         first["result"]["predictions"]["assessment"] = str(outside)
-        write_json(folder / "runs" / first["id"] / "result.json", first["result"])
+        write_json_atomic(folder / "runs" / first["id"] / "result.json", first["result"])
     elif damage in {"run_recipe", "run_membership"}:
         run_path = folder / "runs" / first["id"] / "plan.json"
-        run_plan = read_json(run_path)
+        run_plan = read_json_bounded(run_path)
         if damage == "run_recipe":
             run_plan["recipe"]["patientAggregation"] = "mean_logits"
         else:
             run_plan["data"]["memberships"][0]["partition"] = "wrong"
-        write_json(run_path, run_plan)
+        write_json_atomic(run_path, run_plan)
     elif damage == "checkpoint":
         prediction_path = Path(first["result"]["predictions"]["assessment"])
-        prediction = read_json(prediction_path)
+        prediction = read_json_bounded(prediction_path)
         prediction["checkpointPath"] = "another-model.ckpt"
-        write_json(prediction_path, prediction)
+        write_json_atomic(prediction_path, prediction)
     else:
-        document = read_json(path)
+        document = read_json_bounded(path)
         if damage == "class_order":
             document["classOrder"].reverse()
         elif damage == "probabilities":
@@ -144,8 +142,8 @@ def test_damaged_or_incomplete_oof_evidence_cannot_be_exported(exports, tmp_path
             document["analysisInputHash"] = "0" * 64
         else:
             document["records"][0]["patientIdSource"] = "slide_fallback"
-        write_json(path, document)
-    write_json(folder / "state.json", state)
+        write_json_atomic(path, document)
+    write_json_atomic(folder / "state.json", state)
     with pytest.raises(StorageError) as error:
         training_oof_csv(service.store, *arguments, "patient")
     assert error.value.code in {"TRAINING_OOF_INVALID", "TRAINING_OOF_INCOMPLETE"}

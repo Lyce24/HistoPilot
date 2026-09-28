@@ -25,10 +25,10 @@ from histopilot.application.portability_jobs import PortabilityJobs
 from histopilot.archive_cli import launch_archive_recovery
 from histopilot.config import Settings
 from histopilot.schemas.operations import PortabilityRequest, RelinkSource
+from histopilot.storage.io import write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter.adapters.archive import ArchiveAdapter
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.portability import run
 
 
@@ -326,7 +326,7 @@ def test_an_archive_operation_from_before_the_task_center_is_read_only(project, 
     for key in ("executionMode", "taskId", "ownerKey"):
         saved.pop(key)
     saved.update(status="running", sessionName="histopilot-archive-0123456789abcdef0123")
-    write_json(folder / "state.json", saved)
+    write_json_atomic(folder / "state.json", saved)
     view = jobs.get(store.project_id, job["id"])
     assert view["status"] == "interrupted" and "executor" not in view
     assert "Created before the Task Center" in view["error"]
@@ -337,7 +337,7 @@ def test_an_archive_operation_from_before_the_task_center_is_read_only(project, 
     assert json.loads((folder / "state.json").read_text()) == saved
     assert not (folder / "cancel.requested").exists()
     # A finished one shows exactly its saved record.
-    write_json(folder / "state.json", {**saved, "status": "completed"})
+    write_json_atomic(folder / "state.json", {**saved, "status": "completed"})
     assert jobs.get(store.project_id, job["id"]) == {**saved, "status": "completed"}
 
 

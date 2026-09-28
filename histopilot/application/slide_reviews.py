@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-from datetime import UTC, datetime
 
 from pydantic import ValidationError
 
@@ -11,6 +10,7 @@ from histopilot.schemas.slide_reviews import (
     SlideReviewDocument,
     SlideReviewValues,
 )
+from histopilot.storage.io import read_file_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
@@ -18,8 +18,6 @@ from histopilot.storage.project_lock import (
     reject_symlink_components,
     writer_lock,
 )
-from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.packing_process import write_json
 
 MAX_REVIEW_BYTES = 8 * 1024 * 1024
 
@@ -66,7 +64,7 @@ class SlideReviewService:
             return SlideReviewDocument(datasetId=dataset_id, slideId=slide_id).model_dump()
         try:
             value = SlideReviewDocument.model_validate_json(
-                ScientificStore._read_file(path, MAX_REVIEW_BYTES)
+                read_file_bounded(path, MAX_REVIEW_BYTES)
             ).model_dump()
             if value["datasetId"] != dataset_id or value["slideId"] != slide_id:
                 raise ValueError
@@ -96,7 +94,7 @@ class SlideReviewService:
         for path in paths[offset:offset + limit]:
             try:
                 saved = SlideReviewDocument.model_validate_json(
-                    ScientificStore._read_file(path, MAX_REVIEW_BYTES)
+                    read_file_bounded(path, MAX_REVIEW_BYTES)
                 ).model_dump()
                 if (saved["datasetId"] != dataset_id or saved["slideId"] not in rows
                         or path != self._path(dataset_id, saved["slideId"])):
@@ -140,11 +138,11 @@ class SlideReviewService:
                 if current["revision"] and existing == values:
                     return current
                 event = {**values, "revision": current["revision"] + 1,
-                         "updatedAt": datetime.now(UTC).isoformat()}
+                         "updatedAt": utc_now()}
                 document = {**current, **event, "history": [*current["history"], event]}
                 encoded = json.dumps(document, indent=2, allow_nan=False).encode() + b"\n"
                 if len(encoded) > MAX_REVIEW_BYTES:
                     raise StorageError("This review has reached its history storage limit.", "SLIDE_REVIEW_LIMIT", 413)
                 ensure_managed_directory(self._folder(dataset_id))
-                write_json(self._path(dataset_id, slide_id), document)
+                write_json_atomic(self._path(dataset_id, slide_id), document)
                 return document

@@ -272,7 +272,7 @@ def test_uploaded_slide_list_selects_features_without_slide_files_or_dataset(att
 
 
 def test_legacy_feature_preview_and_freeze_retry_keep_their_identity(attached):
-    from histopilot.application.features import _hash
+    from histopilot.storage.io import content_hash
 
     service, spec, root = attached
     for name in ("001.A.h5", "002.h5"):
@@ -299,7 +299,7 @@ def test_legacy_feature_preview_and_freeze_retry_keep_their_identity(attached):
         {"path": item["path"], "size": item["sizeBytes"], "mtime": item["mtimeNs"]}
         for item in preview["files"]
     ]
-    legacy_preview_hash = _hash(
+    legacy_preview_hash = content_hash(
         {
             **{key: value for key, value in preview.items() if key != "previewHash"},
             "spec": legacy_spec,

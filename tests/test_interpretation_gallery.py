@@ -311,9 +311,9 @@ def test_legacy_manual_study_plan_and_resume_keep_original_slide_shape(managed_s
     for row in original["selection"]["slides"]:
         for key in ("sourceFormat", "packPath", "packSlideId"):
             row.pop(key, None)
-    from histopilot.application.feature_bundles import _hash
+    from histopilot.storage.io import content_hash
 
-    original["previewHash"] = _hash(original)
+    original["previewHash"] = content_hash(original)
     legacy = service.store.publish_configuration(manifest=original, operation_id="legacy-manual")
     launched = service.launch(legacy["id"], "legacy-launch")
     assert launched["status"] == "queued"
@@ -353,15 +353,15 @@ def test_schema_rejects_duplicate_batch_and_partial_geometry():
 
 
 def test_lost_response_after_fast_failure_does_not_resume_same_operation(managed_gallery):
-    from histopilot.workers.training_process import read_json, write_json
+    from histopilot.storage.io import read_json_bounded, write_json_atomic
 
     service, source, task_center, _ = managed_gallery
     request = visualize_request(source, [Path(source["slideFolder"]) / "001.png"])
     first = service.visualize(request)
     identity = first["items"][0]["interpretationId"]
     state_path = service.jobs.folder(identity) / "state.json"
-    state = read_json(state_path)
-    write_json(state_path, {**state, "status": "failed", "error": "Fast worker failure"})
+    state = read_json_bounded(state_path)
+    write_json_atomic(state_path, {**state, "status": "failed", "error": "Fast worker failure"})
     task_center.finish(state["taskId"], "failed", returncode=1)
     repeated = service.visualize(request)
     assert repeated["items"][0]["status"] == "failed"
@@ -377,8 +377,7 @@ def test_lost_response_after_fast_failure_does_not_resume_same_operation(managed
 
 
 def test_uncertain_response_after_launch_replays_original_operation(managed_gallery):
-    from histopilot.application.feature_bundles import _hash
-    from histopilot.workers.training_process import read_json, write_json
+    from histopilot.storage.io import content_hash, read_json_bounded, write_json_atomic
 
     service, source, task_center, _ = managed_gallery
     request = visualize_request(source, [Path(source["slideFolder"]) / "001.png"])
@@ -387,14 +386,14 @@ def test_uncertain_response_after_launch_replays_original_operation(managed_gall
     receipt_path = (
         service.store.folder
         / "interpretation-requests"
-        / _hash(request.operationId)
+        / content_hash(request.operationId)
         / "result.json"
     )
-    receipt = read_json(receipt_path)
+    receipt = read_json_bounded(receipt_path)
     receipt["items"][0]["_launched"] = (
         False  # Simulate interruption after launch before acknowledgement.
     )
-    write_json(receipt_path, receipt)
+    write_json_atomic(receipt_path, receipt)
     task_center.finish(
         compute_task(service, identity, task_center)["id"],
         "interrupted",

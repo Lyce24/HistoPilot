@@ -21,15 +21,15 @@ if __package__ in {None, ""}:
 from histopilot.application.operations import (
     PortabilityCancelled,
     StudyPortability,
-    _now,
     permitted_path,
     restore_archive,
     verify_archive,
 )
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import read_file_bounded, utc_now, write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.packing_process import output_lock, process_metadata, write_json
+from histopilot.workers.packing_process import output_lock, process_metadata
 
 BUSY_EXIT = 75  # EX_TEMPFAIL: the project is busy; the Task Center retries later
 BUSY_CODES = frozenset({"PORTABILITY_ACTIVE_JOBS", "PROJECT_BUSY"})
@@ -49,14 +49,14 @@ def run(plan_path):
     folder = plan_path.parent
     managed = os.environ.get("HISTOPILOT_TASK_MANAGED") == "1"
     with output_lock(f"portability:{plan_path}"):
-        plan = json.loads(ScientificStore._read_file(plan_path, 1024 * 1024))
-        state = json.loads(ScientificStore._read_file(folder / "state.json", 64 * 1024 * 1024))
+        plan = json.loads(read_file_bounded(plan_path, 1024 * 1024))
+        state = json.loads(read_file_bounded(folder / "state.json", 64 * 1024 * 1024))
         if state["status"] in {"completed", "failed", "cancelled"}:
             return state
-        write_json(folder / "process.json", process_metadata())
-        state.update(status="running", updatedAt=_now(), **_task_identity())
+        write_json_atomic(folder / "process.json", process_metadata())
+        state.update(status="running", updatedAt=utc_now(), **_task_identity())
         state.pop("waitingReason", None)
-        write_json(folder / "state.json", state)
+        write_json_atomic(folder / "state.json", state)
         last_update, last_stage = 0.0, None
         interrupted = False
         previous_handlers = {}
@@ -79,7 +79,7 @@ def run(plan_path):
                 )
             current = time.monotonic()
             if current - last_update >= 0.5 or value["stage"] != last_stage:
-                write_json(folder / "progress.json", {**value, "updatedAt": _now()})
+                write_json_atomic(folder / "progress.json", {**value, "updatedAt": utc_now()})
                 print(f"{value['stage']}: {value['completed']}/{value['total']} files", flush=True)
                 last_update, last_stage = current, value["stage"]
 
@@ -129,8 +129,8 @@ def run(plan_path):
             traceback.print_exc()
             state.update(status="failed", error=str(error), result=None)
         finally:
-            state["updatedAt"] = _now()
-            write_json(folder / "state.json", state)
+            state["updatedAt"] = utc_now()
+            write_json_atomic(folder / "state.json", state)
             (folder / "process.json").unlink(missing_ok=True)
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from histopilot.application.feature_bundles import FeatureBundleService, _hash
+from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.mil_inputs import protocol_bundle_findings
 from histopilot.application.protocols import (
     CANONICAL,
@@ -22,6 +22,7 @@ from histopilot.domain.features import representation_kind
 from histopilot.schemas.evaluations import EvaluationSpec, is_inference_purpose
 from histopilot.schemas.protocols import TargetSpec, iter_conditions
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import content_hash
 from histopilot.storage.pack_import import pack_layout
 from histopilot.storage.packed import PackedStoreError
 from histopilot.storage.project_lock import StorageError
@@ -164,12 +165,14 @@ VOLATILE_PREVIEW_KEYS = frozenset({"findings", "canFreeze", "executionEnabled", 
 
 
 def preview_hash(preview):
-    return _hash({key: value for key, value in preview.items() if key not in VOLATILE_PREVIEW_KEYS})
+    return content_hash(
+        {key: value for key, value in preview.items() if key not in VOLATILE_PREVIEW_KEYS}
+    )
 
 
 def legacy_preview_hash(preview):
     """Pre-v2 cohorts hashed the whole preview, findings included."""
-    return _hash({key: value for key, value in preview.items() if key != "previewHash"})
+    return content_hash({key: value for key, value in preview.items() if key != "previewHash"})
 
 
 def preview_current(preview, manifest):

@@ -20,6 +20,7 @@ from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from pathlib import Path
 
+from histopilot.storage.io import utc_now
 from histopilot.storage.project_lock import StorageError
 from histopilot.taskcenter import adapters as adapter_registry
 from histopilot.taskcenter import capacity, leases, paths, procs
@@ -33,7 +34,6 @@ from histopilot.taskcenter.model import (
     normalize_request,
     parse_iso,
     seconds_between,
-    utc_now_iso,
 )
 from histopilot.taskcenter.store import MEASUREMENT_COLUMNS, TaskStore
 
@@ -226,7 +226,7 @@ def stop_signals(event: threading.Event):
 
 
 def _print_log(message: str) -> None:
-    print(f"{utc_now_iso()} {message}", flush=True)
+    print(f"{utc_now()} {message}", flush=True)
 
 
 def _abort_error(task: dict) -> str | None:
@@ -304,7 +304,7 @@ class Runner:
         self,
         store: TaskStore,
         *,
-        now=utc_now_iso,
+        now=utc_now,
         clock=time.monotonic,
         host_probe=capacity.host,
         spawner=procs.spawn,

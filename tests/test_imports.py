@@ -330,13 +330,17 @@ def test_join_amplification_is_bounded_before_whole_result_serialization(service
         patientAttributes=[field("Notes", "patient")],
     )
     monkeypatch.setattr(imports, "MAX_ARTIFACT_BYTES", 700)
-    original_json = imports._json
+    original_json, original_hash = imports.canonical_json, imports.content_hash
 
-    def bounded_json(value):
-        assert not (isinstance(value, dict) and "records" in value)
-        return original_json(value)
+    def bounded(original):
+        def encode(value, **options):
+            assert not (isinstance(value, dict) and "records" in value)
+            return original(value, **options)
 
-    monkeypatch.setattr(imports, "_json", bounded_json)
+        return encode
+
+    monkeypatch.setattr(imports, "canonical_json", bounded(original_json))
+    monkeypatch.setattr(imports, "content_hash", bounded(original_hash))
     with pytest.raises(StorageError) as error:
         preview(service, saved)
     assert error.value.code == "IMPORT_TOO_LARGE"

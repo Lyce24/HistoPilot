@@ -24,8 +24,8 @@ from histopilot.schemas.model_experiments import (
     SubmitModelExperiment,
     UpdateModelExperiment,
 )
+from histopilot.storage.io import write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
 
 
 class Training:
@@ -456,7 +456,7 @@ def test_historical_execution_keeps_configuration_locked_even_when_hidden(manage
     # only its failed Task Center receipt remains.
     folder = service.store.folder / "training" / batch["id"]
     folder.mkdir(parents=True)
-    write_json(
+    write_json_atomic(
         folder / "state.json",
         {
             "batchId": batch["id"],

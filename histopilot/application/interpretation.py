@@ -11,7 +11,6 @@ from pathlib import Path
 from threading import Lock
 
 from histopilot.application.compute_jobs import ComputeJobService
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.interpretation_gallery import (
     InterpretationGalleryService,
     allowed_folder,
@@ -31,12 +30,11 @@ from histopilot.storage.attention_inputs import (
     verify_sources,
 )
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import content_hash, read_file_bounded, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError, ensure_managed_directory, writer_lock
-from histopilot.storage.scientific import ScientificStore
 from histopilot.viewer.attention_arrays import attention_page, attention_top, coordinate_bounds
 from histopilot.viewer.slide_images import allowed_file, inspect_slide, render_slide
-from histopilot.workers.packing_process import write_json
 
 EXECUTION_NOTE = (
     "Pooling attention is class-independent and describes relative patch weighting within a slide. "
@@ -173,9 +171,9 @@ class InterpretationService:
     def visualize(self, request):
         """Freeze and queue each selected slide independently, with durable retry intent."""
         operation_folder = (
-            self.store.folder / "interpretation-requests" / _hash(request.operationId)
+            self.store.folder / "interpretation-requests" / content_hash(request.operationId)
         )
-        request_hash = _hash(request.model_dump())
+        request_hash = content_hash(request.model_dump())
         deadline = time.monotonic() + MAX_BATCH_SECONDS
         with lifecycle_guard(self.store.folder):
             self.store.lifecycle.assert_usable([f"project:{self.store.project_id}"])
@@ -183,7 +181,7 @@ class InterpretationService:
         with writer_lock(operation_folder):
             receipt_path = operation_folder / "request.json"
             if receipt_path.exists():
-                receipt = json.loads(ScientificStore._read_file(receipt_path, 2 * 1024 * 1024))
+                receipt = json.loads(read_file_bounded(receipt_path, 2 * 1024 * 1024))
                 if receipt.get("requestHash") != request_hash:
                     raise StorageError(
                         "This visualization operation belongs to a different selection. Start a new request after changing inputs.",
@@ -191,7 +189,7 @@ class InterpretationService:
                         409,
                     )
             else:
-                write_json(
+                write_json_atomic(
                     receipt_path, {"requestHash": request_hash, "request": request.model_dump()}
                 )
             resolved, folder, rows, _ = self.gallery.rows(request, require_current=True)
@@ -201,7 +199,7 @@ class InterpretationService:
             result_path = operation_folder / "result.json"
             receipts = {}
             if result_path.exists():
-                stored = json.loads(ScientificStore._read_file(result_path, 64 * 1024 * 1024))
+                stored = json.loads(read_file_bounded(result_path, 64 * 1024 * 1024))
                 if stored.get("requestHash") != request_hash:
                     raise StorageError(
                         "Visualization receipt is inconsistent.",
@@ -214,7 +212,7 @@ class InterpretationService:
                 receipts[result["slidePath"]] = {
                     key: value for key, value in result.items() if key != "interpretation"
                 }
-                write_json(
+                write_json_atomic(
                     result_path, {"requestHash": request_hash, "items": list(receipts.values())}
                 )
 
@@ -331,7 +329,7 @@ class InterpretationService:
                             SaveInterpretation(
                                 **selection.model_dump(),
                                 previewHash=preview["previewHash"],
-                                operationId=f"visualize-{_hash([request.operationId, path])}",
+                                operationId=f"visualize-{content_hash([request.operationId, path])}",
                             ),
                             gallery_context=context,
                         )
@@ -340,7 +338,7 @@ class InterpretationService:
                     execution = document["execution"]
                     if execution["status"] not in {"queued", "running", "completed"}:
                         resume = execution["status"] != "not_started"
-                        launch_operation = f"visualize-{_hash([request.operationId, path, resume, execution.get('attempt', 0)])}"
+                        launch_operation = f"visualize-{content_hash([request.operationId, path, resume, execution.get('attempt', 0)])}"
                         result.update(
                             interpretationId=document["id"],
                             _launchOperation=launch_operation,
@@ -625,7 +623,7 @@ class InterpretationService:
                 )
             return {
                 "canSave": True,
-                "previewHash": _hash(manifest),
+                "previewHash": content_hash(manifest),
                 "manifest": manifest,
                 "findings": findings,
                 "executionNote": EXECUTION_NOTE,
@@ -662,7 +660,7 @@ class InterpretationService:
                     )
                 return lifecycle_document(self.store, prior)
         manifest = self._prepare(selection, gallery_context=gallery_context)
-        if _hash(manifest) != request.previewHash:
+        if content_hash(manifest) != request.previewHash:
             raise StorageError("Interpretation inputs changed. Review again.", "PREVIEW_STALE", 409)
 
         def verify_before_publish():
@@ -787,7 +785,7 @@ class InterpretationService:
                 "INTERPRETATION_LEGACY_VIEW_LIMIT",
                 413,
             )
-        content = ScientificStore._read_file(path, max_bytes)
+        content = read_file_bounded(path, max_bytes)
         if (
             len(content) != expected["bytes"]
             or hashlib.sha256(content).hexdigest() != expected["sha256"]

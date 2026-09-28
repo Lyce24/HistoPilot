@@ -15,6 +15,8 @@ import json
 import math
 import statistics
 
+from histopilot.storage.io import content_hash
+
 
 def clinical_fields(recipe):
     return recipe.get("clinicalFields", []) if recipe.get("inputMode", "image") != "image" else []
@@ -126,9 +128,7 @@ def fit_clinical_preprocessor(memberships, values, fields, *, unit="patient"):
         f"training{noun}IdsSha256": hashlib.sha256(
             json.dumps(sorted(patients)).encode()
         ).hexdigest(),
-        "trainingValuesSha256": hashlib.sha256(
-            json.dumps(patients, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-        ).hexdigest(),
+        "trainingValuesSha256": content_hash(patients),
     }
 
 

@@ -4,7 +4,7 @@ from itertools import product
 
 from pydantic import ValidationError
 
-from histopilot.application.feature_bundles import FeatureBundleService, _hash
+from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.mil_inputs import MILInputService
 from histopilot.application.model_experiments import ModelExperimentService, input_snapshot
 from histopilot.application.protocols import FilterEvaluator, ProtocolService
@@ -16,6 +16,7 @@ from histopilot.schemas.training_controls import (
     validate_selection_metric,
     validate_training_controls,
 )
+from histopilot.storage.io import content_hash
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 
@@ -47,7 +48,7 @@ def expand_recipes(spec: DevelopmentBatchSpec) -> list[dict]:
             f"A resolved training recipe is invalid: {error}", "INVALID_TRAINING_RECIPE", 422
         ) from error
     # Duplicate explicit rows are one scientific configuration, never extra repetitions.
-    return list({_hash(recipe): recipe for recipe in recipes}.values())
+    return list({content_hash(recipe): recipe for recipe in recipes}.values())
 
 
 # A covariate this close to the label deserves a second look before anyone trusts an
@@ -99,7 +100,7 @@ def development_plans(protocol: dict) -> list[dict]:
         if row.get("phase") == "final" or row.get("pool") == "external_test":
             continue
         metadata = plan_metadata(row)
-        key = _hash(metadata)
+        key = content_hash(metadata)
         if key not in plans:
             plans[key] = {"id": key, **metadata, "slideIds": set(), "partitions": {}}
         plan = plans[key]
@@ -152,7 +153,7 @@ class DevelopmentService:
         for row in protocol["memberships"]:
             if row.get("phase") == "final" or row.get("pool") == "external_test":
                 continue
-            identity = _hash(plan_metadata(row))
+            identity = content_hash(plan_metadata(row))
             if identity in groups:
                 groups[identity].append(row)
         columns = {
@@ -289,7 +290,7 @@ class DevelopmentService:
                         for split in plans:
                             fitting = [row for row in protocol["memberships"]
                                        if row["partition"] == "train"
-                                       and _hash(plan_metadata(row)) == split["id"]]
+                                       and content_hash(plan_metadata(row)) == split["id"]]
                             fit_clinical_preprocessor(
                                 fitting,
                                 clinical_values,
@@ -369,7 +370,7 @@ class DevelopmentService:
             )
         if not any(item["severity"] == "error" for item in findings):
             for index, recipe in enumerate(recipes):
-                candidate_id = "candidate-" + _hash(
+                candidate_id = "candidate-" + content_hash(
                     {"inputs": spec.inputs.model_dump(), "recipe": recipe}
                 )
                 candidates.append({"id": candidate_id, "number": index + 1, "recipe": recipe})
@@ -379,7 +380,7 @@ class DevelopmentService:
                         "trainingSeed": seed,
                         "splitPlanId": plan["id"],
                     }
-                    runs.append({"id": "run-" + _hash(intent), **intent, "status": "planned"})
+                    runs.append({"id": "run-" + content_hash(intent), **intent, "status": "planned"})
         nnmil_planning = []
         if candidates and any(
             item["recipe"].get("model", "abmil").lower() == "nnmil"
@@ -390,7 +391,7 @@ class DevelopmentService:
             files = {row["slideId"]: row for row in feature["manifest"]["files"]}
             groups = {plan["id"]: [] for plan in plans}
             for row in protocol["memberships"]:
-                identity = _hash(plan_metadata(row))
+                identity = content_hash(plan_metadata(row))
                 if identity in groups:
                     groups[identity].append(row)
             try:
@@ -445,7 +446,7 @@ class DevelopmentService:
         return {
             "canFreeze": not any(item["severity"] == "error" for item in findings),
             "findings": findings,
-            "previewHash": _hash(manifest),
+            "previewHash": content_hash(manifest),
             **manifest,
         }
 

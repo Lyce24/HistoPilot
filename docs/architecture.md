@@ -69,7 +69,7 @@ Records created before the Task Center ran in their own tmux sessions. They stay
 
 Code that produces scientific results runs from a verified, archived copy, never from the live checkout.
 
-- **What is archived.** `histopilot/workers/compute_archive.py` copies the package's Python modules into `<job folder>/compute/histopilot/`, with a `snapshot.json` listing every file's hash. A narrower **compute fingerprint** (`workers/training_process.py:compute_snapshot`) hashes the modules that affect results: models, datasets, training, scoring and statistics, the workers and the predictor and refit services. An existing archive is re-verified on every use and never altered.
+- **What is archived.** `histopilot/workers/compute_archive.py` copies the package's Python modules into `<job folder>/compute/histopilot/`, with a `snapshot.json` listing every file's hash. A narrower **compute fingerprint** (`workers/training_process.py:compute_snapshot`) hashes the modules that affect results: models, datasets, training, scoring and statistics, the workers, the predictor and refit services, and the storage helpers they hash and write records with. An existing archive is re-verified on every use and never altered.
 - **Execution contract.** Each run plan records its code fingerprint and runtime: interpreter, Python and CUDA versions and package versions. No dependency lock file is archived; the contract detects a changed environment instead.
 - **Submission.** Submitting an experiment prepares every batch, requires all their contracts to match, and stores that contract with the submission. Each batch then launches from its own archive in `training/<batch-id>/compute/`; fold and collection workers import that copy and refuse to run if its fingerprint differs from the plan.
 - **Follow-up work.** A refit launched later, a batch whose launch is retried, and the predictor coordinator run from **the first launched batch's archive** (`application/model_experiments.py:pinned_compute`). They check the submitted contract first and refuse with `EXPERIMENT_RUNTIME_CHANGED` if the code or environment changed; restore the environment or copy the experiment. The coordinator also points its refits at the contract's training interpreter.
@@ -146,7 +146,7 @@ TanStack Query owns cached server state, scoped by project and record identity. 
 | `histopilot/api/` | FastAPI routers and the local security boundary (`security.py`) |
 | `histopilot/schemas/` | Pydantic request and record contracts |
 | `histopilot/application/` | Services: imports, targets and splits, features, setups and experiments, training, predictors, evaluation, inference, clinical utility, interpretation, lifecycle, operations, the BLCA demo |
-| `histopilot/storage/` | Scientific and central stores, locks, lifecycle sidecar, filesystem confinement, packed features, attention packs |
+| `histopilot/storage/` | Scientific and central stores, locks, lifecycle sidecar, filesystem confinement, packed features, attention packs; `io.py` holds canonical JSON, content hashes, timestamps and bounded, atomic JSON files |
 | `histopilot/taskcenter/` | Task store, runner, wrapper, capacity, estimator, launcher, leases and per-kind adapters |
 | `histopilot/workers/` | Isolated worker entry points and the compute archive |
 | `histopilot/training/` | Lightning fold training, refit, inference and attention |

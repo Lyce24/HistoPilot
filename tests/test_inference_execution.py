@@ -11,8 +11,8 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
-from histopilot.application.feature_bundles import _hash  # noqa: E402
 from histopilot.application.predictors import checkpoint_snapshot  # noqa: E402
+from histopilot.storage.io import content_hash  # noqa: E402
 from histopilot.storage.packed import stat_stamp  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.inference import (  # noqa: E402
@@ -305,7 +305,7 @@ def test_resume_recomputes_only_cache_without_valid_member_evidence(
         destination.write_text('{"probabilities":')
     else:
         cached["probabilities"] = [[0.9, 0.9] for _ in cached["slideIds"]]
-        cached["sha256"] = _hash(
+        cached["sha256"] = content_hash(
             {key: cached[key] for key in ("probabilities", "logProbabilities")}
         )
         destination.write_text(json.dumps(cached))

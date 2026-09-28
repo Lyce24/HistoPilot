@@ -10,11 +10,11 @@ import traceback
 from contextlib import ExitStack
 from pathlib import Path
 
-from histopilot.application.feature_bundles import _hash
+from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import output_lock, write_json
+from histopilot.workers.packing_process import output_lock
 from histopilot.workers.train_batch import collect_results
-from histopilot.workers.training_process import ACTIVE, now, read_json
+from histopilot.workers.training_process import ACTIVE
 
 BUSY_EXIT = 75  # another collector owns this batch output
 
@@ -42,17 +42,17 @@ def collect(plan_path: Path, *, final: bool) -> int:
         except StorageError as error:
             if error.code != "OUTPUT_BUSY":
                 raise
-            print(f"{now()} Results collection deferred: {error}", flush=True)
+            print(f"{utc_now()} Results collection deferred: {error}", flush=True)
             return BUSY_EXIT
         receipt = {"status": None, "final": final, "at": None, "error": None}
         try:
-            plan = read_json(plan_path)
-            state = read_json(folder / "state.json")
-            if state.get("planHash") != _hash(plan):
+            plan = read_json_bounded(plan_path)
+            state = read_json_bounded(folder / "state.json")
+            if state.get("planHash") != content_hash(plan):
                 raise ValueError("The batch plan changed after launch; results were not collected.")
             if not final and state.get("status") not in ACTIVE:
                 # A finished batch's results carry its final status; never regress them.
-                receipt.update(status=state.get("status"), skipped=True, at=now())
+                receipt.update(status=state.get("status"), skipped=True, at=utc_now())
             else:
                 status = (
                     final_status(state, cancel_requested=(folder / "cancel.json").exists())
@@ -60,14 +60,14 @@ def collect(plan_path: Path, *, final: bool) -> int:
                     else "running"
                 )
                 collect_results(plan, {**state, "status": status}, folder)
-                receipt.update(status=status, at=now())
+                receipt.update(status=status, at=utc_now())
         except Exception as error:
             traceback.print_exc()
-            receipt.update(at=now(), error=str(error) or type(error).__name__)
-            write_json(folder / "collect-result.json", receipt)
+            receipt.update(at=utc_now(), error=str(error) or type(error).__name__)
+            write_json_atomic(folder / "collect-result.json", receipt)
             return 1
-        write_json(folder / "collect-result.json", receipt)
-        print(f"{now()} Results collected ({receipt['status']}, final={final}).", flush=True)
+        write_json_atomic(folder / "collect-result.json", receipt)
+        print(f"{utc_now()} Results collected ({receipt['status']}, final={final}).", flush=True)
         return 0
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 import histopilot
 
 PACKAGE = Path(histopilot.__file__).resolve().parent
-ALLOWED = 49
+ALLOWED = 21
 
 
 def private_imports():

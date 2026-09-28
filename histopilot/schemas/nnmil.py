@@ -4,17 +4,11 @@ The half-median heuristic follows Luo et al., arXiv:2511.14907. Unlike the
 upstream dataset-wide planner, resolution uses only the actual fitting slides.
 """
 
-import hashlib
-import json
 import math
 from statistics import median
 
 from histopilot.schemas.development import TrainingRecipe
-
-
-def _hash(value):
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    return hashlib.sha256(encoded.encode()).hexdigest()
+from histopilot.storage.io import content_hash
 
 
 def _quantile(values, fraction):
@@ -104,7 +98,7 @@ def resolve_nnmil_recipe(recipe, rows, feature_files):
         "truncatedSlides": sum(count > cap for count in counts) if cap is not None else 0,
         "inputMemoryMiB": recipe.get("batchSize", defaults["batchSize"].default)
         * (cap or counts[-1]) * dimension * 4 / 1024**2,
-        "fingerprint": _hash({"version": 1, "fittingSlides": evidence}),
+        "fingerprint": content_hash({"version": 1, "fittingSlides": evidence}),
     }
     return {**recipe, "bagSize": cap}, summary
 

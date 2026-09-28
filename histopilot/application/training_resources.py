@@ -7,8 +7,8 @@ import stat
 from collections import deque
 from datetime import datetime
 
+from histopilot.storage.io import regular_file
 from histopilot.storage.project_lock import StorageError, reject_symlink_components
-from histopilot.storage.scientific import ScientificStore
 
 MAX_RESOURCE_BYTES = 4 * 1024**2
 DISPLAY_RESOURCE_ROWS = 360
@@ -106,7 +106,7 @@ def _sample(content: bytes, run_ids: set[str]) -> dict:
 
 def _tail(path) -> tuple[bytes, bool]:
     """Snapshot a regular file's tail without following aliases or reading a growing log."""
-    ScientificStore._regular(path)
+    regular_file(path)
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(descriptor)

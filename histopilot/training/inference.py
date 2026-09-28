@@ -11,21 +11,19 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import checkpoint_snapshot
 from histopilot.datasets.datamodule import _worker_init
 from histopilot.datasets.mil import SlideDataset, collate_mil
 from histopilot.inference_summary import describe, patient_member_probabilities, summarize
 from histopilot.scoring import patient_predictions
+from histopilot.storage.io import content_hash, read_file_bounded, write_json_atomic
 from histopilot.storage.project_lock import ensure_managed_directory, reject_symlink_components
-from histopilot.storage.scientific import ScientificStore
 from histopilot.training.module import (
     MILTrainModule,
     _metrics,
     class_logits,
     window_uncertainty_rows,
 )
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import check_inputs
 
 
@@ -169,11 +167,11 @@ def _finish_inference(plan, folder, records, *, method, checkpoints, input_hash,
         "patient": patient_summary,
         "selected": patient_summary if target["unit"] == "patient" else slide_summary,
     }
-    write_json(
+    write_json_atomic(
         folder / "predictions.json",
         {"classOrder": classes, "records": records, "patientRecords": patients},
     )
-    write_json(folder / "summary.json", summary)
+    write_json_atomic(folder / "summary.json", summary)
     _write_csv(
         folder / "slide-predictions.csv",
         _described_rows(records, target, threshold),
@@ -215,7 +213,7 @@ def _finish_inference(plan, folder, records, *, method, checkpoints, input_hash,
         "inputHash": input_hash,
         "resumePolicy": "reuse_completed_members_replay_interrupted_member",
     }
-    write_json(folder / "result.json", result)
+    write_json_atomic(folder / "result.json", result)
     return result
 
 
@@ -274,7 +272,7 @@ def _cached_member(path, input_hash, member_hash, identities, shape, *, include_
         return None
     # Filesystem safety failures remain errors; malformed derived predictions can
     # be discarded and recomputed from the still-verified checkpoint and features.
-    content = ScientificStore._read_file(path, 64 * 1024 * 1024)
+    content = read_file_bounded(path, 64 * 1024 * 1024)
     try:
         cache = json.loads(content)
         if (
@@ -284,7 +282,7 @@ def _cached_member(path, input_hash, member_hash, identities, shape, *, include_
             or cache.get("slideIds") != identities
             or "logProbabilities" not in cache
             or cache.get("sha256")
-            != _hash(
+            != content_hash(
                 {
                     "probabilities": cache.get("probabilities"),
                     "logProbabilities": cache.get("logProbabilities"),
@@ -417,7 +415,7 @@ def evaluate(plan, output_dir):
     member_logs = (
         [[] for _ in rows] if member_probabilities is not None and retain_member_logs else None
     )
-    input_hash = _hash(
+    input_hash = content_hash(
         {
             "data": data,
             "target": target,
@@ -438,7 +436,7 @@ def evaluate(plan, output_dir):
             if any(snapshot[key] != checkpoint[key] for key in ("path", "bytes", "sha256")):
                 raise ValueError("A frozen predictor checkpoint changed.")
             cache_path = cache_dir / f"member-{index}.json"
-            member_hash = _hash({"inputHash": input_hash, "checkpoint": checkpoint})
+            member_hash = content_hash({"inputHash": input_hash, "checkpoint": checkpoint})
             cached = _cached_member(
                 cache_path,
                 input_hash,
@@ -505,14 +503,14 @@ def evaluate(plan, output_dir):
                     "logProbabilities": log_collected,
                     **({"windowUncertainty": uncertainty} if uncertainty is not None else {}),
                 }
-                write_json(
+                write_json_atomic(
                     cache_path,
                     {
                         "inputHash": input_hash,
                         "memberHash": member_hash,
                         "slideIds": identities,
                         **payload,
-                        "sha256": _hash(payload),
+                        "sha256": content_hash(payload),
                     },
                 )
             else:
@@ -537,7 +535,7 @@ def evaluate(plan, output_dir):
             totals += probabilities / len(checkpoints)
             log_totals = np.logaddexp(log_totals, log_probabilities - np.log(len(checkpoints)))
             logit_totals += log_probabilities / len(checkpoints)
-            write_json(
+            write_json_atomic(
                 folder / "progress.json",
                 {
                     "completedModels": index + 1,
@@ -628,11 +626,11 @@ def evaluate(plan, output_dir):
         intervals = metrics["patientAnalysis"]["uncertainty"].get("intervals")
         if intervals:
             patient_metrics["confidenceIntervals"] = intervals
-    write_json(
+    write_json_atomic(
         folder / "predictions.json",
         {"classOrder": classes, "records": records, "patientRecords": patients},
     )
-    write_json(folder / "metrics.json", metrics)
+    write_json_atomic(folder / "metrics.json", metrics)
     _write_csv(folder / "slide-predictions.csv", records, classes)
     if not slide_unit:
         _write_csv(folder / "patient-predictions.csv", patients, classes, patient=True)
@@ -662,5 +660,5 @@ def evaluate(plan, output_dir):
         "inputHash": input_hash,
         "resumePolicy": "reuse_completed_members_replay_interrupted_member",
     }
-    write_json(folder / "result.json", result)
+    write_json_atomic(folder / "result.json", result)
     return result

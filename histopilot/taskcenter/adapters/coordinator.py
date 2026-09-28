@@ -13,6 +13,7 @@ Every form is requeued with the runner's busy backoff.
 
 from pathlib import Path
 
+from histopilot.storage.io import read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 from histopilot.taskcenter.adapters.base import (
@@ -23,8 +24,6 @@ from histopilot.taskcenter.adapters.base import (
     logged_busy,
     outcome,
 )
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import now, read_json
 
 FINISHED = frozenset({"completed", "cancelled", "attention"})
 # Last log lines of a coordinator pinned before the busy contract that stopped on a lock:
@@ -59,7 +58,7 @@ class CoordinatorAdapter(Adapter):
 
     def _state(self, task) -> dict | None:
         try:
-            return read_json(self._folder(task) / "state.json")
+            return read_json_bounded(self._folder(task) / "state.json")
         except (OSError, ValueError):
             return None
 
@@ -125,9 +124,12 @@ class CoordinatorAdapter(Adapter):
         """
         folder = self._folder(task)
         try:
-            project = task.get("projectFolder") or read_json(folder / "plan.json")["projectFolder"]
+            project = (
+                task.get("projectFolder")
+                or read_json_bounded(folder / "plan.json")["projectFolder"]
+            )
             with lifecycle_guard(Path(project), timeout=LOCK_WAIT_SECONDS):
-                state = read_json(folder / "state.json")
+                state = read_json_bounded(folder / "state.json")
                 if state.get("taskId") not in (None, task["id"]):
                     raise AdapterError("Another launch owns this work.", fatal=True)
                 if (folder / "cancel.requested").exists():
@@ -146,8 +148,8 @@ class CoordinatorAdapter(Adapter):
                     state.update(status="queued", error=None)
                     changed = True
                 if changed:
-                    state["updatedAt"] = now()
-                    write_json(folder / "state.json", state)
+                    state["updatedAt"] = utc_now()
+                    write_json_atomic(folder / "state.json", state)
         except StorageError as error:
             # Another request holds the project: retry on a later tick.
             raise AdapterError(str(error), fatal=error.code not in BUSY_CODES) from error

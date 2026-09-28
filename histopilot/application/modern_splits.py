@@ -5,24 +5,23 @@ plans never contain an outer test group. No fitting or model choice occurs here.
 """
 
 import hashlib
-import json
 import math
 from collections import Counter, defaultdict
+
+from histopilot.storage.io import canonical_json
 
 # Part of every group's ordering key. Version 4 plans reuse it, so it never changes.
 ALGORITHM_V2 = "histopilot-patient-evaluation-v2"
 ROLES = ("train", "val", "test", "tune")
 
 
-def _json(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-
-
 def _ordered(patients, seed, context):
     return sorted(
         patients,
         key=lambda patient: (
-            hashlib.sha256(_json([ALGORITHM_V2, seed, context, patient])).digest(),
+            hashlib.sha256(
+                canonical_json([ALGORITHM_V2, seed, context, patient], ascii=True, compact=True)
+            ).digest(),
             patient,
         ),
     )
@@ -177,7 +176,7 @@ def modern_assignments(
     # Include metadata and identifiers before allocating any plan/membership arrays.
     row_bytes = sum(
         len(
-            _json(
+            canonical_json(
                 {
                     "seed": 4294967295,
                     "fold": 9,
@@ -190,7 +189,9 @@ def modern_assignments(
                     "patientId": row.get("patientId") if spec.splitUnit == "slide" else patient,
                     "patientIdSource": row.get("patientIdSource", "source"),
                     "label": row["label"],
-                }
+                },
+                ascii=True,
+                compact=True,
             )
         )
         + 1
@@ -202,7 +203,13 @@ def modern_assignments(
     # the baseline planId already counted above provides additional headroom.
     extra_domain_bytes = (
         sum(
-            len(_json({"domain": value, "planId": f"seed:4294967295/domain:{value}"}))
+            len(
+                canonical_json(
+                    {"domain": value, "planId": f"seed:4294967295/domain:{value}"},
+                    ascii=True,
+                    compact=True,
+                )
+            )
             for value in held_out_domains
         )
         * row_count

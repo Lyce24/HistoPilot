@@ -30,6 +30,7 @@ from histopilot.schemas.extractions import ExtractionSpec
 from histopilot.schemas.feature_packs import FeaturePackSpec
 from histopilot.schemas.features import FeatureSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import utc_now
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter import ids, procs
 from histopilot.taskcenter.adapters.extraction import (
@@ -37,7 +38,7 @@ from histopilot.taskcenter.adapters.extraction import (
     ExtractionValidationAdapter,
 )
 from histopilot.taskcenter.adapters.packing import PackingAdapter, reap_staging
-from histopilot.taskcenter.model import TERMINAL, utc_now_iso
+from histopilot.taskcenter.model import TERMINAL
 from histopilot.workers import packing_process
 
 RUNNER = Path(trident.__file__).with_name("runner.py")
@@ -232,7 +233,7 @@ def test_managed_runner_writes_progress_for_stall_detection(tmp_path):
         "id": "extraction-" + "b" * 32,
         "spec": {"options": {"task": "seg"}},
         "slideCount": 2,
-        "createdAt": utc_now_iso(),
+        "createdAt": utc_now(),
     }
     (tmp_path / "job.json").write_text(json.dumps(job))
     bar = "Segmenting tissue:  50%|#####     | 1/2 [00:19<00:19, 19.05s/it]"
@@ -887,7 +888,7 @@ def test_a_cancel_marker_naming_no_attempt_cancels_one_attempt_not_every_retry(p
     service, feature = packing
     job = submit_pack(service, FeaturePackSpec(featureSetId=feature, action="validate"))
     marker = service.folder / job["id"] / "cancelled"
-    marker.write_text(json.dumps({"requestedAt": utc_now_iso(), "attempts": {}}))
+    marker.write_text(json.dumps({"requestedAt": utc_now(), "attempts": {}}))
     task = center.store.get(job["taskId"])
     skipped = PackingAdapter().prepare(task, center.context())["skip"]
     assert (skipped["state"], skipped["error"]) == ("cancelled", "Cancelled before start.")
@@ -1115,7 +1116,7 @@ def test_extraction_and_archive_bind_a_cancel_marker_that_names_no_attempt(
     archive = jobs.submit(store.project_id, request)
     task = center.store.get(archive["taskId"])
     marker = Path(task["adapterData"]["portabilityFolder"]) / "cancel.requested"
-    marker.write_text(json.dumps({"requestedAt": utc_now_iso(), "attempts": {}}))
+    marker.write_text(json.dumps({"requestedAt": utc_now(), "attempts": {}}))
     assert ArchiveAdapter().prepare(task, center.context())["skip"]["state"] == "cancelled"
     assert json.loads(marker.read_text())["attempts"] == {task["id"]: 1}
     assert center.store.transition(task["id"], from_states=("queued",), to_state="cancelled")

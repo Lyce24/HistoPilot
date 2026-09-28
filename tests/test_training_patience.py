@@ -5,9 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from histopilot.application.development import _hash, plan_metadata
+from histopilot.application.development import plan_metadata
 from histopilot.application.training_history import training_history
 from histopilot.application.training_patience import patience_summary
+from histopilot.storage.io import content_hash
 
 
 def history(values, metric="loss", count=3):
@@ -114,7 +115,7 @@ def test_validation_positive_fallback_uses_frozen_patient_membership(positives, 
     }
     store = SimpleNamespace(get_configuration=lambda _: protocol)
     manifest = {"spec": {"inputs": {"protocolId": "p"}}}
-    run = {"splitPlanId": _hash(plan_metadata(rows[0]))}
+    run = {"splitPlanId": content_hash(plan_metadata(rows[0]))}
     result = patience_summary(
         store, manifest, run, recipe(minValidationPositives=3, fixedEpochBudget=10), history([0.8])
     )

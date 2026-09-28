@@ -25,6 +25,7 @@ from pydantic import ValidationError
 
 from histopilot.schemas.imports import AttributeMapping, ImportSpec, InspectRequest, TableSource
 from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
+from histopilot.storage.io import canonical_json, content_hash
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import MAX_ARTIFACT_BYTES, ScientificStore
 
@@ -52,12 +53,6 @@ RESERVED = {"Slide_ID", "Patient_ID", "Slide_Path", "slideId", "patientId", "sli
 
 def _error(message, code="IMPORT_INVALID", status=422):
     return StorageError(message, code, status)
-
-
-def _json(value):
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
 
 
 class _Findings:
@@ -924,7 +919,7 @@ class ImportService:
                 "slidePath": files[0]["path"] if len(files) == 1 else None,
                 "attributes": attributes,
             }
-            record_bytes += len(_json(record)) + bool(records)
+            record_bytes += len(canonical_json(record, ascii=False, compact=True)) + bool(records)
             if record_bytes > MAX_ARTIFACT_BYTES:
                 raise _error(
                     "Joined records exceed the supported artifact size; reduce the selected scalar fields or source population.",
@@ -1071,13 +1066,13 @@ class ImportService:
             "inventory": inventory,
             "exclusions": exclusions,
         }
-        preview_hash = hashlib.sha256(_json(result)).hexdigest()
+        preview_hash = content_hash(result, ascii=False)
         artifacts = {
-            "records.json": _json(records),
-            "dictionary.json": _json(dictionary),
-            "inventory.json": _json(inventory),
-            "exclusions.json": _json(exclusions),
-            "provenance.json": _json(provenance),
+            "records.json": canonical_json(records, ascii=False, compact=True),
+            "dictionary.json": canonical_json(dictionary, ascii=False, compact=True),
+            "inventory.json": canonical_json(inventory, ascii=False, compact=True),
+            "exclusions.json": canonical_json(exclusions, ascii=False, compact=True),
+            "provenance.json": canonical_json(provenance, ascii=False, compact=True),
             **source_artifacts,
         }
         if any(len(value) > MAX_ARTIFACT_BYTES for value in artifacts.values()):

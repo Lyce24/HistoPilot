@@ -17,7 +17,7 @@ from support.workers import run_pack  # noqa: E402
 from histopilot.application.development import DevelopmentService  # noqa: E402
 from histopilot.application.evaluation_runs import EvaluationRunService  # noqa: E402
 from histopilot.application.evaluations import EvaluationService  # noqa: E402
-from histopilot.application.feature_bundles import FeatureBundleService, _hash  # noqa: E402
+from histopilot.application.feature_bundles import FeatureBundleService  # noqa: E402
 from histopilot.application.features import FeatureService  # noqa: E402
 from histopilot.application.predictors import PredictorService  # noqa: E402
 from histopilot.application.protocols import ProtocolService  # noqa: E402
@@ -36,12 +36,12 @@ from histopilot.schemas.predictors import (  # noqa: E402
     SaveEvaluationRun,
 )
 from histopilot.storage.filesystem import LocalFilesystem  # noqa: E402
+from histopilot.storage.io import content_hash, write_json_atomic  # noqa: E402
 from histopilot.storage.scientific import ScientificStore  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.inference import evaluate  # noqa: E402
 from histopilot.training.module import MILTrainModule  # noqa: E402
 from histopilot.training.refit import train_refit  # noqa: E402
-from histopilot.workers.packing_process import write_json  # noqa: E402
 from histopilot.workers.train_batch import execute_plan  # noqa: E402
 
 
@@ -214,12 +214,17 @@ def test_slide_probes_complete_image_clinical_and_combined_studies(
         with torch.inference_mode():
             logits = loaded.prediction_output(torch.zeros(1, 1, 8), clinical=clinical)["logits"]
         assert torch.isfinite(logits).all() and logits.shape == (1, 2)
-        write_json(run_folder / "plan.json", selected)
+        write_json_atomic(run_folder / "plan.json", selected)
         states.append({**run, "status": "completed", "result": result})
-    write_json(folder / "plan.json", plan)
-    write_json(
+    write_json_atomic(folder / "plan.json", plan)
+    write_json_atomic(
         folder / "state.json",
-        {"batchId": batch["id"], "status": "completed", "planHash": _hash(plan), "runs": states},
+        {
+            "batchId": batch["id"],
+            "status": "completed",
+            "planHash": content_hash(plan),
+            "runs": states,
+        },
     )
     cohorts = EvaluationService(store, filesystem)
     draft = projects.draft(
@@ -286,7 +291,7 @@ def test_slide_probes_complete_image_clinical_and_combined_studies(
         if mode != "image":
             assert execution["data"]["clinicalFields"] == fields
             assert set(execution["data"]["clinicalValues"]) == {row["slideId"] for row in rows[36:]}
-            assert saved["manifest"]["clinical"]["valuesSha256"] == _hash(
+            assert saved["manifest"]["clinical"]["valuesSha256"] == content_hash(
                 execution["data"]["clinicalValues"]
             )
         output = tmp_path / f"evaluation-{mode}"

@@ -4,8 +4,8 @@ import json
 import math
 
 from histopilot.application.training_patience import patience_summary
+from histopilot.storage.io import read_file_bounded
 from histopilot.storage.project_lock import StorageError, reject_symlink_components
-from histopilot.storage.scientific import ScientificStore
 
 MAX_HISTORY_BYTES = 32 * 1024**2
 MAX_HISTORY_ROWS = 100000
@@ -64,7 +64,7 @@ def training_history(store, batch_id: str, run_id: str) -> dict:
         if not path.exists():
             return response
         rows = json.loads(
-            ScientificStore._read_file(path, MAX_HISTORY_BYTES),
+            read_file_bounded(path, MAX_HISTORY_BYTES),
             parse_float=_finite,
             parse_constant=_finite,
         )

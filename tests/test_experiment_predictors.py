@@ -8,13 +8,11 @@ from support.predictors import managed as managed
 from support.predictors import registry as registry
 
 from histopilot.application.experiment_predictors import source_items
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.model_experiments import ModelExperimentService
 from histopilot.schemas.model_experiments import ExperimentPredictorPolicy
 from histopilot.schemas.predictors import LaunchRefit
+from histopilot.storage.io import content_hash, read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
 
 
 def coordinators(center):
@@ -43,7 +41,7 @@ def test_refit_requires_an_explicit_finite_percentile(method, percentile):
 
 
 def test_example_counts_seed_configuration_groups_once_per_method():
-    configurations = [{"id": "candidate-" + _hash(index), "number": index} for index in range(15)]
+    configurations = [{"id": "candidate-" + content_hash(index), "number": index} for index in range(15)]
     splits = [{"id": str(fold), "seed": 42} for fold in range(5)]
     runs = [
         {
@@ -126,9 +124,9 @@ def test_both_automatically_publishes_ensembles_and_launches_every_ready_refit(
 def test_partial_folds_wait_without_publishing(managed):
     service, identity, jobs, selections = managed
     folder = service.store.folder / "training" / selections[0].batchId
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     state["status"] = "running"
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "state.json", state)
     service.launch(identity, "start")
     status = service.advance(identity)
     assert status["status"] == "waiting" and status["counts"]["waiting"] == 4
@@ -436,9 +434,9 @@ def test_old_cancel_retry_cannot_cancel_a_new_attempt(managed, task_center, monk
     # A failed cancellation worker reports attention and exits. The user then
     # explicitly resumes a new attempt; retrying the old request must be inert.
     path = service.folder(identity) / "state.json"
-    state = read_json(path)
+    state = read_json_bounded(path)
     state["status"] = "attention"
-    write_json(path, state)
+    write_json_atomic(path, state)
     task_center.finish(task_id, "failed", returncode=0)
     monkeypatch.setattr(service, "_cancel_items", original)
     service.launch(identity, "fresh-resume", resume=True)
@@ -546,14 +544,14 @@ def test_the_coordinator_loops_through_a_busy_project_then_yields_its_slot(tmp_p
     # Busy passes are retried, never recorded as attention.
     service = Service([busy, busy, "running", busy, "completed"])
     assert run(service) == 0 and service.calls == 5
-    assert read_json(tmp_path / "state.json")["status"] == "queued"
+    assert read_json_bounded(tmp_path / "state.json")["status"] == "queued"
     # A project that stays busy: the worker gives its slot back (run() exits 75) and leaves
     # the saved state as it was.
     with pytest.raises(StorageError) as caught:
         run(Service([busy] * 1000))
     assert caught.value.code == "PROJECT_BUSY"
-    assert read_json(tmp_path / "state.json")["status"] == "queued"
+    assert read_json_bounded(tmp_path / "state.json")["status"] == "queued"
     # A real failure still asks for attention.
     assert run(Service([StorageError("Refit stopped.", "EXPERIMENT_REFIT_STOPPED")])) == 0
-    state = read_json(tmp_path / "state.json")
+    state = read_json_bounded(tmp_path / "state.json")
     assert (state["status"], state["error"]["code"]) == ("attention", "EXPERIMENT_REFIT_STOPPED")

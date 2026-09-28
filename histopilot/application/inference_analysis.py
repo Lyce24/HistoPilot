@@ -12,9 +12,9 @@ from histopilot.application.case_review import (
     development_patients,
 )
 from histopilot.application.evaluation_runs import run_purpose
-from histopilot.application.feature_bundles import _hash
 from histopilot.inference_summary import agreement, class_counts, cross_tab, describe, summarize
 from histopilot.schemas.interpretation import VisualizeInterpretation
+from histopilot.storage.io import content_hash
 from histopilot.storage.project_lock import StorageError
 
 MISSING = "Missing"
@@ -253,7 +253,7 @@ class InferenceAnalysisService:
                     patchWidthLevel0=request.patchWidthLevel0,
                     patchHeightLevel0=request.patchHeightLevel0,
                     resources=request.resources,
-                    operationId=f"inference-attention-{_hash([request.operationId, folder])}"[:128],
+                    operationId=f"inference-attention-{content_hash([request.operationId, folder])}"[:128],
                 )
             )
             items.extend(result["items"])

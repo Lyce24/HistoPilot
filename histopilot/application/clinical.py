@@ -13,11 +13,11 @@ from bisect import bisect_left
 from collections import defaultdict
 
 from histopilot.application.evaluation_runs import EvaluationRunService
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import finding, lifecycle_document, reference
 from histopilot.schemas.clinical import ClinicalSelection
 from histopilot.scoring import class_ranking_score
 from histopilot.scoring import logsumexp as _logsumexp
+from histopilot.storage.io import content_hash
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 
@@ -725,7 +725,7 @@ class ClinicalService:
             manifest = self._prepare(selection)
             return {
                 "canSave": True,
-                "previewHash": _hash(manifest),
+                "previewHash": content_hash(manifest),
                 "manifest": manifest,
                 "findings": [],
             }
@@ -755,7 +755,7 @@ class ClinicalService:
                     )
                 return lifecycle_document(self.store, prior)
             manifest = self._prepare(selection)
-            if _hash(manifest) != request.previewHash:
+            if content_hash(manifest) != request.previewHash:
                 raise StorageError(
                     "Clinical analysis inputs changed. Preview again.", "PREVIEW_STALE", 409
                 )

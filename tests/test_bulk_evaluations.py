@@ -14,9 +14,8 @@ from support.projects import lifecycle
 
 from histopilot.application.bulk_evaluations import BulkEvaluationService
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection, RunBulkEvaluation
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
 
 support = runpy.run_path(str(Path(__file__).with_name("test_evaluation_execution_service.py")))
 
@@ -215,7 +214,7 @@ def test_group_cancellation_marks_existing_jobs_pending_until_workers_stop(
     # The worker records the cancellation and exits; only then is the group cancelled.
     member = cancelled["items"][0]["evaluationId"]
     folder = service.evaluations.jobs.folder(member)
-    write_json(folder / "state.json", {**read_json(folder / "state.json"), "status": "cancelled"})
+    write_json_atomic(folder / "state.json", {**read_json_bounded(folder / "state.json"), "status": "cancelled"})
     task_center.finish(task["id"], "cancelled")
     assert service.get(result["id"])["status"] == "cancelled"
 

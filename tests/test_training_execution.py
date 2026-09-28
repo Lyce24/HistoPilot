@@ -19,10 +19,10 @@ from support.training import tc_execution as tc_execution
 from test_worker_process_ownership import isolated_worker_tree as _worker_tree
 
 from histopilot.application.training import membership_plan_id
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import collect_results, execute_plan
-from histopilot.workers.training_process import process_identity, read_json, save_state
+from histopilot.workers.training_process import process_identity, save_state
 
 isolated_worker_tree = _worker_tree
 
@@ -50,7 +50,7 @@ def test_launch_freezes_exact_work_and_idempotent_receipt(tc_execution, task_cen
     assert {attempt for _task, attempt in queued} == {1}
     assert service.launch(frozen["id"], "launch-once")["runs"] == state["runs"]
     assert attempts(task_center, frozen["id"]) == queued
-    plan = read_json(Path(state["outputPath"]) / "plan.json")
+    plan = read_json_bounded(Path(state["outputPath"]) / "plan.json")
     folds = {
         task["adapterData"]["runId"]: task["command"]
         for task in batch_tasks(task_center, frozen["id"], kind="mil-fold")
@@ -155,7 +155,7 @@ def test_archived_experiment_blocks_new_training_but_preserves_launch_replay(
     )
     assert submitted["submission"]["status"] == "submitted", submitted["submission"]
     state = service.execution(batch["id"])
-    operation = next(iter(read_json(Path(state["outputPath"]) / "operations.json")))
+    operation = next(iter(read_json_bounded(Path(state["outputPath"]) / "operations.json")))
     queued = attempts(task_center, batch["id"])
     assert len(queued) == 6
     assert {task["group"]["id"] for task in task_center.tasks(kind="mil-fold")} == {batch["id"]}
@@ -260,17 +260,17 @@ def legacy_batch(service, frozen, status):
     """Model a batch launched before the Task Center: its state names no executor."""
     state = service.launch(frozen["id"], "first")
     folder = Path(state["outputPath"])
-    saved = read_json(folder / "state.json")
+    saved = read_json_bounded(folder / "state.json")
     for key in ("executor", "taskGroup"):
         saved.pop(key)
     saved.update(status=status, sessionName="hp-train-0123456789abcdef")
     for run in saved["runs"]:
         run["status"] = "completed" if status == "completed" else "running"
     save_state(folder, saved)
-    plan = read_json(folder / "plan.json")
+    plan = read_json_bounded(folder / "plan.json")
     plan.pop("executionMode")
-    write_json(folder / "plan.json", plan)
-    return folder, read_json(folder / "state.json")
+    write_json_atomic(folder / "plan.json", plan)
+    return folder, read_json_bounded(folder / "state.json")
 
 
 @pytest.mark.parametrize("status", ["running", "completed"])
@@ -304,7 +304,7 @@ def test_a_batch_from_before_the_task_center_is_read_only(tc_execution, status):
         )
         assert "Created before the Task Center" in str(refused.value)
     assert not (folder / "cancel.json").exists()
-    assert read_json(folder / "state.json") == saved
+    assert read_json_bounded(folder / "state.json") == saved
 
 
 def test_code_pinned_before_the_task_center_cannot_run_as_fold_tasks(
@@ -546,7 +546,9 @@ def test_failed_launch_is_recorded_without_claiming_live_workers(
     queued = attempts(task_center, frozen["id"])
     assert recovered["status"] == "queued" and len(queued) == 6
     assert (Path(state["outputPath"]) / "plan.json").read_bytes() == original_plan
-    assert read_json(Path(state["outputPath"]) / "operations.json")["launch-fails"] == "launch"
+    assert (
+        read_json_bounded(Path(state["outputPath"]) / "operations.json")["launch-fails"] == "launch"
+    )
     assert service.launch(frozen["id"], "launch-fails")["status"] == "queued"
     assert attempts(task_center, frozen["id"]) == queued
 
@@ -562,12 +564,12 @@ def test_lost_enqueue_acknowledgement_preserves_training_worker_state(
         # The store committed the tasks and the runner started them; only the reply was lost.
         enqueue(*args, **kwargs)
         state_path = service._folder(frozen["id"]) / "state.json"
-        state = read_json(state_path)
+        state = read_json_bounded(state_path)
         state.update(
             status="failed" if finished else "running",
             findings=[{"severity": "error", "code": "WORKER_EVIDENCE", "message": "Retain me"}],
         )
-        write_json(state_path, state)
+        write_json_atomic(state_path, state)
         if finished:
             lose_batch(task_center, frozen["id"], state="failed")
         else:
@@ -607,13 +609,13 @@ def test_real_oof_collection_checks_exact_identities_and_patient_metrics(tc_exec
     batch, state = synthetic_results(service, frozen)
     folder = service._folder(frozen["id"])
     collect_results(batch, state, folder)
-    result = read_json(folder / "results.json")
+    result = read_json_bounded(folder / "results.json")
     assert len(result["oof"]) == 1
     assert result["oof"][0]["slideCount"] == 30
     metrics = result["candidates"][0]["metrics"]
     assert metrics["count"] == 30
     assert metrics["accuracy"] == metrics["auroc"] == 1
-    records = read_json(Path(result["oof"][0]["path"]))
+    records = read_json_bounded(Path(result["oof"][0]["path"]))
     assert records["purpose"] == "development_assessment"
     assert len({row["slideId"] for row in records["records"]}) == 30
 
@@ -625,12 +627,12 @@ def test_oof_collection_rejects_missing_duplicate_or_mismatched_identity(tc_exec
     service, frozen, _source = tc_execution
     batch, state = synthetic_results(service, frozen)
     path = Path(state["runs"][0]["result"]["predictions"]["assessment"])
-    records = read_json(path)["records"]
+    records = read_json_bounded(path)["records"]
     if corruption == "duplicate":
         records.append(copy.deepcopy(records[0]))
     else:
         records[0]["patientId" if corruption == "patient" else "label"] = "wrong"
-    write_json(path, {"records": records, "classOrder": batch["target"]["classes"]})
+    write_json_atomic(path, {"records": records, "classOrder": batch["target"]["classes"]})
     with pytest.raises(ValueError, match="exactly once|differs from frozen"):
         collect_results(batch, state, service._folder(frozen["id"]))
 
@@ -646,7 +648,7 @@ def test_oof_scoring_rejects_invalid_class_indices_or_probability_contract(
     service, frozen, _source = tc_execution
     batch, state = synthetic_results(service, frozen)
     path = Path(state["runs"][0]["result"]["predictions"]["assessment"])
-    document = read_json(path)
+    document = read_json_bounded(path)
     if corruption == "label_index":
         document["records"][0]["labelIndex"] = 1 - document["records"][0]["labelIndex"]
     elif corruption == "class_order":
@@ -655,7 +657,7 @@ def test_oof_scoring_rejects_invalid_class_indices_or_probability_contract(
         document["records"][0]["probabilities"] = [0.9, 0.9]
     else:
         document["records"][0]["probabilities"] = [-0.1, 1.1]
-    write_json(path, document)
+    write_json_atomic(path, document)
     with pytest.raises(ValueError):
         collect_results(batch, state, service._folder(frozen["id"]))
 
@@ -665,7 +667,7 @@ def test_incomplete_oof_results_are_not_reported_as_complete(tc_execution):
     batch, state = synthetic_results(service, frozen)
     state["runs"][-1]["status"] = "failed"
     collect_results(batch, state, service._folder(frozen["id"]))
-    result = read_json(service._folder(frozen["id"]) / "results.json")
+    result = read_json_bounded(service._folder(frozen["id"]) / "results.json")
     assert result["oof"] == []
     assert result["candidates"][0]["complete"] is False
     assert result["candidates"][0]["metrics"] is None
@@ -768,9 +770,9 @@ def test_resume_rejects_changed_execution_plan_before_reusing_archive(tc_executi
     service, frozen, _source = tc_execution
     state = service.launch(frozen["id"], "first")
     path = Path(state["outputPath"]) / "plan.json"
-    changed = read_json(path)
+    changed = read_json_bounded(path)
     changed["configurations"][0]["recipe"]["learningRate"] = 0.5
-    write_json(path, changed)
+    write_json_atomic(path, changed)
     queued = attempts(task_center, frozen["id"])
     lose_batch(task_center, frozen["id"])
     with pytest.raises(StorageError) as error:
@@ -806,17 +808,17 @@ def test_resume_rejects_relocated_execution_without_mutating_immutable_evidence(
 def test_resume_rejects_incompatible_frozen_session_without_rehashing_plan(
     tc_execution, task_center
 ):
-    from histopilot.application.feature_bundles import _hash
+    from histopilot.storage.io import content_hash
 
     service, frozen, _source = tc_execution
     launched = service.launch(frozen["id"], "first")
     queued = attempts(task_center, frozen["id"])
     lose_batch(task_center, frozen["id"])
     folder = Path(launched["outputPath"])
-    legacy_plan = read_json(folder / "plan.json")
+    legacy_plan = read_json_bounded(folder / "plan.json")
     legacy_plan["sessionName"] = "legacy-session-policy"
-    write_json(folder / "plan.json", legacy_plan)
-    launched["planHash"] = _hash(legacy_plan)
+    write_json_atomic(folder / "plan.json", legacy_plan)
+    launched["planHash"] = content_hash(legacy_plan)
     save_state(folder, launched)
     before = {
         name: (folder / name).read_bytes() for name in ("plan.json", "state.json", "attempts.jsonl")
@@ -903,7 +905,10 @@ def test_partial_submission_pins_code_and_rejects_environment_drift_without_touc
         # The retried batch copies the first batch's archived code instead of the edit.
         assert rejected["submission"]["status"] == "submitted"
         assert len(launched()) == 2
-        assert read_json(training._folder(launched()[1]) / "plan.json")["code"] == contract["code"]
+        assert (
+            read_json_bounded(training._folder(launched()[1]) / "plan.json")["code"]
+            == contract["code"]
+        )
         return
     assert rejected["submission"]["error"]["code"] == "EXPERIMENT_RUNTIME_CHANGED"
     assert rejected["configurationLocked"] and rejected["stage"] == "running"

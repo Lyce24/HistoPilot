@@ -7,8 +7,7 @@ import pytest
 from support.compute import complete, save_study
 from support.compute import managed_study as managed_study
 
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 
 Image = pytest.importorskip("PIL.Image")
 
@@ -42,7 +41,7 @@ def top_api(managed_study, tmp_path, monkeypatch):
                 )
             ],
         }
-        write_json(folder / filename, value)
+        write_json_atomic(folder / filename, value)
         content = (folder / filename).read_bytes()
         artifacts[filename] = {
             "path": str(folder / filename),
@@ -117,8 +116,8 @@ def test_top_attention_unknown_study_slide_and_incomplete_execution(top_api):
             ).status_code
             == 404
         )
-    state = read_json(folder / "state.json")
-    write_json(folder / "state.json", {**state, "status": "running", "result": None})
+    state = read_json_bounded(folder / "state.json")
+    write_json_atomic(folder / "state.json", {**state, "status": "running", "result": None})
     for endpoint in ("/attention/top", "/patches/1/image"):
         response = client.get(base + endpoint)
         assert response.status_code == 409, response.text

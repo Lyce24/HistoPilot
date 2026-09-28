@@ -16,10 +16,11 @@ import subprocess
 import time
 from contextlib import contextmanager
 
+from histopilot.storage.io import utc_now
 from histopilot.taskcenter import procs
 from histopilot.taskcenter.adapters.base import RunnerContext
 from histopilot.taskcenter.client import default_client
-from histopilot.taskcenter.model import ACTIVE, PENDING, TERMINAL, utc_now_iso
+from histopilot.taskcenter.model import ACTIVE, PENDING, TERMINAL
 from histopilot.taskcenter.runner import Runner
 
 
@@ -53,7 +54,7 @@ def runner_context(store, host=None, log=None):
     """The context an adapter hook receives from the runner."""
     return RunnerContext(
         store=store,
-        now=utc_now_iso,
+        now=utc_now,
         settings=store.settings(),
         host=(host or fake_host())(),
         log=log or (lambda _message: None),
@@ -92,7 +93,7 @@ class Center:
             task_id,
             from_states=tuple(PENDING | {"starting"}),
             to_state="running",
-            started_at=utc_now_iso(),
+            started_at=utc_now(),
             **fields,
         )
         assert started, f"{task_id} is {self.state(task_id)}, not waiting to start"
@@ -220,7 +221,7 @@ def begin(store, task_id, adapter):
         task_id,
         from_states=tuple(PENDING | {"starting"}),
         to_state="running",
-        started_at=utc_now_iso(),
+        started_at=utc_now(),
     )
     assert started, f"{task_id} could not start"
     return True

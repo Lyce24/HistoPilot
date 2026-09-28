@@ -69,10 +69,6 @@ def awaiting_requeue(task: dict) -> bool:
     )
 
 
-def utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 def parse_iso(value) -> datetime | None:
     """Parse a stored timestamp; naive values are UTC. Invalid input reads as unknown."""
     if not isinstance(value, str):

@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from histopilot.application.feature_bundles import _hash
+from histopilot.storage.io import content_hash, read_json_bounded, utc_now
 from histopilot.storage.project_lock import StorageError, writer_lock
 from histopilot.taskcenter import ids
 from histopilot.taskcenter.adapters.base import Adapter, AdapterError, outcome
@@ -26,8 +26,6 @@ from histopilot.workers.training_process import (
     classify_training_failure,
     gpu_snapshot,
     host_snapshot,
-    now,
-    read_json,
     save_state,
 )
 
@@ -113,7 +111,7 @@ def _result(folder: Path, run_id: str) -> dict | None:
     path = folder / "runs" / run_id / "result.json"
     if not path.exists():
         return None
-    result = read_json(path)
+    result = read_json_bounded(path)
     if result.get("runId") != run_id or result.get("state") != "succeeded":
         return None
     try:
@@ -127,7 +125,7 @@ def _failure(folder: Path, run_id: str, since: str | None) -> dict:
     path = folder / "runs" / run_id / "failure.json"
     if not path.exists():
         return {}
-    failure = read_json(path)
+    failure = read_json_bounded(path)
     # A prior attempt's failure is not this process's exit.
     return failure if str(failure.get("at", "")) >= (since or "") else {}
 
@@ -141,7 +139,7 @@ def _cached_state(ctx, folder: Path) -> dict:
     cached = cache.get(str(path))
     if cached is None or cached[0] != stamp:
         cache.pop(str(path), None)
-        cached = cache[str(path)] = (stamp, read_json(path))
+        cached = cache[str(path)] = (stamp, read_json_bounded(path))
         while len(cache) > STATE_CACHE_ENTRIES:
             cache.pop(next(iter(cache)))
     return cached[1]
@@ -219,7 +217,7 @@ class MilFoldAdapter(Adapter):
     @staticmethod
     def _update(folder: Path, run_id: str, change) -> None:
         with _locked(folder):
-            state = read_json(folder / "state.json")
+            state = read_json_bounded(folder / "state.json")
             if change(folder, state, _run(state, run_id)) is not False:
                 save_state(folder, state)
 
@@ -227,7 +225,7 @@ class MilFoldAdapter(Adapter):
     def _cancelled_before_start(folder, state, run):
         if run["status"] in {"completed", "cancelled"}:
             return False
-        run.update(status="cancelled", finishedAt=now(), error="Cancelled before start.")
+        run.update(status="cancelled", finishedAt=utc_now(), error="Cancelled before start.")
         return True
 
     @staticmethod
@@ -286,7 +284,7 @@ class MilFoldAdapter(Adapter):
     def on_started(self, task, identity, gpu, ctx):
         folder, run_id = _folder(task), task["adapterData"]["runId"]
         with _translated(), _locked(folder):
-            state = read_json(folder / "state.json")
+            state = read_json_bounded(folder / "state.json")
             run = _run(state, run_id)
             cancelled = run["status"] == "cancelled" or (folder / "cancel.json").exists()
             run.update(
@@ -311,14 +309,14 @@ class MilFoldAdapter(Adapter):
         with _translated(), _locked(folder):
             # A cancel may have upgraded a pause while this hook waited for the batch lock.
             stop = self._stop_request(task, ctx) or exit.get("stopReason")
-            state = read_json(folder / "state.json")
+            state = read_json_bounded(folder / "state.json")
             run = _run(state, run_id)
             failure = _failure(folder, run_id, task.get("queuedAt") or task.get("startedAt"))
             # A result counts only if this attempt exited cleanly (an adopted or lost process
             # has no observable code) and did not fail afterwards, as the legacy scheduler
             # required; the post-fit input check fails after the fit wrote result.json.
             result = _result(folder, run_id) if code in (0, None) and not failure else None
-            finished = {"finishedAt": now(), "exitCode": code}
+            finished = {"finishedAt": utc_now(), "exitCode": code}
             if result is not None:
                 run.update(
                     status="completed",
@@ -378,7 +376,7 @@ class MilFoldAdapter(Adapter):
                     append_event(
                         folder / "events.jsonl",
                         {
-                            "at": now(),
+                            "at": utc_now(),
                             "runId": run_id,
                             "attempt": run.get("attempt"),
                             "exitCode": code,
@@ -524,9 +522,9 @@ class MilFoldAdapter(Adapter):
     def can_requeue(self, task, ctx):
         folder, run_id = _folder(task), task["adapterData"]["runId"]
         try:
-            plan = read_json(folder / "plan.json")
-            state = read_json(folder / "state.json")
-            if state.get("planHash") != _hash(plan) or (folder / "cancel.json").exists():
+            plan = read_json_bounded(folder / "plan.json")
+            state = read_json_bounded(folder / "state.json")
+            if state.get("planHash") != content_hash(plan) or (folder / "cancel.json").exists():
                 return False
             if _run(state, run_id)["status"] in {"completed", "cancelled"}:
                 return False
@@ -542,7 +540,7 @@ class MilFoldAdapter(Adapter):
         with _translated():
             provenance = self._provenance(ctx)  # before the lock: nvidia-smi can take seconds
             with _locked(folder):
-                state = read_json(folder / "state.json")
+                state = read_json_bounded(folder / "state.json")
                 run = _run(state, run_id)
                 if run["status"] == "completed":
                     return
@@ -554,7 +552,9 @@ class MilFoldAdapter(Adapter):
                     # A cancel that raced a pause (or a single-run cancel) wins over a requeue.
                     if run["status"] in RUN_ACTIVE:
                         run.update(
-                            status="cancelled", finishedAt=now(), error="Cancelled while running."
+                            status="cancelled",
+                            finishedAt=utc_now(),
+                            error="Cancelled while running.",
                         )
                         save_state(folder, state)
                     raise AdapterError(
@@ -587,7 +587,7 @@ class MilFoldAdapter(Adapter):
                 "action": _requeue_action(task),
                 "runId": run["id"],
                 "attempt": run["attempt"],
-                "at": now(),
+                "at": utc_now(),
                 "planHash": state.get("planHash"),
                 "provenance": provenance,
             },
@@ -603,7 +603,11 @@ class MilFoldAdapter(Adapter):
     def _provenance(ctx) -> dict:
         """Host and GPU provenance, probed once per tick for every fold requeued in it."""
         if "mil.provenance" not in ctx.cache:
-            ctx.cache["mil.provenance"] = {"at": now(), "host": host_snapshot(), **gpu_snapshot()}
+            ctx.cache["mil.provenance"] = {
+                "at": utc_now(),
+                "host": host_snapshot(),
+                **gpu_snapshot(),
+            }
         return ctx.cache["mil.provenance"]
 
     @staticmethod
@@ -674,8 +678,8 @@ class MilCollectAdapter(Adapter):
             with _locked(folder):
                 # Again under the lock: a resume may have requeued those folds meanwhile.
                 runs = cancelled()
-                state = read_json(folder / "state.json")
-                at, changed = now(), False
+                state = read_json_bounded(folder / "state.json")
+                at, changed = utc_now(), False
                 for run in state["runs"]:
                     if run["id"] in runs and run["status"] in RUN_ACTIVE:
                         error = (
@@ -705,7 +709,7 @@ class MilCollectAdapter(Adapter):
         path = folder / "collect-result.json"
         if not path.exists():
             return None
-        receipt = read_json(path)
+        receipt = read_json_bounded(path)
         if bool(receipt.get("final")) != final or str(receipt.get("at") or "") < (since or ""):
             return None
         return receipt
@@ -744,7 +748,7 @@ class MilCollectAdapter(Adapter):
             # Again under the batch lock that resume holds while it requeues folds.
             if self._superseded(task, ctx):
                 return outcome("requeue", "busy")
-            state = read_json(folder / "state.json")
+            state = read_json_bounded(folder / "state.json")
             cancelled = (folder / "cancel.json").exists()
             for run in state["runs"]:
                 # Folds whose tasks ended without an exit hook (for example a lost cancel
@@ -771,7 +775,7 @@ class MilCollectAdapter(Adapter):
                 ]
             else:
                 state["status"] = receipt["status"]
-            state["finishedAt"] = now()
+            state["finishedAt"] = utc_now()
             save_state(folder, state)
         return outcome("failed", "error", error) if error else outcome("succeeded", "ok")
 
@@ -780,8 +784,8 @@ class MilCollectAdapter(Adapter):
             return False  # the next finished fold schedules another partial collection
         folder = _folder(task)
         try:
-            return read_json(folder / "state.json").get("planHash") == _hash(
-                read_json(folder / "plan.json")
+            return read_json_bounded(folder / "state.json").get("planHash") == content_hash(
+                read_json_bounded(folder / "plan.json")
             )
         except (StorageError, OSError, ValueError):
             return False

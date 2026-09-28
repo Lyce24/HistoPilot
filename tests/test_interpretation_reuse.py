@@ -9,16 +9,15 @@ from support.compute import managed_study as managed_study
 from test_interpretation_gallery import managed_gallery as managed_gallery
 from test_interpretation_gallery import visualize_request
 
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 
 
 def mark_state(service, identity, status, center):
     """Record the worker's reported status and move its task as the runner would."""
     folder = service.jobs.folder(identity)
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     if status != "completed":
-        write_json(folder / "state.json", {**state, "status": status, "result": None})
+        write_json_atomic(folder / "state.json", {**state, "status": status, "result": None})
         if status == "running":
             center.start(state["taskId"])
         elif status == "failed":
@@ -26,7 +25,7 @@ def mark_state(service, identity, status, center):
         return
     row = service.get(identity)["manifest"]["slides"][0]
     artifact = folder / "slide-0.json"
-    write_json(
+    write_json_atomic(
         artifact,
         {
             "slideId": row["slideId"],
@@ -168,7 +167,7 @@ def test_changed_resource_reuse_still_rejects_corrupted_result_receipt(managed_g
     first = service.visualize(visualize_request(source, paths, operation="original-completed"))
     identity = first["items"][0]["interpretationId"]
     mark_state(service, identity, "completed", task_center)
-    write_json(service.jobs.folder(identity) / "result.json", {})
+    write_json_atomic(service.jobs.folder(identity) / "result.json", {})
     result = service.visualize(
         visualize_request(
             source,

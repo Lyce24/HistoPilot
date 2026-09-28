@@ -104,7 +104,7 @@ def test_grouped_slide_folds_require_every_training_slide_to_name_its_case(const
 
 def test_oof_assembly_rejects_a_case_split_across_folds_when_grouping_was_requested(tmp_path):
     pytest.importorskip("torch")
-    from histopilot.workers.packing_process import write_json
+    from histopilot.storage.io import write_json_atomic
     from histopilot.workers.train_batch import collect_results
 
     target = {"unit": "slide", "task": "binary_classification", "classes": ["a", "b"], "positiveClass": "b"}
@@ -115,7 +115,7 @@ def test_oof_assembly_rejects_a_case_split_across_folds_when_grouping_was_reques
                  "probabilities": [0.8, 0.2] if i == 0 else [0.2, 0.8]} for i in range(2)]
         memberships[split] = [{**row, "partition": "test"} for row in rows]
         path = tmp_path / f"{split}.json"
-        write_json(path, {"classOrder": target["classes"], "records": rows})
+        write_json_atomic(path, {"classOrder": target["classes"], "records": rows})
         runs.append({"id": split, "candidateId": "candidate", "splitPlanId": split, "trainingSeed": 42,
                      "status": "completed", "result": {"predictions": {"assessment": str(path)}}})
     plan = {"batchId": "batch", "protocolId": "protocol", "target": target, "splitUnit": "slide",

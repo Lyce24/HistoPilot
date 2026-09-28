@@ -13,8 +13,8 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from histopilot.storage.io import write_json_atomic
 from histopilot.storage.project_lock import StorageError, ensure_managed_directory, writer_lock
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import owned_processes
 
 LEASE_NAME = re.compile(r"^lease-(\d+)(?:-preparation-(\d+))?\.json$")
@@ -190,10 +190,10 @@ def write_task_lease(
     name = f"lease-{identity['pid']}.json"
     folder = _writable_registry()
     if locked:
-        write_json(folder / name, value)
+        write_json_atomic(folder / name, value)
     else:
         with writer_lock(folder, timeout=5):
-            write_json(folder / name, value)
+            write_json_atomic(folder / name, value)
     return name
 
 

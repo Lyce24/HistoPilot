@@ -11,8 +11,8 @@ from fastapi.testclient import TestClient
 
 from histopilot.api import create_app
 from histopilot.config import Settings
+from histopilot.storage.io import utc_now
 from histopilot.taskcenter import default_client, launcher
-from histopilot.taskcenter.model import utc_now_iso
 from histopilot.taskcenter.service import explain_failure
 
 BASE = "http://127.0.0.1:8787"
@@ -107,7 +107,7 @@ def start(identity, gpu=0):
         identity,
         from_states=("queued",),
         to_state="running",
-        started_at=utc_now_iso(),
+        started_at=utc_now(),
         gpu=gpu,
         process={"pid": 1, "startTicks": 1, "bootId": "none"},
         detail={"pid": 1, "gpu": gpu},
@@ -119,7 +119,7 @@ def finish(identity, state, **exit_record):
         identity,
         from_states=("queued", "running", "blocked"),
         to_state=state,
-        finished_at=utc_now_iso(),
+        finished_at=utc_now(),
         exit={"reason": "error", **exit_record},
         detail={"exitReason": exit_record.get("reason", "error")},
     )

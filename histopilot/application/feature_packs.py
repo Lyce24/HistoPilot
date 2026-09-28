@@ -18,7 +18,6 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -29,6 +28,7 @@ from histopilot.application.project_outputs import protected_output
 from histopilot.schemas.feature_packs import FeaturePackSpec
 from histopilot.schemas.features import FeatureSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import content_hash, read_file_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
@@ -38,11 +38,7 @@ from histopilot.storage.project_lock import (
 )
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter import ids
-from histopilot.workers.packing_process import (
-    maybe_sweep_registry,
-    output_lock,
-    write_json,
-)
+from histopilot.workers.packing_process import maybe_sweep_registry, output_lock
 
 ACTIVE = {"queued", "starting", "running", "cancelling"}
 JOB_ID = re.compile(r"^packing-[a-f0-9]{32}$")
@@ -83,17 +79,9 @@ def _read_receipt(path: Path) -> dict:
     return value
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _hash(value: object) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
-
-
 def _read(path: Path) -> dict:
     try:
-        value = json.loads(ScientificStore._read_file(path, MAX_JSON))
+        value = json.loads(read_file_bounded(path, MAX_JSON))
         if not isinstance(value, dict):
             raise ValueError("Expected an object")
         return value
@@ -398,12 +386,13 @@ class FeaturePackService:
             "verification": "headers",
         }
         # Free disk space may vary between two HTTP requests without invalidating user intent.
-        result["previewHash"] = _hash(
+        result["previewHash"] = content_hash(
             {
                 "preview": {key: value for key, value in result.items() if key != "availableBytes"},
                 "manifest": manifest,
                 "packStamps": pack_stamps,
-            }
+            },
+            compact=False,
         )
         return result, configuration, pack_stamps
 
@@ -414,15 +403,16 @@ class FeaturePackService:
         for job in self._jobs():
             if job["operationId"] == operation_id:
                 requested = spec.model_dump(mode="json")
-                request_hashes = {_hash(requested)}
+                request_hashes = {content_hash(requested, compact=False)}
                 if spec.existingPath is None and "existingPath" not in job["spec"]:
                     request_hashes.add(
-                        _hash(
+                        content_hash(
                             {
                                 key: value
                                 for key, value in requested.items()
                                 if key != "existingPath"
-                            }
+                            },
+                            compact=False,
                         )
                     )
                 if job["requestHash"] not in request_hashes or job["previewHash"] != preview_hash:
@@ -481,22 +471,22 @@ class FeaturePackService:
                 "projectId": self.store.project_id,
                 "state": "queued",
                 "operationId": operation_id,
-                "requestHash": _hash(spec.model_dump(mode="json")),
+                "requestHash": content_hash(spec.model_dump(mode="json"), compact=False),
                 "previewHash": preview_hash,
                 "spec": preview["spec"],
                 "featureSetId": spec.featureSetId,
                 "outputPath": preview["outputPath"],
                 "sessionName": None,
                 "logPath": str(folder / "worker.log"),
-                "createdAt": _now(),
-                "updatedAt": _now(),
+                "createdAt": utc_now(),
+                "updatedAt": utc_now(),
                 "executionMode": task_records.TASK_CENTER,
                 "taskId": ids.task_id("packing", str(folder)),
                 "ownerKey": task_records.owner_key("feature-pack", identity, self.store),
             }
-            write_json(folder / "job.json", job)
+            write_json_atomic(folder / "job.json", job)
             # The runner and the worker's output lock guard the output.
-            write_json(
+            write_json_atomic(
                 folder / "plan.json",
                 {
                     "jobId": identity,
@@ -518,8 +508,8 @@ class FeaturePackService:
                     "failed",
                     f"Could not queue the feature job in the Task Center: {error}",
                 )
-                job["updatedAt"] = _now()
-                write_json(folder / "job.json", job)
+                job["updatedAt"] = utc_now()
+                write_json_atomic(folder / "job.json", job)
         return self.get(identity)
 
     def _enqueue(self, job: dict, folder: Path, preview: dict) -> None:
@@ -782,10 +772,10 @@ class FeaturePackService:
                 task_records.refuse_legacy()
             task = job.get("task") or {}
             if job["state"] in ACTIVE:
-                write_json(
+                write_json_atomic(
                     self.folder / identity / "cancelled",
                     {
-                        "requestedAt": _now(),
+                        "requestedAt": utc_now(),
                         "attempts": {task["id"]: task["attempt"]}
                         if task.get("id") and task.get("attempt")
                         else {},
@@ -884,7 +874,7 @@ class FeaturePackService:
                 ):
                     raise ValueError("Source metadata changed")
                 if "sha256" in expected:
-                    content = ScientificStore._read_file(path, 2 * 1024 * 1024)
+                    content = read_file_bounded(path, 2 * 1024 * 1024)
                     if hashlib.sha256(content).hexdigest() != expected["sha256"]:
                         raise ValueError("Provenance contents changed")
             except (OSError, ValueError, StorageError) as error:
@@ -940,7 +930,7 @@ class FeaturePackService:
         return {"artifact": _compact(artifact), "current": not findings, "findings": findings}
 
     def _selection_path(self, feature_id: str) -> Path:
-        return self.folder / "selections" / f"{_hash(feature_id)}.json"
+        return self.folder / "selections" / f"{content_hash(feature_id, compact=False)}.json"
 
     def selection_for(self, feature_id: str) -> dict:
         configuration = self.store.get_configuration(feature_id)
@@ -1001,8 +991,9 @@ class FeaturePackService:
                     )
             path = self._selection_path(feature_id)
             ensure_managed_directory(path.parent)
-            write_json(
-                path, {"featureSetId": feature_id, "artifactId": artifact_id, "selectedAt": _now()}
+            write_json_atomic(
+                path,
+                {"featureSetId": feature_id, "artifactId": artifact_id, "selectedAt": utc_now()},
             )
         return self.selection_for(feature_id)
 

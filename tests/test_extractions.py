@@ -12,9 +12,10 @@ import pytest
 from support.task_center import begin, conclude
 from support.workers import finish_extraction, finish_validation, run_validation
 
-from histopilot.application.extractions import ExtractionService, _write
+from histopilot.application.extractions import ExtractionService
 from histopilot.schemas.extractions import ExtractionSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import content_hash, write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 
@@ -89,9 +90,9 @@ def legacy_extraction(service, spec, *, result=None):
     for key in ("executionMode", "taskId", "validationTaskId", "ownerKey"):
         record.pop(key)
     record.update(state="running", sessionName="histopilot-pfm-0123456789abcdef")
-    _write(folder / "job.json", record)
+    write_json_atomic(folder / "job.json", record)
     if result is not None:
-        _write(folder / "result.json", result)
+        write_json_atomic(folder / "result.json", result)
     return job["id"], folder, record
 
 
@@ -848,8 +849,6 @@ def test_uploaded_slide_list_rejects_invalid_encoding_and_conflicting_sources(co
 
 
 def test_legacy_extraction_preview_and_retry_keep_their_hashes(extractions, task_center):
-    from histopilot.application.extractions import _hash
-
     service, spec, _slides = extractions
     legacy_spec = {
         "datasetId": spec.datasetId,
@@ -863,7 +862,7 @@ def test_legacy_extraction_preview_and_retry_keep_their_hashes(extractions, task
     assert json.loads(request.model_dump_json()) == legacy_spec
     preview, slides = service._prepare(request)
     assert "slideList" not in preview["spec"]
-    legacy_preview_hash = _hash(
+    legacy_preview_hash = content_hash(
         {
             # Free space may change between requests; it is reported, never hashed.
             **{
@@ -873,17 +872,18 @@ def test_legacy_extraction_preview_and_retry_keep_their_hashes(extractions, task
             },
             "spec": {key: value for key, value in preview["spec"].items() if key != "slideList"},
             "slides": slides,
-        }
+        },
+        compact=False,
     )
     assert preview["previewHash"] == legacy_preview_hash
     job = service.submit(request, legacy_preview_hash, "legacy-extraction-submit")
     path = service.folder / job["id"] / "job.json"
     recorded = json.loads(path.read_text())
-    assert recorded["requestHash"] == _hash(legacy_spec)
+    assert recorded["requestHash"] == content_hash(legacy_spec, compact=False)
     # Replay persisted old metadata rather than relying on this version's serializer.
-    recorded["requestHash"] = _hash(legacy_spec)
+    recorded["requestHash"] = content_hash(legacy_spec, compact=False)
     recorded["spec"].pop("slideList", None)
-    _write(path, recorded)
+    write_json_atomic(path, recorded)
     replay = service.submit(request, legacy_preview_hash, "legacy-extraction-submit")
     assert replay["id"] == job["id"]
     assert [task["attempt"] for task in task_center.tasks(kind="extraction")] == [1]

@@ -9,34 +9,15 @@ attempt in the report and writes PROGRESS after every chunk.
 import json
 import os
 import sys
-import tempfile
-from datetime import UTC, datetime
 from pathlib import Path
 
 from histopilot.application.extraction_artifacts import complete_coverage, inspect_outputs
-from histopilot.storage.project_lock import fsync_directory, reject_symlink_components
-from histopilot.storage.scientific import ScientificStore
+from histopilot.storage.io import read_file_bounded, utc_now, write_json_atomic
+from histopilot.storage.project_lock import reject_symlink_components
 
 CHUNK_SIZE = 16
 MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_FINDINGS = 1000
-
-
-def _write_validation(path: Path, value: dict) -> None:
-    reject_symlink_components(path)
-    content = json.dumps(value, allow_nan=False, indent=2).encode() + b"\n"
-    if len(content) > MAX_JSON_BYTES:
-        raise ValueError("Extraction validation exceeds its storage limit.")
-    descriptor, temporary = tempfile.mkstemp(prefix=".validation-", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        fsync_directory(path.parent)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
 
 
 def _task_identity() -> dict:
@@ -50,13 +31,9 @@ def _task_identity() -> dict:
     }
 
 
-def _stamp() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 def validate_job(job_path: Path, validation_path: Path, progress_path: Path | None = None) -> dict:
     """Persist one completion inspection; status polling only needs the resulting JSON."""
-    job = json.loads(ScientificStore._read_file(job_path, MAX_JSON_BYTES))
+    job = json.loads(read_file_bounded(job_path, MAX_JSON_BYTES))
     if (
         not isinstance(job, dict)
         or not isinstance(job.get("id"), str)
@@ -74,11 +51,11 @@ def validate_job(job_path: Path, validation_path: Path, progress_path: Path | No
     identity = _task_identity()
     if identity:
         # The job log is shared with the extraction task; mark where this phase starts.
-        print(f"[{_stamp()}] Starting Artifact validation worker", flush=True)
+        print(f"[{utc_now()}] Starting Artifact validation worker", flush=True)
     result = {
         "jobId": job["id"],
         **identity,
-        "startedAt": datetime.now(UTC).isoformat(),
+        "startedAt": utc_now(),
         "completedSlides": 0,
         "missingSlides": 0,
         "unvalidatedSlides": 0,
@@ -122,7 +99,7 @@ def validate_job(job_path: Path, validation_path: Path, progress_path: Path | No
             flush=True,
         )
         if progress_path is not None:
-            _write_validation(
+            write_json_atomic(
                 progress_path,
                 {
                     "stage": "validation",
@@ -134,11 +111,12 @@ def validate_job(job_path: Path, validation_path: Path, progress_path: Path | No
                     "unit": "slides",
                     "message": f"{inspected} of {len(slides)} slides inspected.",
                 },
+                limit=MAX_JSON_BYTES,
             )
-    result["finishedAt"] = datetime.now(UTC).isoformat()
+    result["finishedAt"] = utc_now()
     result["expectedSlides"] = len(slides)
     result["complete"] = complete_coverage(result, len(slides))
-    _write_validation(validation_path, result)
+    write_json_atomic(validation_path, result, limit=MAX_JSON_BYTES)
     return result
 
 
@@ -156,12 +134,12 @@ def main() -> int:
     except Exception as error:
         print(f"[validation] Failed to validate extraction: {error}", file=sys.stderr)
         if managed:
-            print(f"[{_stamp()}] Artifact validation failed (exit 1)", flush=True)
+            print(f"[{utc_now()}] Artifact validation failed (exit 1)", flush=True)
         return 1
     code = 0 if result["inspectionComplete"] and not result["missingSlides"] else 1
     if managed:
         state = "succeeded" if code == 0 else "failed"
-        print(f"[{_stamp()}] Artifact validation {state} (exit {code})", flush=True)
+        print(f"[{utc_now()}] Artifact validation {state} (exit {code})", flush=True)
     return code
 
 

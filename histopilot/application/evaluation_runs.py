@@ -7,7 +7,6 @@ from pathlib import Path
 from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.application.evaluations import EvaluationService, patient_overlap_allowed
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import (
     PredictorService,
     feature_contract,
@@ -25,11 +24,10 @@ from histopilot.schemas.evaluations import (
 )
 from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.schemas.protocols import TargetSpec
+from histopilot.storage.io import content_hash, read_file_bounded, read_json_bounded
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.pack_import import pack_layout
 from histopilot.storage.project_lock import StorageError
-from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.training_process import read_json
 
 EXECUTION_NOTE = (
     "Evaluate the selected predictor on its frozen test cohort using the recorded bag, "
@@ -511,14 +509,18 @@ class EvaluationRunService:
             )
         except ValueError as error:
             raise StorageError(str(error), "CLINICAL_VALUES_INVALID", 422) from error
-        return {"inputMode": recipe["inputMode"], "fields": fields, "valuesSha256": _hash(values)}
+        return {
+            "inputMode": recipe["inputMode"],
+            "fields": fields,
+            "valuesSha256": content_hash(values),
+        }
 
     def preview(self, selection):
         try:
             manifest = self._prepare(selection)
             return {
                 "canSave": True,
-                "previewHash": _hash(manifest),
+                "previewHash": content_hash(manifest),
                 "manifest": manifest,
                 "findings": manifest.get("findings", []),
                 "executionEnabled": True,
@@ -552,7 +554,7 @@ class EvaluationRunService:
                     )
                 return lifecycle_document(self.store, prior)
             manifest = self._prepare(selection)
-            if _hash(manifest) != request.previewHash:
+            if content_hash(manifest) != request.previewHash:
                 raise StorageError("Evaluation inputs changed. Review again.", "PREVIEW_STALE", 409)
             published = self.store.publish_configuration(
                 manifest={**manifest, "previewHash": request.previewHash},
@@ -644,8 +646,8 @@ class EvaluationRunService:
         if document["execution"]["status"] != "not_started":
             # Device selection belongs to the first launch. Resume and request
             # replay must preserve it even if CUDA availability has changed.
-            saved = read_json(self.jobs.folder(identity) / "plan.json")
-            if _hash(saved) != document["execution"].get("planHash"):
+            saved = read_json_bounded(self.jobs.folder(identity) / "plan.json")
+            if content_hash(saved) != document["execution"].get("planHash"):
                 raise StorageError("The saved execution plan changed.", "COMPUTE_PLAN_CHANGED")
             defaults = ResourcePolicy().model_dump()
             resources = {
@@ -751,7 +753,7 @@ class EvaluationRunService:
         path = self.jobs.folder(identity) / filename
         if not expected or expected["path"] != str(path):
             raise StorageError("Evaluation result provenance changed.", "EVALUATION_RESULT_CHANGED")
-        content = ScientificStore._read_file(path, 64 * 1024 * 1024)
+        content = read_file_bounded(path, 64 * 1024 * 1024)
         if (
             len(content) != expected["bytes"]
             or hashlib.sha256(content).hexdigest() != expected["sha256"]

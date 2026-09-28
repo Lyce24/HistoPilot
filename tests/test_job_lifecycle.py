@@ -10,9 +10,9 @@ from support.task_center import task_ids
 from support.training import lose_batch, tc_execution
 from support.workers import run_pack
 
+from histopilot.storage.io import write_json_atomic
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import save_state
 
 packing_support = runpy.run_path(str(Path(__file__).with_name("test_feature_packs.py")))
@@ -206,7 +206,7 @@ def test_terminal_job_with_worker_still_running_accepts_cancellation(
     task_center.start(job["taskId"])
     task = task_center.task(job["taskId"])
     folder = service.folder / job["id"]
-    write_json(
+    write_json_atomic(
         folder / "result.json",
         {
             "jobId": job["id"],

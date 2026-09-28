@@ -9,7 +9,7 @@ import os
 import stat
 import tempfile
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from threading import RLock
@@ -28,6 +28,7 @@ from histopilot.schemas.workspace import (
 )
 from histopilot.storage.database import Database, Record
 from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
+from histopilot.storage.io import utc_now
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError, fsync_directory, writer_lock
 from histopilot.storage.scientific import ScientificStore
@@ -46,10 +47,6 @@ def _identity(prefix: str, value: Any) -> str:
     """Stable source identities; stored project descriptors keep these values."""
     canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return f"{prefix}-{sha256(canonical.encode()).hexdigest()[:20]}"
-
-
-def _timestamp() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class StoredSource(RequestModel):
@@ -222,7 +219,7 @@ class ProjectWorkspace:
             "role": role,
             "readOnly": True,
             "importStatus": "not-imported",
-            "createdAt": _timestamp(),
+            "createdAt": utc_now(zulu=True),
         }
 
     def create(self, request: ProjectRequest) -> dict:
@@ -263,7 +260,7 @@ class ProjectWorkspace:
                     path.mkdir()
                     fsync_directory(path.parent)
                     created = True
-                now = _timestamp()
+                now = utc_now(zulu=True)
                 document = {
                     "format": "histopilot-project",
                     "schemaVersion": 1,
@@ -411,7 +408,7 @@ class ProjectWorkspace:
                 if document["config"] == choices:
                     return self._summary(document, path)
                 document["config"] = choices
-                document["updatedAt"] = _timestamp()
+                document["updatedAt"] = utc_now(zulu=True)
                 self._write(path, document)
             summary = self._summary(document, path)
             self._register(summary)
@@ -434,7 +431,7 @@ class ProjectWorkspace:
                         "The project has reached the maximum of 1000 source folders."
                     )
                 document["sources"].append(source)
-                document["updatedAt"] = _timestamp()
+                document["updatedAt"] = utc_now(zulu=True)
                 self._write(path, document)
             self._register(self._summary(document, path))
             return source

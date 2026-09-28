@@ -19,6 +19,7 @@ from pathlib import Path
 from statistics import median
 from urllib.parse import quote
 
+from histopilot.storage.io import utc_now
 from histopilot.storage.project_lock import StorageError
 from histopilot.taskcenter import capacity, estimator, launcher, leases, paths
 from histopilot.taskcenter.client import TaskCenterClient, default_client
@@ -31,7 +32,6 @@ from histopilot.taskcenter.model import (
     TERMINAL,
     awaiting_requeue,
     seconds_between,
-    utc_now_iso,
 )
 from histopilot.taskcenter.store import LIVE_OR_AWAITING_SQL, request_hash
 
@@ -542,7 +542,7 @@ class TaskCenterService:
             row = None
         sample = (row or {}).get("sample") or {}
         at = sample.get("at")
-        age = seconds_between(at, utc_now_iso()) if at else None
+        age = seconds_between(at, utc_now()) if at else None
         fresh = age is not None and age <= SAMPLE_FRESH_SECONDS
         if fresh and isinstance(sample.get("host"), dict) and sample["host"].get("cpuCount"):
             return {**sample["host"], "gpus": list(sample.get("gpus") or []), "sampledAt": at}
@@ -554,7 +554,7 @@ class TaskCenterService:
             value = dict(self.host_probe())
         except Exception as error:  # an unreadable host leaves capacity unknown, not broken
             value = {"gpus": [], "gpuProbeError": f"Host probe failed: {error}"}
-        value["sampledAt"] = utc_now_iso()
+        value["sampledAt"] = utc_now()
         with self._lock:
             self._host_cache = (time.monotonic(), value)
         return value
@@ -720,7 +720,7 @@ class TaskCenterService:
     def _eta(self, live: list[dict], owners: dict, slots: int) -> tuple[dict, dict]:
         """Queue drain estimate: expected GPU seconds over GPU slots, filled in queue order."""
         medians = self._medians()
-        now = utc_now_iso()
+        now = utc_now()
         slots = max(1, slots)
         total, measured, counted = 0.0, True, 0
         running_left: dict[str, float] = {}
@@ -1240,7 +1240,7 @@ class TaskCenterService:
             "eta": eta,
             "foreignLeases": extra["foreignLeases"],
             "workspace": str(self.workspace),
-            "updatedAt": utc_now_iso(),
+            "updatedAt": utc_now(),
         }
         if extra["leaseError"]:
             result["leaseError"] = extra["leaseError"]
@@ -1968,7 +1968,7 @@ class TaskCenterService:
             "projectId": project_id,
             "projectName": names.get(project_id) if project_id else None,
             "href": href,
-            "updatedAt": utc_now_iso(),
+            "updatedAt": utc_now(),
         }
 
     def _scope_retryable(self, base, params, scope_live, live_owners, registry, *, whole_owner):
@@ -2227,7 +2227,7 @@ class TaskCenterService:
         self.store.record_operation(
             OPERATION_PREFIX + operation_id,
             request_hash(request),
-            {**result, "at": utc_now_iso()},
+            {**result, "at": utc_now()},
         )
 
     # -- actions -------------------------------------------------------------------------

@@ -25,8 +25,8 @@ from pathlib import Path
 
 from histopilot import cv_summary as cv
 from histopilot.application.model_experiments import ModelExperimentService
+from histopilot.storage.io import read_json_bounded
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.training_process import read_json
 
 DEFAULT_RESAMPLES = 2000
 DEFAULT_SEED = 42
@@ -140,9 +140,9 @@ def _load(folder: Path, batch: dict) -> dict:
         "oof": {},
     }
     if (folder / "plan.json").exists():
-        loaded["plan"] = read_json(folder / "plan.json")
+        loaded["plan"] = read_json_bounded(folder / "plan.json")
     if (folder / "results.json").exists():
-        loaded["results"] = read_json(folder / "results.json")
+        loaded["results"] = read_json_bounded(folder / "results.json")
         root = folder.resolve()
         comparison = _comparison(batch)
         reported, _source = _reported(loaded["plan"], loaded["results"], comparison)
@@ -160,7 +160,7 @@ def _load(folder: Path, batch: dict) -> dict:
             ):
                 continue
             try:
-                records = read_json(resolved)["records"]
+                records = read_json_bounded(resolved)["records"]
             except (StorageError, ValueError, KeyError, OSError):
                 continue
             loaded["oof"][
@@ -821,7 +821,7 @@ def _headline(folder: Path, batch: dict) -> dict | None:
     if not path.exists():
         return None
     try:
-        stored = read_json(path)
+        stored = read_json_bounded(path)
     except (StorageError, ValueError, OSError):
         return None
     candidates = stored.get("candidates", [])

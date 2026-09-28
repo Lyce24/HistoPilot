@@ -6,7 +6,6 @@ explicitly record acknowledged slide-ID fallback groups. Labels are never
 dropped implicitly and a majority label is never selected.
 """
 
-import hashlib
 import json
 import re
 import time
@@ -38,6 +37,7 @@ from histopilot.schemas.protocols import (
     iter_conditions,
 )
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import canonical_json, content_hash
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 
@@ -55,10 +55,6 @@ CANONICAL = {
     "Slide_Path": "slidePath",
     "slidePath": "slidePath",
 }
-
-
-def _json(value) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
 def _serialized_spec(spec):
@@ -1010,7 +1006,7 @@ class ProtocolService:
             "memberships": memberships,
             "executionEnabled": False,
         }
-        if len(_json(result)) > MAX_PROTOCOL_BYTES:
+        if len(canonical_json(result, ascii=True, compact=True)) > MAX_PROTOCOL_BYTES:
             finding(
                 "PROTOCOL_DOCUMENT_LIMIT",
                 "The protocol exceeds the 15 MiB document limit; reduce seeds, folds, or cohort size.",
@@ -1022,7 +1018,7 @@ class ProtocolService:
             "algorithm": algorithm,
             "datasetContentHash": dataset["contentHash"],
         }
-        return {**result, "previewHash": hashlib.sha256(_json(digest_input)).hexdigest()}
+        return {**result, "previewHash": content_hash(digest_input)}
 
     def freeze(
         self,

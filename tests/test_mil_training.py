@@ -327,7 +327,7 @@ def test_completed_fit_resumes_assessment_without_another_epoch(
     )
     full = train_fold(copy.deepcopy(plan), tmp_path / "full")
     output = tmp_path / "interrupted"
-    original_predict, original_write = fold._predict, fold._write_json
+    original_predict, original_write = fold._predict, fold.write_json_atomic
     prediction_calls = 0
 
     def interrupt_prediction(*args, **kwargs):
@@ -337,13 +337,13 @@ def test_completed_fit_resumes_assessment_without_another_epoch(
             raise RuntimeError("Interrupted assessment")
         return original_predict(*args, **kwargs)
 
-    def interrupt_artifact(path, value):
+    def interrupt_artifact(path, value, **options):
         if interrupted_at == "metrics" and path.name == "metrics.json":
             raise RuntimeError("Interrupted assessment")
-        return original_write(path, value)
+        return original_write(path, value, **options)
 
     monkeypatch.setattr(fold, "_predict", interrupt_prediction)
-    monkeypatch.setattr(fold, "_write_json", interrupt_artifact)
+    monkeypatch.setattr(fold, "write_json_atomic", interrupt_artifact)
     with pytest.raises(RuntimeError, match="Interrupted assessment"):
         train_fold(plan, output)
     evidence = {
@@ -356,7 +356,7 @@ def test_completed_fit_resumes_assessment_without_another_epoch(
         raise AssertionError("A completed fit must never re-enter optimization.")
 
     monkeypatch.setattr(fold, "_predict", original_predict)
-    monkeypatch.setattr(fold, "_write_json", original_write)
+    monkeypatch.setattr(fold, "write_json_atomic", original_write)
     monkeypatch.setattr(fold.L.Trainer, "fit", unexpected_fit)
     resumed = train_fold(plan, output, checkpoint_path=output / "last.ckpt")
     assert resumed["assessmentOnlyResume"]

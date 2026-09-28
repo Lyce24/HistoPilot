@@ -15,17 +15,16 @@ from pathlib import Path
 from uuid import uuid4
 
 from histopilot.application import task_records
-from histopilot.application.operations import _archive_manifest, _now, permitted_path
+from histopilot.application.operations import _archive_manifest, permitted_path
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import read_file_bounded, regular_file, utc_now, write_json_atomic
 from histopilot.storage.project_lock import (
     StorageError,
     ensure_managed_directory,
     reject_symlink_components,
     writer_lock,
 )
-from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter import ids
-from histopilot.workers.packing_process import write_json
 
 WORKER = Path(__file__).parents[1] / "workers" / "portability.py"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -45,7 +44,7 @@ def _queued_state(folder, project_id, project_path, action):
         "projectId": project_id,
         "action": action,
         "status": "queued",
-        "createdAt": _now(),
+        "createdAt": utc_now(),
         "sessionName": None,
         "logPath": str(folder / "worker.log"),
         "result": None,
@@ -107,8 +106,8 @@ def _enqueue(tasks, folder, state, plan, project_path):
 
 def _start(tasks, folder, plan, state, project_path):
     """Save a new operation's plan and state, then queue it; returns the saved state."""
-    write_json(folder / "plan.json", plan)
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "plan.json", plan)
+    write_json_atomic(folder / "state.json", state)
     try:
         _enqueue(tasks, folder, state, plan, project_path)
     except (StorageError, OSError) as error:
@@ -116,7 +115,7 @@ def _start(tasks, folder, plan, state, project_path):
             status="failed",
             error=f"Could not queue the archive operation in the Task Center: {error}",
         )
-        write_json(folder / "state.json", state)
+        write_json_atomic(folder / "state.json", state)
     return state
 
 
@@ -128,7 +127,7 @@ def submit_recovery(settings, archive, destination=None, *, task_center=None):
     """
     roots = LocalFilesystem((settings.workspace, *settings.data_roots))
     archive = permitted_path(roots, str(archive), existing=True)
-    ScientificStore._regular(archive)
+    regular_file(archive)
     with zipfile.ZipFile(archive) as zipped:
         manifest = _archive_manifest(zipped)
     if destination is not None:
@@ -206,7 +205,7 @@ class PortabilityJobs:
         ensure_managed_directory(self.folder)
         with writer_lock(self.folder, timeout=5):
             if folder.exists():
-                previous = json.loads(ScientificStore._read_file(folder / "plan.json", 1024 * 1024))
+                previous = json.loads(read_file_bounded(folder / "plan.json", 1024 * 1024))
                 if previous["request"] != values or previous["projectId"] != identity:
                     raise StorageError(
                         "Operation ID belongs to a different archive request.", "OPERATION_CONFLICT"
@@ -216,7 +215,7 @@ class PortabilityJobs:
             # Refresh/reconnect may generate a fresh operation ID. Coalesce the
             # exact same active request durably instead of launching another copy.
             for prior in self.folder.glob("portability-*/plan.json"):
-                previous = json.loads(ScientificStore._read_file(prior, 1024 * 1024))
+                previous = json.loads(read_file_bounded(prior, 1024 * 1024))
                 if (
                     previous.get("projectId") == identity
                     and {
@@ -247,13 +246,11 @@ class PortabilityJobs:
         folder = self._folder(job_id)
         if not (folder / "state.json").exists():
             raise StorageError("Archive operation not found.", "PORTABILITY_NOT_FOUND", 404)
-        state = json.loads(ScientificStore._read_file(folder / "state.json", 64 * 1024 * 1024))
+        state = json.loads(read_file_bounded(folder / "state.json", 64 * 1024 * 1024))
         if state.get("projectId") != identity:
             raise StorageError("Archive operation not found.", "PORTABILITY_NOT_FOUND", 404)
         if (folder / "progress.json").exists():
-            state["progress"] = json.loads(
-                ScientificStore._read_file(folder / "progress.json", 65536)
-            )
+            state["progress"] = json.loads(read_file_bounded(folder / "progress.json", 65536))
         if task_records.managed_record(state):
             return self._task_state(state)
         # An operation from before the Task Center: nothing runs it any more.
@@ -296,10 +293,10 @@ class PortabilityJobs:
                 task_records.refuse_legacy()
             if state["status"] in ACTIVE_STATUSES:
                 task = state.get("task") or {}
-                write_json(
+                write_json_atomic(
                     folder / "cancel.requested",
                     {
-                        "requestedAt": _now(),
+                        "requestedAt": utc_now(),
                         "attempts": {task["id"]: task["attempt"]}
                         if task.get("id") and task.get("attempt")
                         else {},
@@ -338,7 +335,7 @@ class PortabilityJobs:
         reject_symlink_components(self.folder)
         jobs = []
         for path in sorted(self.folder.glob("portability-*/state.json"), reverse=True):
-            state = json.loads(ScientificStore._read_file(path, 64 * 1024 * 1024))
+            state = json.loads(read_file_bounded(path, 64 * 1024 * 1024))
             if state.get("projectId") == identity:
                 jobs.append(self.get(identity, path.parent.name))
         return {"jobs": sorted(jobs, key=lambda row: row["createdAt"], reverse=True)[:50]}

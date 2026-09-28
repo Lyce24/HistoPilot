@@ -7,10 +7,9 @@ import pytest
 from support.training import runtime
 
 from histopilot.application.compute_jobs import ComputeJobService
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
 
 PLAN = {
     "kind": "evaluation",
@@ -77,7 +76,7 @@ def test_pinned_launch_freezes_submitted_code_and_copies_its_archive(
     # The live checkout moved on after submission; the job must not notice.
     monkeypatch.setattr(compute_jobs, "compute_snapshot", lambda: {"sha256": "edited", "files": {}})
     state = service.launch(identity, plan, "launch", pinned=(submitted, source))
-    assert read_json(service.folder(identity) / "plan.json")["code"] == submitted
+    assert read_json_bounded(service.folder(identity) / "plan.json")["code"] == submitted
     command = task_center.task(state["taskId"])["command"]
     assert command["cwd"] == str(service.folder(identity) / "compute")
 
@@ -96,9 +95,9 @@ def test_accepted_launch_replay_is_read_only_and_preserves_legacy_request_hashes
     service.launch(identity, plan, "launch")
     folder = service.folder(identity)
     if legacy:
-        state = read_json(folder / "state.json")
+        state = read_json_bounded(folder / "state.json")
         state.pop("operationActions")
-        write_json(folder / "state.json", state)
+        write_json_atomic(folder / "state.json", state)
     before = (folder / "state.json").read_bytes(), (folder / "plan.json").read_bytes()
     monkeypatch.setattr(
         service, "runtime", lambda: pytest.fail("Accepted replay must not inspect runtime")
@@ -119,9 +118,9 @@ def test_replay_keeps_numeric_default_compatibility_for_legacy_plans(job):
     plan["resources"] = ResourcePolicy(gpuIds=[]).model_dump()
     service.launch(identity, plan, "launch")
     path = service.folder(identity) / "state.json"
-    state = read_json(path)
+    state = read_json_bounded(path)
     state.pop("operationActions")
-    write_json(path, state)
+    write_json_atomic(path, state)
     assert service.replay_launch(identity, "launch")["status"] == "queued"
 
 
@@ -135,9 +134,9 @@ def test_replay_rejects_changed_resources_wrong_kind_and_altered_saved_plan(job)
         service.replay_launch(identity, "launch", record_kind="model-interpretation")
     assert caught.value.code == "COMPUTE_NOT_FOUND"
     path = service.folder(identity) / "plan.json"
-    changed = read_json(path)
+    changed = read_json_bounded(path)
     changed["data"]["changed"] = True
-    write_json(path, changed)
+    write_json_atomic(path, changed)
     with pytest.raises(StorageError) as caught:
         service.replay_launch(identity, "launch")
     assert caught.value.code == "COMPUTE_PLAN_CHANGED"
@@ -174,9 +173,9 @@ def test_changed_plan_and_archive_block_resume(job, task_center):
     task_id = service.launch(identity, plan, "launch")["taskId"]
     task_center.finish(task_id, "interrupted", returncode=None, reason="lost")
     path = service.folder(identity) / "plan.json"
-    value = read_json(path)
+    value = read_json_bounded(path)
     value["kind"] = "refit"
-    write_json(path, value)
+    write_json_atomic(path, value)
     with pytest.raises(StorageError, match="plan changed"):
         service.launch(identity, plan, "resume", resume=True)
 
@@ -189,10 +188,10 @@ def test_cancel_requested_while_running_and_completion_blocks_relaunch(job, task
     assert state["status"] != "cancelled" and state["cancellationRequested"]
     # The worker finished and recorded its receipt before it saw the request.
     folder = service.folder(identity)
-    saved = read_json(folder / "state.json")
+    saved = read_json_bounded(folder / "state.json")
     saved.update(status="completed", result={"state": "succeeded", "runId": identity})
-    write_json(folder / "result.json", saved["result"])
-    write_json(folder / "state.json", saved)
+    write_json_atomic(folder / "result.json", saved["result"])
+    write_json_atomic(folder / "state.json", saved)
     task_center.finish(task_id, "succeeded")
     assert service.status(identity)["status"] == "completed"
     with pytest.raises(StorageError, match="completed"):

@@ -83,6 +83,16 @@ A test module that uses a fixture from `tests/support/` imports it by name (for 
 
 A queued task stores its adapter name and command line, and a submitted experiment runs its follow-up work from an archived copy of the code. Renaming or moving one of these files strands work that already exists on users' machines. If you must move one, add a compatibility shim or a migration, then update the test.
 
+A module in the fingerprint that starts importing another HistoPilot module should add that module to the list in `workers/training_process.py:compute_snapshot`. New submissions then get a new fingerprint; submitted experiments keep running their archived code.
+
+### Stored hashes must not change
+
+Configuration ids, content hashes, job ids and preview hashes are saved in projects. Compute them with `histopilot/storage/io.py` (`canonical_json` and `content_hash`), which also holds the shared timestamp and bounded JSON file helpers. Three canonical encodings are in use, and each call site must keep the one it has: compact ASCII, compact UTF-8 (scientific-store documents, so every configuration id, and imports), and default separators (extraction and feature-pack jobs). `tests/test_storage_io.py` pins the digest each gives on fixed inputs.
+
+### Shared helpers are public
+
+A helper that another module imports is part of its module's interface: name it without a leading underscore where it is defined. `tests/test_private_imports.py` counts the private helpers still imported across modules; the count may only go down.
+
 ## Frontend
 
 The React UI lives in `web/`:

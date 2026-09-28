@@ -7,7 +7,6 @@ batches and saved plans remain readable without rewriting their evidence.
 
 import sqlite3
 from copy import deepcopy
-from datetime import UTC, datetime
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -17,10 +16,11 @@ from histopilot.application.experiment_policy import (
     resolve_batch_policy,
     submission_policies,
 )
-from histopilot.application.feature_bundles import FeatureBundleService, _hash
+from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.schemas.model_experiments import ExperimentPredictorPolicy
+from histopilot.storage.io import content_hash, utc_now
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 
@@ -58,7 +58,9 @@ def matching_published_batch(publication, batches):
         if (
             manifest.get("spec") == publication["spec"]
             and manifest.get("previewHash") == publication["previewHash"]
-            and _hash({key: value for key, value in manifest.items() if key != "previewHash"})
+            and content_hash(
+                {key: value for key, value in manifest.items() if key != "previewHash"}
+            )
             == publication["previewHash"]
         ):
             return batch
@@ -399,7 +401,7 @@ class ModelExperimentService:
             return
         try:
             self._predictors().launch(
-                identity, "experiment-predictors-" + _hash(submission["operationId"])
+                identity, "experiment-predictors-" + content_hash(submission["operationId"])
             )
         except (StorageError, OSError, ValueError, RuntimeError) as error:
             # Fold submission is already durable. Keep its receipt intact and
@@ -490,7 +492,7 @@ class ModelExperimentService:
         ]
         unique = {}
         for plan in normalized:
-            unique.setdefault(_hash(plan["spec"]), plan)
+            unique.setdefault(content_hash(plan["spec"]), plan)
         if len(unique) != len(normalized) and not deduplicate:
             raise StorageError(
                 "Two batch plans are identical. Remove the duplicate or give the new batch its own name and settings.",
@@ -505,7 +507,7 @@ class ModelExperimentService:
             values.pop("setupVersion", None)
         if values.get("sourceExperimentId") is None:
             values.pop("sourceExperimentId", None)
-        digest = _hash(values)
+        digest = content_hash(values)
         with lifecycle_guard(self.store.folder):
             for record in self.store.list_drafts(include_inactive=True):
                 payload = record["payload"]
@@ -796,7 +798,7 @@ class ModelExperimentService:
                     "EXPERIMENT_SETUP_INPUTS_REQUIRED",
                     422,
                 )
-            operation = "experiment-setup-" + _hash(
+            operation = "experiment-setup-" + content_hash(
                 {"experimentId": identity, "operationId": request.operationId}
             )
             prior = self.store.configuration_publication(operation)
@@ -1105,7 +1107,7 @@ class ModelExperimentService:
                     _plan, freshness = self.training._prepare(
                         {
                             "id": "submission-preflight",
-                            "contentHash": _hash(manifest),
+                            "contentHash": content_hash(manifest),
                             "manifest": manifest,
                         }
                     )
@@ -1117,7 +1119,7 @@ class ModelExperimentService:
                             "spec": spec.model_dump(),
                             "previewHash": preview["previewHash"],
                             "operationId": "experiment-batch-"
-                            + _hash(
+                            + content_hash(
                                 {
                                     "experiment": identity,
                                     "operation": request.operationId,
@@ -1138,7 +1140,7 @@ class ModelExperimentService:
                 submission = {
                     "operationId": request.operationId,
                     "expectedRevision": request.expectedRevision,
-                    "submittedAt": datetime.now(UTC).isoformat(),
+                    "submittedAt": utc_now(),
                     "status": "launching",
                     "batchIds": [batch["id"] for batch in batches],
                     "publications": publications,
@@ -1222,7 +1224,7 @@ class ModelExperimentService:
                         submission["launchedBatchIds"].append(batch_id)
                         self._save_submission(identity, submission)
                         continue
-                    operation = "experiment-launch-" + _hash(
+                    operation = "experiment-launch-" + content_hash(
                         {
                             "experiment": identity,
                             "operation": request.operationId,

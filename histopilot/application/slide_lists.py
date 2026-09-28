@@ -26,7 +26,7 @@ from histopilot.schemas.slide_lists import (
     MAX_SLIDE_UPLOAD_BYTES,
     SlideListSource,
 )
-from histopilot.storage.scientific import ScientificStore
+from histopilot.storage.io import read_file_bounded
 
 MAX_ROWS = 100_000
 MAX_FOLDER_FILES = 100_000
@@ -52,7 +52,7 @@ def read_slide_list_source(source: SlideListSource, resolve_path) -> tuple[bytes
     """Read either input through the same CSV selection and size limits."""
     if source.path is not None:
         path = resolve_path(source.path)
-        return ScientificStore._read_file(path, MAX_SLIDE_LIST_BYTES), str(path)
+        return read_file_bounded(path, MAX_SLIDE_LIST_BYTES), str(path)
     try:
         content = base64.b64decode(source.contentBase64, validate=True)
     except (binascii.Error, ValueError) as error:

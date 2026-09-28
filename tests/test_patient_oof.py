@@ -8,10 +8,9 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
+from histopilot.storage.io import read_json_bounded, write_json_atomic  # noqa: E402
 from histopilot.training import module  # noqa: E402
-from histopilot.workers.packing_process import write_json  # noqa: E402
 from histopilot.workers.train_batch import collect_results  # noqa: E402
-from histopilot.workers.training_process import read_json  # noqa: E402
 
 
 @pytest.mark.parametrize("corrupt_value", [0, float("nan")])
@@ -40,7 +39,7 @@ def test_completed_oof_patients_have_intervals_and_only_verified_analysis_is_reu
         selected = rows[fold * 4 : fold * 4 + 4]
         memberships[split] = [{**row, "partition": "test"} for row in selected]
         path = tmp_path / f"assessment-{fold}.json"
-        write_json(path, {"classOrder": target["classes"], "records": selected})
+        write_json_atomic(path, {"classOrder": target["classes"], "records": selected})
         runs.append(
             {
                 "id": split,
@@ -71,16 +70,16 @@ def test_completed_oof_patients_have_intervals_and_only_verified_analysis_is_reu
 
     monkeypatch.setattr(module, "classification_metrics", measured)
     collect_results(plan, state, tmp_path)
-    result = read_json(tmp_path / "results.json")["candidates"][0]
+    result = read_json_bounded(tmp_path / "results.json")["candidates"][0]
     assert result["metricDetails"]["patientAnalysis"]["uncertainty"]["patientCount"] == 8
     assert result["metrics"]["confidenceIntervals"]["auroc"] == {"lower": 1, "upper": 1}
     collect_results(plan, state, tmp_path)
     assert len(calls) == 1
-    assert read_json(tmp_path / "results.json")["candidates"][0] == result
+    assert read_json_bounded(tmp_path / "results.json")["candidates"][0] == result
     path = tmp_path / result["oofPath"].split("/")[-1]
-    damaged = copy.deepcopy(read_json(path))
+    damaged = copy.deepcopy(read_json_bounded(path))
     damaged["summary"]["patientAnalysis"]["uncertainty"]["intervals"]["auroc"]["lower"] = corrupt_value
     path.write_text(json.dumps(damaged))
     collect_results(plan, state, tmp_path)
     assert len(calls) == 2
-    assert read_json(tmp_path / "results.json")["candidates"][0] == result
+    assert read_json_bounded(tmp_path / "results.json")["candidates"][0] == result

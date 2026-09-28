@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median
 
+from histopilot.storage.io import decode_json_object
 from histopilot.storage.project_lock import reject_symlink_components
 
 KEY_VERSION = 2
@@ -260,10 +261,7 @@ def _read_bytes(path: Path, budget: list[int], maximum: int) -> bytes:
 
 
 def _read_json(path: Path, budget: list[int], maximum: int = MAX_JSON_BYTES) -> dict:
-    value = json.loads(_read_bytes(path, budget, maximum), parse_constant=_reject_constant)
-    if not isinstance(value, dict):
-        raise ValueError(f"{path.name} must contain an object.")
-    return value
+    return decode_json_object(_read_bytes(path, budget, maximum))
 
 
 def _instant(value) -> float | None:

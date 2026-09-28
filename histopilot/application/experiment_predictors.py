@@ -28,13 +28,13 @@ from histopilot.application.experiment_policy import (
     submission_policies,
     verify_batch_policy,
 )
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictor_builds import PredictorBuildService
 from histopilot.application.predictors import PredictorService
 from histopilot.application.refits import RefitService
 from histopilot.application.task_records import LEGACY_CODE, LEGACY_MESSAGE, refuse_legacy
 from histopilot.schemas.model_experiments import ExperimentPredictorPolicy
 from histopilot.schemas.predictors import ApplyPredictorBuilds, LaunchRefit, PredictorBuildSelection
+from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
@@ -44,8 +44,6 @@ from histopilot.storage.project_lock import (
 from histopilot.taskcenter import ids
 from histopilot.taskcenter.model import LIVE
 from histopilot.workers.compute_archive import prepare_compute_archive
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import now, read_json
 
 ACTIVE = {"queued", "waiting", "running", "cancelling"}
 TERMINAL = {"completed", "cancelled", "skipped"}
@@ -78,7 +76,7 @@ def source_items(experiment_id, batches, policy=None, *, policies=None):
             for method in methods:
                 items.append(
                     {
-                        "key": _hash([source, method]),
+                        "key": content_hash([source, method]),
                         "source": source,
                         "method": method,
                         **(
@@ -140,7 +138,7 @@ class TaskCenterExperimentExecutor:
         ]
 
     def launch(self, session, python, plan, log, *, package_root, task_id, owner, title):
-        frozen = read_json(plan)
+        frozen = read_json_bounded(plan)
         folder = Path(plan).parent
         spec = {
             "id": task_id,
@@ -260,10 +258,13 @@ class ExperimentPredictorService:
 
     def _read(self, identity):
         folder = self.folder(identity)
-        plan, state = read_json(folder / "plan.json"), read_json(folder / "state.json")
+        plan, state = (
+            read_json_bounded(folder / "plan.json"),
+            read_json_bounded(folder / "state.json"),
+        )
         _record, submission = self._submission(identity, inactive=True)
         if (
-            state.get("planHash") != _hash(plan)
+            state.get("planHash") != content_hash(plan)
             or plan.get("experimentId") != identity
             or plan.get("projectId") != self.store.project_id
             or plan.get("projectFolder") != str(self.store.folder)
@@ -477,7 +478,7 @@ class ExperimentPredictorService:
                 )
             folder = self.folder(identity)
             ensure_managed_directory(folder)
-            if (folder / f"cancel-{_hash(operation_id)}.json").exists():
+            if (folder / f"cancel-{content_hash(operation_id)}.json").exists():
                 raise StorageError(
                     "This operation belongs to a predictor cancellation.", "OPERATION_CONFLICT", 409
                 )
@@ -498,7 +499,7 @@ class ExperimentPredictorService:
 
                 def accepted_noop():
                     previous["operations"][operation_id] = resume
-                    write_json(folder / "state.json", previous)
+                    write_json_atomic(folder / "state.json", previous)
                     return current
 
                 # Task Center experiments stay resumable after a cancel, like their batches.
@@ -533,7 +534,7 @@ class ExperimentPredictorService:
                 refuse_legacy()
             task_id = ids.coordinator_task_id(str(folder))
             if previous is None:
-                write_json(folder / "plan.json", plan)
+                write_json_atomic(folder / "plan.json", plan)
             items = (
                 deepcopy(previous["items"])
                 if previous
@@ -555,7 +556,7 @@ class ExperimentPredictorService:
                 if item["status"] in reopened:
                     item.update(status="waiting", error=None)
             state = {
-                "planHash": _hash(plan),
+                "planHash": content_hash(plan),
                 "status": "queued",
                 "process": None,
                 "sessionName": "hp-predictors-"
@@ -568,12 +569,12 @@ class ExperimentPredictorService:
                     **(previous["operations"] if previous else {}),
                     operation_id: resume,
                 },
-                "updatedAt": now(),
+                "updatedAt": utc_now(),
                 "executor": "task-center",
                 "taskId": task_id,
             }
             (folder / "cancel.requested").unlink(missing_ok=True)
-            write_json(folder / "state.json", state)
+            write_json_atomic(folder / "state.json", state)
             try:
                 self.executor.launch(
                     state["sessionName"],
@@ -608,7 +609,7 @@ class ExperimentPredictorService:
                     status="interrupted",
                     error={"code": "EXPERIMENT_PREDICTORS_LAUNCH_FAILED", "message": str(error)},
                 )
-                write_json(folder / "state.json", state)
+                write_json_atomic(folder / "state.json", state)
             return self.public(state)
 
     def cancel(self, identity, operation_id):
@@ -633,7 +634,7 @@ class ExperimentPredictorService:
                 # working training environment or starting any process.
                 plan = self._new_plan(identity, submission)
                 stored = {
-                    "planHash": _hash(plan),
+                    "planHash": content_hash(plan),
                     "status": "cancelled",
                     "process": None,
                     "sessionName": None,
@@ -653,18 +654,18 @@ class ExperimentPredictorService:
                         for item in plan["items"]
                     ],
                     "error": None,
-                    "updatedAt": now(),
+                    "updatedAt": utc_now(),
                 }
-                write_json(folder / "plan.json", plan)
-                write_json(folder / "state.json", stored)
+                write_json_atomic(folder / "plan.json", plan)
+                write_json_atomic(folder / "state.json", stored)
             plan, stored = self._read(identity)
             if operation_id in stored["operations"]:
                 raise StorageError(
                     "This operation belongs to another predictor action.", "OPERATION_CONFLICT", 409
                 )
-            receipt_path = folder / f"cancel-{_hash(operation_id)}.json"
+            receipt_path = folder / f"cancel-{content_hash(operation_id)}.json"
             if receipt_path.exists():
-                receipt = read_json(receipt_path)
+                receipt = read_json_bounded(receipt_path)
                 if (
                     receipt.get("operationId") != operation_id
                     or type(receipt.get("attempt")) is not int
@@ -682,13 +683,15 @@ class ExperimentPredictorService:
                     "attempt": stored["attempt"],
                     "status": "requested",
                 }
-                write_json(receipt_path, receipt)
+                write_json_atomic(receipt_path, receipt)
             # This marker is checked before every publication and refit launch.
-            write_json(folder / "cancel.requested", {"operationId": operation_id, "at": now()})
+            write_json_atomic(
+                folder / "cancel.requested", {"operationId": operation_id, "at": utc_now()}
+            )
             self._cancel_items(plan, stored)
-            write_json(folder / "state.json", stored)
+            write_json_atomic(folder / "state.json", stored)
             self._cancel_pending_task(stored)
-            write_json(receipt_path, {**receipt, "status": "applied"})
+            write_json_atomic(receipt_path, {**receipt, "status": "applied"})
             return self.public(stored)
 
     def _cancel_pending_task(self, state):
@@ -711,7 +714,9 @@ class ExperimentPredictorService:
                     execution = self.refits.cancel(
                         item["recordId"],
                         "experiment-cancel-"
-                        + _hash([plan["submissionOperationId"], item["key"], state["attempt"]]),
+                        + content_hash(
+                            [plan["submissionOperationId"], item["key"], state["attempt"]]
+                        ),
                     )
                 item["execution"] = execution
                 if execution["status"] in {"queued", "running"}:
@@ -719,7 +724,9 @@ class ExperimentPredictorService:
                     pending = True
                     continue
             item.update(status="cancelled", error=None)
-        state.update(status="cancelling" if pending else "cancelled", error=None, updatedAt=now())
+        state.update(
+            status="cancelling" if pending else "cancelled", error=None, updatedAt=utc_now()
+        )
 
     def _runtime_contract(self, plan):
         # Refit execution must use the same code and package versions as CV.
@@ -753,7 +760,9 @@ class ExperimentPredictorService:
             or 50.0,
             namePrefix=plan["name"][:100],
         )
-        operation = "experiment-predictor-" + _hash([plan["submissionOperationId"], item["key"]])
+        operation = "experiment-predictor-" + content_hash(
+            [plan["submissionOperationId"], item["key"]]
+        )
         # Persist the exact reviewed request before dispatch: a publication may
         # succeed just before its acknowledgement is lost.
         if not item.get("buildRequest"):
@@ -828,7 +837,7 @@ class ExperimentPredictorService:
             folder = self.folder(identity)
             if (folder / "cancel.requested").exists():
                 self._cancel_items(plan, state)
-                write_json(folder / "state.json", state)
+                write_json_atomic(folder / "state.json", state)
                 return self.public(state)
             batches = observed["batches"]
             for item in state["items"]:
@@ -868,8 +877,8 @@ class ExperimentPredictorService:
 
                         training_folder = self.store.folder / "training" / item["source"]["batchId"]
                         selected = validation_selection(
-                            read_json(training_folder / "plan.json"),
-                            read_json(training_folder / "state.json"),
+                            read_json_bounded(training_folder / "plan.json"),
+                            read_json_bounded(training_folder / "state.json"),
                         )
                         if not selected or not selected["ready"]:
                             raise StorageError(
@@ -885,11 +894,11 @@ class ExperimentPredictorService:
                         # acknowledgement fails after external publication.
                         try:
                             built = self._build(
-                                plan, item, lambda: write_json(folder / "state.json", state)
+                                plan, item, lambda: write_json_atomic(folder / "state.json", state)
                             )
                         finally:
-                            state["updatedAt"] = now()
-                            write_json(folder / "state.json", state)
+                            state["updatedAt"] = utc_now()
+                            write_json_atomic(folder / "state.json", state)
                         result = built["items"][0]
                         if result["status"] == "failed":
                             raise StorageError(
@@ -912,7 +921,7 @@ class ExperimentPredictorService:
                             published = self.refits.publish(
                                 item["recordId"],
                                 "experiment-refit-publish-"
-                                + _hash([plan["submissionOperationId"], item["key"]]),
+                                + content_hash([plan["submissionOperationId"], item["key"]]),
                             )
                             item.update(status="completed", predictorId=published["id"], error=None)
                         elif status in {"queued", "running"}:
@@ -938,11 +947,11 @@ class ExperimentPredictorService:
                                     409,
                                 )
                             self._runtime_contract(plan)
-                            operation = "experiment-refit-launch-" + _hash(
+                            operation = "experiment-refit-launch-" + content_hash(
                                 [plan["submissionOperationId"], item["key"], state["attempt"]]
                             )
                             item["launchedAttempt"] = state["attempt"]
-                            write_json(folder / "state.json", state)
+                            write_json_atomic(folder / "state.json", state)
                             execution = self.refits.launch(
                                 item["recordId"],
                                 LaunchRefit(operationId=operation),
@@ -973,8 +982,8 @@ class ExperimentPredictorService:
                         except (StorageError, OSError, ValueError, RuntimeError):
                             pass
                 finally:
-                    state["updatedAt"] = now()
-                    write_json(folder / "state.json", state)
+                    state["updatedAt"] = utc_now()
+                    write_json_atomic(folder / "state.json", state)
             statuses = {row["status"] for row in state["items"]}
             state["status"] = (
                 "completed"
@@ -990,6 +999,6 @@ class ExperimentPredictorService:
             state["error"] = next(
                 (row["error"] for row in state["items"] if row["status"] == "failed"), None
             )
-            state["updatedAt"] = now()
-            write_json(folder / "state.json", state)
+            state["updatedAt"] = utc_now()
+            write_json_atomic(folder / "state.json", state)
             return self.public(state)

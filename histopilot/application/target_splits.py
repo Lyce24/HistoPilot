@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections import Counter, defaultdict
 
 from pydantic import ValidationError
@@ -12,7 +11,6 @@ from histopilot.application.protocols import (
     FilterEvaluator,
     FilterFailure,
     ProtocolService,
-    _json,
     cohort_statistics,
     development_selection_groups,
     fixed_assignments,
@@ -23,6 +21,7 @@ from histopilot.application.protocols import (
 from histopilot.schemas.protocols import FixedRules, SplitSpec, TargetSpec, iter_conditions
 from histopilot.schemas.target_splits import TargetSplitPartitionPreviewRequest, TargetSplitSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import canonical_json, content_hash
 from histopilot.storage.project_lock import StorageError
 
 ALGORITHM = "histopilot-target-training-testing-v2"
@@ -58,10 +57,6 @@ def _selection_stats(rows, unit):
             for row in rows[:5]
         ],
     }
-
-
-def _hash(value):
-    return hashlib.sha256(_json(value)).hexdigest()
 
 
 def _reference(document):
@@ -337,11 +332,14 @@ class TargetSplitService:
                         else ()
                     )
                     strata[values].append(patient)
-                for values, patients in sorted(strata.items(), key=lambda item: _json(item[0])):
+                for values, patients in sorted(
+                    strata.items(),
+                    key=lambda item: canonical_json(item[0], ascii=True, compact=True),
+                ):
                     ordered = sorted(
                         patients,
                         key=lambda patient: (
-                            _hash([_algorithm(spec), spec.split.seed, values, patient]),
+                            content_hash([_algorithm(spec), spec.split.seed, values, patient]),
                             patient,
                         ),
                     )
@@ -721,7 +719,7 @@ class TargetSplitService:
         }
         return {
             **result,
-            "previewHash": _hash(
+            "previewHash": content_hash(
                 {
                     key: value
                     for key, value in result.items()
@@ -830,7 +828,7 @@ class TargetSplitService:
         spec.update(sourceTargetSplitId=target_split_id, split=split.model_dump(mode="json"))
         if "splitUnit" in source_spec:
             spec["splitUnit"] = source_spec["splitUnit"]
-        operation = "target-training-" + _hash(spec)
+        operation = "target-training-" + content_hash(spec)
         prior = self.store.configuration_publication(operation)
         if prior:
             return prior

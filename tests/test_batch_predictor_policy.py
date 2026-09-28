@@ -11,14 +11,13 @@ from support.predictors import registry as registry
 
 from histopilot.application.experiment_policy import policy_for_batch, submission_policies
 from histopilot.application.experiment_predictors import ExperimentPredictorService
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.model_experiments import ModelExperimentService, execution_contract
 from histopilot.application.refits import RefitService
 from histopilot.schemas.development import DevelopmentBatchSpec, SearchGrid, TrainingRecipe
+from histopilot.storage.io import content_hash, read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import execute_plan
-from histopilot.workers.training_process import compute_snapshot, read_json
+from histopilot.workers.training_process import compute_snapshot
 
 
 @pytest.fixture
@@ -29,17 +28,17 @@ def managed_integrated(registry, task_center):
     store = predictors.store
     identity = selections[0].experimentId
     runtime = {"available": True, "python": sys.executable, "versions": {"torch": "fixture"}}
-    plan = read_json(folder / "plan.json")
+    plan = read_json_bounded(folder / "plan.json")
     plan.update(runtime=runtime, code=compute_snapshot())
-    state = read_json(folder / "state.json")
-    state["planHash"] = _hash(plan)
-    write_json(folder / "plan.json", plan)
-    write_json(folder / "state.json", state)
+    state = read_json_bounded(folder / "state.json")
+    state["planHash"] = content_hash(plan)
+    write_json_atomic(folder / "plan.json", plan)
+    write_json_atomic(folder / "state.json", state)
     for run in plan["runs"]:
         path = folder / "runs" / run["id"] / "plan.json"
-        run_plan = read_json(path)
+        run_plan = read_json_bounded(path)
         run_plan.update(runtime=runtime, code=plan["code"])
-        write_json(path, run_plan)
+        write_json_atomic(path, run_plan)
     record = store.get_draft(identity)
     policy = {"method": "both", "refitPercentile": 75.0}
     submission = {
@@ -83,21 +82,21 @@ def new_batch(service, original_id, name, policy):
     batch = service.store.publish_configuration(manifest=manifest, operation_id=name)
     source = service.store.folder / "training" / original_id
     destination = service.store.folder / "training" / batch["id"]
-    plan = read_json(source / "plan.json")
+    plan = read_json_bounded(source / "plan.json")
     plan.update(batchId=batch["id"], batchContentHash=batch["contentHash"])
-    state = read_json(source / "state.json")
-    state.update(batchId=batch["id"], planHash=_hash(plan))
+    state = read_json_bounded(source / "state.json")
+    state.update(batchId=batch["id"], planHash=content_hash(plan))
     for run in state["runs"]:
         folder = destination / "runs" / run["id"]
         folder.mkdir(parents=True)
         checkpoint = folder / "best.ckpt"
         checkpoint.write_bytes(Path(run["result"]["bestCheckpointPath"]).read_bytes())
         run["result"]["bestCheckpointPath"] = str(checkpoint)
-        write_json(folder / "result.json", run["result"])
+        write_json_atomic(folder / "result.json", run["result"])
         intent = next(row for row in plan["runs"] if row["id"] == run["id"])
-        write_json(folder / "plan.json", execute_plan(plan, intent, None))
-    write_json(destination / "plan.json", plan)
-    write_json(destination / "state.json", state)
+        write_json_atomic(folder / "plan.json", execute_plan(plan, intent, None))
+    write_json_atomic(destination / "plan.json", plan)
+    write_json_atomic(destination / "state.json", state)
     return batch
 
 
@@ -280,7 +279,7 @@ def test_new_submission_freezes_each_batch_choice_before_dispatch(
     assert {row["task"] for row in task_center.store.dependencies(coordinator["id"])} == {
         task["id"] for task in task_center.tasks(kind="mil-collect")
     }
-    frozen = read_json(Path(coordinator["adapterData"]["coordinatorFolder"]) / "plan.json")
+    frozen = read_json_bounded(Path(coordinator["adapterData"]["coordinatorFolder"]) / "plan.json")
     assert frozen["version"] == 2 and frozen["batchIds"] == submission["batchIds"]
     assert frozen["policies"] == submission_policies(submission)
     by_name = {"First": policies[0], "Second": policies[1]}

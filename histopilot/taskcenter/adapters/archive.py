@@ -95,10 +95,10 @@ class ArchiveAdapter(Adapter):
                     return
                 (folder / "cancel.requested").unlink(missing_ok=True)
                 (folder / "progress.json").unlink(missing_ok=True)
-                from histopilot.workers.packing_process import write_json
+                from histopilot.storage.io import write_json_atomic
 
                 state.update(status="queued", error=None, result=None)
-                write_json(folder / "state.json", state)
+                write_json_atomic(folder / "state.json", state)
         except StorageError as error:
             raise AdapterError(str(error), fatal=error.code != "PROJECT_BUSY") from error
         except OSError as error:

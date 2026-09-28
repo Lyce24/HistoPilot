@@ -15,7 +15,8 @@ from histopilot.datasets.datamodule import MILDataModule, training_objective
 from histopilot.datasets.mil import MILDataError, SlideDataset
 from histopilot.schemas.development import TrainingRecipe
 from histopilot.schemas.nnmil import resolve_nnmil_plan, window_seed
-from histopilot.training.fold import _HistoryWriter, _write_json
+from histopilot.storage.io import write_json_atomic
+from histopilot.training.fold import _HistoryWriter
 from histopilot.training.module import MILTrainModule
 
 
@@ -94,8 +95,8 @@ class _RefitHistory(_HistoryWriter):
                 "learningRate": pl_module._epoch_learning_rate,
             }
         )
-        _write_json(self.path, pl_module.history)
-        _write_json(
+        write_json_atomic(self.path, pl_module.history, limit=None, sync=False)
+        write_json_atomic(
             self.path.parent / "progress.json",
             {
                 **pl_module.history[-1],
@@ -103,6 +104,7 @@ class _RefitHistory(_HistoryWriter):
                 "maxEpochs": trainer.max_epochs,
                 "validation": None,
             },
+            limit=None, sync=False,
         )
 
 
@@ -217,7 +219,7 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
             **({key: plan[key] for key in ("effectiveRecipe", "nnmilPlanning")}
                if "nnmilPlanning" in plan else {}),
         }
-        _write_json(output_dir / "result.json", result)
+        write_json_atomic(output_dir / "result.json", result, limit=None, sync=False)
         return result
     finally:
         datamodule.teardown()

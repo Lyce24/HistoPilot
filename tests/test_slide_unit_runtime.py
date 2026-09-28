@@ -11,10 +11,10 @@ from test_mil_training import tiny_plan  # noqa: E402
 
 from histopilot.datasets.mil import MILDataError, validate_memberships  # noqa: E402
 from histopilot.schemas.training_controls import resolve_stopping, validate_split_unit  # noqa: E402
+from histopilot.storage.io import write_json_atomic  # noqa: E402
 from histopilot.training import module  # noqa: E402
 from histopilot.training.fold import _validate_plan, train_fold  # noqa: E402
 from histopilot.training.refit import RefitDataModule  # noqa: E402
-from histopilot.workers.packing_process import write_json  # noqa: E402
 from histopilot.workers.train_batch import collect_results  # noqa: E402
 
 
@@ -106,7 +106,7 @@ def test_oof_slides_from_shared_patient_across_folds_are_complete(tmp_path, monk
                  "probabilities": [0.8, 0.2] if i == 0 else [0.2, 0.8]} for i in range(2)]
         memberships[split] = [{**row, "partition": "test"} for row in rows]
         path = tmp_path / f"{split}.json"
-        write_json(path, {"classOrder": target["classes"], "records": rows})
+        write_json_atomic(path, {"classOrder": target["classes"], "records": rows})
         runs.append({"id": split, "candidateId": "candidate", "splitPlanId": split, "trainingSeed": 42,
                      "status": "completed", "result": {"predictions": {"assessment": str(path)}}})
     plan = {"batchId": "batch", "protocolId": "protocol", "target": target, "splitUnit": "slide",

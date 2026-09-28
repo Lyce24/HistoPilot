@@ -17,6 +17,7 @@ from histopilot.application.slide_lists import (
 from histopilot.schemas.features import FeatureSpec
 from histopilot.schemas.slide_lists import SlideListSource
 from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
+from histopilot.storage.io import content_hash, read_file_bounded
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.viewer.slide_images import allowed_file
@@ -25,12 +26,6 @@ MAX_FILES = 10000
 SCAN_SECONDS = 30
 MAX_METADATA_BYTES = 262144
 ENCODER_ALIASES = {"uni": "uni_v1", "uni2": "uni_v2"}
-
-
-def _hash(value: object) -> str:
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    ).hexdigest()
 
 
 def _stamp(info: os.stat_result) -> dict:
@@ -384,7 +379,7 @@ class FeatureService:
         try:
             documents = {}
             for name in ("job.json", "result.json", "validation.json"):
-                documents[name] = json.loads(self.store._read_file(folder / name, 8 * 1024 * 1024))
+                documents[name] = json.loads(read_file_bounded(folder / name, 8 * 1024 * 1024))
                 if not isinstance(documents[name], dict):
                     raise ValueError("Invalid extraction record.")
             job, result, validation = (
@@ -429,7 +424,7 @@ class FeatureService:
                 "inputFiles": job.get("inputFiles", []),
                 "validation": validation,
             }
-            return {**evidence, "snapshotHash": _hash(evidence)}
+            return {**evidence, "snapshotHash": content_hash(evidence)}
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise StorageError(
                 f"The linked extraction cannot be verified: {error}",
@@ -654,7 +649,7 @@ class FeatureService:
             "validationLevel": "headers",
             "canFreeze": not any(item["severity"] == "error" for item in findings),
         }
-        return {**result, "previewHash": _hash({**result, "inventory": inventory})}
+        return {**result, "previewHash": content_hash({**result, "inventory": inventory})}
 
     def freeze(
         self,

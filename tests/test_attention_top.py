@@ -12,10 +12,9 @@ from support.compute import complete as record_completion
 from support.compute import managed_study as managed_study
 from support.compute import save_study
 
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.viewer.attention_arrays import attention_page, attention_top
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
 
 Image = pytest.importorskip("PIL.Image")
 
@@ -75,7 +74,7 @@ def complete(study, *, legacy=False, footprint=(100, 100), coords=None):
     for member, suffix in enumerate(("", "-member-0")):
         path = folder / f"slide-0{suffix}.{'json' if legacy else 'npy'}"
         if legacy:
-            write_json(
+            write_json_atomic(
                 path,
                 {
                     "slideId": "independent",
@@ -116,9 +115,9 @@ def complete(study, *, legacy=False, footprint=(100, 100), coords=None):
 
 def update_result(service, identity, result):
     folder = service.jobs.folder(identity)
-    state = read_json(folder / "state.json")
-    write_json(folder / "state.json", {**state, "status": "completed", "result": result})
-    write_json(folder / "result.json", result)
+    state = read_json_bounded(folder / "state.json")
+    write_json_atomic(folder / "state.json", {**state, "status": "completed", "result": result})
+    write_json_atomic(folder / "result.json", result)
 
 
 def test_top_scans_beyond_display_limit_and_viewport_with_global_tie_order(tmp_path):
@@ -328,7 +327,7 @@ def test_legacy_contact_sheet_reuses_compact_verified_rows_without_mutable_alias
     path = service.jobs.folder(identity) / "slide-0.json"
     content = json.loads(path.read_bytes())
     content["patches"][2]["unrelated"] = {"nested": ["extra metadata"]}
-    write_json(path, content)
+    write_json_atomic(path, content)
     result = service.execution(identity)["result"]
     result["artifacts"][path.name] = receipt(path)
     update_result(service, identity, result)
@@ -363,8 +362,8 @@ def test_patch_crops_refuse_symlink_replacement_and_incomplete_jobs(managed_stud
         service.patch_image(identity, "independent", 1)
     assert error.value.code == "INTERPRETATION_PATH_INVALID"
     state_path = service.jobs.folder(identity) / "state.json"
-    state = read_json(state_path)
-    write_json(state_path, {**state, "status": "running"})
+    state = read_json_bounded(state_path)
+    write_json_atomic(state_path, {**state, "status": "running"})
     # Its task has concluded, so the Task Center reads the running record as stopped.
     assert service.execution(identity)["status"] == "interrupted"
     with pytest.raises(StorageError) as error:

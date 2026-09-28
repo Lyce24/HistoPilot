@@ -10,9 +10,8 @@ from support.compute import compute_tasks
 from histopilot.application.lifecycle import CleanupService
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
 from histopilot.schemas.lifecycle import CancelCleanupJob, CleanupSelection
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
 
 bulk_support = runpy.run_path(str(Path(__file__).with_name("test_bulk_evaluations.py")))
 cleanup_support = runpy.run_path(str(Path(__file__).with_name("test_workspace_cleanup.py")))
@@ -51,12 +50,12 @@ def review(service, action, *identities):
 def finish(bulk, task_center, evaluation_id, status="cancelled"):
     """The evaluation worker records ``status`` and exits; its task concludes."""
     folder = bulk.evaluations.jobs.folder(evaluation_id)
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     result = {"state": "succeeded", "runId": evaluation_id} if status == "completed" else None
     if result:
-        write_json(folder / "result.json", result)
+        write_json_atomic(folder / "result.json", result)
     state.update(status=status, process=None, result=result)
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "state.json", state)
     task_center.finish(state["taskId"], "succeeded" if status == "completed" else status)
 
 

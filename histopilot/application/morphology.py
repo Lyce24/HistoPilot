@@ -24,6 +24,7 @@ from histopilot.domain.features import representation_kind
 from histopilot.schemas.morphology import MorphologyIndexRequest
 from histopilot.storage.attention_inputs import h5_dataset, patch_geometry
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import read_file_bounded
 from histopilot.storage.packed import PackedStoreError, open_source, require_same_stamp, stat_stamp
 from histopilot.storage.project_lock import StorageError, reject_symlink_components
 from histopilot.viewer.slide_images import allowed_file, inspect_slide, render_slide
@@ -547,7 +548,7 @@ class MorphologyService:
             return [], ["Contours are unavailable for this slide identifier."]
         try:
             job = json.loads(
-                self.store._read_file(
+                read_file_bounded(
                     self.store.folder / "extractions" / extraction["jobId"] / "job.json",
                     8 * 1024 * 1024,
                 )

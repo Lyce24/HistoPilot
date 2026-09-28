@@ -8,7 +8,6 @@ import struct
 from copy import deepcopy
 
 from histopilot.application.experiment_policy import has_predictor_intent
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import (
     PredictorService,
     checkpoint_snapshot,
@@ -22,9 +21,9 @@ from histopilot.schemas.development import ResourcePolicy
 from histopilot.schemas.nnmil import resolve_nnmil_recipe
 from histopilot.schemas.predictors import PredictorSelection
 from histopilot.schemas.training_controls import sampling_memberships
+from histopilot.storage.io import content_hash, read_file_bounded
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
-from histopilot.storage.scientific import ScientificStore
 
 
 def _best_epoch(checkpoint, folder, recipe):
@@ -53,7 +52,7 @@ def _best_epoch(checkpoint, folder, recipe):
     from histopilot.application.predictors import _file_path
 
     try:
-        history = json.loads(ScientificStore._read_file(_file_path(path, run_folder), 32 * 1024**2))
+        history = json.loads(read_file_bounded(_file_path(path, run_folder), 32 * 1024**2))
         if not isinstance(history, list) or not history:
             raise ValueError
         metric = recipe["checkpointMetric"].removeprefix("validation_")
@@ -89,7 +88,7 @@ def _best_epoch(checkpoint, folder, recipe):
         "runId": checkpoint["runId"],
         "bestEpoch": epoch,
         "source": "validation_history",
-        "historyHash": _hash(history),
+        "historyHash": content_hash(history),
     }
 
 
@@ -401,7 +400,7 @@ class RefitService:
                 or receipt.get("runId") != identity
                 or receipt.get("epochsCompleted") != manifest["epochBudget"]["epochs"]
                 or plan.get("recordContentHash") != record["contentHash"]
-                or _hash(plan) != status.get("planHash")
+                or content_hash(plan) != status.get("planHash")
                 or any(plan.get(key) != value for key, value in manifest["planTemplate"].items())
                 or any(receipt.get(key) != manifest[key]
                        for key in ("effectiveRecipe", "nnmilPlanning") if key in manifest)
@@ -439,14 +438,14 @@ class RefitService:
                     {
                         "runId": identity,
                         **checkpoint,
-                        "receiptHash": _hash(receipt),
-                        "runPlanHash": _hash(plan),
+                        "receiptHash": content_hash(receipt),
+                        "runPlanHash": content_hash(plan),
                         "bestEpoch": receipt["epochsCompleted"],
                         "epochsCompleted": receipt["epochsCompleted"],
                         **({"clinicalPreprocessing": clinical_preprocessing} if clinical_preprocessing else {}),
                     }
                 ],
-                executionPlanHash=_hash(plan),
+                executionPlanHash=content_hash(plan),
             )
             return lifecycle_document(
                 self.store,

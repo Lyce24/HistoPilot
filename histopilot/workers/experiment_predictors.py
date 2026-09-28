@@ -14,12 +14,13 @@ from pathlib import Path
 
 from histopilot.application.experiment_predictors import ExperimentPredictorService
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.compute_archive import prepare_compute_archive
-from histopilot.workers.packing_process import output_lock, write_json
-from histopilot.workers.training_process import now, process_identity, read_json
+from histopilot.workers.packing_process import output_lock
+from histopilot.workers.training_process import process_identity
 
 FINISHED = {"completed", "cancelled", "attention"}
 BUSY_EXIT = 75
@@ -34,7 +35,7 @@ def _busy(error) -> bool:
 
 def run(plan_path, *, sleep=time.sleep, clock=time.monotonic) -> int:
     plan_path = Path(plan_path).absolute()
-    plan = read_json(plan_path)
+    plan = read_json_bounded(plan_path)
     store = ScientificStore(Path(plan["projectFolder"]), plan["projectId"])
     filesystem = LocalFilesystem(tuple(Path(root) for root in plan["dataRoots"]))
     service = ExperimentPredictorService(store, filesystem)
@@ -52,15 +53,15 @@ def run(plan_path, *, sleep=time.sleep, clock=time.monotonic) -> int:
     except StorageError as error:
         if not _busy(error):
             raise
-        print(f"{now()} {error.code}: {error} The Task Center retries later.", flush=True)
+        print(f"{utc_now()} {error.code}: {error} The Task Center retries later.", flush=True)
         return BUSY_EXIT
 
 
 def _coordinate(service, store, identity, folder, *, sleep, clock) -> int:
     with lifecycle_guard(store.folder):
         _plan, state = service._read(identity)
-        state.update(process=process_identity(os.getpid()), updatedAt=now())
-        write_json(folder / "state.json", state)
+        state.update(process=process_identity(os.getpid()), updatedAt=utc_now())
+        write_json_atomic(folder / "state.json", state)
     busy_since = None
     try:
         while True:
@@ -90,9 +91,9 @@ def _coordinate(service, store, identity, folder, *, sleep, clock) -> int:
                     "code": getattr(error, "code", "EXPERIMENT_PREDICTOR_FAILED"),
                     "message": str(error),
                 },
-                updatedAt=now(),
+                updatedAt=utc_now(),
             )
-            write_json(folder / "state.json", state)
+            write_json_atomic(folder / "state.json", state)
         return 0
 
 

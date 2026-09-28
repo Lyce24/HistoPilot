@@ -19,12 +19,11 @@ from histopilot.application.training import TrainingService  # noqa: E402
 from histopilot.application.training_exports import training_oof_csv  # noqa: E402
 from histopilot.schemas.development import DevelopmentBatchSpec  # noqa: E402
 from histopilot.storage.filesystem import LocalFilesystem  # noqa: E402
+from histopilot.storage.io import read_json_bounded, write_json_atomic  # noqa: E402
 from histopilot.storage.scientific import ScientificStore  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.module import aggregate_patients  # noqa: E402
-from histopilot.workers.packing_process import write_json  # noqa: E402
 from histopilot.workers.train_batch import collect_results, execute_plan  # noqa: E402
-from histopilot.workers.training_process import read_json  # noqa: E402
 
 
 def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
@@ -116,16 +115,16 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
             assert metrics["slide"]["count"] == len(selected)
             assert metrics["patient"]["count"] == len({row["patientId"] for row in selected})
             assert metrics["selected"] == metrics["patient"]
-        predictions = read_json(Path(result["predictions"]["assessment"]))["records"]
+        predictions = read_json_bounded(Path(result["predictions"]["assessment"]))["records"]
         for patient in aggregate_patients(predictions):
             slides = [row for row in predictions if row["patientId"] == patient["patientId"]]
             np.testing.assert_allclose(patient["probabilities"], np.mean([row["probabilities"] for row in slides], axis=0))
-        write_json(run_folder / "plan.json", worker)
+        write_json_atomic(run_folder / "plan.json", worker)
         state["runs"].append({**run, "status": "completed", "result": result})
     collect_results(plan, state, output)
-    write_json(output / "plan.json", plan)
-    write_json(output / "state.json", state)
-    results = read_json(output / "results.json")
+    write_json_atomic(output / "plan.json", plan)
+    write_json_atomic(output / "state.json", state)
+    results = read_json_bounded(output / "results.json")
     assert len(results["candidates"]) == 2
     for candidate in results["candidates"]:
         assert candidate["complete"] and candidate["assessmentSlideCount"] == 60
@@ -133,7 +132,7 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
         assert metrics["patient"]["count"] == 30 and metrics["slide"]["count"] == 60
         assert metrics["patientAnalysis"]["uncertainty"]["patientCount"] == 30
         assert set(metrics["patient"]["confidenceIntervals"]) >= {"auroc", "auprc"}
-        records = read_json(Path(candidate["oofPath"]))["records"]
+        records = read_json_bounded(Path(candidate["oofPath"]))["records"]
         assert {row["slideId"] for row in records} == eligible_ids and len(records) == 60
         for unit, count in (("slide", 60), ("patient", 30)):
             exported = training_oof_csv(store, frozen["id"], candidate["candidateId"],

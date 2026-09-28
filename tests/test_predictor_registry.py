@@ -10,7 +10,6 @@ from support.predictors import registry as registry
 from support.projects import lifecycle
 
 from histopilot.application.evaluation_runs import EvaluationRunService
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.lifecycle import CleanupService
 from histopilot.schemas.lifecycle import CleanupSelection
 from histopilot.schemas.predictors import (
@@ -18,8 +17,8 @@ from histopilot.schemas.predictors import (
     FreezePredictor,
     SaveEvaluationRun,
 )
+from histopilot.storage.io import content_hash, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import process_identity
 
 
@@ -94,7 +93,7 @@ def test_incomplete_and_foreign_candidate_memberships_are_rejected(registry):
     service, _cohort = registry
     selection, folder, state = candidate(service)
     state["runs"][0]["status"] = "running"
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "state.json", state)
     assert service.preview(selection)["findings"][0]["code"] == "PREDICTOR_RUN_INCOMPLETE"
     assert service.choices()["items"][0]["eligibleMethods"] == []
     other, *_ = candidate(service, "Other")
@@ -119,7 +118,7 @@ def test_changed_checkpoint_or_receipt_invalidates_review(registry):
     assert error.value.code == "PREVIEW_STALE"
     receipt = state["runs"][0]["result"]
     receipt["bestValidationScore"] = 0.1
-    write_json(checkpoint.parent / "result.json", receipt)
+    write_json_atomic(checkpoint.parent / "result.json", receipt)
     assert service.preview(selection)["findings"][0]["code"] == "PREDICTOR_PROVENANCE_CHANGED"
 
 
@@ -130,8 +129,8 @@ def test_checkpoint_cannot_escape_run_directory(registry, tmp_path):
     outside = tmp_path / "unrelated.ckpt"
     outside.write_bytes(b"unrelated")
     run["result"]["bestCheckpointPath"] = str(outside)
-    write_json(folder / "runs" / run["id"] / "result.json", run["result"])
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "runs" / run["id"] / "result.json", run["result"])
+    write_json_atomic(folder / "state.json", state)
     assert service.preview(selection)["findings"][0]["code"] == "PREDICTOR_EVIDENCE_INVALID"
 
 
@@ -213,7 +212,7 @@ def test_completed_receipt_with_live_or_unverifiable_process_cannot_be_promoted(
     service, _cohort = registry
     selection, folder, state = candidate(service)
     state["runs"][0]["process"] = process_identity()
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "state.json", state)
     assert service.preview(selection)["findings"][0]["code"] == "PREDICTOR_RUN_INCOMPLETE"
 
     def unknown(_identity):
@@ -231,9 +230,9 @@ def test_mutated_memberships_are_rejected_even_if_execution_hash_is_rewritten(re
     plan = json.loads((folder / "plan.json").read_text())
     split_id = next(iter(plan["memberships"]))
     plan["memberships"][split_id][0]["slideId"] = "wrong-slide"
-    state["planHash"] = _hash(plan)
-    write_json(folder / "plan.json", plan)
-    write_json(folder / "state.json", state)
+    state["planHash"] = content_hash(plan)
+    write_json_atomic(folder / "plan.json", plan)
+    write_json_atomic(folder / "state.json", state)
     assert service.preview(selection)["findings"][0]["code"] == "PREDICTOR_PROVENANCE_CHANGED"
 
 
@@ -242,8 +241,8 @@ def test_malformed_receipts_fail_closed_with_review_finding(registry):
     selection, folder, state = candidate(service)
     run = state["runs"][0]
     del run["result"]["bestCheckpointPath"]
-    write_json(folder / "runs" / run["id"] / "result.json", run["result"])
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "runs" / run["id"] / "result.json", run["result"])
+    write_json_atomic(folder / "state.json", state)
     assert service.preview(selection)["findings"][0]["code"] == "PREDICTOR_EVIDENCE_INVALID"
 
 

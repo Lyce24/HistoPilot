@@ -11,10 +11,10 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from histopilot.storage.io import read_file_bounded
 from histopilot.storage.project_lock import (
     StorageError,
     ensure_managed_directory,
-    fsync_directory,
     reject_symlink_components,
     writer_lock,
 )
@@ -90,9 +90,7 @@ def live_process(folder: Path) -> dict | None:
         return None
     reject_symlink_components(path)
     try:
-        from histopilot.storage.scientific import ScientificStore
-
-        process = json.loads(ScientificStore._read_file(path, 4096))
+        process = json.loads(read_file_bounded(path, 4096))
         pid = process.get("pid")
         if type(pid) is not int or pid <= 1:
             return None
@@ -250,20 +248,3 @@ def maybe_sweep_registry(folder: Path | None = None, *, interval=SWEEP_INTERVAL_
         return stats
     except (OSError, StorageError):
         return None
-
-
-def write_json(path: Path, value: dict) -> None:
-    reject_symlink_components(path)
-    content = json.dumps(value, indent=2, allow_nan=False).encode() + b"\n"
-    if len(content) > 64 * 1024 * 1024:
-        raise StorageError("Packing metadata exceeds its size limit.", "PACKING_LIMIT", 413)
-    descriptor, temporary = tempfile.mkstemp(prefix=".packing-", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-        fsync_directory(path.parent)
-    finally:
-        Path(temporary).unlink(missing_ok=True)

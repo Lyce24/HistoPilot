@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
+from histopilot.storage.io import write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.taskcenter import leases
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import (
     confirmed_process_alive,
     owned_processes,
@@ -89,7 +89,7 @@ def test_orphan_descendants_retain_resources_and_receive_escalated_cancellation(
     assert leases.read_leases() == []
     with leases.registry_lock() as registry:
         lease = registry / f"lease-{leader.pid}.json"
-        write_json(
+        write_json_atomic(
             lease,
             {
                 "process": identity,
@@ -125,7 +125,7 @@ def test_old_training_and_compute_leases_retain_orphan_session(
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     with leases.registry_lock() as registry:
         # Old writers recorded no process group: their workers led their own sessions.
-        write_json(
+        write_json_atomic(
             registry / f"lease-{leader.pid}.json",
             {"process": identity, "batchId": "batch", "runId": run_id},
         )
@@ -155,7 +155,7 @@ def test_unreadable_evidence_blocks_reservation_release(
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     with leases.registry_lock() as registry:
         lease = registry / f"lease-{leader.pid}.json"
-        write_json(lease, {"process": identity, "processGroupId": leader.pid})
+        write_json_atomic(lease, {"process": identity, "processGroupId": leader.pid})
     blocked = {
         "leader": Path(f"/proc/{leader.pid}/stat"),
         "child": Path(f"/proc/{child['pid']}/stat"),

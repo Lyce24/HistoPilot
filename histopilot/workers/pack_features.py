@@ -17,7 +17,6 @@ import sys
 import time
 import traceback
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
-from datetime import UTC, datetime
 from pathlib import Path
 
 if __package__ in {None, ""}:
@@ -25,15 +24,12 @@ if __package__ in {None, ""}:
 
 from histopilot.application.features import FeatureService
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import read_file_bounded, utc_now, write_json_atomic
 from histopilot.storage.project_lock import StorageError, reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.packing_process import output_lock, process_metadata, write_json
+from histopilot.workers.packing_process import output_lock, process_metadata
 
 BUSY_EXIT = 75  # EX_TEMPFAIL: the output is in use; the Task Center retries later
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _managed() -> bool:
@@ -60,7 +56,7 @@ def _run_job(plan_path: Path) -> dict:
     """Execute an immutable plan; always save a durable terminal result on normal errors."""
     plan_path = Path(plan_path)
     reject_symlink_components(plan_path)
-    plan = json.loads(ScientificStore._read_file(plan_path, 64 * 1024 * 1024))
+    plan = json.loads(read_file_bounded(plan_path, 64 * 1024 * 1024))
     folder = plan_path.parent.resolve(strict=True)
     for key, name in {
         "resultPath": "result.json",
@@ -76,8 +72,8 @@ def _run_job(plan_path: Path) -> dict:
     result_path = Path(plan["resultPath"])
     if result_path.exists():
         # A repeated launch does not rebuild or overwrite a completed immutable artifact.
-        return json.loads(ScientificStore._read_file(result_path, 64 * 1024 * 1024))
-    write_json(Path(plan["processPath"]), process_metadata())
+        return json.loads(read_file_bounded(result_path, 64 * 1024 * 1024))
+    write_json_atomic(Path(plan["processPath"]), process_metadata())
     log_descriptor = os.open(
         plan["logPath"],
         os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK,
@@ -108,7 +104,7 @@ def _run_job(plan_path: Path) -> dict:
         "jobId": plan["jobId"],
         **_task_identity(),
         "state": "failed",
-        "startedAt": _now(),
+        "startedAt": utc_now(),
         "validation": None,
         "artifact": None,
     }
@@ -124,7 +120,7 @@ def _run_job(plan_path: Path) -> dict:
             or value.get("stage") != last_stage
             or value.get("percent") == 100
         ):
-            write_json(Path(plan["progressPath"]), {**value, "updatedAt": _now()})
+            write_json_atomic(Path(plan["progressPath"]), {**value, "updatedAt": utc_now()})
             if value.get("stage") != last_stage or value.get("percent") == 100:
                 print(
                     f"[{value.get('stage', 'working')}] {value.get('completed', 0)}/{value.get('total', 0)} {value.get('unit', '')}",
@@ -150,7 +146,7 @@ def _run_job(plan_path: Path) -> dict:
                 if cancelled():
                     raise PackingCancelled("Cancelled before validation.")
                 configuration = plan["configuration"]
-                job = json.loads(ScientificStore._read_file(folder / "job.json", 8 * 1024 * 1024))
+                job = json.loads(read_file_bounded(folder / "job.json", 8 * 1024 * 1024))
                 store = ScientificStore(folder.parent.parent, job["projectId"])
                 roots = LocalFilesystem(tuple(Path(root) for root in plan["sourceRoots"]))
                 findings = FeatureService(store, roots).verify_binding(configuration)
@@ -216,8 +212,8 @@ def _run_job(plan_path: Path) -> dict:
                     traceback.print_exc()
             finally:
                 if busy is None:
-                    result["finishedAt"] = _now()
-                    write_json(result_path, result)
+                    result["finishedAt"] = utc_now()
+                    write_json_atomic(result_path, result)
                     print(f"Final state: {result['state']}", flush=True)
                 else:
                     print(f"OUTPUT_BUSY: {busy}", flush=True)

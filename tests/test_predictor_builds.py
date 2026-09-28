@@ -6,16 +6,14 @@ import pytest
 from support.predictors import FakeJobs, freeze, refit_candidate, two_seeds
 from support.predictors import registry as registry
 
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictor_builds import PredictorBuildService
 from histopilot.schemas.predictors import (
     ApplyPredictorBuilds,
     PredictorBuildSelection,
     PredictorSourceSelection,
 )
+from histopilot.storage.io import content_hash, read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
 
 
 def request_for(selections, **changes):
@@ -121,7 +119,7 @@ def test_crash_after_child_publication_is_recovered_without_republication(regist
     selections, _ = two_seeds(predictors)
     service = PredictorBuildService(predictors.store, predictors.filesystem)
     apply, _ = apply_request(service, request_for(selections[:1]))
-    original = write_json
+    original = write_json_atomic
     calls = 0
 
     def crash(path, value):
@@ -131,11 +129,11 @@ def test_crash_after_child_publication_is_recovered_without_republication(regist
             raise OSError("Simulated connection/process failure after child commit")
         original(path, value)
 
-    monkeypatch.setattr("histopilot.application.predictor_builds.write_json", crash)
+    monkeypatch.setattr("histopilot.application.predictor_builds.write_json_atomic", crash)
     with pytest.raises(OSError):
         service.apply(apply)
     assert len(predictors.list()["items"]) == 1
-    monkeypatch.setattr("histopilot.application.predictor_builds.write_json", original)
+    monkeypatch.setattr("histopilot.application.predictor_builds.write_json_atomic", original)
     result = service.apply(apply)
     assert result["status"] == "completed"
     assert len(predictors.list()["items"]) == 1
@@ -154,7 +152,7 @@ def test_inactive_identity_blocks_new_build_and_completed_retry_does_not_restore
     lifecycle.apply(
         {key: "trashed"},
         operation_id="trash",
-        request_hash=_hash(key),
+        request_hash=content_hash(key),
         expected_revision=lifecycle.read()["revision"],
     )
     preview = service.preview(request)
@@ -170,9 +168,9 @@ def test_incomplete_group_blocks_whole_review_and_stale_review_creates_nothing(r
     service = PredictorBuildService(predictors.store, predictors.filesystem)
     request = request_for(selections)
     apply, _ = apply_request(service, request)
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     state["runs"][-1]["status"] = "failed"
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "state.json", state)
     assert not service.preview(request)["canBuild"]
     with pytest.raises(StorageError) as error:
         service.apply(apply)
@@ -188,7 +186,7 @@ def test_saved_refit_reuse_verifies_its_original_source_checkpoint_hash(registry
     request = request_for(selections[:1])
     apply, _ = apply_request(service, request)
     service.apply(apply)
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     Path(state["runs"][0]["result"]["bestCheckpointPath"]).write_bytes(b"changed source checkpoint")
     preview = service.preview(request)
     assert not preview["canBuild"]
@@ -202,9 +200,9 @@ def test_modified_durable_receipt_is_rejected_before_retry_or_history_read(regis
     request, _ = apply_request(service, request_for(selections[:1]))
     service.apply(request)
     path = service._folder(request.operationId) / "receipt.json"
-    receipt = read_json(path)
+    receipt = read_json_bounded(path)
     receipt["review"][0]["selection"]["trainingSeed"] = 999
-    write_json(path, receipt)
+    write_json_atomic(path, receipt)
     with pytest.raises(StorageError) as problem:
         service.apply(request)
     assert problem.value.code == "PREDICTOR_BUILD_RECEIPT_INVALID"

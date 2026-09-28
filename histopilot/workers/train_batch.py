@@ -12,14 +12,8 @@ import traceback
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from histopilot.application.feature_bundles import _hash
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import (
-    classify_training_failure,
-    compute_snapshot,
-    now,
-    read_json,
-)
+from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
+from histopilot.workers.training_process import classify_training_failure, compute_snapshot
 
 
 def execute_plan(batch: dict, run: dict, gpu: int | None) -> dict:
@@ -162,13 +156,13 @@ def collect_results(batch: dict, state: dict, folder: Path):
             path = folder / f"oof-{key}.json"
             # Completed groups are collected repeatedly while other groups train.
             # Reuse analysis only when the actual predictions and scoring policy match.
-            analysis_hash = _hash({"records": records, "target": batch["target"],
+            analysis_hash = content_hash({"records": records, "target": batch["target"],
                                    "recipe": recipe, "code": batch.get("code"),
                                    **({"splitUnit": batch["splitUnit"]} if "splitUnit" in batch else {})})
             cached = None
             if path.exists():
                 try:
-                    cached = read_json(path)
+                    cached = read_json_bounded(path)
                 except (OSError, ValueError):
                     pass
             summary = cached.get("summary") if (
@@ -176,7 +170,7 @@ def collect_results(batch: dict, state: dict, folder: Path):
             ) else None
             if isinstance(summary, dict):
                 try:
-                    if cached.get("analysisSummaryHash") != _hash(summary):
+                    if cached.get("analysisSummaryHash") != content_hash(summary):
                         summary = None
                 except (TypeError, ValueError):
                     summary = None
@@ -187,7 +181,7 @@ def collect_results(batch: dict, state: dict, folder: Path):
                     decision_threshold=recipe.get("decisionThreshold", 0.5),
                     split_unit=batch.get("splitUnit"),
                 )
-            write_json(
+            write_json_atomic(
                 path,
                 {
                     "batchId": batch["batchId"],
@@ -199,7 +193,7 @@ def collect_results(batch: dict, state: dict, folder: Path):
                     "records": records,
                     "summary": summary,
                     "analysisInputHash": analysis_hash,
-                    "analysisSummaryHash": _hash(summary),
+                    "analysisSummaryHash": content_hash(summary),
                     "purpose": "development_assessment",
                 },
             )
@@ -224,7 +218,7 @@ def collect_results(batch: dict, state: dict, folder: Path):
                                    if row["candidateId"] == candidate)
             item.update(selectionScore=candidate_score["score"],
                         selected=selection["selectedCandidateId"] == candidate)
-    write_json(
+    write_json_atomic(
         folder / "results.json",
         {
             "batchId": batch["batchId"],
@@ -238,7 +232,7 @@ def collect_results(batch: dict, state: dict, folder: Path):
 
 
 def run_fold_worker(plan_path: Path):
-    plan = read_json(plan_path)
+    plan = read_json_bounded(plan_path)
     folder = plan_path.parent
     try:
         if plan.get("code") is not None and plan["code"] != compute_snapshot():
@@ -253,16 +247,16 @@ def run_fold_worker(plan_path: Path):
             plan, folder, checkpoint_path=checkpoint if checkpoint.exists() else None
         )
         check_inputs(plan["data"])
-        write_json(folder / "result.json", result)
+        write_json_atomic(folder / "result.json", result)
     except BaseException as error:
-        write_json(
+        write_json_atomic(
             folder / "failure.json",
             {
                 "error": str(error),
                 "type": type(error).__name__,
                 "category": classify_training_failure(str(error)),
                 "traceback": traceback.format_exc(),
-                "at": now(),
+                "at": utc_now(),
             },
         )
         raise

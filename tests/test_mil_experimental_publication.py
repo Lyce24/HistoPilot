@@ -8,12 +8,11 @@ from support import predictors
 from support.predictors import registry as registry
 
 from histopilot.application.evaluation_runs import EvaluationRunService
-from histopilot.application.feature_bundles import _hash
 from histopilot.schemas.development import TrainingRecipe
 from histopilot.schemas.evaluations import InferenceSettings
 from histopilot.schemas.predictors import EvaluationRunSelection, SaveEvaluationRun
 from histopilot.schemas.training_controls import resolve_stopping
-from histopilot.workers.packing_process import write_json
+from histopilot.storage.io import content_hash, write_json_atomic
 from histopilot.workers.train_batch import execute_plan
 
 
@@ -31,8 +30,8 @@ def candidate(service, monkeypatch, **recipe):
 
 def save_results(folder, state):
     for run in state["runs"]:
-        write_json(folder / "runs" / run["id"] / "result.json", run["result"])
-    write_json(folder / "state.json", state)
+        write_json_atomic(folder / "runs" / run["id"] / "result.json", run["result"])
+    write_json_atomic(folder / "state.json", state)
 
 
 def fallback_candidate(service, monkeypatch):
@@ -87,10 +86,10 @@ def test_cohort_enriched_worker_memberships_publish_and_refit(registry, monkeypa
         "site": {identity: "TCGA" for identity in plan["data"]["featureFiles"]}
     }
     for run in state["runs"]:
-        write_json(folder / "runs" / run["id"] / "plan.json", execute_plan(plan, run, None))
+        write_json_atomic(folder / "runs" / run["id"] / "plan.json", execute_plan(plan, run, None))
         run["result"]["bestEpoch"] = 2
-    state["planHash"] = _hash(plan)
-    write_json(folder / "plan.json", plan)
+    state["planHash"] = content_hash(plan)
+    write_json_atomic(folder / "plan.json", plan)
     save_results(folder, state)
     predictor, _ = predictors.freeze(service, selection)
     assert predictor["manifest"]["recipe"]["samplingStrategy"] == strategy

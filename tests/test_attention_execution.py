@@ -18,11 +18,11 @@ from support.workers import run_compute_worker  # noqa: E402
 
 from histopilot.application.predictors import checkpoint_snapshot  # noqa: E402
 from histopilot.storage.attention_inputs import file_stamp, inspect_inputs  # noqa: E402
+from histopilot.storage.io import write_json_atomic  # noqa: E402
 from histopilot.storage.scientific import ScientificStore  # noqa: E402
 from histopilot.training.attention import _percentiles, interpret  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.module import MILTrainModule  # noqa: E402
-from histopilot.workers.packing_process import write_json  # noqa: E402
 
 support = runpy.run_path(str(Path(__file__).with_name("test_mil_training.py")))
 
@@ -105,7 +105,7 @@ def attention_plan(tmp_path):
         "references": [],
         "data": {"sourceStamps": slide["sourceStamps"]},
     }
-    write_json(tmp_path / "attention-plan.json", plan)
+    write_json_atomic(tmp_path / "attention-plan.json", plan)
     return plan
 
 
@@ -418,9 +418,9 @@ def packed_attention_plans(tmp_path):
         },
     }
     for name, plan in plans.items():
-        write_json(tmp_path / f"{name}-plan.json", plan)
-    write_json(tmp_path / "feature-configuration.json", config)
-    write_json(tmp_path / "pack-artifact.json", artifact)
+        write_json_atomic(tmp_path / f"{name}-plan.json", plan)
+    write_json_atomic(tmp_path / "feature-configuration.json", config)
+    write_json_atomic(tmp_path / "pack-artifact.json", artifact)
     return plans
 
 

@@ -9,12 +9,11 @@ from support.predictors import FakeJobs, candidate, create, freeze, refit_candid
 from support.predictors import registry as registry
 
 from histopilot.application.compute_jobs import ComputeJobService
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.refits import epoch_budget
 from histopilot.schemas.development import ResourcePolicy
 from histopilot.schemas.predictors import LaunchRefit
+from histopilot.storage.io import content_hash, write_json_atomic
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.packing_process import write_json
 
 
 @pytest.mark.parametrize(
@@ -148,7 +147,7 @@ def test_legacy_epoch_selection_preserves_lightning_float32_first_tie(registry):
         history = [{"epoch": i, "validation": {"loss": 1.0}} for i in range(12)]
         history[1]["validation"]["loss"] = 0.7000000001
         history[2]["validation"]["loss"] = 0.7
-        write_json(folder / "runs" / run["id"] / "history.json", history)
+        write_json_atomic(folder / "runs" / run["id"] / "history.json", history)
     preview = service.preview(selection)
     assert preview["canFreeze"], preview
     assert preview["manifest"]["epochBudget"]["epochs"] == 2
@@ -167,8 +166,8 @@ def test_refit_evidence_survives_experiment_rename(registry, monkeypatch, legacy
     # provenance hash inside planTemplate. Neither is rewritten on upgrade.
     with monkeypatch.context() as old_release:
         if legacy:
-            old_release.setattr(predictor_module, "evidence_hash", _hash)
-            old_release.setattr(refit_module, "evidence_hash", _hash)
+            old_release.setattr(predictor_module, "evidence_hash", content_hash)
+            old_release.setattr(refit_module, "evidence_hash", content_hash)
         refits, record, _ = create(service, selection, jobs)
     refits._verify_sources(record)
     experiment = service.store.get_draft(selection.experimentId)
@@ -201,8 +200,8 @@ def test_refit_hash_compatibility_rejects_scientific_changes(registry, monkeypat
     jobs = FakeJobs(service.store)
     with monkeypatch.context() as old_release:
         if legacy:
-            old_release.setattr(predictor_module, "evidence_hash", _hash)
-            old_release.setattr(refit_module, "evidence_hash", _hash)
+            old_release.setattr(predictor_module, "evidence_hash", content_hash)
+            old_release.setattr(refit_module, "evidence_hash", content_hash)
         refits, record, _ = create(service, selection, jobs)
     document = service.store.get_configuration(record["id"])
     refits._verify_sources(document)

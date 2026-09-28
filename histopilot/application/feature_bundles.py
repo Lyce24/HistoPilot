@@ -3,20 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.schemas.feature_bundles import FeatureBundleSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import content_hash, read_file_bounded
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-
-
-def _hash(value: object) -> str:
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    ).hexdigest()
 
 
 def _finding(code: str, message: str) -> dict:
@@ -156,7 +150,7 @@ class FeatureBundleService:
             "findings": findings,
             "canFreeze": not findings,
         }
-        return {**preview, "previewHash": _hash(preview)}, configuration
+        return {**preview, "previewHash": content_hash(preview)}, configuration
 
     def preview(self, spec: FeatureBundleSpec) -> dict:
         return self._prepare(spec)[0]
@@ -181,9 +175,7 @@ class FeatureBundleService:
         job_ids.update(item["jobId"] for item in preview["packs"])
         for identity in job_ids:
             path = self.packing.folder / identity / "result.json"
-            evidence[path] = hashlib.sha256(
-                ScientificStore._read_file(path, 64 * 1024 * 1024)
-            ).hexdigest()
+            evidence[path] = hashlib.sha256(read_file_bounded(path, 64 * 1024 * 1024)).hexdigest()
         packs = []
         for snapshot in preview["packs"]:
             artifact = self.packing.artifact(snapshot["id"])
@@ -204,7 +196,7 @@ class FeatureBundleService:
                     if pack_file_stamps(path) != stamps:
                         raise PackedStoreError("A pack changed before bundle publication.")
                 for path, digest in evidence.items():
-                    current = ScientificStore._read_file(path, 64 * 1024 * 1024)
+                    current = read_file_bounded(path, 64 * 1024 * 1024)
                     if hashlib.sha256(current).hexdigest() != digest:
                         raise PackedStoreError("Verification evidence changed before publication.")
             except (PackedStoreError, OSError) as error:

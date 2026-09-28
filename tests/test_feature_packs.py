@@ -21,12 +21,13 @@ from histopilot.application.features import FeatureService
 from histopilot.schemas.feature_packs import FeaturePackSpec
 from histopilot.schemas.features import FeatureSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import write_json_atomic
 from histopilot.storage.packed import build_pack
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter.adapters.packing import PackingAdapter
 from histopilot.workers.pack_features import run_job
-from histopilot.workers.packing_process import output_lock, write_json
+from histopilot.workers.packing_process import output_lock
 
 
 def feature_source(tmp_path):
@@ -82,7 +83,7 @@ def test_a_feature_job_from_before_the_task_center_is_read_only(packs, task_cent
     for key in ("executionMode", "taskId", "ownerKey"):
         record.pop(key)
     record.update(state="running", sessionName="histopilot-pack-0123456789abcdef")
-    write_json(folder / "job.json", record)
+    write_json_atomic(folder / "job.json", record)
     view = service.get(job["id"])
     assert view["state"] == "interrupted" and "executor" not in view
     assert "Created before the Task Center" in view["error"]
@@ -343,7 +344,7 @@ def test_older_pack_receipt_needs_verification_before_selection(packs, task_cent
     job = submit(service, spec)
     result = run_pack(task_center.store, job)
     result["artifact"].pop("packStamps")
-    write_json(service.folder / job["id"] / "result.json", result)
+    write_json_atomic(service.folder / job["id"] / "result.json", result)
     resolved = service.resolve_artifact(spec.featureSetId, result["artifact"]["id"])
     assert not resolved["current"]
     assert resolved["findings"][0]["code"] == "PACK_VERIFICATION_REFRESH_REQUIRED"
@@ -362,7 +363,7 @@ def test_old_operation_retry_without_existing_path_field_is_idempotent(packs, ta
     record["requestHash"] = hashlib.sha256(
         json.dumps(old_request, sort_keys=True, allow_nan=False).encode()
     ).hexdigest()
-    write_json(record_path, record)
+    write_json_atomic(record_path, record)
     assert service.submit(spec, preview["previewHash"], "old-operation")["id"] == job["id"]
     assert len(task_center.tasks()) == 1
 
@@ -390,7 +391,7 @@ def test_reverified_folder_supersedes_old_receipt_without_changing_selection(pac
     original = created_result["artifact"]
     service.select(spec.featureSetId, original["id"])
     original.pop("packStamps")
-    write_json(service.folder / created_job["id"] / "result.json", created_result)
+    write_json_atomic(service.folder / created_job["id"] / "result.json", created_result)
 
     attach = spec.model_copy(update={"action": "attach", "existingPath": original["outputPath"]})
     attached_job = submit(service, attach, "reverify-existing")
@@ -505,7 +506,7 @@ def test_script_worker_runs_from_unrelated_cwd(packs, task_center, tmp_path):
 def test_corrupt_terminal_receipt_does_not_masquerade_as_success(packs):
     service, spec, source = packs
     job = submit(service, spec)
-    write_json(
+    write_json_atomic(
         service.folder / job["id"] / "result.json", {"jobId": "different", "state": "succeeded"}
     )
     with pytest.raises(StorageError) as caught:
@@ -588,7 +589,7 @@ def test_artifact_and_job_reads_reject_inconsistent_completion_receipts(
             **result["validation"],
             "sourceContentHash": "different",
         }
-    write_json(service.folder / job["id"] / "result.json", result)
+    write_json_atomic(service.folder / job["id"] / "result.json", result)
     for read in (
         lambda: service.get(job["id"]),
         service.list,

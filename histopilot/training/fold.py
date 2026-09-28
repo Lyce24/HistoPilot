@@ -17,27 +17,14 @@ from histopilot.models import catalog
 from histopilot.schemas.development import TrainingRecipe
 from histopilot.schemas.nnmil import resolve_nnmil_plan, window_seed
 from histopilot.schemas.training_controls import resolve_stopping, validate_training_controls
+from histopilot.storage.io import content_hash, read_file_bounded, write_json_atomic
 from histopilot.storage.project_lock import reject_symlink_components
-from histopilot.storage.scientific import ScientificStore
 from histopilot.training.module import (
     MILTrainModule,
     aggregate_patients,
     classification_metrics,
     prediction_rows,
 )
-from histopilot.workers.packing_process import write_json as _write_durable_json
-
-
-def _write_json(path, value):
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    temporary.replace(path)
-
-
-def _receipt_hash(value):
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    ).hexdigest()
 
 
 def _checkpoint_evidence(path, output_dir):
@@ -64,13 +51,13 @@ def _completed_fit(plan, output_dir, recipe, checkpoint_path):
         # fitting resume; they cannot distinguish fitting from interrupted assessment.
         return None
     try:
-        receipt = json.loads(ScientificStore._read_file(path, 64 * 1024 * 1024))
+        receipt = json.loads(read_file_bounded(path, 64 * 1024 * 1024))
         payload = receipt["fit"]
         identity = {"plan": plan, "recipe": recipe, "outputPath": str(output_dir.absolute())}
         if (
             receipt["version"] != 1
-            or receipt["sha256"] != _receipt_hash(payload)
-            or payload["planHash"] != _receipt_hash(identity)
+            or receipt["sha256"] != content_hash(payload)
+            or payload["planHash"] != content_hash(identity)
         ):
             raise ValueError("The completed fit receipt or its execution plan changed.")
         if (
@@ -150,10 +137,10 @@ class _HistoryWriter(L.Callback):
 
     def on_validation_end(self, trainer, pl_module):
         if not trainer.sanity_checking:
-            _write_json(self.path, pl_module.history)
+            write_json_atomic(self.path, pl_module.history, limit=None, sync=False)
             if pl_module.history:
                 latest = pl_module.history[-1]
-                _write_json(
+                write_json_atomic(
                     self.path.parent / "progress.json",
                     {
                         "epoch": int(trainer.current_epoch) + 1,
@@ -169,6 +156,7 @@ class _HistoryWriter(L.Callback):
                         if pl_module.device.type == "cuda"
                         else 0,
                     },
+                    limit=None, sync=False,
                 )
 
     def on_exception(self, trainer, pl_module, exception):
@@ -176,7 +164,7 @@ class _HistoryWriter(L.Callback):
             # Keep the last complete epoch (or initialization) checkpoint.
             # DataLoader prefetch/cursors are not resumable; saving halfway
             # through an epoch would silently repeat or skip selected slides.
-            _write_json(self.path, pl_module.history)
+            write_json_atomic(self.path, pl_module.history, limit=None, sync=False)
 
 
 def _validate_plan(plan):
@@ -383,7 +371,7 @@ def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
     if checkpoint_selection in {"final_epoch", "latest"}:
         best = last
     fit = {
-        "planHash": _receipt_hash(
+        "planHash": content_hash(
             {"plan": plan, "recipe": requested_recipe, "outputPath": str(output_dir.absolute())}
         ),
         "best": _checkpoint_evidence(best, output_dir),
@@ -419,9 +407,9 @@ def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
         "cudaPeakAllocatedBytes": torch.cuda.max_memory_allocated() if device_name == "cuda" else 0,
         "cudaPeakReservedBytes": torch.cuda.max_memory_reserved() if device_name == "cuda" else 0,
     }
-    _write_durable_json(
+    write_json_atomic(
         output_dir / "fit-complete.json",
-        {"version": 1, "fit": fit, "sha256": _receipt_hash(fit)},
+        {"version": 1, "fit": fit, "sha256": content_hash(fit)},
     )
     return fit
 
@@ -438,7 +426,7 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
     )
     aggregation = recipe.get("patientAggregation", "mean_probabilities")
     best, last = Path(fit["best"]["path"]), Path(fit["last"]["path"])
-    _write_json(output_dir / "history.json", fit["history"])
+    write_json_atomic(output_dir / "history.json", fit["history"], limit=None, sync=False)
     selected = MILTrainModule.load_from_checkpoint(str(best), map_location="cpu", weights_only=True)
     if selected.split_unit != plan.get("splitUnit"):
         raise ValueError("Selected checkpoint split unit differs from the frozen plan.")
@@ -464,7 +452,7 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
         )
         patient_available = metrics[split]["patient"]["available"]
         path = output_dir / f"{split}-predictions.json"
-        _write_json(
+        write_json_atomic(
             path,
             {
                 "classOrder": target["classes"],
@@ -477,9 +465,10 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
                 "patientAggregation": aggregation,
                 "patientMetrics": metrics[split]["patient"],
             },
+            limit=None, sync=False,
         )
         predictions[split] = str(path)
-    _write_json(output_dir / "metrics.json", metrics)
+    write_json_atomic(output_dir / "metrics.json", metrics, limit=None, sync=False)
     result = {
         "runId": plan["runId"],
         "state": "succeeded",
@@ -533,5 +522,5 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
             torch.cuda.max_memory_reserved() if device_name == "cuda" else 0,
         ),
     }
-    _write_json(output_dir / "result.json", result)
+    write_json_atomic(output_dir / "result.json", result, limit=None, sync=False)
     return result

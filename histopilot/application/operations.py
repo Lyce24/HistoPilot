@@ -13,7 +13,6 @@ import shutil
 import stat
 import tempfile
 import zipfile
-from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from histopilot.application.lifecycle import CleanupService
@@ -24,6 +23,7 @@ from histopilot.application.project_workspace import (
     ProjectWorkspace,
 )
 from histopilot.storage import sqlite_connections
+from histopilot.storage.io import read_file_bounded, regular_file, utc_now
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     LOCK_FILE,
@@ -44,10 +44,6 @@ ACTIVE = {"queued", "starting", "running", "cancelling", "unknown"}
 
 class PortabilityCancelled(ValueError):
     pass
-
-
-def _now():
-    return datetime.now(UTC).isoformat()
 
 
 def _error(message, code="PORTABILITY_INVALID", status=409):
@@ -285,7 +281,7 @@ class StudyPortability:
                             DATABASE_FILE + suffix for suffix in ("-wal", "-shm", "-journal")
                         }:
                             continue
-                        ScientificStore._regular(path)
+                        regular_file(path)
                         files.append((relative, snapshot if relative == DATABASE_FILE else path))
                         if len(files) > MAX_MEMBERS:
                             raise _error("This project exceeds the archive file limit.", status=413)
@@ -340,7 +336,7 @@ class StudyPortability:
                     manifest = {
                         "format": "histopilot-study-archive",
                         "schemaVersion": 1,
-                        "createdAt": _now(),
+                        "createdAt": utc_now(),
                         "projectId": self.store.project_id,
                         "originalPath": str(folder),
                         "files": entries,
@@ -443,7 +439,7 @@ def _archive_manifest(zipped):
 
 def verify_archive(path, *, destination=None, progress=None):
     """Validate every byte; optionally write into a caller-owned empty staging folder."""
-    ScientificStore._regular(Path(path))
+    regular_file(Path(path))
     try:
         with zipfile.ZipFile(path) as zipped:
             manifest = _archive_manifest(zipped)
@@ -525,7 +521,7 @@ def restore_archive(archive, destination, filesystem, *, progress=None, operatio
     destination = permitted_path(filesystem, destination)
     receipt_name = ".histopilot-restore.json"
     if destination.is_dir() and operation_id and (destination / receipt_name).exists():
-        receipt = json.loads(ScientificStore._read_file(destination / receipt_name, 65536))
+        receipt = json.loads(read_file_bounded(destination / receipt_name, 65536))
         if receipt.get("operationId") == operation_id:
             result = verify_archive(archive, progress=progress)
             if receipt.get("manifestSha256") == result["manifestSha256"]:
@@ -549,14 +545,14 @@ def restore_archive(archive, destination, filesystem, *, progress=None, operatio
                 raise _error("The restored SQLite snapshot failed its integrity check.")
         ScientificStore(staging, result["projectId"]).initialize()
         if operation_id:
-            from histopilot.workers.packing_process import write_json
+            from histopilot.storage.io import write_json_atomic
 
-            write_json(
+            write_json_atomic(
                 staging / receipt_name,
                 {
                     "operationId": operation_id,
                     "manifestSha256": result["manifestSha256"],
-                    "restoredAt": _now(),
+                    "restoredAt": utc_now(),
                 },
             )
         for current, _directories, _files in os.walk(staging, topdown=False):
@@ -613,7 +609,7 @@ def relink_source(projects, identity, payload):
                 )
             source["path"] = str(replacement)
             source["name"] = replacement.name
-            document["updatedAt"] = _now()
+            document["updatedAt"] = utc_now()
             projects._write(folder, document)
         summary = projects._summary(document, folder)
         projects._register(summary)

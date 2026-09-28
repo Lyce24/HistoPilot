@@ -14,11 +14,10 @@ from support.compute import complete, compute_tasks, save_study
 from support.compute import managed_study as managed_study
 
 from histopilot.schemas.interpretation import InterpretationSelection, SaveInterpretation
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.viewer.slide_images import inspect_slide, render_slide
 from histopilot.workers.compute_job import verify_plan_inputs
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
 
 Image = pytest.importorskip("PIL.Image")
 
@@ -42,7 +41,7 @@ def test_arbitrary_slide_review_geometry_identity_idempotency_and_execution(mana
     tasks = compute_tasks(task_center)
     assert [task["attempt"] for task in tasks] == [1]
     assert tasks[0]["group"] == {"kind": "interpretation", "id": document["id"]}
-    plan = read_json(service.jobs.folder(document["id"]) / "plan.json")
+    plan = read_json_bounded(service.jobs.folder(document["id"]) / "plan.json")
     verify_plan_inputs(plan)
     task_center.finish(result["taskId"], "interrupted", returncode=None, reason="lost")
     assert service.execution(document["id"])["status"] == "interrupted"
@@ -270,7 +269,7 @@ def test_attention_pagination_member_viewports_and_tamper_detection(managed_stud
             for index, xy in enumerate([[0, 0], [100, 0], [100, 100]])
         ],
     }
-    write_json(folder / "slide-0.json", value)
+    write_json_atomic(folder / "slide-0.json", value)
     content = (folder / "slide-0.json").read_bytes()
     result = {
         "runId": identity,

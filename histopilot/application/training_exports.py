@@ -7,11 +7,11 @@ import json
 
 from histopilot.application.clinical import validate_records
 from histopilot.application.development import plan_metadata
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import read_evidence
 from histopilot.schemas.nnmil import resolve_nnmil_plan
 from histopilot.schemas.training_controls import sampling_memberships
 from histopilot.scoring import patient_predictions
+from histopilot.storage.io import content_hash
 from histopilot.storage.project_lock import StorageError
 
 
@@ -76,7 +76,7 @@ def training_oof_csv(store, batch_id, candidate_id, training_seed, split_seed, u
             receipt = read_evidence(run_folder / "result.json", run_folder)
             run_plan = read_evidence(run_folder / "plan.json", run_folder)
             members = [row for row in protocol["manifest"]["memberships"]
-                       if _hash(plan_metadata(row)) == run["splitPlanId"]]
+                       if content_hash(plan_metadata(row)) == run["splitPlanId"]]
             expected_data = {**plan["data"], "memberships": sampling_memberships(
                 members, recipe, plan["data"].get("cohortValues", {})
             )}
@@ -135,7 +135,7 @@ def training_oof_csv(store, batch_id, candidate_id, training_seed, split_seed, u
         records = validate_records(document["records"], classes)
         if set(row["slideId"] for row in records) != set(expected):
             raise _invalid("OOF predictions are incomplete.")
-        expected_hash = _hash({"records": records, "target": target, "recipe": recipe,
+        expected_hash = content_hash({"records": records, "target": target, "recipe": recipe,
                                "code": plan.get("code"),
                                **({"splitUnit": plan["splitUnit"]} if "splitUnit" in plan else {})})
         if document.get("analysisInputHash") != expected_hash:

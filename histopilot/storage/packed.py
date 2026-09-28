@@ -25,6 +25,8 @@ from pathlib import Path
 
 import numpy as np
 
+from histopilot.storage.io import canonical_json, content_hash
+
 CHUNK_BYTES = 16 * 1024 * 1024
 
 
@@ -112,14 +114,6 @@ class _HashedWriter:
     def write(self, data):
         self.stream.write(data)
         self.digest.update(data)
-
-
-def _json_bytes(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-
-
-def _digest(value: object) -> str:
-    return hashlib.sha256(_json_bytes(value)).hexdigest()
 
 
 def _cancel(cancelled):
@@ -223,7 +217,7 @@ def _attributes(handle) -> dict:
         ):
             raise PackedStoreError("HDF5 attributes exceed the metadata limit.")
         result[key] = plain(handle.attrs[key])
-        if len(_json_bytes(result)) > MAX_METADATA_BYTES:
+        if len(canonical_json(result, ascii=True, compact=True)) > MAX_METADATA_BYTES:
             raise PackedStoreError("HDF5 attributes exceed the metadata limit.")
     return result
 
@@ -296,7 +290,7 @@ def _conflicts(attributes, observed):
             if normalized in {"encoder", "encoder_id", "encoderid"}:
                 normalized = "encoder"
                 value = {"uni": "uni_v1", "uni2": "uni_v2"}.get(str(value), value)
-            encoded = _json_bytes(value)
+            encoded = canonical_json(value, ascii=True, compact=True)
             if normalized in observed and observed[normalized] != encoded:
                 raise PackedStoreError(f"Selected slides have conflicting {key} evidence.")
             observed[normalized] = encoded
@@ -517,7 +511,8 @@ def _scan(
         "slides": semantic_slides,
         "encoderId": encoder,
         "provenance": sorted(
-            (_semantic(item["configuration"]) for item in provenance), key=_json_bytes
+            (_semantic(item["configuration"]) for item in provenance),
+            key=lambda value: canonical_json(value, ascii=True, compact=True),
         ),
     }
     result = {
@@ -525,7 +520,7 @@ def _scan(
         "valid": True,
         "featureSetId": configuration.get("id"),
         "sourceBindingHash": configuration.get("contentHash"),
-        "sourceContentHash": _digest(semantic),
+        "sourceContentHash": content_hash(semantic),
         "semanticIdentity": semantic,
         "featureKind": "patch",
         "tensorValidationComplete": True,
@@ -695,7 +690,8 @@ def _scan_slide_features(configuration, *, progress=None, cancelled=None, chunk_
         "slides": semantic_slides,
         "encoderId": encoder,
         "provenance": sorted(
-            (_semantic(item["configuration"]) for item in provenance), key=_json_bytes
+            (_semantic(item["configuration"]) for item in provenance),
+            key=lambda value: canonical_json(value, ascii=True, compact=True),
         ),
     }
     report = {
@@ -703,7 +699,7 @@ def _scan_slide_features(configuration, *, progress=None, cancelled=None, chunk_
         "valid": True,
         "featureSetId": configuration.get("id"),
         "sourceBindingHash": configuration.get("contentHash"),
-        "sourceContentHash": _digest(semantic),
+        "sourceContentHash": content_hash(semantic),
         "semanticIdentity": semantic,
         "featureKind": "slide",
         "tensorValidationComplete": True,
@@ -799,7 +795,7 @@ def _safe_destination(configuration, destination):
 
 def _write_json(path, data):
     with path.open("xb") as stream:
-        stream.write(_json_bytes(data) + b"\n")
+        stream.write(canonical_json(data, ascii=True, compact=True) + b"\n")
         stream.flush()
         os.fsync(stream.fileno())
 
@@ -953,8 +949,8 @@ def build_pack(
         }
         if validation.get("sourceExtraction") is not None:
             manifest["sourceExtraction"] = validation["sourceExtraction"]
-        manifest["id"] = manifest["materializationId"] = "pack-" + _digest(_identity(manifest))
-        manifest["manifestContentHash"] = _digest(manifest)
+        manifest["id"] = manifest["materializationId"] = "pack-" + content_hash(_identity(manifest))
+        manifest["manifestContentHash"] = content_hash(manifest)
         _write_json(staging / "manifest.json", manifest)
         checksum_entries = {name: files[name]["sha256"] for name in PAYLOADS}
         checksum_entries["manifest.json"] = _file_evidence(staging / "manifest.json")["sha256"]
@@ -1004,7 +1000,7 @@ def validate_pack(path: Path, *, full=True) -> dict:
     try:
         manifest = read_pack_json(path / "manifest.json")
         saved_hash = manifest.get("manifestContentHash")
-        if saved_hash != _digest(
+        if saved_hash != content_hash(
             {key: value for key, value in manifest.items() if key != "manifestContentHash"}
         ):
             raise PackedStoreError("Pack manifest checksum does not match its content.")
@@ -1018,14 +1014,14 @@ def validate_pack(path: Path, *, full=True) -> dict:
             or manifest["coordinateDimensions"] != 2
         ):
             raise PackedStoreError("Unsupported feature pack array layout.")
-        if manifest["id"] != "pack-" + _digest(_identity(manifest)):
+        if manifest["id"] != "pack-" + content_hash(_identity(manifest)):
             raise PackedStoreError("Pack materialization identity does not match its content.")
         if manifest["materializationId"] != manifest["id"]:
             raise PackedStoreError("Pack materialization IDs disagree.")
         validation = manifest["validation"]
         if (
             validation["sourceContentHash"] != manifest["sourceContentHash"]
-            or _digest(validation["semanticIdentity"]) != manifest["sourceContentHash"]
+            or content_hash(validation["semanticIdentity"]) != manifest["sourceContentHash"]
             or not validation["tensorValidationComplete"]
         ):
             raise PackedStoreError("Pack source content identity is invalid.")

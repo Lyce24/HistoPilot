@@ -14,11 +14,12 @@ import stat
 import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from threading import RLock, local
 from uuid import uuid4
 
+from histopilot.storage.io import canonical_json, utc_now
 from histopilot.storage.project_lock import (
     StorageError,
     fsync_directory,
@@ -493,7 +494,7 @@ class LifecycleStore:
             if document["revision"] >= 2**63 - 2:
                 raise _error("The lifecycle revision limit has been reached.", "LIFECYCLE_LIMIT")
             updated = copy.deepcopy(document)
-            now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            now = utc_now(zulu=True)
             updated["revision"] += 1
             event = {
                 "operationId": operation_id,
@@ -522,9 +523,7 @@ class LifecycleStore:
                 updated["operations"][operation_id]["action"] = action
             if targets is not None:
                 updated["operations"][operation_id]["targets"] = list(targets)
-            encoded = json.dumps(
-                updated, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-            ).encode("utf-8")
+            encoded = canonical_json(updated, ascii=False, compact=True)
             if len(encoded) > MAX_BYTES:
                 raise _error(
                     "Workspace cleanup history reached its supported metadata size.",

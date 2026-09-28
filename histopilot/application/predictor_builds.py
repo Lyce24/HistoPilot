@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import (
     PredictorService,
     evidence_current,
@@ -12,14 +11,13 @@ from histopilot.application.predictors import (
     lifecycle_document,
 )
 from histopilot.schemas.predictors import PredictorBuildSelection, PredictorSelection
+from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
     ensure_managed_directory,
     reject_symlink_components,
 )
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import now, read_json
 
 
 class PredictorBuildService:
@@ -53,7 +51,7 @@ class PredictorBuildService:
         return matches[0] if matches else None
 
     def _item(self, selection):
-        key = _hash(self.predictors.source_key(selection))
+        key = content_hash(self.predictors.source_key(selection))
         kind = "frozen-predictor" if selection.method == "ensemble" else "predictor-refit"
         result = {
             "key": key,
@@ -120,7 +118,9 @@ class PredictorBuildService:
                     )
             else:
                 evidence = manifest
-                result.update(action="create", manifestHash=_hash(manifest), _manifest=manifest)
+                result.update(
+                    action="create", manifestHash=content_hash(manifest), _manifest=manifest
+                )
             result.update(
                 epochBudget=evidence.get("epochBudget"),
                 trainingSlideCount=evidence.get("trainingSlideCount"),
@@ -166,7 +166,7 @@ class PredictorBuildService:
         }
         return {
             "canBuild": can_build,
-            "previewHash": _hash({"request": request.model_dump(), "items": public})
+            "previewHash": content_hash({"request": request.model_dump(), "items": public})
             if can_build
             else None,
             "items": public,
@@ -191,12 +191,14 @@ class PredictorBuildService:
             valid = (
                 receipt["version"] == 1
                 and receipt["operationId"] == operation_id
-                and _hash({"selection": receipt["request"], "previewHash": receipt["previewHash"]})
+                and content_hash(
+                    {"selection": receipt["request"], "previewHash": receipt["previewHash"]}
+                )
                 == receipt["requestHash"]
-                and _hash({"request": receipt["request"], "items": receipt["review"]})
+                and content_hash({"request": receipt["request"], "items": receipt["review"]})
                 == receipt["previewHash"]
                 and receipt["status"] in {"partial", "completed"}
-                and _hash(receipt["items"]) == receipt["resultsHash"]
+                and content_hash(receipt["items"]) == receipt["resultsHash"]
             )
             expected = {row["key"]: row for row in receipt["review"]}
             result_keys = {row["key"] for row in receipt["items"]}
@@ -231,7 +233,7 @@ class PredictorBuildService:
             raise StorageError(
                 "Predictor build receipt not found.", "PREDICTOR_BUILD_NOT_FOUND", 404
             )
-        receipt = read_json(path)
+        receipt = read_json_bounded(path)
         self._validate_receipt(receipt, operation_id)
         return self._public(receipt)
 
@@ -239,14 +241,14 @@ class PredictorBuildService:
         selection = PredictorBuildSelection.model_validate(
             request.model_dump(include=set(PredictorBuildSelection.model_fields))
         )
-        request_hash = _hash(
+        request_hash = content_hash(
             {"selection": selection.model_dump(), "previewHash": request.previewHash}
         )
         with lifecycle_guard(self.store.folder):
             folder = self._folder(request.operationId)
             path = folder / "receipt.json"
             if path.exists():
-                receipt = read_json(path)
+                receipt = read_json_bounded(path)
                 self._validate_receipt(receipt, request.operationId)
                 if (
                     receipt.get("operationId") != request.operationId
@@ -276,13 +278,13 @@ class PredictorBuildService:
                     "request": selection.model_dump(),
                     "previewHash": request.previewHash,
                     "status": "partial",
-                    "createdAt": now(),
-                    "updatedAt": now(),
+                    "createdAt": utc_now(),
+                    "updatedAt": utc_now(),
                     "review": preview["items"],
                     "items": [],
-                    "resultsHash": _hash([]),
+                    "resultsHash": content_hash([]),
                 }
-                write_json(path, receipt)
+                write_json_atomic(path, receipt)
             results = {row["key"]: row for row in receipt["items"]}
             for expected in receipt["review"]:
                 key = expected["key"]
@@ -296,7 +298,7 @@ class PredictorBuildService:
                 }
                 try:
                     self.store.lifecycle.assert_usable([])
-                    operation = "predictor-build-item-" + _hash([request.operationId, key])
+                    operation = "predictor-build-item-" + content_hash([request.operationId, key])
                     prior = self.store.configuration_publication(operation)
                     if prior:
                         original = {
@@ -304,7 +306,7 @@ class PredictorBuildService:
                         }
                         if (
                             prior["manifest"].get("previewHash") != expected["manifestHash"]
-                            or _hash(original) != expected["manifestHash"]
+                            or content_hash(original) != expected["manifestHash"]
                         ):
                             raise StorageError(
                                 "A build item publication differs from its reviewed inputs.",
@@ -354,7 +356,7 @@ class PredictorBuildService:
                     and all(row["status"] != "failed" for row in receipt["items"])
                     else "partial"
                 )
-                receipt["updatedAt"] = now()
-                receipt["resultsHash"] = _hash(receipt["items"])
-                write_json(path, receipt)
+                receipt["updatedAt"] = utc_now()
+                receipt["resultsHash"] = content_hash(receipt["items"])
+                write_json_atomic(path, receipt)
             return self._public(receipt)

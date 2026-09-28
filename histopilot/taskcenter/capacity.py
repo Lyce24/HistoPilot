@@ -3,8 +3,9 @@
 import math
 from pathlib import Path
 
+from histopilot.storage.io import utc_now
 from histopilot.taskcenter import procs
-from histopilot.taskcenter.model import seconds_between, utc_now_iso
+from histopilot.taskcenter.model import seconds_between
 from histopilot.workers.training_process import gpu_snapshot, host_snapshot
 
 NO_GPU = "No GPU available"
@@ -99,7 +100,7 @@ def usage(
     allocating VRAM; ``resident(lease)`` measures a foreign lease's resident GiB and
     defaults to ``procs.lease_resident_gb``.
     """
-    now = now or utc_now_iso()
+    now = now or utc_now()
     measure = resident or procs.lease_resident_gb
     value = {
         "gpus": {gpu["index"]: _gpu_usage() for gpu in host.get("gpus") or []},

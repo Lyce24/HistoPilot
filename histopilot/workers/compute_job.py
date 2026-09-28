@@ -12,19 +12,14 @@ import time
 import traceback
 from pathlib import Path
 
-from histopilot.application.feature_bundles import _hash
+from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.compute_archive import prepare_compute_archive
-from histopilot.workers.packing_process import output_lock, write_json
+from histopilot.workers.packing_process import output_lock
 from histopilot.workers.train_batch import check_inputs
-from histopilot.workers.training_process import (
-    now,
-    process_identity,
-    read_json,
-    stop_owned_processes,
-)
+from histopilot.workers.training_process import process_identity, stop_owned_processes
 
 # Archives whose worker defines this constant can run under the Task Center runner.
 TASK_CENTER_PROTOCOL = 1
@@ -187,8 +182,8 @@ def execute(path):
     path = Path(path).absolute()
     folder = path.parent
     managed = _managed()
-    state = read_json(folder / "state.json")
-    plan = read_json(path)
+    state = read_json_bounded(folder / "state.json")
+    plan = read_json_bounded(path)
     # All loader children inherit this private session; cancellation and cleanup
     # can still recognize them if the main worker is abruptly terminated.
     if os.getsid(0) != os.getpid():
@@ -204,7 +199,7 @@ def execute(path):
         if managed:
             # Fence: another launch may have reassigned or finished this record since
             # the task was queued. Never touch a state that belongs to someone else.
-            state = read_json(folder / "state.json")
+            state = read_json_bounded(folder / "state.json")
             task = os.environ.get("HISTOPILOT_TASK_ID")
             if (
                 not task
@@ -218,16 +213,16 @@ def execute(path):
                 )
                 return state
         try:
-            if _hash(plan) != state["planHash"]:
+            if content_hash(plan) != state["planHash"]:
                 raise ValueError("The immutable execution plan changed.")
             prepare_compute_archive(folder, plan["code"])
             state.update(
                 process=process_identity(),
                 processGroupId=os.getpid(),
                 status="queued",
-                updatedAt=now(),
+                updatedAt=utc_now(),
             )
-            write_json(folder / "state.json", state)
+            write_json_atomic(folder / "state.json", state)
             resources = plan["resources"]
             # The runner admitted this task and holds its lease; it chose the device.
             if (folder / "cancel.requested").exists():
@@ -244,11 +239,11 @@ def execute(path):
                 _verify_inputs(plan, folder, managed=managed)
             except Busy:
                 # Nothing ran yet: the record stays queued for the requeued attempt.
-                state.update(status="queued", updatedAt=now())
-                write_json(folder / "state.json", state)
+                state.update(status="queued", updatedAt=utc_now())
+                write_json_atomic(folder / "state.json", state)
                 raise
-            state.update(status="running", gpu=gpu, updatedAt=now())
-            write_json(folder / "state.json", state)
+            state.update(status="running", gpu=gpu, updatedAt=utc_now())
+            write_json_atomic(folder / "state.json", state)
             execution = {**plan, "device": "cpu" if gpu is None else "cuda"}
             if plan["kind"] == "refit":
                 from histopilot.training.refit import train_refit
@@ -270,7 +265,7 @@ def execute(path):
             if (folder / "cancel.requested").exists():
                 raise KeyboardInterrupt("Compute cancellation requested.")
             _verify_inputs(plan, folder, managed=managed, wait=FINISHED_BUSY_WAIT_SECONDS)
-            write_json(folder / "result.json", result)
+            write_json_atomic(folder / "result.json", result)
             state.update(status="completed", result=result, error=None)
         except Busy:
             busy = True
@@ -296,8 +291,8 @@ def execute(path):
                 traceback.print_exc()
                 state.update(status="failed", error=str(error), result=None)
             if not busy:
-                state.update(updatedAt=now())
-                write_json(folder / "state.json", state)
+                state.update(updatedAt=utc_now())
+                write_json_atomic(folder / "state.json", state)
     return state
 
 
@@ -305,7 +300,7 @@ def main(path) -> int:
     try:
         execute(path)
     except Busy as error:
-        print(f"{now()} PROJECT_BUSY: {error} The Task Center retries later.", flush=True)
+        print(f"{utc_now()} PROJECT_BUSY: {error} The Task Center retries later.", flush=True)
         return BUSY_EXIT
     except StorageError as error:
         if not _managed():

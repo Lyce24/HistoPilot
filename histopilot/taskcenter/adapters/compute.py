@@ -6,10 +6,9 @@ untouched. The adapter only writes that file to re-queue an attempt, under the c
 folder's writer lock; ``result.json`` stays the worker's evidence of success.
 """
 
-import hashlib
-import json
 from pathlib import Path
 
+from histopilot.storage.io import content_hash, read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError, writer_lock
 from histopilot.taskcenter.adapters.base import (
     BUSY_CODES,
@@ -20,8 +19,7 @@ from histopilot.taskcenter.adapters.base import (
     outcome,
 )
 from histopilot.taskcenter.model import parse_iso
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import classify_training_failure, read_json
+from histopilot.workers.training_process import classify_training_failure
 
 REQUEUEABLE = frozenset({"queued", "running", "interrupted"})
 # A worker records an out-of-memory or lost-device run as failed; the runner may still
@@ -32,13 +30,6 @@ BUSY_MARKERS = ("OUTPUT_BUSY", "already using this output")
 FOREIGN = "The compute record now belongs to another launch."
 # The requeue hook waits this long for the job folder's lock, then retries on a later tick.
 LOCK_WAIT_SECONDS = 1.0
-
-
-def plan_hash(value) -> str:
-    # Same canonical hash as application.feature_bundles._hash, without its imports.
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    ).hexdigest()
 
 
 def failure_reason(error: str | None) -> str:
@@ -57,7 +48,7 @@ class ComputeJobAdapter(Adapter):
         if not path.exists():
             return None
         try:
-            return read_json(path)
+            return read_json_bounded(path)
         except (OSError, ValueError) as error:
             raise AdapterError(f"The compute state cannot be read: {error}", fatal=True) from error
 
@@ -168,13 +159,13 @@ class ComputeJobAdapter(Adapter):
     def can_requeue(self, task, ctx):
         folder = self._folder(task)
         try:
-            state = read_json(folder / "state.json")
-            plan = read_json(folder / "plan.json")
+            state = read_json_bounded(folder / "state.json")
+            plan = read_json_bounded(folder / "plan.json")
         except (OSError, ValueError):
             return False
         return (
             state.get("taskId") == task["id"]
-            and state.get("planHash") == plan_hash(plan)
+            and state.get("planHash") == content_hash(plan)
             and self._requeueable(state, task)
             and not (folder / "cancel.requested").exists()
         )
@@ -183,7 +174,7 @@ class ComputeJobAdapter(Adapter):
         folder = self._folder(task)
         try:
             with writer_lock(folder, timeout=LOCK_WAIT_SECONDS):
-                state = read_json(folder / "state.json")
+                state = read_json_bounded(folder / "state.json")
                 if state.get("taskId") != task["id"] or not self._requeueable(state, task):
                     raise AdapterError(FOREIGN, fatal=True)
                 if (folder / "cancel.requested").exists():
@@ -201,7 +192,7 @@ class ComputeJobAdapter(Adapter):
                     result=None,
                     updatedAt=at,
                 )
-                write_json(folder / "state.json", state)
+                write_json_atomic(folder / "state.json", state)
         except StorageError as error:
             # Another writer (a launch or cancel) holds the folder: retry on a later tick.
             raise AdapterError(str(error), fatal=error.code not in BUSY_CODES) from error

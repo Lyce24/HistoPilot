@@ -9,7 +9,6 @@ import re
 import shutil
 import stat
 import sys
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -38,6 +37,7 @@ from histopilot.application.slide_lists import (
 from histopilot.schemas.extractions import ExtractionSpec
 from histopilot.schemas.slide_lists import SlideListSource
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import content_hash, read_file_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
@@ -60,16 +60,8 @@ EXTRACTION_GRACE_SECONDS = 30
 VALIDATION_GRACE_SECONDS = 10
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _hash(value: object) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
-
-
 def _read(path: Path) -> dict:
-    content = ScientificStore._read_file(path, MAX_JSON)
+    content = read_file_bounded(path, MAX_JSON)
     try:
         value = json.loads(content)
         if not isinstance(value, dict):
@@ -77,23 +69,6 @@ def _read(path: Path) -> dict:
         return value
     except (ValueError, UnicodeError) as error:
         raise StorageError("Extraction metadata is invalid.", "EXTRACTION_CORRUPT") from error
-
-
-def _write(path: Path, value: dict) -> None:
-    reject_symlink_components(path)
-    content = json.dumps(value, indent=2, allow_nan=False).encode() + b"\n"
-    if len(content) > MAX_JSON:
-        raise StorageError("Extraction metadata exceeds its size limit.", "EXTRACTION_LIMIT", 413)
-    descriptor, name = tempfile.mkstemp(prefix=".extraction-", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(name, path)
-        fsync_directory(path.parent)
-    finally:
-        Path(name).unlink(missing_ok=True)
 
 
 def _log_tail(path: Path) -> tuple[str, str | None]:
@@ -555,7 +530,7 @@ class ExtractionService:
             "estimatedBytes": estimated,
         }
         # Free space may change between two requests without invalidating the user's intent.
-        result["previewHash"] = _hash({**result, "slides": slides})
+        result["previewHash"] = content_hash({**result, "slides": slides}, compact=False)
         result["availableBytes"] = available
         return result, slides
 
@@ -627,7 +602,8 @@ class ExtractionService:
             for existing in self._jobs():
                 if existing["operationId"] == operation_id:
                     if (
-                        existing["requestHash"] != _hash(spec.model_dump(mode="json"))
+                        existing["requestHash"]
+                        != content_hash(spec.model_dump(mode="json"), compact=False)
                         or existing["previewHash"] != preview_hash
                     ):
                         raise StorageError(
@@ -647,7 +623,8 @@ class ExtractionService:
             for existing in self._jobs():
                 if existing["operationId"] == operation_id:
                     if (
-                        existing["requestHash"] != _hash(spec.model_dump(mode="json"))
+                        existing["requestHash"]
+                        != content_hash(spec.model_dump(mode="json"), compact=False)
                         or existing["previewHash"] != preview_hash
                     ):
                         raise StorageError(
@@ -731,7 +708,7 @@ class ExtractionService:
                 "projectId": self.store.project_id,
                 "state": "queued",
                 "operationId": operation_id,
-                "requestHash": _hash(spec.model_dump(mode="json")),
+                "requestHash": content_hash(spec.model_dump(mode="json"), compact=False),
                 "previewHash": preview_hash,
                 "spec": preview["spec"],
                 "outputPath": str(output),
@@ -743,14 +720,14 @@ class ExtractionService:
                 "inputFiles": preview["inputFiles"],
                 "sessionName": None,
                 "logPath": str(folder / "worker.log"),
-                "createdAt": _now(),
-                "updatedAt": _now(),
+                "createdAt": utc_now(),
+                "updatedAt": utc_now(),
                 "executionMode": task_records.TASK_CENTER,
                 "taskId": ids.task_id("extraction", str(folder)),
                 "validationTaskId": ids.task_id("extraction-validation", str(folder)),
                 "ownerKey": task_records.owner_key("extraction", identity, self.store),
             }
-            _write(folder / "job.json", job)
+            write_json_atomic(folder / "job.json", job, limit=MAX_JSON)
             plan = {
                 "command": command,
                 "resultPath": str(folder / "result.json"),
@@ -769,7 +746,7 @@ class ExtractionService:
                 "progressPath": str(folder / "progress.json"),
                 "peakPath": str(folder / "trident-peak.json"),
             }
-            _write(folder / "plan.json", plan)
+            write_json_atomic(folder / "plan.json", plan, limit=MAX_JSON)
             try:
                 self._enqueue(job, folder, values, lane, preview["estimatedBytes"])
             except (StorageError, OSError) as error:
@@ -777,7 +754,7 @@ class ExtractionService:
                     "failed",
                     f"Could not queue the extraction in the Task Center: {error}",
                 )
-                _write(folder / "job.json", job)
+                write_json_atomic(folder / "job.json", job, limit=MAX_JSON)
         return self.get(identity)
 
     def _enqueue(self, job: dict, folder: Path, values: dict, lane: str, estimated: int) -> None:
@@ -1097,16 +1074,17 @@ class ExtractionService:
         if job["state"] not in ACTIVE:
             return self.get(identity, logs=True, include_inactive=True)
         views = self.tasks.views([job.get("taskId"), job.get("validationTaskId")])
-        _write(
+        write_json_atomic(
             self.folder / identity / "cancelled",
             {
-                "requestedAt": _now(),
+                "requestedAt": utc_now(),
                 "attempts": {
                     view["id"]: view["attempt"]
                     for view in views
                     if view and not view.get("unknown")
                 },
             },
+            limit=MAX_JSON,
         )
         for view in views:
             if view and task_records.live(view) and not view.get("unknown"):

@@ -8,16 +8,16 @@ runs from ``<batch>/compute``. The runner chooses the device through
 import sys
 from pathlib import Path
 
+from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import ensure_managed_directory
-from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import execute_plan, run_fold_worker
-from histopilot.workers.training_process import compute_snapshot, read_json
+from histopilot.workers.training_process import compute_snapshot
 
 
 def run(plan_path: Path, run_id: str) -> None:
     if not plan_path.is_absolute():
         raise SystemExit("The batch plan path must be absolute; run paths derive from it.")
-    batch = read_json(plan_path)
+    batch = read_json_bounded(plan_path)
     if batch.get("code") not in (None, compute_snapshot()):
         raise SystemExit(
             "Training code changed after this execution was prepared. Clone a new batch."
@@ -29,7 +29,7 @@ def run(plan_path: Path, run_id: str) -> None:
     ensure_managed_directory(folder)
     # Only the device kind enters the plan; the physical GPU is the runner's choice.
     gpu = 0 if batch["resources"].get("gpuIds") else None
-    write_json(folder / "plan.json", execute_plan(batch, run, gpu))
+    write_json_atomic(folder / "plan.json", execute_plan(batch, run, gpu))
     run_fold_worker(folder / "plan.json")
 
 

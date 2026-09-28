@@ -12,13 +12,13 @@ from pathlib import Path
 
 import numpy as np
 
+from histopilot.storage.io import content_hash
 from histopilot.storage.packed import (
     CHUNK_BYTES,
     FORMAT,
     PackedStoreError,
     _cancel,
     _configuration,
-    _digest,
     _no_links,
     _progress,
     check_sources,
@@ -304,7 +304,7 @@ def verify_existing_pack(
                 raise PackedStoreError(f"{name} checksum differs from the pack manifest.")
         materialization = strong["materializationId"]
     else:
-        materialization = "pack-" + _digest(
+        materialization = "pack-" + content_hash(
             {
                 "format": FORMAT,
                 "slides": inspection["slides"],
@@ -317,7 +317,7 @@ def verify_existing_pack(
     if stamps != pack_file_stamps(path):
         raise PackedStoreError("Pack files changed during content verification.")
     _cancel(cancelled)
-    identity = "pack-" + _digest(
+    identity = "pack-" + content_hash(
         {
             "featureSetId": configuration["id"],
             "materializationId": materialization,

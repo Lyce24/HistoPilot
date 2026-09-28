@@ -13,7 +13,6 @@ from support.task_center import exit_record
 from support.training import development_batch, runtime
 from test_training_control_preview import preview_context  # noqa: F401
 
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.model_experiments import (
     ModelExperimentService,
     experiment_stage,
@@ -26,15 +25,15 @@ from histopilot.schemas.model_experiments import (
     SubmitModelExperiment,
     UpdateModelExperiment,
 )
+from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.taskcenter import capacity, ids
 from histopilot.taskcenter.adapters import adapter as registered_adapter
 from histopilot.taskcenter.adapters.base import AdapterError
 from histopilot.taskcenter.adapters.mil import MilCollectAdapter, MilFoldAdapter
-from histopilot.taskcenter.model import LIVE, TERMINAL, utc_now_iso
+from histopilot.taskcenter.model import LIVE, TERMINAL
 from histopilot.workers.managed_collect import final_status
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json, save_state
+from histopilot.workers.training_process import save_state
 
 setup_support = runpy.run_path(str(Path(__file__).with_name("test_experiment_setup.py")))
 
@@ -154,21 +153,23 @@ def fold_running(context):
 
 
 def assert_completed_evidence(context):
-    state = read_json(context.folder / "state.json")
+    state = read_json_bounded(context.folder / "state.json")
     assert state["status"] == "completed" and state["executor"] == "task-center"
     assert state["runCounts"]["completed"] == state["runCounts"]["total"] == 5
     for run in state["runs"]:
-        result = read_json(context.folder / "runs" / run["id"] / "result.json")
+        result = read_json_bounded(context.folder / "runs" / run["id"] / "result.json")
         # Promotion and exports require the state copy to equal the fold's receipt.
         assert run["result"] == result
         assert run["metrics"] == result["metrics"]
         assert run["checkpointPath"] == result["bestCheckpointPath"]
-        assert read_json(context.folder / "runs" / run["id"] / "plan.json")["device"] == "cpu"
-    results = read_json(context.folder / "results.json")
+        assert (
+            read_json_bounded(context.folder / "runs" / run["id"] / "plan.json")["device"] == "cpu"
+        )
+    results = read_json_bounded(context.folder / "results.json")
     assert results["status"] == "completed"
     assert results["oof"] and all(Path(row["path"]).is_file() for row in results["oof"])
     assert all(candidate["complete"] for candidate in results["candidates"])
-    assert read_json(context.folder / "collect-result.json")["final"] is True
+    assert read_json_bounded(context.folder / "collect-result.json")["final"] is True
     execution = context.service.execution(context.identity)
     assert execution["status"] == "completed"
     assert execution["taskCenter"]["running"] == execution["taskCenter"]["queued"] == 0
@@ -204,7 +205,7 @@ def test_legacy_frozen_spec_keeps_its_serialization_and_preview_hash(preview_con
     assert stored["resources"] == LEGACY_RESOURCES
     # A stored legacy spec re-validates to exactly the bytes it was frozen with.
     again = DevelopmentBatchSpec.model_validate(stored, context={"legacy": True}).model_dump()
-    assert again == stored and _hash(again) == _hash(stored)
+    assert again == stored and content_hash(again) == content_hash(stored)
     service = preview_context.service
     owned = service._preview(parsed, experiment_record=LEGACY_EXPERIMENT)
     assert owned["previewHash"] == LEGACY_OWNED_PREVIEW_HASH
@@ -309,8 +310,8 @@ def test_launch_enqueues_one_task_per_fold_and_queued_work_never_reads_interrupt
         "id": context.identity,
         "projectFolder": str(context.development.store.folder),
     }
-    plan = read_json(context.folder / "plan.json")
-    assert plan["executionMode"] == "task-center" and _hash(plan) == state["planHash"]
+    plan = read_json_bounded(context.folder / "plan.json")
+    assert plan["executionMode"] == "task-center" and content_hash(plan) == state["planHash"]
     assert plan["resources"] == {
         "maxConcurrentRuns": 1,
         "gpuIds": [],
@@ -411,7 +412,7 @@ def test_failed_enqueue_is_recorded_and_the_same_operation_resumes(managed):
     with pytest.raises(StorageError) as failure:
         context.service.launch(context.identity, "launch")
     assert failure.value.code == "TRAINING_LAUNCH_FAILED"
-    state = read_json(context.folder / "state.json")
+    state = read_json_bounded(context.folder / "state.json")
     assert state["status"] == "failed"
     assert state["findings"][0]["code"] == "TRAINING_LAUNCH_FAILED"
     assert not (context.folder / "operations.json").exists()
@@ -459,7 +460,7 @@ def test_cancel_stops_running_folds_cancels_pending_ones_and_resume_completes(ma
     assert cancelled["cancelRequested"] and cancelled["status"] in {"queued", "running"}
     assert context.service.cancel(context.identity, "cancel")["cancelRequested"]
     states = {task["id"]: task["state"] for task in group_tasks(context)}
-    raw = read_json(context.folder / "state.json")
+    raw = read_json_bounded(context.folder / "state.json")
     pending = [run for run in raw["runs"] if run["status"] == "cancelled"]
     assert len(pending) >= 3
     assert {run["error"] for run in pending} == {"Cancelled before start."}
@@ -472,7 +473,7 @@ def test_cancel_stops_running_folds_cancels_pending_ones_and_resume_completes(ma
     assert execution["status"] == "cancelled"
     assert set(execution["runCounts"]) and execution["runCounts"]["queued"] == 0
     assert execution["runCounts"]["running"] == 0
-    assert read_json(context.folder / "results.json")["status"] == "cancelled"
+    assert read_json_bounded(context.folder / "results.json")["status"] == "cancelled"
     final = context.store.get(ids.collect_task_id(key, True))
     assert final["state"] == "succeeded"
 
@@ -525,7 +526,7 @@ def test_single_run_cancels_finish_the_batch_cancelled_and_resume_reruns_them(ma
 
     context.store.update_settings({"cpuTaskSlots": 8})
     drive(context, runner, lambda: settled(context))
-    state = read_json(context.folder / "state.json")
+    state = read_json_bounded(context.folder / "state.json")
     runs = {run["id"]: run for run in state["runs"]}
     assert (runs[stopped]["status"], runs[stopped]["error"]) == (
         "cancelled",
@@ -534,7 +535,7 @@ def test_single_run_cancels_finish_the_batch_cancelled_and_resume_reruns_them(ma
     assert runs[pending]["error"] == runs[store_only]["error"] == "Cancelled before start."
     assert state["runCounts"]["cancelled"] == 3 and state["runCounts"]["completed"] == 2
     assert state["status"] == "cancelled"
-    assert read_json(context.folder / "results.json")["status"] == "cancelled"
+    assert read_json_bounded(context.folder / "results.json")["status"] == "cancelled"
     execution = context.service.execution(context.identity)
     assert execution["status"] == "cancelled" and not execution["cancelRequested"]
 
@@ -578,7 +579,9 @@ def test_lost_runner_interrupts_and_auto_resumes_the_running_fold(managed):
     )
     run_id = task["adapterData"]["runId"]
     run = next(
-        row for row in read_json(context.folder / "state.json")["runs"] if row["id"] == run_id
+        row
+        for row in read_json_bounded(context.folder / "state.json")["runs"]
+        if row["id"] == run_id
     )
     assert run["status"] == "queued" and run["attempt"] == 2 and "process" not in run
     [event] = [event for event in attempt_events(context) if event.get("runId") == run_id]
@@ -654,7 +657,7 @@ def test_stop_and_hold_requeues_running_folds_until_release(managed):
             )
         ),
     )
-    state = read_json(context.folder / "state.json")
+    state = read_json_bounded(context.folder / "state.json")
     runs = {run["id"]: run for run in state["runs"]}
     paused = [context.store.get(task["id"]) for task in running]
     requeued = [task for task in paused if task["state"] == "queued"]
@@ -685,13 +688,13 @@ def fabricated_batch(tmp_path, *run_ids):
         "runtime": {"versions": {}},
         "runs": [{"id": run_id} for run_id in run_ids],
     }
-    write_json(folder / "plan.json", plan)
+    write_json_atomic(folder / "plan.json", plan)
     save_state(
         folder,
         {
             "batchId": "batch",
             "status": "running",
-            "planHash": _hash(plan),
+            "planHash": content_hash(plan),
             "runs": [{"id": run_id, "status": "running", "attempt": 1} for run_id in run_ids],
         },
     )
@@ -728,20 +731,20 @@ def test_fold_outcomes_come_from_receipts_never_from_the_exit_code(tmp_path, tas
         "cudaPeakReservedBytes": 2**30,
         "epochsCompleted": 3,
     }
-    write_json(folder / "runs" / "done" / "result.json", result)
+    write_json_atomic(folder / "runs" / "done" / "result.json", result)
     decision = adapter.on_exit(fabricated_task(folder, "done"), exit_record(0), ctx)
     assert decision["state"] == "succeeded"
     assert decision["measurement"] == {"peakVramGb": 1.0, "epochs": 3}
     # SIGTERM during fitting exits 0 without a result: that is not success.
     decision = adapter.on_exit(fabricated_task(folder, "sigterm"), exit_record(0), ctx)
     assert decision["state"] == "failed" and decision["exitReason"] == "error"
-    write_json(
+    write_json_atomic(
         folder / "runs" / "oom" / "failure.json",
-        {"error": "CUDA out of memory.", "category": "out_of_memory", "at": utc_now_iso()},
+        {"error": "CUDA out of memory.", "category": "out_of_memory", "at": utc_now()},
     )
     decision = adapter.on_exit(fabricated_task(folder, "oom"), exit_record(1), ctx)
     assert (decision["state"], decision["exitReason"]) == ("failed", "oom")
-    write_json(
+    write_json_atomic(
         folder / "runs" / "stale" / "failure.json",
         {"error": "old attempt", "category": "out_of_memory", "at": "2025-01-01T00:00:00+00:00"},
     )
@@ -751,7 +754,7 @@ def test_fold_outcomes_come_from_receipts_never_from_the_exit_code(tmp_path, tas
     assert decision["state"] == "interrupted"
     decision = adapter.on_exit(fabricated_task(folder, "paused"), exit_record(0, stop="pause"), ctx)
     assert decision["state"] == "requeue"
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     runs = {run["id"]: run for run in state["runs"]}
     assert runs["done"]["status"] == "completed" and runs["done"]["result"] == result
     assert runs["sigterm"]["error"] == "Training process exited with code 0. See run.log."
@@ -763,15 +766,19 @@ def test_fold_outcomes_come_from_receipts_never_from_the_exit_code(tmp_path, tas
     assert adapter.can_requeue(fabricated_task(folder, "lost"), ctx)
     assert not adapter.can_requeue(fabricated_task(folder, "done"), ctx)
     adapter.on_requeue(fabricated_task(folder, "lost"), ctx)
-    lost = next(run for run in read_json(folder / "state.json")["runs"] if run["id"] == "lost")
+    lost = next(
+        run for run in read_json_bounded(folder / "state.json")["runs"] if run["id"] == "lost"
+    )
     assert lost["status"] == "queued" and lost["attempt"] == 2 and "error" not in lost
     assert adapter.prepare(fabricated_task(folder, "done"), ctx)["skip"]["exitReason"] == (
         "already-complete"
     )
-    write_json(folder / "cancel.json", {"requestedAt": utc_now_iso(), "operationId": "cancel"})
+    write_json_atomic(folder / "cancel.json", {"requestedAt": utc_now(), "operationId": "cancel"})
     assert not adapter.can_requeue(fabricated_task(folder, "lost"), ctx)
     assert adapter.prepare(fabricated_task(folder, "lost"), ctx)["skip"]["state"] == "cancelled"
-    lost = next(run for run in read_json(folder / "state.json")["runs"] if run["id"] == "lost")
+    lost = next(
+        run for run in read_json_bounded(folder / "state.json")["runs"] if run["id"] == "lost"
+    )
     assert lost["status"] == "cancelled" and lost["error"] == "Cancelled before start."
     decision = adapter.on_exit(fabricated_task(folder, "sigterm"), exit_record(0), ctx)
     assert decision["state"] == "cancelled"
@@ -783,22 +790,22 @@ def test_final_collection_applies_only_its_own_receipt(tmp_path, task_center):
     adapter = MilCollectAdapter()
     final = fabricated_task(folder)
     assert adapter.on_exit(final, exit_record(75), ctx)["exitReason"] == "busy"
-    write_json(
+    write_json_atomic(
         folder / "collect-result.json",
-        {"status": "running", "final": False, "at": utc_now_iso(), "error": None},
+        {"status": "running", "final": False, "at": utc_now(), "error": None},
     )
     decision = adapter.on_exit(final, exit_record(1), ctx)
     assert decision["state"] == "failed"
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     assert state["status"] == "failed"
     assert state["findings"][0]["code"] == "TRAINING_RESULTS_FAILED"
     assert state["runs"][0]["status"] == "interrupted"
-    write_json(
+    write_json_atomic(
         folder / "collect-result.json",
-        {"status": "cancelled", "final": True, "at": utc_now_iso(), "error": None},
+        {"status": "cancelled", "final": True, "at": utc_now(), "error": None},
     )
     assert adapter.on_exit(final, exit_record(0), ctx)["state"] == "succeeded"
-    assert read_json(folder / "state.json")["status"] == "cancelled"
+    assert read_json_bounded(folder / "state.json")["status"] == "cancelled"
     assert adapter.can_requeue(final, ctx)
     assert final_status({"runs": [{"status": "completed"}]}, cancel_requested=True) == "cancelled"
     assert (
@@ -817,18 +824,18 @@ def test_final_collection_superseded_by_requeued_folds_collects_again(tmp_path, 
     folder = fabricated_batch(tmp_path, "run")
     ctx = task_center.context()
     adapter = MilCollectAdapter()
-    final = fabricated_task(folder, queuedAt=utc_now_iso())
+    final = fabricated_task(folder, queuedAt=utc_now())
     # A collection that finishes before the runner records startedAt is still this attempt's.
-    write_json(
+    write_json_atomic(
         folder / "collect-result.json",
-        {"status": "failed", "final": True, "at": utc_now_iso(), "error": None},
+        {"status": "failed", "final": True, "at": utc_now(), "error": None},
     )
-    final["startedAt"] = utc_now_iso()
+    final["startedAt"] = utc_now()
     assert adapter.on_exit(final, exit_record(0), ctx)["state"] == "succeeded"
-    assert read_json(folder / "state.json")["status"] == "failed"
+    assert read_json_bounded(folder / "state.json")["status"] == "failed"
 
     # A resume requeued a fold (under the batch lock) while this collection was running.
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     # Resume writes a fresh state without the previous attempt's finishedAt.
     state.pop("finishedAt")
     state.update(status="queued", runs=[{"id": "run", "status": "queued", "attempt": 2}])
@@ -859,7 +866,7 @@ def test_final_collection_superseded_by_requeued_folds_collects_again(tmp_path, 
     for exit in (exit_record(0), exit_record(None, lost=True), exit_record(None)):
         decision = adapter.on_exit(final, exit, ctx)
         assert (decision["state"], decision["exitReason"]) == ("requeue", "busy")
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     assert state["status"] == "queued" and state["runs"][0]["status"] == "queued"
     assert "finishedAt" not in state
 
@@ -874,15 +881,15 @@ def test_prepare_adopts_only_an_exact_result_left_by_a_lost_runner(tmp_path, tas
         "metrics": {"validation": {}},
         "bestCheckpointPath": "best.ckpt",
     }
-    write_json(folder / "runs" / "done" / "result.json", result)
+    write_json_atomic(folder / "runs" / "done" / "result.json", result)
     # Another run's receipt in this folder is not this run's success.
-    write_json(folder / "runs" / "other" / "result.json", result)
+    write_json_atomic(folder / "runs" / "other" / "result.json", result)
     skip = adapter.prepare(fabricated_task(folder, "done"), ctx)["skip"]
     assert (skip["state"], skip["exitReason"]) == ("succeeded", "already-complete")
     assert adapter.prepare(fabricated_task(folder, "other", request={"lane": "cpu"}), ctx) is None
-    runs = {run["id"]: run for run in read_json(folder / "state.json")["runs"]}
+    runs = {run["id"]: run for run in read_json_bounded(folder / "state.json")["runs"]}
     assert runs["done"]["status"] == "completed"
-    assert runs["done"]["result"] == read_json(folder / "runs" / "done" / "result.json")
+    assert runs["done"]["result"] == read_json_bounded(folder / "runs" / "done" / "result.json")
     assert runs["other"]["status"] == "running" and "result" not in runs["other"]
 
 
@@ -894,7 +901,7 @@ def test_a_result_the_worker_later_failed_is_never_success(tmp_path, monkeypatch
 
     folder = fabricated_batch(tmp_path, "run")
     run_folder = folder / "runs" / "run"
-    write_json(run_folder / "plan.json", {"code": None, "data": {"sourceStamps": {}}})
+    write_json_atomic(run_folder / "plan.json", {"code": None, "data": {"sourceStamps": {}}})
     checks = []
 
     def check_inputs(_data):
@@ -910,7 +917,7 @@ def test_a_result_the_worker_later_failed_is_never_success(tmp_path, monkeypatch
             "metrics": {"validation": {"auroc": 0.9}},
             "bestCheckpointPath": str(output_dir / "best.ckpt"),
         }
-        write_json(output_dir / "result.json", result)
+        write_json_atomic(output_dir / "result.json", result)
         return result
 
     monkeypatch.setattr(train_batch, "check_inputs", check_inputs)
@@ -926,10 +933,10 @@ def test_a_result_the_worker_later_failed_is_never_success(tmp_path, monkeypatch
     for code in (1, 0, None):
         decision = adapter.on_exit(fabricated_task(folder, "run"), exit_record(code), ctx)
         assert (decision["state"], decision["error"]) == ("failed", POST_FIT_ERROR)
-    run = read_json(folder / "state.json")["runs"][0]
+    run = read_json_bounded(folder / "state.json")["runs"][0]
     assert run["status"] == "failed" and "result" not in run and "metrics" not in run
     # A later attempt that exits cleanly without a new result does not inherit the old one.
-    later = fabricated_task(folder, "run", queuedAt=utc_now_iso())
+    later = fabricated_task(folder, "run", queuedAt=utc_now())
     decision = adapter.on_exit(later, exit_record(0), ctx)
     assert decision["state"] == "failed" and "exited with code 0" in decision["error"]
     decision = adapter.on_exit(later, exit_record(None, lost=True), ctx)
@@ -937,12 +944,12 @@ def test_a_result_the_worker_later_failed_is_never_success(tmp_path, monkeypatch
     # Retries and automatic resumes do not adopt it without training either.
     retry = fabricated_task(folder, "run", request={"lane": "cpu"})
     assert adapter.prepare(retry, ctx) is None
-    assert read_json(folder / "state.json")["runs"][0]["status"] == "interrupted"
+    assert read_json_bounded(folder / "state.json")["runs"][0]["status"] == "interrupted"
     # A receipt written after the failure (a later attempt succeeded) is adopted.
     failed_at = (run_folder / "failure.json").stat().st_mtime_ns
     os.utime(run_folder / "result.json", ns=(failed_at + 10**9, failed_at + 10**9))
     assert adapter.prepare(retry, ctx)["skip"]["exitReason"] == "already-complete"
-    assert read_json(folder / "state.json")["runs"][0]["status"] == "completed"
+    assert read_json_bounded(folder / "state.json")["runs"][0]["status"] == "completed"
 
 
 def test_a_cancel_that_races_a_pause_is_never_requeued(tmp_path, task_center):
@@ -984,7 +991,7 @@ def test_a_cancel_that_races_a_pause_is_never_requeued(tmp_path, task_center):
     assert decision["state"] == "cancelled"
 
     # A cancelled run is skipped without waiting for the batch lock, and never requeued.
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     state["runs"][2].update(status="cancelled", error="Cancelled before start.")
     save_state(folder, state)
     with writer_lock(folder):
@@ -995,16 +1002,16 @@ def test_a_cancel_that_races_a_pause_is_never_requeued(tmp_path, task_center):
     assert refused.value.fatal
 
     # The batch cancel marker outranks a pause both on exit and on requeue.
-    write_json(folder / "cancel.json", {"requestedAt": utc_now_iso(), "operationId": "cancel"})
+    write_json_atomic(folder / "cancel.json", {"requestedAt": utc_now(), "operationId": "cancel"})
     decision = adapter.on_exit(fabricated_task(folder, "paused"), exit_record(0, stop="pause"), ctx)
     assert decision["state"] == "cancelled"
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     state["runs"][1]["status"] = "queued"  # as a pause concluded just before the marker
     save_state(folder, state)
     with pytest.raises(AdapterError) as refused:
         adapter.on_requeue(fabricated_task(folder, "paused", exit={"reason": "paused"}), ctx)
     assert refused.value.fatal
-    runs = {run["id"]: run for run in read_json(folder / "state.json")["runs"]}
+    runs = {run["id"]: run for run in read_json_bounded(folder / "state.json")["runs"]}
     assert runs["paused"]["status"] == "cancelled" and runs["paused"]["attempt"] == 1
     assert runs["single"]["error"] == "Cancelled before start."
     assert not (folder / "attempts.jsonl").exists()
@@ -1030,7 +1037,7 @@ def test_cancel_while_the_runner_concludes_a_paused_fold_cancels_it(tmp_path, ta
     from histopilot.taskcenter import procs
 
     folder = fabricated_batch(tmp_path, "r1")
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     state.update(status="queued", runs=[{"id": "r1", "status": "queued", "attempt": 1}])
     save_state(folder, state)
     project = str(folder.parents[1])
@@ -1087,7 +1094,7 @@ def test_cancel_while_the_runner_concludes_a_paused_fold_cancels_it(tmp_path, ta
         with writer_lock(folder, timeout=5):
             locked.set()
             time.sleep(0.5)
-            write_json(folder / "cancel.json", {"requestedAt": utc_now_iso()})
+            write_json_atomic(folder / "cancel.json", {"requestedAt": utc_now()})
             for _ in range(2):
                 client.cancel_group("mil-batch", "batch", project, exclude_kinds=("mil-collect",))
 
@@ -1097,7 +1104,7 @@ def test_cancel_while_the_runner_concludes_a_paused_fold_cancels_it(tmp_path, ta
     runner.tick()  # lists the fold as paused, then waits for the lock in on_exit
     thread.join()
     task = context.store.get("fold-r1")
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     assert task["state"] == "cancelled" and task["attempt"] == 1
     assert state["runs"][0]["status"] == "cancelled"
 
@@ -1133,14 +1140,14 @@ def test_a_cancel_during_a_pause_requeue_ends_the_task_cancelled(tmp_path, task_
     )
     assert store.transition(fold["id"], from_states=("queued",), to_state="running")
     # "Stop & hold" concluded the fold: its run waits queued and the task awaits its requeue.
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     state["runs"][0]["status"] = "queued"
     save_state(folder, state)
     concluded = store.conclude(
         fold["id"],
         to_state="interrupted",
         stop_request="pause",
-        follow_up={"hook": "on_requeue", "reason": "paused", "since": utc_now_iso()},
+        follow_up={"hook": "on_requeue", "reason": "paused", "since": utc_now()},
         exit={"reason": "paused", "returncode": 0},
     )
     assert concluded == "concluded"
@@ -1152,7 +1159,7 @@ def test_a_cancel_during_a_pause_requeue_ends_the_task_cancelled(tmp_path, task_
             if store.get(task["id"])["stopRequest"] is None:
                 store.request_stop([task["id"]], "cancel")
                 if recorded:
-                    current = read_json(folder / "state.json")
+                    current = read_json_bounded(folder / "state.json")
                     current["runs"][0].update(status="cancelled", error="Cancelled before start.")
                     save_state(folder, current)
             return super().on_requeue(task, ctx)
@@ -1164,7 +1171,7 @@ def test_a_cancel_during_a_pause_requeue_ends_the_task_cancelled(tmp_path, task_
     )
     runner.tick()
     task = store.get(fold["id"])
-    run = read_json(folder / "state.json")["runs"][0]
+    run = read_json_bounded(folder / "state.json")["runs"][0]
     # The Task Center and the batch record agree: cancelled, never "interrupted" with an error,
     # and no attempt is recorded for a requeue that never happened.
     assert (task["state"], task["attempt"], task["error"]) == ("cancelled", 1, None)
@@ -1182,8 +1189,8 @@ def test_requeued_attempts_record_their_host_provenance(tmp_path, monkeypatch, t
     folder = fabricated_batch(tmp_path, "paused", "oom", "lost", "pending", "unknown")
     host = host_snapshot()
     gpus = [{"index": 0, "uuid": "GPU-a", "name": "RTX A5000", "driverVersion": "580.1"}]
-    state = read_json(folder / "state.json")
-    state.update(findings=[], provenance={"at": utc_now_iso(), "host": host, "gpus": gpus})
+    state = read_json_bounded(folder / "state.json")
+    state.update(findings=[], provenance={"at": utc_now(), "host": host, "gpus": gpus})
     save_state(folder, state)
     monkeypatch.setattr(mil, "gpu_snapshot", lambda: {"gpus": gpus})
     adapter = MilFoldAdapter(runtime=runtime)
@@ -1195,7 +1202,7 @@ def test_requeued_attempts_record_their_host_provenance(tmp_path, monkeypatch, t
     def host_changed():
         return [
             item
-            for item in read_json(folder / "state.json")["findings"]
+            for item in read_json_bounded(folder / "state.json")["findings"]
             if item["code"] == "TRAINING_HOST_CHANGED"
         ]
 
@@ -1226,7 +1233,7 @@ def test_requeued_attempts_record_their_host_provenance(tmp_path, monkeypatch, t
     assert all(event["planHash"] == state["planHash"] and event["at"] for event in events)
     assert len(host_changed()) == 1
     # The launch provenance stays the reference for runs it recorded.
-    assert read_json(folder / "state.json")["provenance"]["gpus"] == gpus
+    assert read_json_bounded(folder / "state.json")["provenance"]["gpus"] == gpus
 
 
 def test_a_retried_requeue_records_its_attempt_once(tmp_path, monkeypatch, task_center):
@@ -1245,16 +1252,16 @@ def test_a_retried_requeue_records_its_attempt_once(tmp_path, monkeypatch, task_
     # The store's requeue failed (or the runner died) after this hook, so the runner repeats it.
     for _ in range(2):
         adapter.on_requeue(fold, task_center.context())
-    run = read_json(folder / "state.json")["runs"][0]
+    run = read_json_bounded(folder / "state.json")["runs"][0]
     assert (run["status"], run["attempt"], run["taskAttempt"]) == ("queued", 2, 2)
     assert events() == [("auto-resume", 2)]
     assert rearmed == [1, 1]  # the final collection is still re-armed by the repeated hook
     # That attempt ran and was lost again: its requeue is a new attempt.
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     state["runs"][0]["status"] = "interrupted"
     save_state(folder, state)
     adapter.on_requeue({**fold, "attempt": 2}, task_center.context())
-    run = read_json(folder / "state.json")["runs"][0]
+    run = read_json_bounded(folder / "state.json")["runs"][0]
     assert (run["status"], run["attempt"], run["taskAttempt"]) == ("queued", 3, 3)
     assert events() == [("auto-resume", 2), ("auto-resume", 3)]
 
@@ -1305,14 +1312,14 @@ def test_a_fold_requeued_after_finalization_rearms_the_final_collection(tmp_path
     assert store.promote_ready() == [final_id]
     assert store.transition(final_id, from_states=("queued",), to_state="running")
     assert store.transition(final_id, from_states=("running",), to_state="succeeded")
-    state = read_json(folder / "state.json")
-    state.update(status="failed", finishedAt=utc_now_iso())
+    state = read_json_bounded(folder / "state.json")
+    state.update(status="failed", finishedAt=utc_now())
     state["runs"][0]["status"] = "failed"
     save_state(folder, state)
 
     MilFoldAdapter(runtime=runtime).on_requeue(store.get(fold["id"]), ctx)
     assert store.get(final_id)["state"] == "blocked"
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     assert state["status"] == "queued" and "finishedAt" not in state
     assert store.requeue([fold["id"]], reason="oom-backoff") == [fold["id"]]
     assert store.promote_ready() == [] and store.get(final_id)["state"] == "blocked"
@@ -1320,10 +1327,13 @@ def test_a_fold_requeued_after_finalization_rearms_the_final_collection(tmp_path
 
 def pinned_runtime(folder, python, versions):
     """Give a fabricated batch the interpreter and versions its folds were planned with."""
-    plan = {**read_json(folder / "plan.json"), "runtime": {"python": python, "versions": versions}}
-    write_json(folder / "plan.json", plan)
-    state = read_json(folder / "state.json")
-    state["planHash"] = _hash(plan)
+    plan = {
+        **read_json_bounded(folder / "plan.json"),
+        "runtime": {"python": python, "versions": versions},
+    }
+    write_json_atomic(folder / "plan.json", plan)
+    state = read_json_bounded(folder / "state.json")
+    state["planHash"] = content_hash(plan)
     save_state(folder, state)
 
 
@@ -1370,7 +1380,7 @@ def test_an_unknown_runtime_defers_the_requeue_decision_instead_of_refusing(
     assert probes == [(python, False), (python, True), (python, True)]
     # Definitive answers need no probe: finished, cancelled or changed-plan folds never resume.
     assert adapter.can_requeue(fabricated_task(folder, "done"), ctx) is True
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     state["runs"][1]["status"] = "cancelled"
     save_state(folder, state)
     assert adapter.can_requeue(fabricated_task(folder, "done"), task_center.context()) is False
@@ -1454,9 +1464,9 @@ def test_contended_batch_lock_is_transient_for_every_state_write(
     folder = fabricated_batch(tmp_path, "run")
     ctx = task_center.context()
     fold, final = MilFoldAdapter(runtime=runtime), MilCollectAdapter()
-    write_json(
+    write_json_atomic(
         folder / "collect-result.json",
-        {"status": "completed", "final": True, "at": utc_now_iso(), "error": None},
+        {"status": "completed", "final": True, "at": utc_now(), "error": None},
     )
     before = (folder / "state.json").read_bytes()
     with writer_lock(folder):
@@ -1469,7 +1479,7 @@ def test_contended_batch_lock_is_transient_for_every_state_write(
             with pytest.raises(AdapterError) as busy:
                 hook()
             assert busy.value.transient
-        write_json(folder / "cancel.json", {"requestedAt": utc_now_iso()})
+        write_json_atomic(folder / "cancel.json", {"requestedAt": utc_now()})
         with pytest.raises(AdapterError) as busy:
             fold.prepare(fabricated_task(folder, "run"), ctx)
         assert busy.value.transient
@@ -1485,16 +1495,16 @@ def test_managed_collect_defers_when_busy_and_never_regresses_final_results(tmp_
     with output_lock(folder):
         assert collect(plan_path, final=True) == BUSY_EXIT
     assert not (folder / "collect-result.json").exists()
-    state = read_json(folder / "state.json")
+    state = read_json_bounded(folder / "state.json")
     state["status"] = "completed"
     save_state(folder, state)
     assert collect(plan_path, final=False) == 0
-    receipt = read_json(folder / "collect-result.json")
+    receipt = read_json_bounded(folder / "collect-result.json")
     assert receipt["skipped"] and receipt["status"] == "completed" and not receipt["final"]
     assert not (folder / "results.json").exists()
-    write_json(plan_path, {**read_json(plan_path), "batchId": "changed"})
+    write_json_atomic(plan_path, {**read_json_bounded(plan_path), "batchId": "changed"})
     assert collect(plan_path, final=True) == 1
-    assert "plan changed" in read_json(folder / "collect-result.json")["error"]
+    assert "plan changed" in read_json_bounded(folder / "collect-result.json")["error"]
 
 
 # -- experiments ---------------------------------------------------------------------------

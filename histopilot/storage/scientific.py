@@ -12,7 +12,7 @@ import sqlite3
 import stat
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from threading import RLock
 from uuid import uuid4
@@ -25,6 +25,7 @@ from histopilot.schemas.version_labels import (
     VersionLabelValues,
 )
 from histopilot.storage import sqlite_connections
+from histopilot.storage.io import canonical_json, read_file_bounded, regular_file, utc_now
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
@@ -155,15 +156,13 @@ _COLUMNS = {
 }
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
 def _error(message: str, code: str = "STORAGE_INVALID", status: int = 409) -> StorageError:
     return StorageError(message, code, status)
 
 
-def _json(value: dict, maximum: int = MAX_DOCUMENT_BYTES) -> bytes:
+def encode_document(value: dict, maximum: int = MAX_DOCUMENT_BYTES) -> bytes:
+    """A stored document's canonical compact UTF-8 bytes; configuration ids hash them."""
+
     def check(item: object) -> None:
         if isinstance(item, dict):
             if any(not isinstance(key, str) for key in item):
@@ -180,9 +179,7 @@ def _json(value: dict, maximum: int = MAX_DOCUMENT_BYTES) -> bytes:
         if not isinstance(value, dict):
             raise ValueError("Expected an object")
         check(value)
-        encoded = json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
-        ).encode("utf-8")
+        encoded = canonical_json(value, ascii=False, compact=True)
     except (ValueError, TypeError, RecursionError, UnicodeError) as error:
         raise _error(
             "Supply a JSON object containing finite JSON values.", "INVALID_DOCUMENT", 422
@@ -195,7 +192,7 @@ def _json(value: dict, maximum: int = MAX_DOCUMENT_BYTES) -> bytes:
 def _load_json(value: str | bytes) -> dict:
     try:
         document = json.loads(value)
-        _json(document)
+        encode_document(document)
         return document
     except (ValueError, TypeError, RecursionError) as error:
         raise _error("Stored metadata is invalid.", "STORAGE_CORRUPT") from error
@@ -272,7 +269,9 @@ def _artifact_metadata(artifacts: dict[str, bytes]) -> dict:
 def _hash_content(manifest: dict, artifacts: dict) -> str:
     # Generated timestamps, project IDs and storage locations are envelope fields,
     # deliberately excluded. Every caller-supplied scientific manifest value is hashed.
-    return hashlib.sha256(_json({"manifest": manifest, "artifacts": artifacts})).hexdigest()
+    return hashlib.sha256(
+        encode_document({"manifest": manifest, "artifacts": artifacts})
+    ).hexdigest()
 
 
 class ScientificStore:
@@ -285,61 +284,11 @@ class ScientificStore:
     def _checkpoint(self, phase: str) -> None:
         """Failure-injection seam; production publication has no callback actions."""
 
-    @staticmethod
-    def _regular(
-        path: Path, *, missing_ok: bool = False, parents: bool = True
-    ) -> os.stat_result | None:
-        if parents and any(parent.is_symlink() for parent in path.parents):
-            raise _error(
-                "Managed storage cannot traverse symbolic links.", "STORAGE_UNSAFE_PATH", 403
-            )
-        try:
-            info = path.lstat()
-        except FileNotFoundError:
-            if missing_ok:
-                return None
-            raise _error("A required storage file is missing.", "STORAGE_CORRUPT") from None
-        except OSError as error:
-            raise _error(
-                "A managed storage path cannot be inspected.", "STORAGE_READ_FAILED", 403
-            ) from error
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise _error(
-                "Managed files must be regular files without aliases.", "STORAGE_UNSAFE_PATH", 403
-            )
-        return info
-
     def _database_paths(self) -> None:
         with _SQLITE_LIFECYCLE_LOCK:
             # The four files share one parent chain: check it once.
             for suffix in ("", "-wal", "-shm", "-journal"):
-                self._regular(Path(str(self.path) + suffix), missing_ok=True, parents=not suffix)
-
-    @staticmethod
-    def _read_file(path: Path, maximum: int) -> bytes:
-        ScientificStore._regular(path)
-        descriptor = None
-        try:
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-            info = os.fstat(descriptor)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                raise _error(
-                    "Managed files must be regular files without aliases.",
-                    "STORAGE_UNSAFE_PATH",
-                    403,
-                )
-            if info.st_size > maximum:
-                raise _error("A stored artifact exceeds its declared bounds.", "STORAGE_CORRUPT")
-            with os.fdopen(descriptor, "rb", closefd=False) as handle:
-                content = handle.read(maximum + 1)
-            if len(content) > maximum:
-                raise _error("A stored artifact exceeds its declared bounds.", "STORAGE_CORRUPT")
-            return content
-        except OSError as error:
-            raise _error("A stored artifact cannot be read.", "STORAGE_READ_FAILED", 403) from error
-        finally:
-            if descriptor is not None:
-                os.close(descriptor)
+                regular_file(Path(str(self.path) + suffix), missing_ok=True, parents=not suffix)
 
     @contextmanager
     def _connection(self, *, create: bool = False) -> Iterator[sqlite3.Connection]:
@@ -455,7 +404,7 @@ class ScientificStore:
 
     def _initialize_locked(self) -> None:
         self._database_paths()
-        info = self._regular(self.path, missing_ok=True)
+        info = regular_file(self.path, missing_ok=True)
         existing_state = any(
             path.exists() or path.is_symlink()
             for path in (
@@ -635,8 +584,8 @@ class ScientificStore:
         if not isinstance(kind, str) or kind not in {"import", "experiment"}:
             raise _error("Draft kind must be import or experiment.", "INVALID_DRAFT_KIND", 422)
         _label(name, "draft name")
-        content = _json(payload).decode("utf-8")
-        identity, now = f"draft-{uuid4().hex}", _now()
+        content = encode_document(payload).decode("utf-8")
+        identity, now = f"draft-{uuid4().hex}", utc_now(zulu=True)
         with lifecycle_guard(self.folder), writer_lock(self.folder):
             self._initialize_locked()
             self.lifecycle.assert_document_usable(payload)
@@ -687,7 +636,7 @@ class ScientificStore:
     ) -> dict:
         _revision(expected_revision)
         _label(name, "draft name")
-        content = _json(payload).decode("utf-8")
+        content = encode_document(payload).decode("utf-8")
         with lifecycle_guard(self.folder), writer_lock(self.folder):
             self._initialize_locked()
             self.lifecycle.assert_usable([f"draft:{identity}"])
@@ -702,7 +651,7 @@ class ScientificStore:
                     (
                         name,
                         content,
-                        _now(),
+                        utc_now(zulu=True),
                         identity,
                         expected_revision,
                     ),
@@ -874,7 +823,7 @@ class ScientificStore:
         revision = current["revision"] if current else 0
         if revision >= 2**63 - 1:
             raise _error("The version label revision limit was reached.", "REVISION_LIMIT")
-        now = _now()
+        now = utc_now(zulu=True)
         connection.execute(
             "INSERT INTO version_labels VALUES (?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(resource_type,resource_id) DO UPDATE SET "
@@ -1019,9 +968,9 @@ class ScientificStore:
         self, identity: str, content_hash: str, stored: bytes, document: dict
     ) -> None:
         try:
-            _json(document, MAX_CONFIGURATION_BYTES)
+            encode_document(document, MAX_CONFIGURATION_BYTES)
             digest = hashlib.sha256(
-                _json(document["manifest"], MAX_CONFIGURATION_BYTES)
+                encode_document(document["manifest"], MAX_CONFIGURATION_BYTES)
             ).hexdigest()
             if (
                 document["projectId"] != self.project_id
@@ -1152,11 +1101,11 @@ class ScientificStore:
             "model-interpretation",
         }:
             raise _error("Unsupported scientific configuration kind.", "INVALID_CONFIGURATION", 422)
-        content = _json(manifest, MAX_CONFIGURATION_BYTES)
+        content = encode_document(manifest, MAX_CONFIGURATION_BYTES)
         digest = hashlib.sha256(content).hexdigest()
         identity = f"configuration-{digest}"
         request_hash = hashlib.sha256(
-            _json(
+            encode_document(
                 {
                     "draftId": draft_id,
                     "revision": expected_revision,
@@ -1218,11 +1167,11 @@ class ScientificStore:
                     "projectId": self.project_id,
                     "contentHash": digest,
                     "manifest": manifest,
-                    "createdAt": _now(),
+                    "createdAt": utc_now(zulu=True),
                 }
                 connection.execute(
                     "INSERT INTO configurations VALUES (?,?,?) ON CONFLICT(id) DO NOTHING",
-                    (identity, digest, _json(document, MAX_CONFIGURATION_BYTES).decode()),
+                    (identity, digest, encode_document(document, MAX_CONFIGURATION_BYTES).decode()),
                 )
                 self._apply_publication_label(
                     connection, "configuration", identity, manifest["kind"], label_values
@@ -1234,7 +1183,7 @@ class ScientificStore:
                 if draft_id is not None:
                     connection.execute(
                         "UPDATE drafts SET status='frozen',revision=revision+1,updated_at=? WHERE id=?",
-                        (_now(), draft_id),
+                        (utc_now(zulu=True), draft_id),
                     )
                 self._checkpoint("configuration_before_commit")
                 result = self._with_version_label(
@@ -1304,7 +1253,7 @@ class ScientificStore:
     @staticmethod
     def _disk_manifest(document: dict) -> bytes:
         return (
-            _json(
+            encode_document(
                 {
                     "format": "histopilot-dataset",
                     "schemaVersion": DATASET_FORMAT_VERSION,
@@ -1339,7 +1288,7 @@ class ScientificStore:
                             )
                         pending.append(entry)
                     else:
-                        self._regular(entry)
+                        regular_file(entry)
                         if relative not in expected:
                             raise _error(
                                 "The dataset contains an undeclared artifact.", "STORAGE_CORRUPT"
@@ -1347,12 +1296,12 @@ class ScientificStore:
                         found.add(relative)
             if found != expected:
                 raise _error("The dataset has missing or undeclared artifacts.", "STORAGE_CORRUPT")
-            disk = self._read_file(folder / "manifest.json", MAX_DOCUMENT_BYTES + 1)
+            disk = read_file_bounded(folder / "manifest.json", MAX_DOCUMENT_BYTES + 1)
             if disk != self._disk_manifest(document):
                 raise _error("The dataset manifest changed.", "STORAGE_CORRUPT")
             for name, item in document["artifacts"].items():
                 if checksums:
-                    content = self._read_file(folder / name, item["sizeBytes"])
+                    content = read_file_bounded(folder / name, item["sizeBytes"])
                     if (
                         len(content) != item["sizeBytes"]
                         or hashlib.sha256(content).hexdigest() != item["sha256"]
@@ -1360,7 +1309,7 @@ class ScientificStore:
                         raise _error(
                             "A dataset artifact failed checksum validation.", "ARTIFACT_CORRUPT"
                         )
-                elif self._regular(folder / name).st_size != item["sizeBytes"]:
+                elif regular_file(folder / name).st_size != item["sizeBytes"]:
                     raise _error("A dataset artifact changed size.", "ARTIFACT_CORRUPT")
         except OSError as error:
             raise _error(
@@ -1409,7 +1358,7 @@ class ScientificStore:
                 "The requested artifact is not declared in this dataset.", "ARTIFACT_NOT_FOUND", 404
             )
         metadata = document["artifacts"][name]
-        content = self._read_file(
+        content = read_file_bounded(
             self.folder / "datasets" / dataset_id / name, metadata["sizeBytes"]
         )
         if (
@@ -1428,7 +1377,7 @@ class ScientificStore:
         label_values: VersionLabelValues | None,
     ) -> str:
         return hashlib.sha256(
-            _json(
+            encode_document(
                 {
                     "draftId": draft_id,
                     "revision": expected_revision,
@@ -1501,7 +1450,7 @@ class ScientificStore:
         _revision(expected_revision)
         _label(operation_id, "operation ID")
         label_values = self._publication_label_values(version_label)
-        manifest = _load_json(_json(manifest))
+        manifest = _load_json(encode_document(manifest))
         metadata = _artifact_metadata(artifacts)
         content_hash = _hash_content(manifest, metadata)
         request_hash = self._dataset_request_hash(
@@ -1545,7 +1494,7 @@ class ScientificStore:
                             422,
                         )
                     self._get_dataset(connection, parent)
-                now = _now()
+                now = utc_now(zulu=True)
                 document = {
                     "id": f"dataset-{content_hash}",
                     "projectId": self.project_id,
@@ -1584,7 +1533,7 @@ class ScientificStore:
                             expected_revision,
                             document["id"],
                             stage_name,
-                            _json(document).decode(),
+                            encode_document(document).decode(),
                             "preparing",
                             None,
                             now,
@@ -1695,7 +1644,7 @@ class ScientificStore:
                 (
                     document["id"],
                     document["contentHash"],
-                    _json(document).decode(),
+                    encode_document(document).decode(),
                 ),
             )
             self._apply_publication_label(
@@ -1703,18 +1652,18 @@ class ScientificStore:
             )
             connection.execute(
                 "UPDATE drafts SET status='frozen',revision=revision+1,updated_at=? WHERE id=?",
-                (_now(), draft["id"]),
+                (utc_now(zulu=True), draft["id"]),
             )
             connection.execute(
                 "UPDATE publications SET status='published',error=NULL,updated_at=? WHERE id=?",
-                (_now(), operation_id),
+                (utc_now(zulu=True), operation_id),
             )
 
     def _sync_artifacts(self, folder: Path, document: dict) -> None:
         directories = {folder}
         for name in (*document["artifacts"], "manifest.json"):
             path = folder / name
-            self._regular(path)
+            regular_file(path)
             descriptor = None
             try:
                 descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -1787,7 +1736,7 @@ class ScientificStore:
                         "UPDATE publications SET status='interrupted',error=?,updated_at=? WHERE id=?",
                         (
                             error.code,
-                            _now(),
+                            utc_now(zulu=True),
                             operation["id"],
                         ),
                     )

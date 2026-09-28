@@ -4,7 +4,6 @@ Lifecycle metadata changes visibility, never scientific identities or source/out
 bytes. A project-wide gate serializes review/commit with new references and launches.
 """
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -14,9 +13,9 @@ from histopilot.application.extractions import ExtractionService
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.training import TrainingService, run_processes
 from histopilot.schemas.lifecycle import ApplyCleanup, CancelCleanupJob, CleanupSelection
+from histopilot.storage.io import content_hash, read_file_bounded
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError
-from histopilot.storage.scientific import ScientificStore
 
 ACTIVE = {"queued", "starting", "running", "cancelling"}
 TERMINAL = {"completed", "succeeded", "failed", "cancelled", "interrupted"}
@@ -25,12 +24,6 @@ NOTE = (
     "Delete moves records to recoverable Trash. Source files, slides, features, packs, "
     "logs and checkpoints are retained; these actions do not reclaim disk space."
 )
-
-
-def _hash(value):
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    ).hexdigest()
 
 
 def _strings(value):
@@ -51,7 +44,7 @@ def _read_optional(path: Path):
     if not path.exists() and not path.is_symlink():
         return None
     try:
-        result = json.loads(ScientificStore._read_file(path, 64 * 1024 * 1024))
+        result = json.loads(read_file_bounded(path, 64 * 1024 * 1024))
         if not isinstance(result, dict):
             raise ValueError("Expected an object")
         return result
@@ -156,7 +149,7 @@ class CleanupService:
         descriptor = _read_optional(self.store.folder / "histopilot-project.json")
         project_key = add(
             "project",
-            {"id": self.store.project_id, "contentHash": _hash(descriptor)},
+            {"id": self.store.project_id, "contentHash": content_hash(descriptor)},
             "project",
             (descriptor or {}).get("name", self.project_name),
             {},
@@ -449,7 +442,7 @@ class CleanupService:
             "action": selection.action,
             "keys": selection.keys,
             "revision": catalog["revision"],
-            "previewHash": _hash(
+            "previewHash": content_hash(
                 {
                     "selection": selection.model_dump(),
                     "catalog": {key: value for key, value in catalog.items() if key != "audit"},
@@ -468,7 +461,7 @@ class CleanupService:
 
     def apply(self, request: ApplyCleanup):
         with lifecycle_guard(self.store.folder):
-            request_hash = _hash(request.model_dump(exclude={"operationId"}))
+            request_hash = content_hash(request.model_dump(exclude={"operationId"}))
             prior = self.metadata.read().get("operations", {}).get(request.operationId)
             if prior:
                 if prior["requestHash"] != request_hash:
@@ -518,7 +511,7 @@ class CleanupService:
                     "JOB_NOT_FOUND",
                     404,
                 )
-            request_hash = _hash({"action": "cancel", "key": request.key})
+            request_hash = content_hash({"action": "cancel", "key": request.key})
             prior = self.metadata.read().get("operations", {}).get(request.operationId)
             if prior and prior["requestHash"] != request_hash:
                 raise StorageError(

@@ -8,12 +8,11 @@ from support.predictors import Jobs, Training, candidate, freeze
 from support.predictors import registry as registry
 
 from histopilot.application.experiment_predictors import ExperimentPredictorService
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.model_experiments import execution_contract
 from histopilot.application.refits import RefitService
-from histopilot.workers.packing_process import write_json
+from histopilot.storage.io import content_hash, read_json_bounded, write_json_atomic
 from histopilot.workers.train_batch import execute_plan
-from histopilot.workers.training_process import compute_snapshot, read_json
+from histopilot.workers.training_process import compute_snapshot
 
 
 @pytest.fixture
@@ -26,18 +25,26 @@ def selected_batch(registry):
     )
     first = manifest["configurations"][0]
     second_recipe = {**first["recipe"], "learningRate": 0.002}
-    second = {"id": "candidate-" + _hash(second_recipe), "number": 2, "recipe": second_recipe}
+    second = {
+        "id": "candidate-" + content_hash(second_recipe),
+        "number": 2,
+        "recipe": second_recipe,
+    }
     manifest["configurations"].append(second)
     old_runs = manifest["runs"]
     manifest["runs"] = [
-        {**row, "candidateId": candidate["id"], "id": "run-" + _hash([row["id"], candidate["id"]])}
+        {
+            **row,
+            "candidateId": candidate["id"],
+            "id": "run-" + content_hash([row["id"], candidate["id"]]),
+        }
         for candidate in manifest["configurations"]
         for row in old_runs
     ]
     batch = service.store.publish_configuration(manifest=manifest, operation_id="selected-batch")
     runtime = {"available": True, "python": sys.executable, "versions": {"torch": "fixture"}}
     plan = {
-        **read_json(old_folder / "plan.json"),
+        **read_json_bounded(old_folder / "plan.json"),
         "batchId": batch["id"],
         "batchContentHash": batch["contentHash"],
         "selectionMetric": "validation_auroc",
@@ -69,12 +76,17 @@ def selected_batch(registry):
                 "assessment": {"patient": {"auroc": 1 - score}},
             },
         )
-        write_json(run_folder / "plan.json", execute_plan(plan, run, None))
-        write_json(run_folder / "result.json", result)
+        write_json_atomic(run_folder / "plan.json", execute_plan(plan, run, None))
+        write_json_atomic(run_folder / "result.json", result)
         states.append({**run, "status": "completed", "result": result})
-    state = {"batchId": batch["id"], "status": "completed", "planHash": _hash(plan), "runs": states}
-    write_json(folder / "plan.json", plan)
-    write_json(folder / "state.json", state)
+    state = {
+        "batchId": batch["id"],
+        "status": "completed",
+        "planHash": content_hash(plan),
+        "runs": states,
+    }
+    write_json_atomic(folder / "plan.json", plan)
+    write_json_atomic(folder / "state.json", state)
     loser = source.model_copy(update={"batchId": batch["id"]})
     winner = loser.model_copy(update={"candidateId": second["id"], "name": "Validation winner"})
     return service, winner, loser, folder, plan, state
@@ -103,7 +115,7 @@ def test_competing_configuration_receipts_are_verified(selected_batch):
     next(row for row in state["runs"] if row["candidateId"] == loser.candidateId)["result"][
         "metrics"
     ]["validation"]["patient"]["auroc"] = 0.1
-    write_json(folder / "state.json", state)
+    write_json_atomic(folder / "state.json", state)
     preview = service.preview(winner)
     assert not preview["canFreeze"]
     assert preview["findings"][0]["code"] == "PREDICTOR_SELECTION_CHANGED"

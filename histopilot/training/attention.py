@@ -9,15 +9,13 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import checkpoint_snapshot
 from histopilot.models import catalog
 from histopilot.storage.attention_inputs import inspect_inputs, verify_sources
+from histopilot.storage.io import content_hash, read_file_bounded, write_json_atomic
 from histopilot.storage.packed import open_source
 from histopilot.storage.project_lock import ensure_managed_directory, reject_symlink_components
-from histopilot.storage.scientific import ScientificStore
 from histopilot.training.module import MILTrainModule, class_logits, window_uncertainty_rows
-from histopilot.workers.packing_process import write_json
 
 ATTENTION_NOTE = (
     "Class-independent pooling weights, normalized over all patches in this slide. "
@@ -185,7 +183,7 @@ def interpret(plan, output_dir):
     }
     if aggregation == "mean_logit":
         input_contract["aggregation"] = aggregation
-    input_hash = _hash(input_contract)
+    input_hash = content_hash(input_contract)
     artifacts, summaries = {}, []
     for slide_index, slide in enumerate(plan["slides"]):
         if (folder / "cancel.requested").exists():
@@ -211,14 +209,14 @@ def interpret(plan, output_dir):
             weights, probabilities, log_probabilities = None, None, None
             window_uncertainty = None
             if cache_receipt.exists() and path.exists():
-                cached = json.loads(ScientificStore._read_file(cache_receipt, 4096))
+                cached = json.loads(read_file_bounded(cache_receipt, 4096))
                 if cached.get("inputHash") != input_hash or cached.get("artifact") != _receipt(
                     path
                 ):
                     raise ValueError(
                         "Saved attention member evidence changed; it cannot be resumed."
                     )
-                value = json.loads(ScientificStore._read_file(path, MAX_ARTIFACT_BYTES))
+                value = json.loads(read_file_bounded(path, MAX_ARTIFACT_BYTES))
                 if (
                     value.get("slideId") != slide["slideId"]
                     or value.get("member") != str(member_index)
@@ -284,7 +282,7 @@ def interpret(plan, output_dir):
                         window_uncertainty=window_uncertainty,
                     ),
                 )
-                write_json(cache_receipt, {"inputHash": input_hash, "artifact": _receipt(path)})
+                write_json_atomic(cache_receipt, {"inputHash": input_hash, "artifact": _receipt(path)})
             _validate(weights, probabilities, len(coords), len(total_probabilities))
             artifacts[filename] = _receipt(path)
             array_name = f"slide-{slide_index}-member-{member_index}.npy"
@@ -306,7 +304,7 @@ def interpret(plan, output_dir):
                        if window_uncertainty is not None else {}),
                 }
             )
-            write_json(
+            write_json_atomic(
                 folder / "progress.json",
                 {
                     "completedPairs": slide_index * len(checkpoints) + member_index + 1,
@@ -351,7 +349,7 @@ def interpret(plan, output_dir):
             }
         )
     verify_sources(plan["slides"])
-    write_json(
+    write_json_atomic(
         folder / "attention.json",
         {
             "runId": plan["runId"],

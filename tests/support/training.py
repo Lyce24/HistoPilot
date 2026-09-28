@@ -16,12 +16,11 @@ from histopilot.application.protocols import ProtocolService
 from histopilot.application.training import TrainingService
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter.adapters.mil import MilCollectAdapter, MilFoldAdapter
-from histopilot.taskcenter.model import LIVE, utc_now_iso
+from histopilot.taskcenter.model import LIVE
 from histopilot.workers.managed_collect import final_status
-from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import read_json
 from support.projects import TARGET, bundle, dataset
 from support.task_center import begin, conclude
 
@@ -230,13 +229,15 @@ def synthetic_results(service, frozen):
                     }
                 )
         predictions = folder / "assessment-predictions.json"
-        write_json(predictions, {"records": records, "classOrder": batch["target"]["classes"]})
+        write_json_atomic(
+            predictions, {"records": records, "classOrder": batch["target"]["classes"]}
+        )
         result = {
             "runId": run["id"],
             "state": "succeeded",
             "predictions": {"assessment": str(predictions)},
         }
-        write_json(folder / "result.json", result)
+        write_json_atomic(folder / "result.json", result)
         rows.append({**run, "status": "completed", "result": result, "outputPath": str(folder)})
     return batch, {"status": "completed", "runs": rows}
 
@@ -299,7 +300,7 @@ def finish_batch(center, batch_id, *, fit="succeeded"):
         if fit == "succeeded":
             checkpoint = output / "best.ckpt"
             checkpoint.write_bytes(b"checkpoint")
-            write_json(
+            write_json_atomic(
                 output / "result.json",
                 {
                     "runId": run_id,
@@ -311,13 +312,13 @@ def finish_batch(center, batch_id, *, fit="succeeded"):
             )
             returncode = 0
         else:
-            write_json(
+            write_json_atomic(
                 output / "failure.json",
                 {
                     "error": "Synthetic training failure",
                     "type": "RuntimeError",
                     "category": "error",
-                    "at": utc_now_iso(),
+                    "at": utc_now(),
                 },
             )
             returncode = 1
@@ -329,10 +330,10 @@ def finish_batch(center, batch_id, *, fit="succeeded"):
             continue
         assert task["adapterData"].get("final"), f"{task['id']} is a partial collection"
         folder = Path(task["adapterData"]["batchFolder"])
-        state = read_json(folder / "state.json")
+        state = read_json_bounded(folder / "state.json")
         status = final_status(state, cancel_requested=(folder / "cancel.json").exists())
-        write_json(
+        write_json_atomic(
             folder / "collect-result.json",
-            {"status": status, "final": True, "at": utc_now_iso(), "error": None},
+            {"status": status, "final": True, "at": utc_now(), "error": None},
         )
         conclude(center.store, task["id"], collect)

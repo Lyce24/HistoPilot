@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from histopilot.storage import sqlite_connections
+from histopilot.storage.io import utc_now
 from histopilot.storage.project_lock import (
     StorageError,
     ensure_managed_directory,
@@ -38,7 +39,6 @@ from histopilot.taskcenter.model import (
     normalize_owner,
     normalize_request,
     normalize_task,
-    utc_now_iso,
 )
 
 __all__ = ["DEFAULT_SETTINGS", "TaskStore"]
@@ -237,7 +237,7 @@ def _marks(values) -> str:
 
 
 class TaskStore:
-    def __init__(self, path: Path | None = None, *, now=utc_now_iso):
+    def __init__(self, path: Path | None = None, *, now=utc_now):
         self.path = Path(path) if path is not None else paths.store_path()
         self._now = now
         self._ready = False

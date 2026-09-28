@@ -16,14 +16,13 @@ from pathlib import Path
 
 from histopilot.application.development import development_plans
 from histopilot.application.experiment_policy import has_predictor_intent, policy_for_batch
-from histopilot.application.feature_bundles import _hash
 from histopilot.application.training import membership_plan_id
 from histopilot.domain.features import representation_kind
 from histopilot.models import catalog
 from histopilot.schemas.predictors import PredictorSelection
+from histopilot.storage.io import content_hash, read_file_bounded
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError, reject_symlink_components
-from histopilot.storage.scientific import ScientificStore
 
 
 def reference(document):
@@ -59,10 +58,10 @@ def _file_path(path, root):
 def read_evidence(path, root):
     path = _file_path(path, root)
     try:
-        value = json.loads(ScientificStore._read_file(path, 32 * 1024 * 1024))
+        value = json.loads(read_file_bounded(path, 32 * 1024 * 1024))
         if not isinstance(value, dict):
             raise ValueError
-        _hash(value)  # Reject NaN/Infinity in evidence as well as in scientific records.
+        content_hash(value)  # Reject NaN/Infinity in evidence as well as in scientific records.
         return value
     except (OSError, ValueError, TypeError) as error:
         raise StorageError(
@@ -127,7 +126,7 @@ def evidence_hash(manifest):
             **manifest,
             "experiment": {key: value for key, value in experiment.items() if key != "name"},
         }
-    return _hash({key: value for key, value in manifest.items() if key != "previewHash"})
+    return content_hash({key: value for key, value in manifest.items() if key != "previewHash"})
 
 
 def evidence_current(manifest, stored):
@@ -145,7 +144,7 @@ def evidence_current(manifest, stored):
     # content. Old plans include both the historical experiment name and the
     # provenance hash derived from that name; keep those values for this legacy
     # comparison only. Every other field must still match the live evidence.
-    if stored_hash != _hash({key: value for key, value in stored.items() if key != "previewHash"}):
+    if stored_hash != content_hash({key: value for key, value in stored.items() if key != "previewHash"}):
         return False
     legacy = {key: value for key, value in manifest.items() if key != "previewHash"}
     experiment, saved_experiment = legacy.get("experiment"), stored.get("experiment")
@@ -161,7 +160,7 @@ def evidence_current(manifest, stored):
             **legacy["planTemplate"],
             "provenanceHash": stored["planTemplate"]["provenanceHash"],
         }
-    return stored_hash == _hash(legacy)
+    return stored_hash == content_hash(legacy)
 
 
 class PredictorService:
@@ -478,7 +477,7 @@ class PredictorService:
             if row["slideId"] in required
         }
         if (
-            _hash(plan) != state.get("planHash")
+            content_hash(plan) != state.get("planHash")
             or state.get("batchId") != batch["id"]
             or plan.get("batchId") != batch["id"]
             or plan.get("batchContentHash") != batch["contentHash"]
@@ -645,8 +644,8 @@ class PredictorService:
                     "runId": run["id"],
                     "splitPlanId": run["splitPlanId"],
                     **snapshot,
-                    "receiptHash": _hash(receipt),
-                    "runPlanHash": _hash(run_plan),
+                    "receiptHash": content_hash(receipt),
+                    "runPlanHash": content_hash(run_plan),
                     "bestValidationScore": receipt["bestValidationScore"],
                     "epochsCompleted": receipt.get("epochsCompleted"),
                     **({"clinicalPreprocessing": clinical_preprocessing} if clinical_preprocessing else {}),
@@ -699,7 +698,7 @@ class PredictorService:
                     "packStamps": plan["data"].get("packStamps"),
                 },
             },
-            "trainingPlanHash": _hash(plan),
+            "trainingPlanHash": content_hash(plan),
             **({"selectionEvidence": selection_evidence} if selection_evidence else {}),
             "compute": plan.get("code"),
             "runtime": plan.get("runtime"),
