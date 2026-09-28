@@ -862,18 +862,28 @@ class TrainingService:
                     plan["executionMode"] = MANAGED
                 plan.update(outputPath=str(folder), sessionName=session)
             submission = (experiment_record or {}).get("payload", {}).get("submission")
+            pinned = None
             if submission:
                 from histopilot.application.model_experiments import (
                     execution_contract,
+                    pinned_compute,
                     require_execution_contract,
                 )
 
+                if not resume:
+                    # A batch launched after its siblings, as when a submission is
+                    # retried, copies their archived code rather than the live checkout.
+                    pinned = pinned_compute(self.store, submission)
+                    if pinned:
+                        plan["code"] = pinned[0]
                 # Resumes retain their archived original worker code while the
                 # currently installed interpreter still has to match the common
                 # experiment contract. Live batches never pass through here.
                 contract = execution_contract({**plan, "runtime": prepared_runtime})
                 require_execution_contract(submission.get("executionContract"), contract)
-            package_root = prepare_compute_archive(folder, plan.get("code", {}))
+            package_root = prepare_compute_archive(
+                folder, plan.get("code", {}), source_root=pinned[1] if pinned else None
+            )
             freshness()
             if managed:
                 self._require_idle_tasks(identity)

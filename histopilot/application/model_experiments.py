@@ -304,6 +304,25 @@ def execution_contract(plan):
     }
 
 
+def pinned_compute(store, submission):
+    """The submitted worker code and a verified archive to copy it from, or None.
+
+    Work added after submission, such as a refit launched later or a batch whose launch is
+    retried, must run the code the experiment was reviewed with rather than whatever the
+    live checkout holds now. Every launched batch archived that code; None before any has.
+    """
+    from histopilot.workers.compute_archive import prepare_compute_archive
+
+    code = ((submission or {}).get("executionContract") or {}).get("code")
+    if not code:
+        return None
+    for batch_id in submission.get("batchIds") or []:
+        folder = store.folder / "training" / batch_id
+        if (folder / "compute").is_dir():
+            return code, prepare_compute_archive(folder, code) / "histopilot"
+    return None
+
+
 def require_execution_contract(expected, actual):
     if expected != actual:
         raise StorageError(

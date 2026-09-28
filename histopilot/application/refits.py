@@ -299,6 +299,7 @@ class RefitService:
                 return replay
             self.predictors.require_work_open(record["manifest"]["experimentId"])
             self._verify_sources(record)
+            pinned = None
             owner = record["manifest"].get("experimentId", "")
             if owner and not owner.startswith("legacy-"):
                 submission = self.store.get_draft(owner)["payload"].get("submission") or {}
@@ -311,14 +312,18 @@ class RefitService:
                         )
                     from histopilot.application.model_experiments import (
                         execution_contract,
+                        pinned_compute,
                         require_execution_contract,
                     )
                     from histopilot.workers.training_process import compute_snapshot
 
-                    runtime = self.jobs.runtime()
+                    # The refit runs the experiment's archived code, so only the
+                    # interpreter has to match; the live checkout may have moved on.
+                    pinned = pinned_compute(self.store, submission)
+                    code = pinned[0] if pinned else compute_snapshot()
                     require_execution_contract(
                         submission["executionContract"],
-                        execution_contract({"code": compute_snapshot(), "runtime": runtime}),
+                        execution_contract({"code": code, "runtime": self.jobs.runtime()}),
                     )
             if resources["maxConcurrentRuns"] != 1 or len(resources["gpuIds"]) > 1:
                 raise StorageError(
@@ -338,6 +343,7 @@ class RefitService:
                 request.operationId,
                 resume=resume,
                 task_owner=self._task_owner(record),
+                pinned=pinned,
             )
 
     def _task_owner(self, record):

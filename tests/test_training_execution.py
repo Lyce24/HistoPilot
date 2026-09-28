@@ -1015,7 +1015,7 @@ def test_resume_rejects_incompatible_frozen_session_without_rehashing_plan(execu
 
 
 @pytest.mark.parametrize("drift", ["code", "versions", "pythonVersion"])
-def test_partial_experiment_submission_rejects_environment_drift_without_touching_live_batch(
+def test_partial_submission_pins_code_and_rejects_environment_drift_without_touching_live_batch(
     execution, monkeypatch, drift
 ):
     from histopilot.application.model_experiments import ModelExperimentService
@@ -1077,6 +1077,12 @@ def test_partial_experiment_submission_rejects_environment_drift_without_touchin
     else:
         training.runtime = lambda: {**original_runtime(), "pythonVersion": "different"}
     rejected = experiments.submit(owner["id"], command)
+    if drift == "code":
+        # The retried batch copies the first batch's archived code instead of the edit.
+        assert rejected["submission"]["status"] == "submitted"
+        assert len(executor.launches) == 2
+        assert read_json(executor.launches[1][2])["code"] == contract["code"]
+        return
     assert rejected["submission"]["error"]["code"] == "EXPERIMENT_RUNTIME_CHANGED"
     assert rejected["configurationLocked"] and rejected["stage"] == "running"
     assert len(executor.launches) == 1

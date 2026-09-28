@@ -365,6 +365,37 @@ def test_manual_refit_cannot_change_submitted_percentile_or_resources(integrated
     assert error.value.code == "EXPERIMENT_CONFIGURATION_LOCKED"
 
 
+@pytest.mark.parametrize("archived", [True, False])
+def test_manual_refit_runs_the_submitted_archive_after_the_checkout_changes(
+    integrated, monkeypatch, archived
+):
+    from histopilot.workers import training_process
+    from histopilot.workers.compute_archive import prepare_compute_archive
+
+    service, identity, jobs, _executor, selections = integrated
+    submission = service.store.get_draft(identity)["payload"]["submission"]
+    code = submission["executionContract"]["code"]
+    batch = service.store.folder / "training" / selections[0].batchId
+    if archived:
+        prepare_compute_archive(batch, code)
+    service.launch(identity, "start")
+    service.advance(identity)
+    refit_id = jobs.launches[0][0]
+    jobs.states[refit_id]["status"] = "failed"
+    monkeypatch.setattr(
+        training_process, "compute_snapshot", lambda: {"sha256": "edited", "files": {}}
+    )
+    request = LaunchRefit(operationId="relaunch-after-edit")
+    if not archived:
+        # Without an archive there is nothing verified to run, so the old rule stands.
+        with pytest.raises(StorageError) as error:
+            service.refits.launch(refit_id, request, resume=True)
+        assert error.value.code == "EXPERIMENT_RUNTIME_CHANGED"
+        return
+    service.refits.launch(refit_id, request, resume=True)
+    assert jobs.task_options["pinned"] == (code, batch / "compute" / "histopilot")
+
+
 def test_cleanup_catalog_tracks_active_coordinator(integrated, monkeypatch):
     from histopilot.application.experiment_predictors import TmuxExperimentExecutor
     from histopilot.application.lifecycle import CleanupService

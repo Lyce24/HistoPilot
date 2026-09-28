@@ -586,10 +586,20 @@ class ComputeJobService:
                 return self.status(identity)
 
     def launch(
-        self, identity, plan, operation_id, *, resume=False, task_owner=None, task_title=None
+        self,
+        identity,
+        plan,
+        operation_id,
+        *,
+        resume=False,
+        task_owner=None,
+        task_title=None,
+        pinned=None,
     ):
         """Freeze and start one job. ``task_owner`` groups its Task Center task (for example
-        under an experiment or an evaluation batch); by default the record owns it."""
+        under an experiment or an evaluation batch); by default the record owns it.
+        ``pinned`` is (code, source root) for work that must run a submitted experiment's
+        archived code instead of the live checkout."""
         with lifecycle_guard(self.store.folder):
             record = self._record(identity)
             self.store.lifecycle.assert_document_usable(record)
@@ -647,7 +657,7 @@ class ComputeJobService:
                     "projectId": self.store.project_id,
                     "projectFolder": str(self.store.folder),
                     "runtime": runtime,
-                    "code": compute_snapshot(),
+                    "code": pinned[0] if pinned else compute_snapshot(),
                 }
                 if prior:
                     original = read_json(folder / "plan.json")
@@ -667,7 +677,9 @@ class ComputeJobService:
                             "COMPUTE_PLAN_CHANGED",
                         )
                     frozen = original
-                archive = prepare_compute_archive(folder, frozen["code"])
+                archive = prepare_compute_archive(
+                    folder, frozen["code"], source_root=pinned[1] if pinned else None
+                )
                 # Archives frozen before the Task Center keep their self-leasing tmux worker.
                 managed = (
                     self._managed_executor
