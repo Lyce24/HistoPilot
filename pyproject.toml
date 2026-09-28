@@ -68,6 +68,7 @@ pythonpath = ["."]
 addopts = "--strict-markers"
 markers = [
     "slow: trains real models or drives the real runner (5 s or more); deselect with -m 'not slow'",
+    "legacy_tmux: covers only the pre-Task Center tmux execution path, removed with that path",
 ]
 
 [tool.ruff]

@@ -28,8 +28,33 @@ class Executor:
         self.calls.append((session, python, plan, log, package_root))
 
 
-@pytest.fixture
-def job(tmp_path):
+def runtime():
+    return {
+        "available": True,
+        "python": sys.executable,
+        "versions": {},
+        "cudaAvailable": False,
+        "gpuCount": 0,
+        # Launch checks must not inherit the CI runner's resource limits.
+        "host": {"cpuCount": 8, "totalRamGb": 16},
+    }
+
+
+PLAN = {
+    "kind": "evaluation",
+    "resources": {
+        "gpuIds": [],
+        "cpuThreadsPerRun": 1,
+        "dataLoaderWorkers": 0,
+        "ramGbPerRun": 0.01,
+        "maxConcurrentRuns": 1,
+        "runsPerGpu": 1,
+    },
+    "data": {"sourceStamps": {}},
+}
+
+
+def evaluation_record(tmp_path):
     store = ScientificStore(tmp_path, "compute-project")
     draft = store.create_draft("import", "Data", {})
     dataset = store.publish_dataset(
@@ -43,54 +68,69 @@ def job(tmp_path):
         manifest={"kind": "model-evaluation", "name": "Test", "datasetId": dataset["id"]},
         operation_id="record",
     )
+    return store, record
+
+
+@pytest.fixture
+def job(tmp_path, task_center):
+    store, record = evaluation_record(tmp_path)
+    service = ComputeJobService(
+        store, runtime=runtime, execution_mode="task-center", task_center=task_center.client
+    )
+    return service, record["id"], copy.deepcopy(PLAN)
+
+
+@pytest.fixture
+def legacy_job(tmp_path):
+    store, record = evaluation_record(tmp_path)
     executor = Executor()
-
-    def runtime():
-        return {
-            "available": True,
-            "python": sys.executable,
-            "versions": {},
-            "cudaAvailable": False,
-            "gpuCount": 0,
-            # The fake executor must not inherit the CI runner's resource limits.
-            "host": {"cpuCount": 8, "totalRamGb": 16},
-        }
-
     service = ComputeJobService(store, executor=executor, runtime=runtime)
-    plan = {
-        "kind": "evaluation",
-        "resources": {
-            "gpuIds": [],
-            "cpuThreadsPerRun": 1,
-            "dataLoaderWorkers": 0,
-            "ramGbPerRun": 0.01,
-            "maxConcurrentRuns": 1,
-            "runsPerGpu": 1,
-        },
-        "data": {"sourceStamps": {}},
-    }
-    return service, record["id"], plan, executor
+    return service, record["id"], copy.deepcopy(PLAN), executor
 
 
-def test_compute_launch_pins_code_and_retry_does_not_relaunch(job):
-    service, identity, plan, executor = job
+def test_compute_launch_pins_code_and_retry_does_not_relaunch(job, task_center):
+    service, identity, plan = job
     original = service.launch(identity, plan, "launch")
     assert original["status"] == "queued"
-    assert executor.calls[0][4].joinpath("histopilot/workers/compute_job.py").is_file()
+    folder = service.folder(identity)
+    assert (folder / "compute" / "histopilot" / "workers" / "compute_job.py").is_file()
     assert service.launch(identity, plan, "launch")["status"] == "queued"
-    assert len(executor.calls) == 1
+    assert [task["attempt"] for task in task_center.tasks()] == [1]
     changed = copy.deepcopy(plan)
     changed["resources"]["ramGbPerRun"] = 1
     with pytest.raises(StorageError, match="another compute request"):
         service.launch(identity, changed, "launch")
 
 
+def test_pinned_launch_freezes_submitted_code_and_copies_its_archive(
+    job, task_center, monkeypatch, tmp_path
+):
+    from histopilot.application import compute_jobs
+    from histopilot.workers.compute_archive import prepare_compute_archive
+    from histopilot.workers.training_process import compute_snapshot
+
+    service, identity, plan = job
+    submitted = compute_snapshot()
+    source = prepare_compute_archive(tmp_path / "batch", submitted) / "histopilot"
+    # The live checkout moved on after submission; the job must not notice.
+    monkeypatch.setattr(compute_jobs, "compute_snapshot", lambda: {"sha256": "edited", "files": {}})
+    state = service.launch(identity, plan, "launch", pinned=(submitted, source))
+    assert read_json(service.folder(identity) / "plan.json")["code"] == submitted
+    command = task_center.task(state["taskId"])["command"]
+    assert command["cwd"] == str(service.folder(identity) / "compute")
+
+
 @pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("owned_envelope", [False, True])
-def test_accepted_launch_replay_is_read_only_and_preserves_legacy_request_hashes(job, monkeypatch, legacy, owned_envelope):
-    service, identity, plan, executor = job
+def test_accepted_launch_replay_is_read_only_and_preserves_legacy_request_hashes(
+    job, task_center, monkeypatch, legacy, owned_envelope
+):
+    service, identity, plan = job
     if owned_envelope:
-        plan.update(recordId=identity, recordContentHash=service.store.get_configuration(identity)["contentHash"])
+        plan.update(
+            recordId=identity,
+            recordContentHash=service.store.get_configuration(identity)["contentHash"],
+        )
     service.launch(identity, plan, "launch")
     folder = service.folder(identity)
     if legacy:
@@ -98,18 +138,20 @@ def test_accepted_launch_replay_is_read_only_and_preserves_legacy_request_hashes
         state.pop("operationActions")
         write_json(folder / "state.json", state)
     before = (folder / "state.json").read_bytes(), (folder / "plan.json").read_bytes()
-    monkeypatch.setattr(service, "runtime", lambda: pytest.fail("Accepted replay must not inspect runtime"))
+    monkeypatch.setattr(
+        service, "runtime", lambda: pytest.fail("Accepted replay must not inspect runtime")
+    )
     assert service.replay_launch(identity, "launch")["status"] == "queued"
     assert service.replay_launch(identity, "unknown") is None
     assert before == ((folder / "state.json").read_bytes(), (folder / "plan.json").read_bytes())
-    assert len(executor.calls) == 1
+    assert len(task_center.tasks()) == 1
     with pytest.raises(StorageError) as caught:
         service.replay_launch(identity, "launch", resume=True)
     assert caught.value.code == "OPERATION_CONFLICT"
 
 
 def test_replay_keeps_numeric_default_compatibility_for_legacy_plans(job):
-    service, identity, plan, _ = job
+    service, identity, plan = job
     from histopilot.schemas.development import ResourcePolicy
 
     plan["resources"] = ResourcePolicy(gpuIds=[]).model_dump()
@@ -122,7 +164,7 @@ def test_replay_keeps_numeric_default_compatibility_for_legacy_plans(job):
 
 
 def test_replay_rejects_changed_resources_wrong_kind_and_altered_saved_plan(job):
-    service, identity, plan, _ = job
+    service, identity, plan = job
     service.launch(identity, plan, "launch")
     with pytest.raises(StorageError) as caught:
         service.replay_launch(identity, "launch", resources={**plan["resources"], "ramGbPerRun": 1})
@@ -140,51 +182,35 @@ def test_replay_rejects_changed_resources_wrong_kind_and_altered_saved_plan(job)
 
 
 def test_replay_still_checks_dependency_lifecycle(job):
-    service, identity, plan, _ = job
+    service, identity, plan = job
     service.launch(identity, plan, "launch")
     record = service.store.get_configuration(identity)
     service.store.lifecycle.apply(
-        {f"dataset:{record['manifest']['datasetId']}": "trashed"}, operation_id="trash-source",
-        request_hash=hashlib.sha256(b"trash-source").hexdigest(), expected_revision=0)
+        {f"dataset:{record['manifest']['datasetId']}": "trashed"},
+        operation_id="trash-source",
+        request_hash=hashlib.sha256(b"trash-source").hexdigest(),
+        expected_revision=0,
+    )
     with pytest.raises(StorageError):
         service.replay_launch(identity, "launch")
 
 
-def test_interrupted_job_resumes_same_plan_and_preserves_audit(job):
-    service, identity, plan, executor = job
-    service.launch(identity, plan, "launch")
-    executor.sessions.clear()
+def test_interrupted_job_resumes_same_plan_and_preserves_audit(job, task_center):
+    service, identity, plan = job
+    task_id = service.launch(identity, plan, "launch")["taskId"]
+    task_center.finish(task_id, "interrupted", returncode=None, reason="lost")
     assert service.status(identity)["status"] == "interrupted"
     with pytest.raises(StorageError, match="Resume"):
         service.launch(identity, plan, "new-launch")
     result = service.launch(identity, plan, "resume", resume=True)
     assert result["attempt"] == 2 and len(result["operations"]) == 2
-    assert len(executor.calls) == 2
+    assert task_center.task(task_id)["attempt"] == 2
 
 
-def test_orphan_compute_loader_blocks_resume_until_cancelled(job, isolated_worker_tree):
-    from histopilot.workers.training_process import confirmed_process_alive
-
-    service, identity, plan, executor = job
-    state = service.launch(identity, plan, "launch")
-    leader, process, child = isolated_worker_tree()
-    leader.kill()
-    leader.wait(timeout=5)
-    state.update(status="failed", process=process, processGroupId=process["pid"])
-    write_json(service.folder(identity) / "state.json", state)
-    executor.sessions.clear()
-    assert service.status(identity)["status"] == "running"
-    with pytest.raises(StorageError, match="active"):
-        service.launch(identity, plan, "resume-orphan", resume=True)
-    assert service.cancel(identity, "cancel")["status"] == "failed"
-    assert not confirmed_process_alive(child)
-    assert len(executor.calls) == 1
-
-
-def test_changed_plan_and_archive_block_resume(job):
-    service, identity, plan, executor = job
-    service.launch(identity, plan, "launch")
-    executor.sessions.clear()
+def test_changed_plan_and_archive_block_resume(job, task_center):
+    service, identity, plan = job
+    task_id = service.launch(identity, plan, "launch")["taskId"]
+    task_center.finish(task_id, "interrupted", returncode=None, reason="lost")
     path = service.folder(identity) / "plan.json"
     value = read_json(path)
     value["kind"] = "refit"
@@ -193,23 +219,26 @@ def test_changed_plan_and_archive_block_resume(job):
         service.launch(identity, plan, "resume", resume=True)
 
 
-def test_cancel_keeps_pending_state_and_completion_blocks_relaunch(job):
-    service, identity, plan, executor = job
-    service.launch(identity, plan, "launch")
+def test_cancel_requested_while_running_and_completion_blocks_relaunch(job, task_center):
+    service, identity, plan = job
+    task_id = service.launch(identity, plan, "launch")["taskId"]
+    task_center.start(task_id)
     state = service.cancel(identity, "cancel")
-    assert state["status"] == "queued" and state["cancellationRequested"]
-    executor.sessions.clear()
+    assert state["status"] != "cancelled" and state["cancellationRequested"]
+    # The worker finished and recorded its receipt before it saw the request.
     folder = service.folder(identity)
-    state = read_json(folder / "state.json")
-    state.update(status="completed", result={"state": "succeeded", "runId": identity})
-    write_json(folder / "result.json", state["result"])
-    write_json(folder / "state.json", state)
+    saved = read_json(folder / "state.json")
+    saved.update(status="completed", result={"state": "succeeded", "runId": identity})
+    write_json(folder / "result.json", saved["result"])
+    write_json(folder / "state.json", saved)
+    task_center.finish(task_id, "succeeded")
+    assert service.status(identity)["status"] == "completed"
     with pytest.raises(StorageError, match="completed"):
         service.launch(identity, plan, "again", resume=True)
 
 
-def test_unknown_record_and_trashed_project_never_launch(job):
-    service, identity, plan, executor = job
+def test_unknown_record_and_trashed_project_never_launch(job, task_center):
+    service, identity, plan = job
     with pytest.raises(StorageError):
         service.folder("../../escape")
     service.store.lifecycle.apply(
@@ -220,37 +249,22 @@ def test_unknown_record_and_trashed_project_never_launch(job):
     )
     with pytest.raises(StorageError):
         service.launch(identity, plan, "launch")
-    assert not executor.calls
+    assert task_center.tasks() == []
 
 
 def test_delayed_cancel_retry_does_not_cancel_resumed_attempt(job):
-    service, identity, plan, executor = job
+    service, identity, plan = job
     service.launch(identity, plan, "launch")
-    service.cancel(identity, "cancel")
-    executor.sessions.clear()
+    assert service.cancel(identity, "cancel")["status"] == "cancelled"
     service.launch(identity, plan, "resume", resume=True)
     assert not service.status(identity)["cancellationRequested"]
     assert not service.cancel(identity, "cancel")["cancellationRequested"]
     assert service.cancel(identity, "cancel-new")["cancellationRequested"]
 
 
-def test_lost_launch_acknowledgement_preserves_running_session(job, monkeypatch):
-    service, identity, plan, executor = job
-    launch = executor.launch
-
-    def launch_then_timeout(*args, **kwargs):
-        launch(*args, **kwargs)
-        raise TimeoutError("Lost acknowledgement")
-
-    monkeypatch.setattr(executor, "launch", launch_then_timeout)
-    assert service.launch(identity, plan, "launch")["status"] == "queued"
-    assert service.launch(identity, plan, "launch")["status"] == "queued"
-    assert len(executor.calls) == 1
-
-
 @pytest.mark.parametrize("corruption", ["json", "shape", "symlink", "nonfinite", "overflow"])
 def test_optional_progress_cannot_block_status_or_cancellation(job, corruption):
-    service, identity, plan, executor = job
+    service, identity, plan = job
     service.launch(identity, plan, "launch")
     folder = service.folder(identity)
     progress = folder / "progress.json"
@@ -268,13 +282,12 @@ def test_optional_progress_cannot_block_status_or_cancellation(job, corruption):
     state = service.status(identity)
     assert state["status"] == "queued"
     assert state["progress"] is None and state["progressWarning"]
-    assert service.cancel(identity, "cancel")["cancellationRequested"]
-    executor.sessions.clear()
-    assert service.status(identity)["status"] == "cancelled"
+    cancelled = service.cancel(identity, "cancel")
+    assert cancelled["cancellationRequested"] and cancelled["status"] == "cancelled"
 
 
 def test_corrupt_authoritative_state_remains_a_structured_error(job):
-    service, identity, plan, _executor = job
+    service, identity, plan = job
     service.launch(identity, plan, "launch")
     (service.folder(identity) / "state.json").write_text("{")
     with pytest.raises(StorageError) as error:
@@ -282,8 +295,47 @@ def test_corrupt_authoritative_state_remains_a_structured_error(job):
     assert error.value.code == "TRAINING_STATE_INVALID"
 
 
-def test_lost_acknowledgement_preserves_fast_worker_completion(job, monkeypatch):
-    service, identity, plan, executor = job
+# -- Records launched before the Task Center, on their tmux executor ---------------------------
+
+
+@pytest.mark.legacy_tmux
+def test_orphan_compute_loader_blocks_resume_until_cancelled(legacy_job, isolated_worker_tree):
+    from histopilot.workers.training_process import confirmed_process_alive
+
+    service, identity, plan, executor = legacy_job
+    state = service.launch(identity, plan, "launch")
+    leader, process, child = isolated_worker_tree()
+    leader.kill()
+    leader.wait(timeout=5)
+    state.update(status="failed", process=process, processGroupId=process["pid"])
+    write_json(service.folder(identity) / "state.json", state)
+    executor.sessions.clear()
+    assert service.status(identity)["status"] == "running"
+    with pytest.raises(StorageError, match="active"):
+        service.launch(identity, plan, "resume-orphan", resume=True)
+    assert service.cancel(identity, "cancel")["status"] == "failed"
+    assert not confirmed_process_alive(child)
+    assert len(executor.calls) == 1
+
+
+@pytest.mark.legacy_tmux
+def test_lost_launch_acknowledgement_preserves_running_session(legacy_job, monkeypatch):
+    service, identity, plan, executor = legacy_job
+    launch = executor.launch
+
+    def launch_then_timeout(*args, **kwargs):
+        launch(*args, **kwargs)
+        raise TimeoutError("Lost acknowledgement")
+
+    monkeypatch.setattr(executor, "launch", launch_then_timeout)
+    assert service.launch(identity, plan, "launch")["status"] == "queued"
+    assert service.launch(identity, plan, "launch")["status"] == "queued"
+    assert len(executor.calls) == 1
+
+
+@pytest.mark.legacy_tmux
+def test_lost_acknowledgement_preserves_fast_worker_completion(legacy_job, monkeypatch):
+    service, identity, plan, executor = legacy_job
 
     def finish_then_timeout(*_args, **_kwargs):
         folder = service.folder(identity)
@@ -303,8 +355,9 @@ def test_lost_acknowledgement_preserves_fast_worker_completion(job, monkeypatch)
     assert service.status(identity)["status"] == "completed"
 
 
-def test_worker_completion_during_session_probe_is_not_overwritten(job, monkeypatch):
-    service, identity, plan, executor = job
+@pytest.mark.legacy_tmux
+def test_worker_completion_during_session_probe_is_not_overwritten(legacy_job, monkeypatch):
+    service, identity, plan, executor = legacy_job
     pending_probe = False
 
     def launch_then_timeout(*_args, **_kwargs):

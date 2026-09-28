@@ -41,3 +41,13 @@ def _task_center_state(tmp_path, monkeypatch):
     _reset_default_client()
     yield
     _reset_default_client()
+
+
+@pytest.fixture
+def task_center(_task_center_state):
+    """This test's private Task Center; see ``support/task_center.py``."""
+    from support.task_center import Center
+
+    center = Center()
+    yield center
+    center.cleanup()
