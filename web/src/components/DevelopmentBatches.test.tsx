@@ -157,6 +157,11 @@ describe('development execution controls', () => {
     expect(html).toContain('Optimization &amp; stopping');
     expect(html).toContain('Model architecture');
     expect(html).toContain('Precision &amp; memory');
+    // The collapsed summary uses the same names as the choices, never the raw setting.
+    expect(html).toMatch(/Precision &amp; memory<\/span> <small>BF16 mixed · 1 batch per update<\/small>/);
+    expect(html).not.toContain('<small>bf16-mixed');
+    expect(renderToStaticMarkup(<RecipeFields value={{ ...defaultRecipe(), precision: '16-mixed' }} gridMode onChange={() => {}} />)).toContain('<small>FP16 mixed · ');
+    expect(renderToStaticMarkup(<RecipeFields value={defaultRecipe()} gridMode onChange={() => {}} />)).toContain('<small>FP32 · ');
     expect(html).toContain('Warmup epochs');
     expect(html).toContain('Minimum training epochs');
     expect(html).toContain('Final LR fraction');

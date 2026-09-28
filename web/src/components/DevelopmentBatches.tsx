@@ -130,7 +130,7 @@ export function RecipeFields({ value, onChange, gridMode = false, classes, clini
     <SamplingFields value={value} onChange={onChange} />
     {value.inputMode !== 'clinical' ? <EvaluationBagFields value={value} onChange={onChange} /> : null}
     <PatientAnalysisFields value={value} onChange={onChange} />
-    <details className="batch-settings-details setup-details"><summary><span>Precision &amp; memory</span>{' '}<small>{resolved.precision === '32-true' ? 'FP32' : resolved.precision} · {resolved.accumulateGradBatches} batch{resolved.accumulateGradBatches === 1 ? '' : 'es'} per update</small></summary>
+    <details className="batch-settings-details setup-details"><summary><span>Precision &amp; memory</span>{' '}<small>{precisionLabel(resolved.precision)} · {resolved.accumulateGradBatches} batch{resolved.accumulateGradBatches === 1 ? '' : 'es'} per update</small></summary>
       <div className="development-fields">
         <label className="label">Precision<select className="field" value={resolved.precision} onChange={(e) => onChange({ ...value, precision: e.target.value as TrainingRecipe['precision'] })}><option value="32-true">FP32 (standard)</option><option value="16-mixed">FP16 mixed (CUDA)</option><option value="bf16-mixed">BF16 mixed (supported device)</option></select><small>Mixed precision can reduce GPU memory use. Device support is checked before training.</small></label>
         <NumericField label="Accumulate batches" value={resolved.accumulateGradBatches!} min={1} max={4096} onChange={(accumulateGradBatches) => onChange({ ...value, accumulateGradBatches })} />
@@ -220,7 +220,7 @@ export function BatchPlanSettings({ spec, fallbackPredictorPolicy }: { spec: Dev
           <div><dt>Early stopping</dt><dd>{recipe.earlyStopping ? `Patience ${recipe.patience} · Minimum improvement ${resolved.earlyStoppingMinDelta}` : 'Disabled'} · Minimum epochs {resolved.minEpochs}</dd></div>
           <div><dt>Model architecture</dt><dd>{recipeArchitectureSummary(recipe)}</dd></div>
           <div><dt>Regularization</dt><dd>{recipe.inputMode !== 'clinical' ? <>{recipe.model !== 'slide_linear' ? <>Dropout {resolved.dropout} · </> : null}Input dropout {resolved.inputDropout} · </> : null}Gradient clipping {resolved.gradientClipNorm}</dd></div>
-          <div><dt>Precision &amp; memory</dt><dd>{resolved.precision === '32-true' ? 'FP32' : resolved.precision === '16-mixed' ? 'FP16 mixed' : 'BF16 mixed'} · Accumulate {resolved.accumulateGradBatches} batch{resolved.accumulateGradBatches === 1 ? '' : 'es'}{usesPatchFeatures(recipe.model, recipe.inputMode) ? ` · Gradient checkpointing ${resolved.gradientCheckpointing ? 'on' : 'off'}` : ''}</dd></div>
+          <div><dt>Precision &amp; memory</dt><dd>{precisionLabel(resolved.precision)} · Accumulate {resolved.accumulateGradBatches} batch{resolved.accumulateGradBatches === 1 ? '' : 'es'}{usesPatchFeatures(recipe.model, recipe.inputMode) ? ` · Gradient checkpointing ${resolved.gradientCheckpointing ? 'on' : 'off'}` : ''}</dd></div>
           <ExperimentalRecipeSummary recipe={recipe} />
           <div><dt>Patient analysis</dt><dd>{recipe.analysis ? `95% intervals · ${recipe.analysis.bootstrapResamples} patient resamples · Bootstrap seed ${recipe.analysis.bootstrapSeed} · One-slide seed ${recipe.analysis.oneSlideSeed}` : 'Historical recipe without patient analysis'}</dd></div>
           <div><dt>Frozen binary threshold</dt><dd>{recipe.decisionThreshold ?? 'Not specified'}</dd></div>
@@ -258,6 +258,10 @@ export function batchSpecification(values: BatchEditorValues): DevelopmentBatchS
     notes: values.notes, predictorPolicy: values.predictorPolicy, selectionMetric: values.selectionMetric,
     candidateSelection: comparison ? 'all' : values.candidateSelection, ...(comparison ? { comparison } : {}) };
 }
+
+/** "FP32", "FP16 mixed" or "BF16 mixed" for a recipe's training precision. */
+export const precisionLabel = (precision?: TrainingRecipe['precision']) =>
+  precision === '16-mixed' ? 'FP16 mixed' : precision === 'bf16-mixed' ? 'BF16 mixed' : 'FP32';
 
 /** The service accepts at most 100 distinct training seeds per batch (`DevelopmentBatchSpec`). */
 export const TRAINING_SEED_LIMITS = { label: 'Training seeds', min: 0, max: 2 ** 32 - 1, maxItems: 100 };
