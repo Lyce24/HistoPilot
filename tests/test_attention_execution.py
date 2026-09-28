@@ -201,6 +201,7 @@ def test_immutable_contract_detects_coords_even_when_stamp_is_replaced(plan, tmp
         interpret(changed, tmp_path / "wrong-rows")
 
 
+@pytest.mark.slow
 def test_pinned_worker_executes_attention_without_server_or_tmux(plan, tmp_path):
     support_jobs = runpy.run_path(str(Path(__file__).with_name("test_compute_jobs.py")))
     service, initial_id, _, executor = support_jobs["job"].__wrapped__(tmp_path)
@@ -473,6 +474,7 @@ def test_packed_attention_detects_mutation_before_reusing_cached_predictions(tmp
         interpret(plan, tmp_path / "packed-output")
 
 
+@pytest.mark.slow
 def test_pinned_worker_executes_packed_multi_slide_attention(tmp_path):
     plan = packed_attention_plans(tmp_path)["packed-ensemble"]
     job_support = runpy.run_path(str(Path(__file__).with_name("test_compute_jobs.py")))

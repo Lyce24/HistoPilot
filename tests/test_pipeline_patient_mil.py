@@ -39,12 +39,11 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(t
     ]
     eligible_ids = {row["slideId"] for row in rows}
     # Publish/verify features before any dataset exists. One source slide has no
-    # dataset row; two dataset rows are ineligible for different explicit reasons.
+    # dataset row, and one dataset row is outside the eligible cohorts. Feature
+    # coverage is checked by the experiment setup, not by the split.
     features, _, _ = bundle(store, tmp_path, {"id": None},
                             sorted(eligible_ids | {"source-only", "rih-slide"}))
     rows.extend([
-        {"slideId": "no-features", "patientId": "p-uncovered",
-         "attributes": {"label": "unmapped", "cohort": "TCGA"}},
         {"slideId": "rih-slide", "patientId": "p-rih",
          "attributes": {"label": None, "cohort": "RIH"}},
     ])
@@ -61,7 +60,6 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(t
     assert preview["canFreeze"], preview["findings"]
     assert preview["summary"]["includedPatients"] == 30
     assert preview["summary"]["includedSlides"] == 60
-    assert preview["summary"]["featureExclusions"] == 1
     protocol = protocols.freeze(draft["id"], 1, preview["previewHash"], "patient-protocol")
     assessed = Counter()
     for fold in range(5):

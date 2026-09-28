@@ -49,7 +49,12 @@ training = [
 opensdpc = { git = "https://github.com/WonderLandxD/opensdpc", rev = "a07579eedde1dffddf8fa712ef236b97ca8cfc55" }
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1"]
+dev = [
+    "pytest>=8,<10",
+    "httpx>=0.28,<1",
+    "ruff>=0.11,<1",
+    "pytest-xdist>=3.6,<4",
+]
 
 [tool.setuptools.packages.find]
 include = ["histopilot*"]
@@ -60,6 +65,10 @@ histopilot = ["py.typed", "resources/*.json", "static/**/*", "static/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "--strict-markers"
+markers = [
+    "slow: trains real models or drives the real runner (5 s or more); deselect with -m 'not slow'",
+]
 
 [tool.ruff]
 target-version = "py311"

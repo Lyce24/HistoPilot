@@ -1000,6 +1000,7 @@ def saved_status(jobs, identity):
     return read_json(jobs.folder(identity) / "state.json")["status"]
 
 
+@pytest.mark.slow
 def test_real_managed_refit_runs_through_the_runner_without_worker_leases(refit, center):
     refits, jobs, record, launch, private = refit
     identity = record["id"]
@@ -1057,6 +1058,7 @@ def test_real_managed_refit_cancelled_while_queued_or_running_is_cancelled(refit
     assert jobs.status(identity)["status"] == "cancelled"
 
 
+@pytest.mark.slow
 def test_real_managed_refit_is_auto_resumed_after_a_lost_runner(refit, center):
     _refits, jobs, record, launch, _private = refit
     identity = record["id"]

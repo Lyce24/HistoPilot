@@ -149,9 +149,14 @@ For saved training runs, resource charts read bounded recorded history. New CPU 
 From the repository root:
 
 ```bash
-uv run pytest
+uv run pytest -n auto --dist worksteal -m "not slow"   # about 2 minutes
+uv run pytest -n auto --dist worksteal                 # full suite, about 8 minutes
 uv run ruff check .
 ```
+
+Tests marked `slow` train real models or drive the real Task Center runner. Tests that
+need Torch or Pillow skip unless the environment has the `training` and `imaging` extras
+(`uv sync --extra training --extra imaging`).
 
 From `web/`:
 

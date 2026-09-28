@@ -258,6 +258,7 @@ def test_curriculum_grows_training_cap_and_eval_cap_is_epoch_independent(experim
     assert next(iter(module.test_dataloader()))["features"].shape == (1, 7, 4)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("workers", [0, 2])
 def test_augmentation_replays_across_workers_and_epoch_resume(experimental_plan, workers):
     experimental_plan["recipe"].update(

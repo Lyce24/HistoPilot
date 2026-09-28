@@ -39,6 +39,7 @@ support = runpy.run_path(str(Path(__file__).with_name("test_evaluations.py")))
 refit_support = runpy.run_path(str(Path(__file__).with_name("test_refit_predictors.py")))
 
 
+@pytest.mark.slow
 def test_matched_clinical_models_keep_frozen_covariates_through_publication(tmp_path, monkeypatch):
     folder = tmp_path / "project"
     folder.mkdir()

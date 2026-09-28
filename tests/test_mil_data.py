@@ -429,6 +429,7 @@ def test_singleton_whole_bag_collation_reuses_feature_storage(plan):
     torch.testing.assert_close(batch["features"][0], item["features"])
 
 
+@pytest.mark.slow
 def test_worker_pools_have_bounded_prefetch_and_are_released(plan):
     plan["resources"]["dataLoaderWorkers"] = 2
     module = MILDataModule(plan)

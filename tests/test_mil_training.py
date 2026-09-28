@@ -294,6 +294,7 @@ def test_legacy_resume_last_checkpoint_continues_optimizer_epoch_and_history(tmp
     assert not resumed["assessmentOnlyResume"]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("workers", [0, 1, 2])
 def test_legacy_epoch_checkpoint_resume_reproduces_uninterrupted_training_with_dropout(
     tmp_path, workers
@@ -679,6 +680,7 @@ def test_cpu_checkpoint_rng_does_not_initialize_or_restore_cuda_contexts(tmp_pat
     assert module._resume_rng_state is None
 
 
+@pytest.mark.slow
 def test_interrupted_fit_shuts_down_both_cached_worker_pools(tmp_path, monkeypatch):
     from histopilot.datasets.datamodule import MILDataModule
 

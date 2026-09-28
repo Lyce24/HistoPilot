@@ -95,6 +95,7 @@ def test_fixed_budget_keeps_actual_best_and_selected_final_epochs(tmp_path, monk
     assert result["bestCheckpointPath"] == result["lastCheckpointPath"]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("workers", [0, 1])
 def test_interrupted_nnmil_replays_patch_views_optimizer_and_window_predictions(
     tmp_path, monkeypatch, workers

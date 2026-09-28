@@ -90,6 +90,7 @@ def test_refit_resume_replays_incomplete_epoch_with_exact_optimizer_and_rng(
         torch.testing.assert_close(tensor, resumed_state["state_dict"][key], rtol=0, atol=0)
 
 
+@pytest.mark.slow
 def test_pinned_refit_worker_runs_created_plan_and_publishes_verified_predictor(tmp_path):
     import os
     import subprocess

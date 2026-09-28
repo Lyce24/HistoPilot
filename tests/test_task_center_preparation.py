@@ -843,6 +843,7 @@ def test_pack_and_validate_run_one_at_a_time_through_the_runner(packing, center)
     assert [item["outputPath"] for item in listed["artifacts"]] == [pack["outputPath"]]
 
 
+@pytest.mark.slow
 def test_busy_output_requeues_instead_of_failing(packing, center):
     service, feature = packing
     job = submit_pack(service, FeaturePackSpec(featureSetId=feature, action="pack"))
@@ -1108,6 +1109,7 @@ def _busy_packing_record(store):
     return folder
 
 
+@pytest.mark.slow
 def test_export_is_an_archive_task_that_waits_for_an_idle_project(archives, center):
     from histopilot.schemas.operations import PortabilityRequest
 

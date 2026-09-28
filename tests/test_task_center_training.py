@@ -452,6 +452,7 @@ def test_failed_enqueue_is_recorded_and_the_same_operation_resumes(managed):
 # -- runner end to end ---------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_managed_batch_runs_every_fold_and_collects_pinned_results(managed):
     context = managed
     context.service.launch(context.identity, "launch")
@@ -475,6 +476,7 @@ def test_managed_batch_runs_every_fold_and_collects_pinned_results(managed):
     assert done.value.code == "TRAINING_NOT_RESUMABLE"
 
 
+@pytest.mark.slow
 def test_cancel_stops_running_folds_cancels_pending_ones_and_resume_completes(managed):
     context = managed
     context.store.update_settings({"cpuTaskSlots": 1})
@@ -513,6 +515,7 @@ def test_cancel_stops_running_folds_cancels_pending_ones_and_resume_completes(ma
     assert {run["attempt"] for run in state["runs"] if run["id"] in resumed_ids} == {2}
 
 
+@pytest.mark.slow
 def test_single_run_cancels_finish_the_batch_cancelled_and_resume_reruns_them(managed):
     context = managed
     context.store.update_settings({"cpuTaskSlots": 1})
@@ -579,6 +582,7 @@ def lose(task):
     os.killpg(task["process"]["pid"], signal.SIGKILL)
 
 
+@pytest.mark.slow
 def test_lost_runner_interrupts_and_auto_resumes_the_running_fold(managed):
     context = managed
     context.store.update_settings({"cpuTaskSlots": 1})
@@ -614,6 +618,7 @@ def test_lost_runner_interrupts_and_auto_resumes_the_running_fold(managed):
     assert_completed_evidence(context)
 
 
+@pytest.mark.slow
 def test_a_fold_lost_in_a_restart_resumes_once_its_runtime_answers(managed, monkeypatch):
     from histopilot.taskcenter.adapters import mil
 
@@ -652,6 +657,7 @@ def test_a_fold_lost_in_a_restart_resumes_once_its_runtime_answers(managed, monk
     assert assert_completed_evidence(context)
 
 
+@pytest.mark.slow
 def test_stop_and_hold_requeues_running_folds_until_release(managed):
     context = managed
     context.service.launch(context.identity, "launch")

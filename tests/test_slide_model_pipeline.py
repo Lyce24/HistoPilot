@@ -86,6 +86,7 @@ def slide_bundle(store, filesystem, root, dataset, rows, name):
     return bundles.freeze(request, preview["previewHash"], name + "-bundle")
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("architecture", ["slide_linear", "slide_mlp"])
 def test_slide_probes_complete_image_clinical_and_combined_studies(
     tmp_path, monkeypatch, architecture

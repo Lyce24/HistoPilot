@@ -232,8 +232,19 @@ def test_service_ranks_members_globally_and_crops_exact_original_edge_pixels(stu
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-def test_fractional_frozen_footprint_is_rendered_exactly_and_clipped(study, monkeypatch, legacy):
+def test_fractional_frozen_footprint_is_rendered_exactly_and_clipped(study, legacy):
     service, identity, _, _ = complete(study, legacy=legacy, footprint=(100.5, 83.25))
+    sizes = [
+        Image.open(io.BytesIO(service.patch_image(identity, "independent", index))).size
+        for index in (1, 2)
+    ]
+    assert sizes == [(100, 83), (10, 10)]
+
+
+def test_rendering_resizes_the_exact_fractional_field_of_view(monkeypatch):
+    """The reader subprocess renders, so check the box on the renderer it runs."""
+    from histopilot.viewer.slide_images import _render_open_slide
+
     original = Image.Image.resize
     boxes = []
 
@@ -242,8 +253,9 @@ def test_fractional_frozen_footprint_is_rendered_exactly_and_clipped(study, monk
         return original(self, size, resample=resample, box=box, **kwargs)
 
     monkeypatch.setattr(Image.Image, "resize", resize)
-    service.patch_image(identity, "independent", 1)
-    service.patch_image(identity, "independent", 2)
+    slide = Image.new("RGB", (300, 200))
+    _render_open_slide(slide, "pillow", max_size=1024, region=(0, 0, 100.5, 83.25))
+    _render_open_slide(slide, "pillow", max_size=1024, region=(290, 190, 10, 10))
     assert boxes == [((100, 83), (0, 0, 100.5, 83.25)), ((10, 10), (0, 0, 10, 10))]
 
 

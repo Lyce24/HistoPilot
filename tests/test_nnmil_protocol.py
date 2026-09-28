@@ -156,6 +156,7 @@ def test_missing_fitting_class_fails_without_using_validation(nnmil_data_plan):
         MILDataModule(nnmil_data_plan).setup("fit")
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("mode", ["patient_weighted", "class_balanced", "auc_stratified"])
 def test_epoch_replay_is_independent_of_data_workers(nnmil_data_plan, mode):
     nnmil_data_plan["recipe"].update(
