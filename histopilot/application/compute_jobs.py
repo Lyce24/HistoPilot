@@ -14,7 +14,7 @@ import signal
 from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
-from histopilot.application.task_records import LEGACY_MESSAGE, refuse_legacy
+from histopilot.application.task_records import LEGACY_MESSAGE, TaskCenterAccess, refuse_legacy
 from histopilot.schemas.development import ResourcePolicy
 from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
@@ -112,23 +112,6 @@ def compute_priority(plan, owner) -> str:
     return "normal"
 
 
-def wake_runner(default_client: bool) -> None:
-    """The first submission starts the runner; failures only delay queued work.
-
-    Injected clients (tests) never start one. Neither does code running inside a task
-    (the coordinator's refits, bulk submission): it may be a pinned archive, and a runner
-    started from there would run that old code.
-    """
-    if not default_client or os.environ.get("HISTOPILOT_TASK_ID"):
-        return
-    try:
-        from histopilot.taskcenter.launcher import ensure_runner
-
-        ensure_runner()
-    except Exception:  # never fail an accepted submission because tmux misbehaved
-        pass
-
-
 def submit_task(client, owner, spec, *, reason, active_message, active_code):
     """Enqueue a task, or requeue its finished predecessor with a refreshed command.
 
@@ -200,20 +183,8 @@ def host_gpu_argv(argv) -> list[str]:
     return [shutil.which("env") or "/usr/bin/env", "-u", "CUDA_VISIBLE_DEVICES", *argv]
 
 
-class TaskCenterComputeExecutor:
+class TaskCenterComputeExecutor(TaskCenterAccess):
     """Queue compute workers in the machine-wide Task Center."""
-
-    def __init__(self, client=None):
-        self._client = client
-        self._default_client = client is None
-
-    @property
-    def client(self):
-        if self._client is None:
-            from histopilot.taskcenter.client import default_client
-
-            self._client = default_client()
-        return self._client
 
     def running(self, session):
         task = self.client.by_session(session)
@@ -264,7 +235,7 @@ class TaskCenterComputeExecutor:
             active_message="This compute task is already queued or running.",
             active_code="COMPUTE_ACTIVE",
         )
-        wake_runner(self._default_client)
+        self.wake()
 
 
 class ComputeJobService:

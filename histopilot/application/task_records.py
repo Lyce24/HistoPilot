@@ -1,4 +1,8 @@
-"""Task Center plumbing shared by extraction, feature-pack and archive records.
+"""Task Center plumbing shared by every service that queues or reads tasks.
+
+``TaskCenterAccess`` is the one way a service reaches the Task Center: it resolves the
+machine's client lazily, or uses a client a test injects, and wakes the runner after a
+submission.
 
 A record created as a Task Center task stores ``executionMode: "task-center"`` and its
 task ids; its execution state is read from the task store. Records created before the
@@ -8,6 +12,8 @@ launching, resuming, retrying or cancelling it.
 """
 
 from __future__ import annotations
+
+import os
 
 from histopilot.storage.project_lock import StorageError
 from histopilot.taskcenter import ids
@@ -60,9 +66,20 @@ class TaskCenterAccess:
         return self._client
 
     def wake(self) -> None:
-        from histopilot.application.compute_jobs import wake_runner
+        """The first submission starts the runner; failures only delay queued work.
 
-        wake_runner(self.default)
+        Injected clients (tests) never start one. Neither does code running inside a task
+        (the coordinator's refits, bulk submission): it may be a pinned archive, and a
+        runner started from there would run that old code.
+        """
+        if not self.default or os.environ.get("HISTOPILOT_TASK_ID"):
+            return
+        try:
+            from histopilot.taskcenter.launcher import ensure_runner
+
+            ensure_runner()
+        except Exception:  # never fail an accepted submission because tmux misbehaved
+            pass
 
     def views(self, task_ids: list[str | None]) -> list[dict | None]:
         """One view per id (None for a missing task), or ``{"unknown": True}`` views."""

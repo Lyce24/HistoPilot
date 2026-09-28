@@ -9,10 +9,10 @@ import hashlib
 import sys
 from pathlib import Path
 
-from histopilot.application.compute_jobs import host_gpu_argv, wake_runner
+from histopilot.application.compute_jobs import host_gpu_argv
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.predictors import finding, lifecycle_document, reference
-from histopilot.application.task_records import LEGACY_CODE
+from histopilot.application.task_records import LEGACY_CODE, TaskCenterAccess
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
 from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
@@ -36,16 +36,11 @@ class BulkEvaluationService:
         self.evaluations = evaluations or EvaluationRunService(store, filesystem)
         # Background submission is a Task Center task; otherwise members are submitted inline.
         self.background = background
-        self._task_center = task_center
-        self._default_task_center = task_center is None
+        self.tasks = TaskCenterAccess(task_center)
 
     @property
     def task_center(self):
-        if self._task_center is None:
-            from histopilot.taskcenter.client import default_client
-
-            self._task_center = default_client()
-        return self._task_center
+        return self.tasks.client
 
     def _submission_task_id(self, identity):
         return ids.bulk_submit_task_id(str(self.store.folder), identity)
@@ -261,7 +256,7 @@ class BulkEvaluationService:
         if existing is not None:
             if existing["state"] in TERMINAL:
                 client.store.requeue([task_id], reason="retry", include_succeeded=True)
-            wake_runner(self._default_task_center)
+            self.tasks.wake()
             return
         roots = [value for root in self.filesystem.roots for value in ("--data-root", str(root))]
         client.enqueue(
@@ -309,7 +304,7 @@ class BulkEvaluationService:
                 }
             ],
         )
-        wake_runner(self._default_task_center)
+        self.tasks.wake()
 
     def _submission_pending(self, identity):
         """Whether a Task Center task will still submit this batch's planned members."""

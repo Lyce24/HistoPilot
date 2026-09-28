@@ -19,6 +19,7 @@ from support.training import runtime
 
 from histopilot.application import compute_jobs as compute_module
 from histopilot.application.compute_jobs import ComputeJobService
+from histopilot.application.task_records import TaskCenterAccess
 from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
@@ -1188,7 +1189,7 @@ def bulk(tmp_path, monkeypatch, center):
     )
     service = BulkEvaluationService(evaluations.store, evaluations.filesystem, evaluations)
     service.background = True
-    service._task_center = center.client
+    service.tasks = TaskCenterAccess(center.client)
     return service, cohort
 
 
@@ -1281,10 +1282,10 @@ def test_background_submission_wakes_the_runner(bulk, center, monkeypatch):
     monkeypatch.setattr(launcher, "ensure_runner", lambda: calls.append(1) or {"started": True})
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     request = run_request(choice, service.preview(choice))
-    service._default_task_center = False
+    service.tasks.default = False
     service.run(request)
     assert calls == []  # an injected client never starts a runner
-    service._default_task_center = True
+    service.tasks.default = True
     service.run(request)  # a replay of a still-queued submission wakes it too
     assert calls == [1]
 

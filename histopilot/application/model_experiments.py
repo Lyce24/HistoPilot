@@ -17,6 +17,7 @@ from histopilot.application.experiment_policy import (
     submission_policies,
 )
 from histopilot.application.feature_bundles import FeatureBundleService
+from histopilot.application.task_records import TaskCenterAccess
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.schemas.model_experiments import ExperimentPredictorPolicy
@@ -377,11 +378,7 @@ class ModelExperimentService:
         from histopilot.taskcenter import ids
 
         try:
-            client = getattr(self.training, "task_center", None)
-            if client is None:
-                from histopilot.taskcenter.client import default_client
-
-                client = default_client()
+            client = getattr(self.training, "task_center", None) or TaskCenterAccess().client
             key = ids.owner_key("experiment", identity, str(self.store.folder))
             tasks = client.store.list(owner_key=key, limit=None)
             if not tasks:

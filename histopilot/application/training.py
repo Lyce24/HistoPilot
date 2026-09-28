@@ -11,7 +11,12 @@ from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.mil_inputs import MILInputService
 from histopilot.application.protocols import FilterEvaluator, ProtocolService
-from histopilot.application.task_records import LEGACY_CODE, LEGACY_MESSAGE, refuse_legacy
+from histopilot.application.task_records import (
+    LEGACY_CODE,
+    LEGACY_MESSAGE,
+    TaskCenterAccess,
+    refuse_legacy,
+)
 from histopilot.domain.features import representation_kind
 from histopilot.models import catalog
 from histopilot.schemas.development import DevelopmentBatchSpec
@@ -80,16 +85,11 @@ class TrainingService:
     def __init__(self, store, filesystem, *, runtime=None, task_center=None):
         self.store, self.filesystem = store, filesystem
         self.runtime = runtime or training_runtime
-        self._task_center = task_center
-        self._default_task_center = task_center is None
+        self.tasks = TaskCenterAccess(task_center)
 
     @property
     def task_center(self):
-        if self._task_center is None:
-            from histopilot.taskcenter.client import default_client
-
-            self._task_center = default_client()
-        return self._task_center
+        return self.tasks.client
 
     def _task_group(self, identity, state):
         """The batch's Task Center group, or ``{"error": ...}`` when the store is unreadable."""
@@ -709,17 +709,6 @@ class TrainingService:
                 "TRAINING_ACTIVE",
             )
 
-    def _wake_runner(self):
-        """The first submission starts the runner; failures only delay queued work."""
-        if not self._default_task_center:
-            return
-        try:
-            from histopilot.taskcenter.launcher import ensure_runner
-
-            ensure_runner()
-        except Exception:  # never fail an accepted launch because tmux misbehaved
-            pass
-
     @staticmethod
     def _operation(folder, operation_id, action):
         path = folder / "operations.json"
@@ -963,7 +952,7 @@ class TrainingService:
                 return self.execution(identity)
             operations[operation_id] = action
             write_json_atomic(path, operations)
-            self._wake_runner()
+            self.tasks.wake()
             return state
 
     def cancel(self, identity, operation_id):
@@ -1027,7 +1016,7 @@ class TrainingService:
                 if task_ids.fold_task_id(key_folder, run["id"]) not in running
             ]
         )
-        self._wake_runner()
+        self.tasks.wake()
 
     @staticmethod
     def _record_cancelled_before_start(folder, tasks) -> None:
@@ -1100,7 +1089,7 @@ class TrainingService:
             task for task, row in current.items() if row is None or row["state"] not in TASK_ACTIVE
         }
         self._record_cancelled_before_start(folder, idle)
-        self._wake_runner()
+        self.tasks.wake()
 
     @staticmethod
     def _stop_orphans(processes):

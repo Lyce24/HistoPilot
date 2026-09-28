@@ -20,7 +20,6 @@ from histopilot.application.compute_jobs import (
     submit_task,
     task_pending,
     task_view,
-    wake_runner,
 )
 from histopilot.application.experiment_policy import (
     has_predictor_intent,
@@ -31,7 +30,12 @@ from histopilot.application.experiment_policy import (
 from histopilot.application.predictor_builds import PredictorBuildService
 from histopilot.application.predictors import PredictorService
 from histopilot.application.refits import RefitService
-from histopilot.application.task_records import LEGACY_CODE, LEGACY_MESSAGE, refuse_legacy
+from histopilot.application.task_records import (
+    LEGACY_CODE,
+    LEGACY_MESSAGE,
+    TaskCenterAccess,
+    refuse_legacy,
+)
 from histopilot.schemas.model_experiments import ExperimentPredictorPolicy
 from histopilot.schemas.predictors import ApplyPredictorBuilds, LaunchRefit, PredictorBuildSelection
 from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
@@ -96,24 +100,12 @@ def source_items(experiment_id, batches, policy=None, *, policies=None):
     return items
 
 
-class TaskCenterExperimentExecutor:
+class TaskCenterExperimentExecutor(TaskCenterAccess):
     """Queue the coordinator as a Task Center service task behind its fold batches.
 
     It depends on every fold task of its batches succeeding and on each batch's final
     results collection finishing; batches launched before the Task Center add nothing.
     """
-
-    def __init__(self, client=None):
-        self._client = client
-        self._default_client = client is None
-
-    @property
-    def client(self):
-        if self._client is None:
-            from histopilot.taskcenter.client import default_client
-
-            self._client = default_client()
-        return self._client
 
     def running(self, session):
         task = self.client.by_session(session)
@@ -171,7 +163,7 @@ class TaskCenterExperimentExecutor:
             active_message="This experiment coordinator already exists.",
             active_code="EXPERIMENT_ACTIVE",
         )
-        wake_runner(self._default_client)
+        self.wake()
 
 
 class ExperimentPredictorService:
