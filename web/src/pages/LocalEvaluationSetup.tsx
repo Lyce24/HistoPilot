@@ -25,7 +25,7 @@ import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import { useHashParameters } from '../lib/hashRoute';
 import { cohortKind, cohortKindLabel, isInferencePurpose } from '../lib/inference';
 
-const newTestTarget = (): ProtocolSpec['target'] => ({ field: '', task: '', unit: 'patient', classes: [], labels: {}, missing: 'block', unmapped: 'block' });
+const newTestTarget = (): ProtocolSpec['target'] => ({ field: '', task: '', unit: 'slide', classes: [], labels: {}, missing: 'block', unmapped: 'block' });
 
 export const newEvaluationSpec = (): EvaluationSpec => ({
   protocolId: '', developmentFeatureBundleId: '', datasetId: '', featureBundleId: '',

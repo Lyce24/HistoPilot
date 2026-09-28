@@ -104,12 +104,12 @@ export default function PredictionTargetEditor({
               updateTarget({ unit: event.target.value as 'patient' | 'slide' })
             }
           >
+            <option value="slide">Slide / case — score each slide</option>
             <option value="patient">
-              Patient — consistent label across their slides
+              Patient — one prediction from each patient&rsquo;s slides
             </option>
-            <option value="slide">Slide / case — keep known patients together</option>
           </select>
-          <small>Training uses individual slides. The label unit determines label consistency and primary scoring; known patients stay together in every split, including validation. Patient targets retain slide-level results as a secondary analysis.</small>
+          <small>Match the label unit of the models you will evaluate; review blocks a mismatch. Patient labels must agree across a patient&rsquo;s slides, and patient scoring keeps slide-level results as a secondary analysis.</small>
         </label>}
         <label className="label">
           Class names, separated by |

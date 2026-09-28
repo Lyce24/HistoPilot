@@ -63,7 +63,7 @@ describe('pipeline editing and scoring contracts', () => {
     expect(renderToStaticMarkup(<OOFPredictionDownloads project="p" batchId="b" candidate={{ ...candidate, complete: false }} />)).toBe('');
   });
 
-  it('explains slide training and prevents patient targets from implying Slide ID fallback is sufficient', () => {
+  it('asks test labels to match the model unit and prevents patient targets from implying Slide ID fallback is sufficient', () => {
     const client = new QueryClient();
     try {
       const html = renderToStaticMarkup(<QueryClientProvider client={client}><PredictionTargetEditor
@@ -71,8 +71,8 @@ describe('pipeline editing and scoring contracts', () => {
         fieldContext={{ project: 'p', datasetId: '', dictionary: [] }} unlinkedSlideCount={2} fallbackSlideCount={3}
         labelValues={{ isPending: false, error: null }} rawValues={[]} dataLabel="eligible records"
         onChooseTarget={() => {}} onChange={() => {}} /></QueryClientProvider>);
-      expect(html).toContain('Training uses individual slides');
-      expect(html).toContain('including validation');
+      expect(html).toContain('Match the label unit of the models you will evaluate');
+      expect(html.indexOf('value="slide"')).toBeLessThan(html.indexOf('value="patient"'));
       expect(html).toContain('Patient-level analysis requires verified patient IDs');
       expect(html).toContain('3 slides use Slide ID fallback');
       expect(html).not.toContain('or explicitly confirm Slide ID');
