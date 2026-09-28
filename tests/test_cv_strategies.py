@@ -1,4 +1,4 @@
-"""Scientific partition guarantees for version 2 cross-validation strategies."""
+"""Scientific partition guarantees for development (version 4) cross-validation strategies."""
 
 import copy
 import json
@@ -27,8 +27,6 @@ def rows():
             "attributes": {
                 "label": str(patient % 2),
                 "site": f"site-{patient // 20}",
-                "partition": "test" if patient >= 48 else "train",
-                "explicit": "test" if patient >= 48 else "val" if patient >= 36 else "train",
             },
         }
         for patient in range(60)
@@ -38,13 +36,15 @@ def rows():
 
 def specification(mode="kfold", **split):
     config = {
-        "version": 2,
+        "version": 4,
         "mode": mode,
         "folds": 3,
         "seeds": [42],
         "validationFraction": 0.25,
         "testFraction": 0.2,
         "stratify": True,
+        # Every eligible patient is in the development cohort.
+        "pools": {"trainSelection": "remaining"},
     }
     if mode == "leave_one_domain_out":
         config.update(domainField="site", domainPolicy="all")
@@ -84,7 +84,7 @@ class Store:
                 "kind": "dataset",
                 "dictionary": [
                     {"key": key, "sourceColumn": key, "owner": "slide", "type": "text"}
-                    for key in ("label", "site", "partition", "explicit")
+                    for key in ("label", "site")
                 ],
             },
         }
@@ -187,12 +187,13 @@ def test_stratification_and_early_stopping_are_enabled_by_default():
     spec["split"].pop("validationFraction")
     validated = ProtocolSpec.model_validate(spec)
     assert validated.split.stratify is True
-    assert validated.split.validationFraction == 0.2
+    assert validated.split.validationFraction == 0.15
     store = Store()
     store.draft["payload"]["spec"] = spec
     result = successful(store)
     for plan in result["partitions"]:
-        assert plan["val"]["patients"] == 8
+        # 15% of each 20-patient development class rounds to three.
+        assert plan["val"]["patients"] == 6
         for role in ("train", "val", "test"):
             assert plan[role]["classes"]["negative"] == plan[role]["classes"]["positive"]
 
@@ -412,135 +413,6 @@ def test_held_out_fraction_plan_has_final_test_and_validation_from_remaining_tra
     assert len(patients(assignments, "train")) == 36
 
 
-def test_held_out_test_rule_reserves_whole_patients_and_carves_automatic_validation():
-    result = successful(
-        Store(
-            "held_out",
-            heldOutSource="rules",
-            rules={"test": [{"field": "Slide_ID", "op": "regex", "value": "^slide-5[0-9]-0$"}]},
-        )
-    )
-    assignments = next(iter(plans(result).values()))
-    assert patients(assignments, "test") == {f"patient-{index:02d}" for index in range(50, 60)}
-    assert len(patients(assignments)) == 60
-    assert abs(len(patients(assignments, "val")) - 12.5) <= 1
-    assert patients(assignments, "train") | patients(assignments, "val") == {
-        f"patient-{index:02d}" for index in range(50)
-    }
-
-
-def test_held_out_explicit_validation_is_kept_without_carving_a_second_validation_pool():
-    result = successful(
-        Store(
-            "held_out",
-            heldOutSource="rules",
-            rules={
-                role: [{"field": "explicit", "op": "eq", "value": role}] for role in ("test", "val")
-            },
-        )
-    )
-    assignments = next(iter(plans(result).values()))
-    assert len(patients(assignments, "test")) == 12
-    assert len(patients(assignments, "val")) == 12
-    assert len(patients(assignments, "train")) == 36
-    assert patients(assignments, "val") == {f"patient-{index:02d}" for index in range(36, 48)}
-
-
-def test_held_out_conflicting_patient_rules_block_the_plan():
-    store = Store(
-        "held_out",
-        heldOutSource="rules",
-        rules={
-            "test": [{"field": "Slide_ID", "op": "eq", "value": "slide-00-0"}],
-            "val": [{"field": "Slide_ID", "op": "eq", "value": "slide-00-1"}],
-        },
-    )
-    result = preview(store)
-    assert not result["canFreeze"]
-    assert any(finding["severity"] == "error" for finding in result["findings"])
-
-
-@pytest.mark.parametrize("field", ("partition", "explicit"))
-def test_predefined_test_is_preserved_with_optional_validation(field):
-    result = successful(
-        Store(
-            "held_out",
-            heldOutSource="imported",
-            imported={
-                "partitionField": field,
-                "partitionLabels": {"train": "train", "test": "test", "val": "val"},
-            },
-        )
-    )
-    assignments = next(iter(plans(result).values()))
-    assert patients(assignments, "test") == {f"patient-{index:02d}" for index in range(48, 60)}
-    assert len(patients(assignments, "val")) == 12
-    assert len(patients(assignments, "train")) == 36
-    assert_disjoint(result)
-
-
-@pytest.mark.parametrize("excluded_by", ["eligibility", "missing_target"])
-def test_excluding_predefined_validation_cannot_silently_generate_a_replacement(excluded_by):
-    store = Store(
-        "held_out",
-        heldOutSource="imported",
-        imported={
-            "partitionField": "explicit",
-            "partitionLabels": {"train": "train", "test": "test", "val": "val"},
-        },
-    )
-    spec = store.draft["payload"]["spec"]
-    if excluded_by == "eligibility":
-        spec["eligibility"] = [{"field": "explicit", "op": "ne", "value": "val"}]
-    else:
-        for row in store.rows:
-            if row["attributes"]["explicit"] == "val":
-                row["attributes"]["label"] = None
-        spec["target"]["missing"] = "exclude"
-    result = preview(store)
-    assert not result["canFreeze"]
-    assert "EMPTY_IMPORTED_VALIDATION" in {finding["code"] for finding in result["findings"]}
-    assert result["memberships"] == []
-
-    # Revising the mapping makes the change of validation policy explicit.
-    spec["split"]["imported"]["partitionLabels"]["val"] = "train"
-    revised = successful(store)
-    assert_disjoint(revised)
-    assert revised["partitions"][0]["val"]["groups"] > 0
-
-
-def test_predefined_split_cannot_put_one_patients_slides_in_different_roles():
-    store = Store(
-        "held_out",
-        heldOutSource="imported",
-        imported={
-            "partitionField": "partition",
-            "partitionLabels": {"train": "train", "test": "test"},
-        },
-    )
-    store.rows[0]["attributes"]["partition"] = "test"
-    result = preview(store)
-    assert not result["canFreeze"]
-    assert "IMPORTED_PATIENT_LEAKAGE" in {finding["code"] for finding in result["findings"]}
-
-
-@pytest.mark.parametrize("source", ("rules", "imported"))
-def test_held_out_cannot_silently_evaluate_on_early_stopping_validation(source):
-    extra = {"heldOutSource": source}
-    if source == "rules":
-        extra["rules"] = {"val": [{"field": "explicit", "op": "eq", "value": "val"}]}
-    else:
-        extra["imported"] = {
-            "partitionField": "partition",
-            "partitionLabels": {"train": "train", "test": "val"},
-        }
-    try:
-        result = preview(Store("held_out", **extra))
-    except ValidationError:
-        return
-    assert not result["canFreeze"]
-
-
 @pytest.mark.parametrize(
     "mode,invalid",
     [
@@ -612,6 +484,19 @@ def test_domain_bytes_are_bounded_before_allocation_in_both_plan_id_and_metadata
     assert "PROTOCOL_DOCUMENT_LIMIT" in {finding["code"] for finding in result["findings"]}
 
 
+def test_inconsistent_plan_roles_are_blocked_instead_of_frozen(monkeypatch):
+    # Defensive invariants: an early-stop draw outside its fitting pool would reuse outer
+    # assessment and inner tuning groups. Such a plan is reported and never frozen.
+    def everyone(_pool, _fraction, _seed, _context, _spec, groups, _finding, **_role):
+        return set(groups)
+
+    monkeypatch.setattr("histopilot.application.modern_splits._subset", everyone)
+    result = preview(Store("nested_kfold"))
+    assert not result["canFreeze"]
+    errors = {finding["code"] for finding in result["findings"] if finding["severity"] == "error"}
+    assert {"PATIENT_PARTITION_LEAKAGE", "INCOMPLETE_ASSIGNMENTS"} <= errors
+
+
 def test_acknowledged_slide_id_fallback_remains_visible_in_modern_cv():
     store = Store()
     for row in store.rows:
@@ -628,23 +513,6 @@ def test_acknowledged_slide_id_fallback_remains_visible_in_modern_cv():
             assert summary[role]["patients"] == 0
             assert summary[role]["groups"] == summary[role]["slides"]
             assert summary[role]["fallbackSlides"] == summary[role]["slides"]
-
-
-def test_legacy_kfold_serialization_and_validation_rotation_remain_stable():
-    store = Store()
-    store.draft["payload"]["spec"]["split"] = {"mode": "kfold", "folds": 3, "seeds": [42]}
-    result = successful(store)
-    assert set(result["spec"]["split"]) == {"mode", "folds", "seeds", "ratios", "rules", "imported"}
-    # Original six-field split serialization; feature-only metadata is no longer hashed.
-    assert (
-        result["previewHash"] == "b6c46f940105496eb1e9e5d18256a6a066deb5da6ab0f5709249e9b989aa4c2e"
-    )
-    assert len(result["partitions"]) == 3
-    for summary in result["partitions"]:
-        assert summary["train"]["patients"] == 40
-        assert summary["val"]["patients"] == 20
-        assert summary["test"]["patients"] == 0
-    assert all("planId" not in row for row in result["memberships"])
 
 
 def test_nested_frozen_protocol_preserves_every_plan_and_survives_reopening(tmp_path):
@@ -676,14 +544,3 @@ def test_nested_frozen_protocol_preserves_every_plan_and_survives_reopening(tmp_
         ProtocolService(reopened).freeze(draft["id"], 1, result["previewHash"], "freeze-cv")
         == frozen
     )
-
-
-@pytest.mark.parametrize("mode", MODES)
-def test_version_two_fractions_do_not_use_legacy_holdout_ratios(mode):
-    baseline = ProtocolService(Store(mode)).preview("draft-cv", 1)
-    result = ProtocolService(Store(mode, ratios={"train": 0.64, "val": 0.16, "test": 0.2})).preview(
-        "draft-cv", 1
-    )
-    assert result["canFreeze"], result["findings"]
-    assert result["memberships"] == baseline["memberships"]
-    assert result["partitions"] == baseline["partitions"]

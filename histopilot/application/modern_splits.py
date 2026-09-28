@@ -1,4 +1,4 @@
-"""Versioned patient-grouped evaluation plans, distinct from early stopping.
+"""Patient-grouped evaluation plans for development splits, distinct from early stopping.
 
 All random orders derive from the frozen algorithm, seed and plan context. Inner
 plans never contain an outer test group. No fitting or model choice occurs here.
@@ -9,6 +9,7 @@ import json
 import math
 from collections import Counter, defaultdict
 
+# Part of every group's ordering key. Version 4 plans reuse it, so it never changes.
 ALGORITHM_V2 = "histopilot-patient-evaluation-v2"
 ROLES = ("train", "val", "test", "tune")
 
@@ -129,39 +130,13 @@ def _domain_groups(spec, groups, evaluator, finding):
     if set(selected) - set(observed):
         finding(
             "UNKNOWN_HELD_OUT_DOMAIN",
-            "A selected held-out domain is absent from the training pool."
-            if spec.split.version == 3
-            else "A selected held-out domain is absent from the eligible cohort.",
+            "A selected held-out domain is absent from the eligible cohort.",
         )
     return domains, selected
 
 
-def _imported_groups(spec, groups, evaluator, finding):
-    imported = spec.split.imported
-    result = {}
-    for patient, rows in sorted(groups.items()):
-        values = {evaluator.field(row, imported.partitionField) for row in rows}
-        if any(value is None or value not in imported.partitionLabels for value in values):
-            finding(
-                "INVALID_IMPORTED_PARTITION",
-                "Every included slide needs an explicitly mapped partition.",
-            )
-            continue
-        roles = {imported.partitionLabels[value] for value in values}
-        # trainval is a development designation; val is kept only when explicit.
-        roles = {"train" if role == "trainval" else role for role in roles}
-        if len(roles) != 1:
-            finding(
-                "IMPORTED_PATIENT_LEAKAGE",
-                "An imported split puts slides from one group in different partitions.",
-            )
-        else:
-            result[patient] = next(iter(roles))
-    return result
-
-
 def modern_assignments(
-    spec, groups, fixed, evaluator, finding, max_memberships, max_bytes, *, fixed_validation=None
+    spec, groups, evaluator, finding, max_memberships, max_bytes, *, fixed_validation=None
 ):
     """Return bounded plan descriptors and assignments, then shared summary metadata."""
     split = spec.split
@@ -215,7 +190,6 @@ def modern_assignments(
                     "patientId": row.get("patientId") if spec.splitUnit == "slide" else patient,
                     "patientIdSource": row.get("patientIdSource", "source"),
                     "label": row["label"],
-                    **({"pool": "training"} if split.version == 3 else {}),
                 }
             )
         )
@@ -244,8 +218,9 @@ def modern_assignments(
         return []
     plans = []
 
-    def add(seed, fold, train_pool, test, context, *, tune=None, explicit_val=None, **metadata):
+    def add(seed, fold, train_pool, test, context, *, tune=None, **metadata):
         excluded_validation = set()
+        explicit_val = None
         if fixed_validation is not None:
             explicit_val = set(validation_groups)
             if "domain" in metadata:
@@ -375,50 +350,18 @@ def modern_assignments(
                     outerFold=outer_fold,
                 )
         else:
-            explicit_val = None
-            if split.heldOutSource == "fractions":
-                test = _subset(
-                    patients,
-                    split.testFraction,
-                    seed,
-                    ["held_out", "reported_test"],
-                    spec,
-                    groups,
-                    finding,
-                    role="reported test",
-                )
-                train_pool = patients - test
-            else:
-                assignment = (
-                    dict(fixed)
-                    if split.heldOutSource == "rules"
-                    else _imported_groups(spec, groups, evaluator, finding)
-                )
-                remaining = patients - set(assignment)
-                if split.heldOutSource == "rules" and not split.rules.train:
-                    assignment.update({patient: "train" for patient in remaining})
-                elif remaining:
-                    finding(
-                        "UNASSIGNED_RULE_GROUPS"
-                        if split.heldOutSource == "rules"
-                        else "INVALID_IMPORTED_PARTITION",
-                        "Some eligible groups have no partition. Assign them or leave training rules empty.",
-                    )
-                test = {patient for patient, role in assignment.items() if role == "test"}
-                train_pool = {patient for patient, role in assignment.items() if role == "train"}
-                val = {patient for patient, role in assignment.items() if role == "val"}
-                has_explicit_val = (
-                    bool(split.rules.val) if split.heldOutSource == "rules" else bool(val)
-                )
-                if has_explicit_val:
-                    explicit_val = val
-                    train_pool |= val
-                if not test:
-                    finding(
-                        "MISSING_HELD_OUT_TEST",
-                        "Held-out validation requires an explicit final test set.",
-                    )
-            add(seed, None, train_pool, test, "held_out", explicit_val=explicit_val)
+            # Development held-out plans draw their assessment set by fraction.
+            test = _subset(
+                patients,
+                split.testFraction,
+                seed,
+                ["held_out", "reported_test"],
+                spec,
+                groups,
+                finding,
+                role="reported test",
+            )
+            add(seed, None, patients - test, test, "held_out")
     return plans
 
 

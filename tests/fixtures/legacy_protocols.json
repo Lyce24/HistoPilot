@@ -1,0 +1,717 @@
+{
+ "dataset": {
+  "id": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+  "manifest": {
+   "dictionary": [
+    {"key": "label", "owner": "slide", "sourceColumn": "label", "type": "text"},
+    {"key": "partition", "owner": "slide", "sourceColumn": "partition", "type": "text"}
+   ],
+   "kind": "dataset"
+  },
+  "records": [
+   {"attributes": {"label": "0", "partition": "train"}, "patientId": "p00", "slideId": "s00-0", "slidePath": null},
+   {"attributes": {"label": "0", "partition": "train"}, "patientId": "p00", "slideId": "s00-1", "slidePath": null},
+   {"attributes": {"label": "1", "partition": "train"}, "patientId": "p01", "slideId": "s01-0", "slidePath": null},
+   {"attributes": {"label": "1", "partition": "train"}, "patientId": "p01", "slideId": "s01-1", "slidePath": null},
+   {"attributes": {"label": "0", "partition": "train"}, "patientId": "p02", "slideId": "s02-0", "slidePath": null},
+   {"attributes": {"label": "1", "partition": "train"}, "patientId": "p03", "slideId": "s03-0", "slidePath": null},
+   {"attributes": {"label": "0", "partition": "train"}, "patientId": "p04", "slideId": "s04-0", "slidePath": null},
+   {"attributes": {"label": "1", "partition": "train"}, "patientId": "p05", "slideId": "s05-0", "slidePath": null},
+   {"attributes": {"label": "0", "partition": "train"}, "patientId": "p06", "slideId": "s06-0", "slidePath": null},
+   {"attributes": {"label": "1", "partition": "train"}, "patientId": "p07", "slideId": "s07-0", "slidePath": null},
+   {"attributes": {"label": "0", "partition": "train"}, "patientId": "p08", "slideId": "s08-0", "slidePath": null},
+   {"attributes": {"label": "1", "partition": "train"}, "patientId": "p09", "slideId": "s09-0", "slidePath": null},
+   {"attributes": {"label": "0", "partition": "train"}, "patientId": "p10", "slideId": "s10-0", "slidePath": null},
+   {"attributes": {"label": "1", "partition": "train"}, "patientId": "p11", "slideId": "s11-0", "slidePath": null},
+   {"attributes": {"label": "0", "partition": "test"}, "patientId": "p12", "slideId": "s12-0", "slidePath": null},
+   {"attributes": {"label": "1", "partition": "test"}, "patientId": "p13", "slideId": "s13-0", "slidePath": null},
+   {"attributes": {"label": "0", "partition": "test"}, "patientId": "p14", "slideId": "s14-0", "slidePath": null},
+   {"attributes": {"label": "1", "partition": "test"}, "patientId": "p15", "slideId": "s15-0", "slidePath": null}
+  ]
+ },
+ "protocols": {
+  "v1": {
+   "draftSpec": {
+    "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+    "split": {
+     "folds": 2,
+     "mode": "kfold",
+     "rules": {"test": [{"field": "partition", "op": "eq", "value": "test"}]},
+     "seeds": [42]
+    },
+    "target": {
+     "classes": ["low", "high"],
+     "field": "label",
+     "labels": {"0": "low", "1": "high"},
+     "positiveClass": "high",
+     "task": "binary_classification",
+     "unit": "patient"
+    }
+   },
+   "manifest": {
+    "algorithm": "histopilot-patient-stratification-v1",
+    "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+    "executionEnabled": false,
+    "findings": [],
+    "kind": "protocol",
+    "memberships": [
+     {"fold": 0, "label": "low", "partition": "test", "patientId": "p12", "seed": 42, "slideId": "s12-0"},
+     {"fold": 0, "label": "high", "partition": "test", "patientId": "p13", "seed": 42, "slideId": "s13-0"},
+     {"fold": 0, "label": "low", "partition": "test", "patientId": "p14", "seed": 42, "slideId": "s14-0"},
+     {"fold": 0, "label": "high", "partition": "test", "patientId": "p15", "seed": 42, "slideId": "s15-0"},
+     {"fold": 0, "label": "low", "partition": "train", "patientId": "p00", "seed": 42, "slideId": "s00-0"},
+     {"fold": 0, "label": "low", "partition": "train", "patientId": "p00", "seed": 42, "slideId": "s00-1"},
+     {"fold": 0, "label": "high", "partition": "train", "patientId": "p05", "seed": 42, "slideId": "s05-0"},
+     {"fold": 0, "label": "low", "partition": "train", "patientId": "p06", "seed": 42, "slideId": "s06-0"},
+     {"fold": 0, "label": "high", "partition": "train", "patientId": "p07", "seed": 42, "slideId": "s07-0"},
+     {"fold": 0, "label": "low", "partition": "train", "patientId": "p10", "seed": 42, "slideId": "s10-0"},
+     {"fold": 0, "label": "high", "partition": "train", "patientId": "p11", "seed": 42, "slideId": "s11-0"},
+     {"fold": 0, "label": "high", "partition": "val", "patientId": "p01", "seed": 42, "slideId": "s01-0"},
+     {"fold": 0, "label": "high", "partition": "val", "patientId": "p01", "seed": 42, "slideId": "s01-1"},
+     {"fold": 0, "label": "low", "partition": "val", "patientId": "p02", "seed": 42, "slideId": "s02-0"},
+     {"fold": 0, "label": "high", "partition": "val", "patientId": "p03", "seed": 42, "slideId": "s03-0"},
+     {"fold": 0, "label": "low", "partition": "val", "patientId": "p04", "seed": 42, "slideId": "s04-0"},
+     {"fold": 0, "label": "low", "partition": "val", "patientId": "p08", "seed": 42, "slideId": "s08-0"},
+     {"fold": 0, "label": "high", "partition": "val", "patientId": "p09", "seed": 42, "slideId": "s09-0"},
+     {"fold": 1, "label": "low", "partition": "test", "patientId": "p12", "seed": 42, "slideId": "s12-0"},
+     {"fold": 1, "label": "high", "partition": "test", "patientId": "p13", "seed": 42, "slideId": "s13-0"},
+     {"fold": 1, "label": "low", "partition": "test", "patientId": "p14", "seed": 42, "slideId": "s14-0"},
+     {"fold": 1, "label": "high", "partition": "test", "patientId": "p15", "seed": 42, "slideId": "s15-0"},
+     {"fold": 1, "label": "high", "partition": "train", "patientId": "p01", "seed": 42, "slideId": "s01-0"},
+     {"fold": 1, "label": "high", "partition": "train", "patientId": "p01", "seed": 42, "slideId": "s01-1"},
+     {"fold": 1, "label": "low", "partition": "train", "patientId": "p02", "seed": 42, "slideId": "s02-0"},
+     {"fold": 1, "label": "high", "partition": "train", "patientId": "p03", "seed": 42, "slideId": "s03-0"},
+     {"fold": 1, "label": "low", "partition": "train", "patientId": "p04", "seed": 42, "slideId": "s04-0"},
+     {"fold": 1, "label": "low", "partition": "train", "patientId": "p08", "seed": 42, "slideId": "s08-0"},
+     {"fold": 1, "label": "high", "partition": "train", "patientId": "p09", "seed": 42, "slideId": "s09-0"},
+     {"fold": 1, "label": "low", "partition": "val", "patientId": "p00", "seed": 42, "slideId": "s00-0"},
+     {"fold": 1, "label": "low", "partition": "val", "patientId": "p00", "seed": 42, "slideId": "s00-1"},
+     {"fold": 1, "label": "high", "partition": "val", "patientId": "p05", "seed": 42, "slideId": "s05-0"},
+     {"fold": 1, "label": "low", "partition": "val", "patientId": "p06", "seed": 42, "slideId": "s06-0"},
+     {"fold": 1, "label": "high", "partition": "val", "patientId": "p07", "seed": 42, "slideId": "s07-0"},
+     {"fold": 1, "label": "low", "partition": "val", "patientId": "p10", "seed": 42, "slideId": "s10-0"},
+     {"fold": 1, "label": "high", "partition": "val", "patientId": "p11", "seed": 42, "slideId": "s11-0"}
+    ],
+    "partitions": [
+     {
+      "fold": 0,
+      "seed": 42,
+      "test": {
+       "classes": {"high": 2, "low": 2},
+       "fallbackSlides": 0,
+       "groups": 4,
+       "patients": 4,
+       "slides": 4
+      },
+      "train": {
+       "classes": {"high": 3, "low": 3},
+       "fallbackSlides": 0,
+       "groups": 6,
+       "patients": 6,
+       "slides": 7
+      },
+      "val": {
+       "classes": {"high": 3, "low": 3},
+       "fallbackSlides": 0,
+       "groups": 6,
+       "patients": 6,
+       "slides": 7
+      }
+     },
+     {
+      "fold": 1,
+      "seed": 42,
+      "test": {
+       "classes": {"high": 2, "low": 2},
+       "fallbackSlides": 0,
+       "groups": 4,
+       "patients": 4,
+       "slides": 4
+      },
+      "train": {
+       "classes": {"high": 3, "low": 3},
+       "fallbackSlides": 0,
+       "groups": 6,
+       "patients": 6,
+       "slides": 7
+      },
+      "val": {
+       "classes": {"high": 3, "low": 3},
+       "fallbackSlides": 0,
+       "groups": 6,
+       "patients": 6,
+       "slides": 7
+      }
+     }
+    ],
+    "previewHash": "2b79e47806194a63e38a17d6bd71f603659c68ba2fa41f3bec575a54a3f5d75f",
+    "spec": {
+     "constraints": {"minPatientsPerClass": 1, "minPatientsPerPartition": 1},
+     "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+     "eligibility": [],
+     "predictors": [],
+     "split": {
+      "folds": 2,
+      "imported": null,
+      "mode": "kfold",
+      "ratios": {"test": 0.0, "train": 0.8, "val": 0.2},
+      "rules": {"test": [{"field": "partition", "op": "eq", "value": "test"}], "train": [], "val": []},
+      "seeds": [42]
+     },
+     "target": {
+      "classes": ["low", "high"],
+      "field": "label",
+      "labels": {"0": "low", "1": "high"},
+      "missing": "block",
+      "positiveClass": "high",
+      "task": "binary_classification",
+      "unit": "patient",
+      "unmapped": "block"
+     }
+    },
+    "summary": {
+     "algorithm": "histopilot-patient-stratification-v1",
+     "classCounts": {"high": 9, "low": 9},
+     "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+     "eligibleSlides": 18,
+     "excludedSlides": 0,
+     "fallbackSlideCount": 0,
+     "fixedPatients": {"test": 4, "train": 0, "val": 0},
+     "grouping": "patient",
+     "includedGroups": 16,
+     "includedPatients": 16,
+     "includedSlides": 18,
+     "labelExclusions": {},
+     "patientClassCounts": {"high": 8, "low": 8},
+     "targetUnit": "patient",
+     "totalSlides": 18,
+     "unlinkedSlideCount": 0
+    }
+   }
+  },
+  "v2": {
+   "draftSpec": {
+    "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+    "split": {"folds": 2, "mode": "kfold", "seeds": [42], "version": 2},
+    "target": {
+     "classes": ["low", "high"],
+     "field": "label",
+     "labels": {"0": "low", "1": "high"},
+     "positiveClass": "high",
+     "task": "binary_classification",
+     "unit": "patient"
+    }
+   },
+   "manifest": {
+    "algorithm": "histopilot-patient-evaluation-v2",
+    "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+    "executionEnabled": false,
+    "findings": [],
+    "kind": "protocol",
+    "memberships": [
+     {"fold": 0, "label": "low", "partition": "test", "patientId": "p02", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s02-0"},
+     {"fold": 0, "label": "high", "partition": "test", "patientId": "p03", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s03-0"},
+     {"fold": 0, "label": "low", "partition": "test", "patientId": "p04", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s04-0"},
+     {"fold": 0, "label": "low", "partition": "test", "patientId": "p08", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s08-0"},
+     {"fold": 0, "label": "high", "partition": "test", "patientId": "p09", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s09-0"},
+     {"fold": 0, "label": "high", "partition": "test", "patientId": "p13", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s13-0"},
+     {"fold": 0, "label": "low", "partition": "test", "patientId": "p14", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s14-0"},
+     {"fold": 0, "label": "high", "partition": "test", "patientId": "p15", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s15-0"},
+     {"fold": 0, "label": "low", "partition": "train", "patientId": "p00", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s00-0"},
+     {"fold": 0, "label": "low", "partition": "train", "patientId": "p00", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s00-1"},
+     {"fold": 0, "label": "high", "partition": "train", "patientId": "p01", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s01-0"},
+     {"fold": 0, "label": "high", "partition": "train", "patientId": "p01", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s01-1"},
+     {"fold": 0, "label": "high", "partition": "train", "patientId": "p05", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s05-0"},
+     {"fold": 0, "label": "low", "partition": "train", "patientId": "p10", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s10-0"},
+     {"fold": 0, "label": "high", "partition": "train", "patientId": "p11", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s11-0"},
+     {"fold": 0, "label": "low", "partition": "train", "patientId": "p12", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s12-0"},
+     {"fold": 0, "label": "low", "partition": "val", "patientId": "p06", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s06-0"},
+     {"fold": 0, "label": "high", "partition": "val", "patientId": "p07", "phase": "evaluation", "planId": "seed:42/fold:0", "seed": 42, "slideId": "s07-0"},
+     {"fold": 1, "label": "low", "partition": "test", "patientId": "p00", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s00-0"},
+     {"fold": 1, "label": "low", "partition": "test", "patientId": "p00", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s00-1"},
+     {"fold": 1, "label": "high", "partition": "test", "patientId": "p01", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s01-0"},
+     {"fold": 1, "label": "high", "partition": "test", "patientId": "p01", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s01-1"},
+     {"fold": 1, "label": "high", "partition": "test", "patientId": "p05", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s05-0"},
+     {"fold": 1, "label": "low", "partition": "test", "patientId": "p06", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s06-0"},
+     {"fold": 1, "label": "high", "partition": "test", "patientId": "p07", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s07-0"},
+     {"fold": 1, "label": "low", "partition": "test", "patientId": "p10", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s10-0"},
+     {"fold": 1, "label": "high", "partition": "test", "patientId": "p11", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s11-0"},
+     {"fold": 1, "label": "low", "partition": "test", "patientId": "p12", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s12-0"},
+     {"fold": 1, "label": "low", "partition": "train", "patientId": "p02", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s02-0"},
+     {"fold": 1, "label": "low", "partition": "train", "patientId": "p04", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s04-0"},
+     {"fold": 1, "label": "low", "partition": "train", "patientId": "p08", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s08-0"},
+     {"fold": 1, "label": "high", "partition": "train", "patientId": "p09", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s09-0"},
+     {"fold": 1, "label": "high", "partition": "train", "patientId": "p13", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s13-0"},
+     {"fold": 1, "label": "high", "partition": "train", "patientId": "p15", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s15-0"},
+     {"fold": 1, "label": "high", "partition": "val", "patientId": "p03", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s03-0"},
+     {"fold": 1, "label": "low", "partition": "val", "patientId": "p14", "phase": "evaluation", "planId": "seed:42/fold:1", "seed": 42, "slideId": "s14-0"}
+    ],
+    "partitions": [
+     {
+      "fold": 0,
+      "phase": "evaluation",
+      "planId": "seed:42/fold:0",
+      "seed": 42,
+      "test": {
+       "classes": {"high": 4, "low": 4},
+       "fallbackSlides": 0,
+       "groups": 8,
+       "patients": 8,
+       "slides": 8
+      },
+      "train": {
+       "classes": {"high": 3, "low": 3},
+       "fallbackSlides": 0,
+       "groups": 6,
+       "patients": 6,
+       "slides": 8
+      },
+      "tune": {
+       "classes": {"high": 0, "low": 0},
+       "fallbackSlides": 0,
+       "groups": 0,
+       "patients": 0,
+       "slides": 0
+      },
+      "val": {
+       "classes": {"high": 1, "low": 1},
+       "fallbackSlides": 0,
+       "groups": 2,
+       "patients": 2,
+       "slides": 2
+      }
+     },
+     {
+      "fold": 1,
+      "phase": "evaluation",
+      "planId": "seed:42/fold:1",
+      "seed": 42,
+      "test": {
+       "classes": {"high": 4, "low": 4},
+       "fallbackSlides": 0,
+       "groups": 8,
+       "patients": 8,
+       "slides": 10
+      },
+      "train": {
+       "classes": {"high": 3, "low": 3},
+       "fallbackSlides": 0,
+       "groups": 6,
+       "patients": 6,
+       "slides": 6
+      },
+      "tune": {
+       "classes": {"high": 0, "low": 0},
+       "fallbackSlides": 0,
+       "groups": 0,
+       "patients": 0,
+       "slides": 0
+      },
+      "val": {
+       "classes": {"high": 1, "low": 1},
+       "fallbackSlides": 0,
+       "groups": 2,
+       "patients": 2,
+       "slides": 2
+      }
+     }
+    ],
+    "previewHash": "6231fa3eb13976fe374b670913b4dbb842d43d6867e8075f0380586cf714596c",
+    "spec": {
+     "constraints": {"minPatientsPerClass": 1, "minPatientsPerPartition": 1},
+     "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+     "eligibility": [],
+     "predictors": [],
+     "split": {
+      "domainField": null,
+      "domainPolicy": "all",
+      "folds": 2,
+      "heldOutDomains": [],
+      "heldOutSource": "fractions",
+      "imported": null,
+      "innerFolds": 3,
+      "mode": "kfold",
+      "outerFolds": 5,
+      "ratios": {"test": 0.0, "train": 0.8, "val": 0.2},
+      "repeats": 5,
+      "rules": {"test": [], "train": [], "val": []},
+      "seeds": [42],
+      "stratify": true,
+      "testFraction": 0.2,
+      "validationFraction": 0.2,
+      "version": 2
+     },
+     "target": {
+      "classes": ["low", "high"],
+      "field": "label",
+      "labels": {"0": "low", "1": "high"},
+      "missing": "block",
+      "positiveClass": "high",
+      "task": "binary_classification",
+      "unit": "patient",
+      "unmapped": "block"
+     }
+    },
+    "summary": {
+     "algorithm": "histopilot-patient-evaluation-v2",
+     "classCounts": {"high": 9, "low": 9},
+     "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+     "eligibleSlides": 18,
+     "evaluationPlanCount": 2,
+     "excludedSlides": 0,
+     "fallbackSlideCount": 0,
+     "fixedPatients": {"test": 0, "train": 0, "val": 0},
+     "grouping": "patient",
+     "includedGroups": 16,
+     "includedPatients": 16,
+     "includedSlides": 18,
+     "innerPlanCount": 0,
+     "labelExclusions": {},
+     "modelSelection": null,
+     "oofCoverage": {
+      "complete": true,
+      "groups": 16,
+      "maxTestAppearances": 1,
+      "minTestAppearances": 1,
+      "testedGroups": 16
+     },
+     "patientClassCounts": {"high": 8, "low": 8},
+     "roleDescriptions": {
+      "test": "Reported evaluation; excluded from early stopping and model selection",
+      "train": "Model fitting",
+      "tune": "Inner held-out data for model selection; outer test groups never enter inner plans",
+      "val": "Early stopping only; the stopping criterion is configured in the MIL experiment"
+     },
+     "splitVersion": 2,
+     "strategy": "kfold",
+     "stratified": true,
+     "targetUnit": "patient",
+     "totalSlides": 18,
+     "unlinkedSlideCount": 0,
+     "validationFraction": 0.2,
+     "validationFractionScope": "Fraction of each training pool after reported test and inner tuning data are removed; explicit validation assignments override it"
+    }
+   }
+  },
+  "v3": {
+   "draftSpec": {
+    "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+    "split": {
+     "folds": 2,
+     "mode": "kfold",
+     "pools": {
+      "rules": {
+       "test": [{"field": "partition", "op": "eq", "value": "test"}],
+       "train": [{"field": "partition", "op": "eq", "value": "train"}]
+      }
+     },
+     "seeds": [42],
+     "version": 3
+    },
+    "target": {
+     "classes": ["low", "high"],
+     "field": "label",
+     "labels": {"0": "low", "1": "high"},
+     "positiveClass": "high",
+     "task": "binary_classification",
+     "unit": "patient"
+    }
+   },
+   "manifest": {
+    "algorithm": "histopilot-explicit-pools-evaluation-v3",
+    "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+    "executionEnabled": false,
+    "findings": [
+     {
+      "code": "SPLIT_FRACTION_ADJUSTED",
+      "message": "Seed 42, fold:0: early-stop validation requests 15% (0 rounded groups) from 3 groups in class 'high'; minimum group constraints allocate 1 groups.",
+      "severity": "warning"
+     },
+     {
+      "code": "SPLIT_FRACTION_ADJUSTED",
+      "message": "Seed 42, fold:0: early-stop validation requests 15% (0 rounded groups) from 3 groups in class 'low'; minimum group constraints allocate 1 groups.",
+      "severity": "warning"
+     },
+     {
+      "code": "SPLIT_FRACTION_ADJUSTED",
+      "message": "Seed 42, fold:1: early-stop validation requests 15% (0 rounded groups) from 3 groups in class 'high'; minimum group constraints allocate 1 groups.",
+      "severity": "warning"
+     },
+     {
+      "code": "SPLIT_FRACTION_ADJUSTED",
+      "message": "Seed 42, fold:1: early-stop validation requests 15% (0 rounded groups) from 3 groups in class 'low'; minimum group constraints allocate 1 groups.",
+      "severity": "warning"
+     }
+    ],
+    "kind": "protocol",
+    "memberships": [
+     {"fold": null, "label": "low", "partition": "test", "patientId": "p12", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s12-0"},
+     {"fold": null, "label": "high", "partition": "test", "patientId": "p13", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s13-0"},
+     {"fold": null, "label": "low", "partition": "test", "patientId": "p14", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s14-0"},
+     {"fold": null, "label": "high", "partition": "test", "patientId": "p15", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s15-0"},
+     {"fold": null, "label": "low", "partition": "train", "patientId": "p00", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s00-0"},
+     {"fold": null, "label": "low", "partition": "train", "patientId": "p00", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s00-1"},
+     {"fold": null, "label": "high", "partition": "train", "patientId": "p01", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s01-0"},
+     {"fold": null, "label": "high", "partition": "train", "patientId": "p01", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s01-1"},
+     {"fold": null, "label": "low", "partition": "train", "patientId": "p04", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s04-0"},
+     {"fold": null, "label": "high", "partition": "train", "patientId": "p05", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s05-0"},
+     {"fold": null, "label": "low", "partition": "train", "patientId": "p06", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s06-0"},
+     {"fold": null, "label": "high", "partition": "train", "patientId": "p07", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s07-0"},
+     {"fold": null, "label": "low", "partition": "train", "patientId": "p08", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s08-0"},
+     {"fold": null, "label": "high", "partition": "train", "patientId": "p09", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s09-0"},
+     {"fold": null, "label": "low", "partition": "train", "patientId": "p10", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s10-0"},
+     {"fold": null, "label": "high", "partition": "train", "patientId": "p11", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s11-0"},
+     {"fold": null, "label": "low", "partition": "val", "patientId": "p02", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s02-0"},
+     {"fold": null, "label": "high", "partition": "val", "patientId": "p03", "phase": "final", "planId": "seed:42/final", "pool": "external_test", "seed": 42, "slideId": "s03-0"},
+     {"fold": 0, "label": "low", "partition": "test", "patientId": "p00", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s00-0"},
+     {"fold": 0, "label": "low", "partition": "test", "patientId": "p00", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s00-1"},
+     {"fold": 0, "label": "high", "partition": "test", "patientId": "p01", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s01-0"},
+     {"fold": 0, "label": "high", "partition": "test", "patientId": "p01", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s01-1"},
+     {"fold": 0, "label": "low", "partition": "test", "patientId": "p04", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s04-0"},
+     {"fold": 0, "label": "high", "partition": "test", "patientId": "p05", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s05-0"},
+     {"fold": 0, "label": "low", "partition": "test", "patientId": "p10", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s10-0"},
+     {"fold": 0, "label": "high", "partition": "test", "patientId": "p11", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s11-0"},
+     {"fold": 0, "label": "low", "partition": "train", "patientId": "p02", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s02-0"},
+     {"fold": 0, "label": "high", "partition": "train", "patientId": "p03", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s03-0"},
+     {"fold": 0, "label": "high", "partition": "train", "patientId": "p07", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s07-0"},
+     {"fold": 0, "label": "low", "partition": "train", "patientId": "p08", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s08-0"},
+     {"fold": 0, "label": "low", "partition": "val", "patientId": "p06", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s06-0"},
+     {"fold": 0, "label": "high", "partition": "val", "patientId": "p09", "phase": "evaluation", "planId": "seed:42/fold:0", "pool": "training", "seed": 42, "slideId": "s09-0"},
+     {"fold": 1, "label": "low", "partition": "test", "patientId": "p02", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s02-0"},
+     {"fold": 1, "label": "high", "partition": "test", "patientId": "p03", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s03-0"},
+     {"fold": 1, "label": "low", "partition": "test", "patientId": "p06", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s06-0"},
+     {"fold": 1, "label": "high", "partition": "test", "patientId": "p07", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s07-0"},
+     {"fold": 1, "label": "low", "partition": "test", "patientId": "p08", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s08-0"},
+     {"fold": 1, "label": "high", "partition": "test", "patientId": "p09", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s09-0"},
+     {"fold": 1, "label": "low", "partition": "train", "patientId": "p00", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s00-0"},
+     {"fold": 1, "label": "low", "partition": "train", "patientId": "p00", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s00-1"},
+     {"fold": 1, "label": "high", "partition": "train", "patientId": "p01", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s01-0"},
+     {"fold": 1, "label": "high", "partition": "train", "patientId": "p01", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s01-1"},
+     {"fold": 1, "label": "low", "partition": "train", "patientId": "p10", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s10-0"},
+     {"fold": 1, "label": "high", "partition": "train", "patientId": "p11", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s11-0"},
+     {"fold": 1, "label": "low", "partition": "val", "patientId": "p04", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s04-0"},
+     {"fold": 1, "label": "high", "partition": "val", "patientId": "p05", "phase": "evaluation", "planId": "seed:42/fold:1", "pool": "training", "seed": 42, "slideId": "s05-0"}
+    ],
+    "partitions": [
+     {
+      "fold": 0,
+      "phase": "evaluation",
+      "planId": "seed:42/fold:0",
+      "pool": "training",
+      "seed": 42,
+      "test": {
+       "classes": {"high": 3, "low": 3},
+       "fallbackSlides": 0,
+       "groups": 6,
+       "patients": 6,
+       "slides": 8
+      },
+      "train": {
+       "classes": {"high": 2, "low": 2},
+       "fallbackSlides": 0,
+       "groups": 4,
+       "patients": 4,
+       "slides": 4
+      },
+      "tune": {
+       "classes": {"high": 0, "low": 0},
+       "fallbackSlides": 0,
+       "groups": 0,
+       "patients": 0,
+       "slides": 0
+      },
+      "val": {
+       "classes": {"high": 1, "low": 1},
+       "fallbackSlides": 0,
+       "groups": 2,
+       "patients": 2,
+       "slides": 2
+      }
+     },
+     {
+      "fold": 1,
+      "phase": "evaluation",
+      "planId": "seed:42/fold:1",
+      "pool": "training",
+      "seed": 42,
+      "test": {
+       "classes": {"high": 3, "low": 3},
+       "fallbackSlides": 0,
+       "groups": 6,
+       "patients": 6,
+       "slides": 6
+      },
+      "train": {
+       "classes": {"high": 2, "low": 2},
+       "fallbackSlides": 0,
+       "groups": 4,
+       "patients": 4,
+       "slides": 6
+      },
+      "tune": {
+       "classes": {"high": 0, "low": 0},
+       "fallbackSlides": 0,
+       "groups": 0,
+       "patients": 0,
+       "slides": 0
+      },
+      "val": {
+       "classes": {"high": 1, "low": 1},
+       "fallbackSlides": 0,
+       "groups": 2,
+       "patients": 2,
+       "slides": 2
+      }
+     },
+     {
+      "fold": null,
+      "phase": "final",
+      "planId": "seed:42/final",
+      "pool": "external_test",
+      "seed": 42,
+      "test": {
+       "classes": {"high": 2, "low": 2},
+       "fallbackSlides": 0,
+       "groups": 4,
+       "patients": 4,
+       "slides": 4
+      },
+      "train": {
+       "classes": {"high": 5, "low": 5},
+       "fallbackSlides": 0,
+       "groups": 10,
+       "patients": 10,
+       "slides": 12
+      },
+      "tune": {
+       "classes": {"high": 0, "low": 0},
+       "fallbackSlides": 0,
+       "groups": 0,
+       "patients": 0,
+       "slides": 0
+      },
+      "val": {
+       "classes": {"high": 1, "low": 1},
+       "fallbackSlides": 0,
+       "groups": 2,
+       "patients": 2,
+       "slides": 2
+      }
+     }
+    ],
+    "previewHash": "aad834d97c3d83d22e0830322b78edb9767ff57dee0edab193ab299c50012850",
+    "spec": {
+     "constraints": {"minPatientsPerClass": 1, "minPatientsPerPartition": 1},
+     "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+     "eligibility": [],
+     "predictors": [],
+     "split": {
+      "domainField": null,
+      "domainPolicy": "all",
+      "folds": 2,
+      "heldOutDomains": [],
+      "heldOutSource": "fractions",
+      "imported": null,
+      "innerFolds": 3,
+      "mode": "kfold",
+      "outerFolds": 5,
+      "pools": {
+       "imported": null,
+       "rules": {
+        "test": [{"field": "partition", "op": "eq", "value": "test"}],
+        "train": [{"field": "partition", "op": "eq", "value": "train"}],
+        "val": []
+       },
+       "source": "rules",
+       "trainSelection": "rules",
+       "validationSource": "training_fraction"
+      },
+      "ratios": {"test": 0.0, "train": 0.8, "val": 0.2},
+      "repeats": 5,
+      "rules": {"test": [], "train": [], "val": []},
+      "seeds": [42],
+      "stratify": true,
+      "testFraction": 0.2,
+      "validationFraction": 0.15,
+      "version": 3
+     },
+     "target": {
+      "classes": ["low", "high"],
+      "field": "label",
+      "labels": {"0": "low", "1": "high"},
+      "missing": "block",
+      "positiveClass": "high",
+      "task": "binary_classification",
+      "unit": "patient",
+      "unmapped": "block"
+     }
+    },
+    "summary": {
+     "algorithm": "histopilot-explicit-pools-evaluation-v3",
+     "classCounts": {"high": 9, "low": 9},
+     "datasetId": "dataset-99b0ef01579e344d2fd423b08416ca1effac86cecb537e545a9f4553fab9a10d",
+     "eligibleSlides": 18,
+     "evaluationPlanCount": 2,
+     "evaluationScope": "Cross-validation within training; external test used only in final evaluation",
+     "excludedSlides": 0,
+     "fallbackSlideCount": 0,
+     "finalPlanCount": 1,
+     "fixedPatients": {"test": 0, "train": 0, "val": 0},
+     "grouping": "patient",
+     "includedGroups": 16,
+     "includedPatients": 16,
+     "includedSlides": 18,
+     "innerPlanCount": 0,
+     "labelExclusions": {},
+     "modelSelection": null,
+     "oofCoverage": {
+      "complete": true,
+      "groups": 12,
+      "maxTestAppearances": 1,
+      "minTestAppearances": 1,
+      "testedGroups": 12
+     },
+     "patientClassCounts": {"high": 8, "low": 8},
+     "poolCounts": {
+      "test": {
+       "classes": {"high": 2, "low": 2},
+       "fallbackSlides": 0,
+       "groups": 4,
+       "patients": 4,
+       "slides": 4
+      },
+      "train": {
+       "classes": {"high": 6, "low": 6},
+       "fallbackSlides": 0,
+       "groups": 12,
+       "patients": 12,
+       "slides": 14
+      },
+      "val": {
+       "classes": {"high": 0, "low": 0},
+       "fallbackSlides": 0,
+       "groups": 0,
+       "patients": 0,
+       "slides": 0
+      }
+     },
+     "roleDescriptions": {
+      "test": "Within-training CV evaluation in training plans; reserved external test in final plans",
+      "train": "Model fitting",
+      "tune": "Inner held-out data for model selection; outer and external test groups are excluded",
+      "val": "Early stopping using the selected fixed validation pool or a percentage of training"
+     },
+     "splitVersion": 3,
+     "strategy": "kfold",
+     "stratified": true,
+     "targetUnit": "patient",
+     "totalSlides": 18,
+     "unlinkedSlideCount": 0,
+     "validationFraction": 0.15,
+     "validationFractionScope": "Percentage of each training subset after CV evaluation and tuning folds are removed; fixed validation overrides it",
+     "validationSource": "training_fraction"
+    }
+   }
+  }
+ }
+}

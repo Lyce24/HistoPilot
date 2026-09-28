@@ -1,13 +1,13 @@
 """Explicit targets, patient-grouped splits and immutable protocol publication.
 
-The algorithm sorts stable grouping identities and uses SHA-256 ordering. A dataset
-may explicitly record acknowledged slide-ID fallback groups. Labels are never
+New protocols hold development-only (version 4) splits. Frozen protocols of
+split versions 1-3 stay readable, but their generators are gone. A dataset may
+explicitly record acknowledged slide-ID fallback groups. Labels are never
 dropped implicitly and a majority label is never selected.
 """
 
 import hashlib
 import json
-import math
 import re
 import time
 from collections import Counter, defaultdict
@@ -21,19 +21,12 @@ from histopilot.application.development_splits import (
     ALGORITHM_V4_MIXED,
     development_assignments,
     development_summary,
+    pool_counts,
     select_development_pools,
 )
-from histopilot.application.explicit_pools import (
-    ALGORITHM_V3,
-    explicit_assignments,
-    pool_counts,
-    select_pools,
-)
 from histopilot.application.modern_splits import (
-    ALGORITHM_V2,
     check_modern_plan,
     group_class_counts,
-    modern_assignments,
     modern_summary,
 )
 from histopilot.schemas.protocols import (
@@ -48,7 +41,6 @@ from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 
-ALGORITHM = "histopilot-patient-stratification-v1"
 MAX_RECORDS = 50000
 MAX_MEMBERSHIPS = 500000
 MAX_PROTOCOL_BYTES = 15 * 1024 * 1024
@@ -73,14 +65,6 @@ def _serialized_spec(spec):
     value = spec.model_dump(mode="json")
     if spec.sourceTargetSplitId is None:
         value.pop("sourceTargetSplitId", None)
-    if spec.split.version == 1:
-        # Retain the original six-field representation for legacy split strategies.
-        value["split"] = {
-            key: value["split"][key]
-            for key in ("mode", "folds", "seeds", "ratios", "rules", "imported")
-        }
-    elif spec.split.version == 2:
-        value["split"].pop("pools", None)
     return value
 
 
@@ -327,6 +311,40 @@ def _fixed_assignments(groups, rules, evaluator, finding):
     return assignments, direct, expanded
 
 
+def _memberships(plans, groups, *, slide_unit):
+    """Expand each plan's group roles to one frozen membership row per slide."""
+    memberships = []
+    for metadata, assignment in plans:
+        plan = {key: value for key, value in metadata.items() if key != "excludedValidation"}
+        for patient, partition in sorted(assignment.items()):
+            for row in groups[patient]:
+                memberships.append(
+                    {
+                        **plan,
+                        "partition": partition,
+                        "slideId": row["slideId"],
+                        "patientId": row.get("patientId") if slide_unit else patient,
+                        **(
+                            {"patientIdSource": row["patientIdSource"]}
+                            if "patientIdSource" in row
+                            else {}
+                        ),
+                        "label": row["label"],
+                    }
+                )
+    return sorted(
+        memberships,
+        key=lambda item: (
+            item["seed"],
+            item.get("planId", ""),
+            -1 if item["fold"] is None else item["fold"],
+            item["partition"],
+            item["patientId"] or "",
+            item["slideId"],
+        ),
+    )
+
+
 class ProtocolService:
     def __init__(self, store: ScientificStore, filesystem: LocalFilesystem | None = None):
         self.store = store
@@ -371,6 +389,15 @@ class ProtocolService:
                 "INVALID_PROTOCOL_SPEC",
                 422,
             ) from error
+        if spec.split.version != 4:
+            # SplitSpec still parses versions 1-3 so frozen records remain readable.
+            raise _failure(
+                "This protocol was created before development-only splits; frozen versions "
+                "stay readable, but it can no longer be previewed or frozen. Design training "
+                "in Targets & splits.",
+                "LEGACY_PROTOCOL_SPLIT",
+                422,
+            )
         dataset, fields, records = self._load_dataset(spec.datasetId)
         if spec.sourceTargetSplitId:
             from histopilot.application.target_split_source import restrict_target_split_rows
@@ -633,99 +660,32 @@ class ProtocolService:
     def preview(self, draft_id: str, expected_revision: int) -> dict:
         return self._preview(draft_id, expected_revision, allow_frozen=False)
 
-    def _preview(self, draft_id, expected_revision, *, allow_frozen):
-        spec, dataset, fields, rows = self._load(draft_id, expected_revision, allow_frozen)
-        slide_unit = spec.splitUnit == "slide"
-        # Folds and early-stop validation use patient groups unless a slide design
-        # assigns slides independently. Slide targets keep per-slide labels either way.
-        patient_folds = not slide_unit or spec.split.groupByPatient
-        modern = spec.split.version >= 2
-        explicit = spec.split.version >= 3
-        development = spec.split.version == 4
-        algorithm = (
-            ALGORITHM_V4
-            if development
-            else ALGORITHM_V3
-            if explicit
-            else ALGORITHM_V2
-            if modern
-            else ALGORITHM
-        )
-        findings = []
-
-        def finding(code, message, severity="error"):
-            if development:
-                # Shared CV code retains its historical internal assessment key.
-                # Translate role wording without changing user field/class names.
-                message = message.replace(
-                    ": reported test requests", ": development assessment requests"
-                ).replace(": test has fewer than", ": development assessment has fewer than")
-            if not any(item["code"] == code and item["message"] == message for item in findings):
-                findings.append({"severity": severity, "code": code, "message": message})
-
-        conditions = [
-            *spec.eligibility,
-            *spec.split.rules.train,
-            *spec.split.rules.val,
-            *spec.split.rules.test,
-        ]
-        if explicit:
-            conditions.extend(
-                condition
-                for role in PARTITIONS
-                for condition in getattr(spec.split.pools.rules, role)
-            )
-        selected_fields = [
-            spec.target.field,
-            *spec.predictors,
-            *(condition.field for condition in iter_conditions(conditions)),
-        ]
-        imported = spec.split.pools.imported if explicit else spec.split.imported
-        if imported:
-            selected_fields.extend(
-                field for field in (imported.partitionField, imported.foldField) if field
-            )
-        if modern and spec.split.domainField:
-            selected_fields.append(spec.split.domainField)
-        for field in sorted(set(selected_fields)):
-            if field not in fields and field not in CANONICAL:
-                finding(
-                    "UNKNOWN_FIELD", f"The field '{field}' is not in the frozen dataset dictionary."
-                )
-        if spec.target.field in CANONICAL or _forbidden_name(spec.target.field, target=True):
-            finding(
-                "IDENTIFIER_TARGET", "Identifiers and partition fields cannot serve as the target."
-            )
-        target_source = fields.get(spec.target.field, {}).get("sourceColumn", spec.target.field)
-        if _forbidden_name(target_source, target=True):
-            finding(
-                "IDENTIFIER_TARGET", "Identifiers and partition fields cannot serve as the target."
-            )
+    @staticmethod
+    def _field_findings(spec, dataset, fields, conditions, finding):
+        """Reject unknown fields and identifier, target or split leakage before reading rows."""
+        split = spec.split
+        imported = split.pools.imported
         assignment_fields = (
             {imported.partitionField, imported.foldField} - {None} if imported else set()
         )
         split_fields = set(assignment_fields)
-        if modern and spec.split.domainField:
-            split_fields.add(spec.split.domainField)
-            domain_source = fields.get(spec.split.domainField, {}).get(
-                "sourceColumn", spec.split.domainField
-            )
-            if (
-                spec.split.domainField in CANONICAL
-                or _forbidden_name(spec.split.domainField)
-                or _forbidden_name(domain_source)
-            ):
+        if split.domainField:
+            split_fields.add(split.domainField)
+        selected_fields = {
+            spec.target.field,
+            *spec.predictors,
+            *(condition.field for condition in iter_conditions(conditions)),
+            *split_fields,
+        }
+        for field in sorted(selected_fields):
+            if field not in fields and field not in CANONICAL:
                 finding(
-                    "INVALID_DOMAIN_FIELD",
-                    "Choose a site or cohort attribute, rather than an identifier or partition column.",
+                    "UNKNOWN_FIELD", f"The field '{field}' is not in the frozen dataset dictionary."
                 )
-            if spec.target.field == spec.split.domainField or _key(target_source) == _key(
-                domain_source
-            ):
-                finding(
-                    "DOMAIN_TARGET_LEAKAGE",
-                    "The held-out site or cohort column cannot also be the prediction target.",
-                )
+
+        def source(field):
+            return fields.get(field, {}).get("sourceColumn", field)
+
         provenance_mapping = dataset["manifest"].get("provenance", {}).get("mapping", {})
         source_identifiers = {
             _key(provenance_mapping[name])
@@ -737,29 +697,48 @@ class ProtocolService:
             )
             if isinstance(provenance_mapping.get(name), str)
         }
-        if _key(target_source) in source_identifiers:
+        target_source = source(spec.target.field)
+        if (
+            spec.target.field in CANONICAL
+            or _forbidden_name(spec.target.field, target=True)
+            or _forbidden_name(target_source, target=True)
+            or _key(target_source) in source_identifiers
+        ):
             finding(
                 "IDENTIFIER_TARGET", "Identifiers and partition fields cannot serve as the target."
             )
-        if modern and spec.split.domainField and _key(domain_source) in source_identifiers:
-            finding(
-                "INVALID_DOMAIN_FIELD",
-                "The site or cohort column cannot be an identity mapping source.",
-            )
-        split_sources = {
-            _key(fields.get(field, {}).get("sourceColumn", field)) for field in split_fields
-        }
-        assignment_sources = {
-            _key(fields.get(field, {}).get("sourceColumn", field)) for field in assignment_fields
-        }
-        if spec.target.field in assignment_fields or _key(target_source) in assignment_sources:
+        if split.domainField:
+            domain_source = source(split.domainField)
+            if (
+                split.domainField in CANONICAL
+                or _forbidden_name(split.domainField)
+                or _forbidden_name(domain_source)
+            ):
+                finding(
+                    "INVALID_DOMAIN_FIELD",
+                    "Choose a site or cohort attribute, rather than an identifier or partition column.",
+                )
+            if spec.target.field == split.domainField or _key(target_source) == _key(domain_source):
+                finding(
+                    "DOMAIN_TARGET_LEAKAGE",
+                    "The held-out site or cohort column cannot also be the prediction target.",
+                )
+            if _key(domain_source) in source_identifiers:
+                finding(
+                    "INVALID_DOMAIN_FIELD",
+                    "The site or cohort column cannot be an identity mapping source.",
+                )
+        split_sources = {_key(source(field)) for field in split_fields}
+        if spec.target.field in assignment_fields or _key(target_source) in {
+            _key(source(field)) for field in assignment_fields
+        }:
             finding(
                 "SPLIT_TARGET_LEAKAGE",
                 "An imported partition or fold column cannot also be the prediction target.",
             )
         for field in spec.predictors:
-            source = fields.get(field, {}).get("sourceColumn", field)
-            if field == spec.target.field or _key(source) == _key(target_source):
+            predictor_source = source(field)
+            if field == spec.target.field or _key(predictor_source) == _key(target_source):
                 finding(
                     "TARGET_PREDICTOR_LEAKAGE",
                     f"Predictor '{field}' is the target or a target alias.",
@@ -767,125 +746,56 @@ class ProtocolService:
             elif (
                 field in CANONICAL
                 or field in split_fields
-                or _key(source) in split_sources
-                or _key(source) in source_identifiers
+                or _key(predictor_source) in split_sources
+                or _key(predictor_source) in source_identifiers
                 or _forbidden_name(field)
-                or _forbidden_name(source)
+                or _forbidden_name(predictor_source)
             ):
                 finding(
                     "FORBIDDEN_PREDICTOR",
                     f"Predictor '{field}' is an identifier, label, or split field.",
                 )
-        if (
-            not modern
-            and spec.split.mode != "holdout"
-            and spec.split.ratios.model_dump()
-            != {
-                "train": 0.8,
-                "val": 0.2,
-                "test": 0,
-            }
-        ):
-            finding(
-                "UNUSED_HOLDOUT_RATIOS",
-                "Holdout ratios apply only to generated holdout mode; remove them or switch split mode.",
-            )
-        if len({row["slideId"] for row in rows}) != len(rows):
-            finding("DUPLICATE_SLIDE_ID", "The frozen dataset contains duplicate slide identities.")
-        evaluator = FilterEvaluator()
-        eligible, included = [], []
-        exclusion_counts = Counter()
-        if not any(item["code"] == "UNKNOWN_FIELD" for item in findings):
-            try:
-                evaluator.prepare(conditions)
-                eligible = [row for row in rows if evaluator.conjunction(row, spec.eligibility)]
-            except FilterFailure as error:
-                finding(error.code, str(error))
-        development_pool_assignments = {}
-        if development and not any(item["severity"] == "error" for item in findings):
-            # Select development sources before interpreting their labels. A
-            # combined metadata file can contain unrelated, unlabeled rows.
-            source_groups = (
-                _development_selection_groups(eligible)
-                if patient_folds
-                else {(0, row["slideId"]): [row] for row in eligible}
-            )
-            try:
-                selected, _direct, _expanded, _remaining = select_development_pools(
-                    source_groups, spec.split.pools, evaluator, finding, _fixed_assignments
-                )
-                eligible = _expanded["train"] + _expanded["val"]
-                if patient_folds:
-                    self._identity_findings(
-                        eligible,
-                        {key: rows for key, rows in source_groups.items() if key in selected},
-                        finding,
-                    )
-                development_pool_assignments = {
-                    key[1]: role for key, role in selected.items() if key[0] == 0
-                }
-            except FilterFailure as error:
-                finding(error.code, str(error))
+
+    @staticmethod
+    def _labelled(target, eligible, evaluator, finding):
+        """Map raw target values; missing or unmapped labels block unless explicitly excluded."""
+        included, exclusions = [], Counter()
+        blocked = False
         for row in eligible:
-            raw = evaluator.field(row, spec.target.field)
+            raw = evaluator.field(row, target.field)
             if raw is None:
-                exclusion_counts["missingLabel"] += 1
-                if spec.target.missing == "block":
+                exclusions["missingLabel"] += 1
+                if target.missing == "block":
+                    blocked = True
                     finding(
                         "MISSING_LABEL",
                         "Eligible slides have missing target labels; resolve or explicitly exclude them.",
                     )
                 continue
-            if raw not in spec.target.labels:
-                exclusion_counts["unmappedLabel"] += 1
-                if spec.target.unmapped == "block":
+            if raw not in target.labels:
+                exclusions["unmappedLabel"] += 1
+                if target.unmapped == "block":
+                    blocked = True
                     finding(
                         "UNMAPPED_LABEL",
                         "Eligible slides have unmapped target labels; map or explicitly exclude them.",
                     )
                 continue
-            included.append({**row, "label": spec.target.labels[raw]})
-        if exclusion_counts and not any(
-            item["code"] in {"MISSING_LABEL", "UNMAPPED_LABEL"} for item in findings
-        ):
+            included.append({**row, "label": target.labels[raw]})
+        if exclusions and not blocked:
             finding(
                 "EXPLICIT_LABEL_EXCLUSIONS",
-                f"Explicit label policies exclude {sum(exclusion_counts.values())} eligible slides.",
+                f"Explicit label policies exclude {sum(exclusions.values())} eligible slides.",
                 "warning",
             )
-        if not included:
-            finding("EMPTY_COHORT", "No slides remain after eligibility and target mapping.")
-        if modern and not explicit and imported:
-            # A predefined validation cohort remains an explicit scientific choice
-            # when filtering or label policies exclude it. Do not replace it with
-            # an automatic training subset simply because no validation rows remain.
-            def is_imported_validation(row):
-                return (
-                    imported.partitionLabels.get(evaluator.field(row, imported.partitionField))
-                    == "val"
-                )
+        return included, exclusions
 
-            if any(is_imported_validation(row) for row in rows) and not any(
-                is_imported_validation(row) for row in included
-            ):
-                finding(
-                    "EMPTY_IMPORTED_VALIDATION",
-                    "All predefined validation slides were excluded by eligibility or target "
-                    "mapping. Restore eligible validation groups or explicitly revise the "
-                    "partition mapping; automatic validation will not replace this cohort.",
-                )
-        groups = defaultdict(list)
-        for row in included:
-            if not patient_folds:
-                groups[row["slideId"]].append(row)
-            elif _valid_patient(row):
-                groups[row["patientId"]].append(row)
-        if patient_folds:
-            self._identity_findings(included, groups, finding)
+    @staticmethod
+    def _label_findings(spec, groups, included, evaluator, finding, *, patient_folds):
+        """Check mixed-label groups, target-equivalent predictors and class minimums."""
         mixed_groups = sum(len({row["label"] for row in group}) > 1 for group in groups.values())
-        mixed_slide_target = development and spec.target.unit == "slide" and mixed_groups > 0
+        mixed_slide_target = spec.target.unit == "slide" and mixed_groups > 0
         if mixed_slide_target:
-            algorithm = ALGORITHM_V4_MIXED
             stratification = (
                 "Stratification uses each patient's observed label combination. "
                 if spec.split.stratify
@@ -899,13 +809,8 @@ class ProtocolService:
                 "warning",
             )
         elif mixed_groups:
-            code = (
-                "MIXED_PATIENT_LABELS"
-                if spec.target.unit == "patient"
-                else "MIXED_PATIENT_STRATIFICATION_UNSUPPORTED"
-            )
             finding(
-                code,
+                "MIXED_PATIENT_LABELS",
                 "A patient has conflicting mapped target labels. No majority label is selected; mixed-label slide-target stratification requires a version-4 slide target.",
             )
         for field in spec.predictors:
@@ -922,7 +827,6 @@ class ProtocolService:
                         "TARGET_EQUIVALENT_PREDICTOR",
                         f"Predictor '{field}' is a one-to-one encoding of the mapped target in this cohort.",
                     )
-        class_counts = Counter(row["label"] for row in included)
         patient_counts = (
             group_class_counts(groups)
             if mixed_slide_target
@@ -938,158 +842,116 @@ class ProtocolService:
                     "INSUFFICIENT_CLASS_PATIENTS",
                     f"Class '{label}' has fewer than {spec.constraints.minPatientsPerClass} independent {'patients' if patient_folds else 'slides'}.",
                 )
-        fixed = {}
-        try:
-            fixed, _direct, _expanded = _fixed_assignments(
-                groups, spec.split.rules, evaluator, finding
-            )
-        except FilterFailure as error:
-            finding(error.code, str(error))
-        for partition in PARTITIONS:
-            if getattr(spec.split.rules, partition) and partition not in fixed.values():
-                finding(
-                    "EMPTY_FIXED_RULE",
-                    f"The fixed {partition} rule does not select any included patients.",
-                )
-        pool_assignments = {}
-        if explicit and not any(item["severity"] == "error" for item in findings):
+        return mixed_slide_target, patient_counts
+
+    def _preview(self, draft_id, expected_revision, *, allow_frozen):
+        spec, dataset, fields, rows = self._load(draft_id, expected_revision, allow_frozen)
+        slide_unit = spec.splitUnit == "slide"
+        # Folds and early-stop validation use patient groups unless a slide design
+        # assigns slides independently. Slide targets keep per-slide labels either way.
+        patient_folds = not slide_unit or spec.split.groupByPatient
+        findings = []
+
+        def finding(code, message, severity="error"):
+            # Shared CV code retains its historical internal assessment key.
+            # Translate role wording without changing user field/class names.
+            message = message.replace(
+                ": reported test requests", ": development assessment requests"
+            ).replace(": test has fewer than", ": development assessment has fewer than")
+            if not any(item["code"] == code and item["message"] == message for item in findings):
+                findings.append({"severity": severity, "code": code, "message": message})
+
+        def blocked():
+            return any(item["severity"] == "error" for item in findings)
+
+        pools = spec.split.pools
+        conditions = [
+            *spec.eligibility,
+            *(condition for role in PARTITIONS for condition in getattr(pools.rules, role)),
+        ]
+        self._field_findings(spec, dataset, fields, conditions, finding)
+        if len({row["slideId"] for row in rows}) != len(rows):
+            finding("DUPLICATE_SLIDE_ID", "The frozen dataset contains duplicate slide identities.")
+        evaluator = FilterEvaluator()
+        eligible = []
+        if not any(item["code"] == "UNKNOWN_FIELD" for item in findings):
             try:
-                if development:
-                    pool_assignments = {
-                        patient: role
-                        for patient, role in development_pool_assignments.items()
-                        if patient in groups
-                    }
-                    for role in ("train", "val"):
-                        if (
-                            role == "train" or spec.split.pools.validationSource == "fixed"
-                        ) and role not in pool_assignments.values():
-                            finding(
-                                f"{role.upper()}_POOL_EMPTY",
-                                f"The selected {role} pool has no groups after target mapping.",
-                            )
-                else:
-                    pool_assignments, _direct, _expanded, _remaining = select_pools(
-                        groups, spec.split.pools, evaluator, finding, _fixed_assignments
-                    )
+                evaluator.prepare(conditions)
+                eligible = [row for row in rows if evaluator.conjunction(row, spec.eligibility)]
             except FilterFailure as error:
                 finding(error.code, str(error))
-        memberships, partitions, plans = [], [], []
-        training_groups = (
-            {
-                patient: rows
-                for patient, rows in groups.items()
-                if pool_assignments.get(patient) == "train"
-            }
-            if explicit
-            else groups
-        )
-        if modern and not any(item["severity"] == "error" for item in findings):
-            if explicit:
-                assign = development_assignments if development else explicit_assignments
-                plans, training_groups = assign(
-                    spec,
-                    groups,
-                    pool_assignments,
-                    evaluator,
-                    finding,
-                    MAX_MEMBERSHIPS,
-                    MAX_PROTOCOL_BYTES,
-                )
-            else:
-                plans = modern_assignments(
-                    spec, groups, fixed, evaluator, finding, MAX_MEMBERSHIPS, MAX_PROTOCOL_BYTES
-                )
-            for metadata, assignment in plans:
-                for patient, partition in sorted(assignment.items()):
-                    for row in groups[patient]:
-                        memberships.append(
-                            {
-                                **{
-                                    key: value
-                                    for key, value in metadata.items()
-                                    if key != "excludedValidation"
-                                },
-                                "partition": partition,
-                                "slideId": row["slideId"],
-                                "patientId": row.get("patientId") if slide_unit else patient,
-                                **(
-                                    {"patientIdSource": row["patientIdSource"]}
-                                    if "patientIdSource" in row
-                                    else {}
-                                ),
-                                "label": row["label"],
-                            }
-                        )
-                partitions.append(check_modern_plan(spec, groups, metadata, assignment, finding))
-        elif not modern and not any(item["severity"] == "error" for item in findings):
-            iterations = len(spec.split.seeds) * (
-                spec.split.folds
-                if spec.split.mode == "kfold" or imported and imported.foldField
-                else 1
+        selected_pools = {}
+        if not blocked():
+            # Select development sources before interpreting their labels. A
+            # combined metadata file can contain unrelated, unlabeled rows.
+            source_groups = (
+                _development_selection_groups(eligible)
+                if patient_folds
+                else {(0, row["slideId"]): [row] for row in eligible}
             )
-            estimated_bytes = 0
-            for row in included:
-                estimated_bytes += (
-                    len(
-                        _json(
-                            {
-                                "seed": 4294967295,
-                                "fold": None,
-                                "partition": "train",
-                                "slideId": row["slideId"],
-                                "patientId": row["patientId"],
-                                "label": row["label"],
-                            }
-                        )
+            try:
+                selected, _direct, expanded, _remaining = select_development_pools(
+                    source_groups, pools, evaluator, finding, _fixed_assignments
+                )
+                eligible = expanded["train"] + expanded["val"]
+                if patient_folds:
+                    self._identity_findings(
+                        eligible,
+                        {key: rows for key, rows in source_groups.items() if key in selected},
+                        finding,
                     )
-                    + 1
-                )
-                if estimated_bytes * iterations > MAX_PROTOCOL_BYTES:
-                    break
-            if (
-                len(included)
-                * len(spec.split.seeds)
-                * (
-                    spec.split.folds
-                    if spec.split.mode == "kfold" or imported and imported.foldField
-                    else 1
-                )
-                > MAX_MEMBERSHIPS
-            ):
-                finding(
-                    "PROTOCOL_MEMBERSHIP_LIMIT",
-                    "The requested seeds and folds exceed 500,000 explicit membership rows.",
-                )
-            elif estimated_bytes * iterations > MAX_PROTOCOL_BYTES:
-                finding(
-                    "PROTOCOL_DOCUMENT_LIMIT",
-                    "The requested explicit memberships exceed the 15 MiB protocol limit; reduce seeds, folds, or cohort size.",
-                )
-            else:
-                assignments = self._assign(spec, groups, fixed, evaluator, finding)
-                for seed, fold, assignment in assignments:
-                    for patient, partition in sorted(assignment.items()):
-                        for row in groups[patient]:
-                            memberships.append(
-                                {
-                                    "seed": seed,
-                                    "fold": fold,
-                                    "partition": partition,
-                                    "slideId": row["slideId"],
-                                    "patientId": row.get("patientId") if slide_unit else patient,
-                                    **(
-                                        {"patientIdSource": row["patientIdSource"]}
-                                        if "patientIdSource" in row
-                                        else {}
-                                    ),
-                                    "label": row["label"],
-                                }
-                            )
-                    partitions.append(
-                        self._check_partition(spec, groups, seed, fold, assignment, finding)
+                selected_pools = {key[1]: role for key, role in selected.items() if key[0] == 0}
+            except FilterFailure as error:
+                finding(error.code, str(error))
+        included, exclusion_counts = self._labelled(spec.target, eligible, evaluator, finding)
+        if not included:
+            finding("EMPTY_COHORT", "No slides remain after eligibility and target mapping.")
+        groups = defaultdict(list)
+        for row in included:
+            if not patient_folds:
+                groups[row["slideId"]].append(row)
+            elif _valid_patient(row):
+                groups[row["patientId"]].append(row)
+        if patient_folds:
+            self._identity_findings(included, groups, finding)
+        mixed_slide_target, patient_counts = self._label_findings(
+            spec, groups, included, evaluator, finding, patient_folds=patient_folds
+        )
+        pool_assignments = {}
+        if not blocked():
+            pool_assignments = {
+                patient: role for patient, role in selected_pools.items() if patient in groups
+            }
+            for role in ("train", "val"):
+                if (
+                    role == "train" or pools.validationSource == "fixed"
+                ) and role not in pool_assignments.values():
+                    finding(
+                        f"{role.upper()}_POOL_EMPTY",
+                        f"The selected {role} pool has no groups after target mapping.",
                     )
-        if spec.sourceTargetSplitId and not any(item["severity"] == "error" for item in findings):
+        memberships, partitions, plans = [], [], []
+        training_groups = {
+            patient: rows
+            for patient, rows in groups.items()
+            if pool_assignments.get(patient) == "train"
+        }
+        if not blocked():
+            plans, training_groups = development_assignments(
+                spec,
+                groups,
+                pool_assignments,
+                evaluator,
+                finding,
+                MAX_MEMBERSHIPS,
+                MAX_PROTOCOL_BYTES,
+            )
+            memberships = _memberships(plans, groups, slide_unit=slide_unit)
+            partitions = [
+                check_modern_plan(spec, groups, metadata, assignment, finding)
+                for metadata, assignment in plans
+            ]
+        if spec.sourceTargetSplitId and not blocked():
             # _load already restricted rows to the exact frozen training set.
             # CV roles may vary across plans; selection or eligibility must not
             # silently discard part of that population while retaining its source.
@@ -1099,18 +961,10 @@ class ProtocolService:
                     "Training design must preserve every frozen training slide. "
                     "Change the training/testing selection in Targets & Splits instead.",
                 )
-        memberships.sort(
-            key=lambda item: (
-                item["seed"],
-                item.get("planId", ""),
-                -1 if item["fold"] is None else item["fold"],
-                item["partition"],
-                item["patientId"] or "",
-                item["slideId"],
-            )
-        )
         findings.sort(key=lambda item: (item["severity"], item["code"], item["message"]))
+        algorithm = ALGORITHM_V4_MIXED if mixed_slide_target else ALGORITHM_V4
         cohort_stats = _cohort_stats(included)
+        class_counts = Counter(row["label"] for row in included)
         summary = {
             "datasetId": spec.datasetId,
             "totalSlides": len(rows),
@@ -1131,52 +985,23 @@ class ProtocolService:
             else "slide"
             if slide_unit
             else "patient_with_slide_fallback"
-            if (slide_unit or cohort_stats["fallbackSlideCount"])
+            if cohort_stats["fallbackSlideCount"]
             else "patient",
             "targetUnit": spec.target.unit,
             "algorithm": algorithm,
-            "fixedPatients": {
-                partition: 0 if slide_unit else sum(value == partition for value in fixed.values())
-                for partition in PARTITIONS
-            },
-            **(modern_summary(spec, training_groups, plans) if modern else {}),
-            **(
-                {
-                    "poolCounts": pool_counts(
-                        groups, pool_assignments, spec.target.classes, split_unit=spec.splitUnit
-                    ),
-                    "finalPlanCount": sum(
-                        metadata["phase"] == "final" for metadata, _assignment in plans
-                    ),
-                    "validationSource": spec.split.pools.validationSource,
-                    "evaluationScope": "Cross-validation within training; external test used only in final evaluation",
-                    "validationFractionScope": "Percentage of each training subset after CV evaluation and tuning folds are removed; fixed validation overrides it",
-                    "roleDescriptions": {
-                        "train": "Model fitting",
-                        "val": "Early stopping using the selected fixed validation pool or a percentage of training",
-                        "test": "Within-training CV evaluation in training plans; reserved external test in final plans",
-                        "tune": "Inner held-out data for model selection; outer and external test groups are excluded",
-                    },
-                }
-                if explicit and not development
-                else {}
+            # Development splits have no fixed partition rules; frozen summaries keep the key.
+            "fixedPatients": dict.fromkeys(PARTITIONS, 0),
+            **modern_summary(spec, training_groups, plans),
+            "poolCounts": pool_counts(
+                groups, pool_assignments, spec.target.classes, split_unit=spec.splitUnit
             ),
-            **(
-                {
-                    "poolCounts": pool_counts(
-                        groups, pool_assignments, spec.target.classes, split_unit=spec.splitUnit
-                    ),
-                    **development_summary(spec),
-                }
-                if development
-                else {}
-            ),
+            **development_summary(spec),
         }
         result = {
             "spec": _serialized_spec(spec),
             "summary": summary,
             "findings": findings,
-            "canFreeze": not any(item["severity"] == "error" for item in findings),
+            "canFreeze": not blocked(),
             "partitions": partitions,
             "memberships": memberships,
             "executionEnabled": False,
@@ -1194,257 +1019,6 @@ class ProtocolService:
             "datasetContentHash": dataset["contentHash"],
         }
         return {**result, "previewHash": hashlib.sha256(_json(digest_input)).hexdigest()}
-
-    @staticmethod
-    def _ordered(patients, seed, label):
-        return sorted(
-            patients,
-            key=lambda patient: (
-                hashlib.sha256(_json([ALGORITHM, seed, label, patient])).digest(),
-                patient,
-            ),
-        )
-
-    def _assign(self, spec, groups, fixed, evaluator, finding):
-        if spec.split.mode == "imported":
-            return self._imported(spec, groups, fixed, evaluator, finding)
-        if spec.split.mode == "rules":
-            assignment = dict(fixed)
-            remaining = set(groups) - set(assignment)
-            if spec.split.rules.train and remaining:
-                finding(
-                    "UNASSIGNED_RULE_GROUPS",
-                    "Some eligible groups match no partition. Change the rules or leave training rules empty to use the remaining cohort.",
-                )
-                return []
-            assignment.update({patient: "train" for patient in remaining})
-            if len(spec.split.seeds) > 1:
-                finding(
-                    "RULE_ASSIGNMENTS_REUSED",
-                    "Rule-based memberships are identical across the selected seeds.",
-                    "warning",
-                )
-            return [(seed, 0, dict(assignment)) for seed in sorted(spec.split.seeds)]
-        free_by_class = defaultdict(list)
-        for patient, group in sorted(groups.items()):
-            if patient not in fixed:
-                free_by_class[group[0]["label"]].append(patient)
-        results = []
-        for seed in sorted(spec.split.seeds):
-            if spec.split.mode == "kfold":
-                if sum(map(len, free_by_class.values())) < spec.split.folds:
-                    finding(
-                        "INFEASIBLE_FOLDS",
-                        "There are fewer unfixed patients than requested validation folds.",
-                    )
-                    continue
-                fold_map, sizes = {}, [0] * spec.split.folds
-                for label in spec.target.classes:
-                    ordered = self._ordered(free_by_class[label], seed, label)
-                    offset = min(range(spec.split.folds), key=lambda fold: (sizes[fold], fold))
-                    for index, patient in enumerate(ordered):
-                        fold = (offset + index) % spec.split.folds
-                        fold_map[patient] = fold
-                        sizes[fold] += 1
-                for fold in range(spec.split.folds):
-                    assignment = {
-                        **fixed,
-                        **{
-                            patient: "val" if member_fold == fold else "train"
-                            for patient, member_fold in fold_map.items()
-                        },
-                    }
-                    results.append((seed, fold, assignment))
-            else:
-                assignment = dict(fixed)
-                ratios = spec.split.ratios.model_dump()
-                for label in spec.target.classes:
-                    ordered = self._ordered(free_by_class[label], seed, label)
-                    desired = {
-                        partition: ratios[partition] * len(ordered) for partition in PARTITIONS
-                    }
-                    counts = {partition: math.floor(desired[partition]) for partition in PARTITIONS}
-                    remainder = len(ordered) - sum(counts.values())
-                    priorities = sorted(
-                        PARTITIONS,
-                        key=lambda partition: (
-                            -(desired[partition] - counts[partition]),
-                            PARTITIONS.index(partition),
-                        ),
-                    )
-                    for partition in priorities[:remainder]:
-                        counts[partition] += 1
-                    needs = {
-                        partition: max(
-                            0,
-                            spec.constraints.minPatientsPerClass
-                            - sum(
-                                fixed.get(patient) == partition and group[0]["label"] == label
-                                for patient, group in groups.items()
-                            ),
-                        )
-                        if ratios[partition] > 0
-                        else 0
-                        for partition in PARTITIONS
-                    }
-                    if sum(needs.values()) <= len(ordered):
-                        for partition in PARTITIONS:
-                            while counts[partition] < needs[partition]:
-                                donors = [
-                                    candidate
-                                    for candidate in PARTITIONS
-                                    if counts[candidate] > needs[candidate]
-                                ]
-                                donor = max(
-                                    donors,
-                                    key=lambda candidate: (
-                                        counts[candidate] - desired[candidate],
-                                        counts[candidate],
-                                        -PARTITIONS.index(candidate),
-                                    ),
-                                )
-                                counts[donor] -= 1
-                                counts[partition] += 1
-                    offset = 0
-                    for partition in PARTITIONS:
-                        for patient in ordered[offset : offset + counts[partition]]:
-                            assignment[patient] = partition
-                        offset += counts[partition]
-                results.append((seed, None, assignment))
-        return results
-
-    @staticmethod
-    def _imported(spec, groups, fixed, evaluator, finding):
-        imported = spec.split.imported
-        states = {}
-        for patient, group in sorted(groups.items()):
-            patient_states = set()
-            for row in group:
-                partition = None
-                if imported.partitionField:
-                    raw = evaluator.field(row, imported.partitionField)
-                    if raw is None or raw not in imported.partitionLabels:
-                        finding(
-                            "INVALID_IMPORTED_PARTITION",
-                            "Every included slide needs an explicitly mapped imported partition.",
-                        )
-                        continue
-                    partition = imported.partitionLabels[raw]
-                if imported.foldField:
-                    raw_fold = evaluator.field(row, imported.foldField)
-                    if raw_fold in imported.testFoldLabels:
-                        if partition not in (None, "test"):
-                            finding(
-                                "IMPORTED_PARTITION_FOLD_CONFLICT",
-                                "A held-out fold conflicts with its imported partition.",
-                            )
-                        state = ("fixed", "test")
-                    elif partition in ("train", "val", "test"):
-                        if raw_fold is not None:
-                            finding(
-                                "IMPORTED_PARTITION_FOLD_CONFLICT",
-                                "Fixed imported partitions require an empty fold or an explicit test-fold label.",
-                            )
-                        state = ("fixed", partition)
-                    elif raw_fold is None or raw_fold not in imported.foldLabels:
-                        finding(
-                            "INVALID_IMPORTED_FOLD",
-                            "Every development slide needs an explicit valid fold mapping; held-out labels require an explicit mapping.",
-                        )
-                        continue
-                    else:
-                        state = ("fold", imported.foldLabels[raw_fold])
-                elif partition == "trainval":
-                    finding(
-                        "INVALID_IMPORTED_PARTITION",
-                        "A trainval partition requires an imported fold field.",
-                    )
-                    continue
-                else:
-                    state = ("fixed", partition)
-                patient_states.add(state)
-            if len(patient_states) > 1:
-                finding(
-                    "IMPORTED_PATIENT_LEAKAGE",
-                    "An imported split assigns slides from the same patient to different folds or partitions.",
-                )
-            elif patient_states:
-                state = next(iter(patient_states))
-                if patient in fixed and state != ("fixed", fixed[patient]):
-                    finding(
-                        "IMPORTED_RULE_CONFLICT",
-                        "Imported assignments conflict with a patient-expanded fixed rule.",
-                    )
-                states[patient] = state
-        if imported.foldField:
-            used = {value for kind, value in states.values() if kind == "fold"}
-            if used != set(range(spec.split.folds)):
-                finding(
-                    "INCOMPLETE_IMPORTED_FOLDS",
-                    "Imported development assignments must contain every declared fold from zero through folds minus one.",
-                )
-        if len(spec.split.seeds) > 1:
-            finding(
-                "IMPORTED_ASSIGNMENTS_REUSED",
-                "Imported memberships are identical across the selected seeds.",
-                "warning",
-            )
-        folds = range(spec.split.folds) if imported.foldField else (None,)
-        results = []
-        for seed in sorted(spec.split.seeds):
-            for fold in folds:
-                assignment = {
-                    patient: value if kind == "fixed" else "val" if value == fold else "train"
-                    for patient, (kind, value) in states.items()
-                }
-                results.append((seed, fold, assignment))
-        return results
-
-    @staticmethod
-    def _check_partition(spec, groups, seed, fold, assignment, finding):
-        if set(assignment) != set(groups) or any(
-            value not in PARTITIONS for value in assignment.values()
-        ):
-            finding(
-                "INCOMPLETE_ASSIGNMENTS",
-                "Every included patient must have exactly one valid partition in every seed and fold.",
-            )
-        result = {"seed": seed, "fold": fold}
-        for partition in PARTITIONS:
-            patients = [patient for patient, value in assignment.items() if value == partition]
-            classes = Counter(groups[patient][0]["label"] for patient in patients)
-            stats = _cohort_stats([row for patient in patients for row in groups[patient]])
-            result[partition] = {
-                "patients": 0 if spec.splitUnit == "slide" else stats["patientCount"],
-                "groups": len(patients),
-                "fallbackSlides": stats["fallbackSlideCount"],
-                "slides": sum(len(groups[patient]) for patient in patients),
-                "classes": {label: classes[label] for label in spec.target.classes},
-            }
-            required = partition in {"train", "val"} or bool(patients)
-            if spec.split.mode == "rules":
-                required = partition == "train" or bool(getattr(spec.split.rules, partition))
-            if partition == "test" and spec.split.mode == "holdout" and spec.split.ratios.test > 0:
-                required = True
-            if required and len(patients) < spec.constraints.minPatientsPerPartition:
-                finding(
-                    "PARTITION_TOO_SMALL",
-                    f"Seed {seed}, fold {fold}, {partition} has fewer than {spec.constraints.minPatientsPerPartition} patients.",
-                )
-            if required:
-                for label in spec.target.classes:
-                    if classes[label] < spec.constraints.minPatientsPerClass:
-                        finding(
-                            "PARTITION_CLASS_TOO_SMALL",
-                            f"Seed {seed}, fold {fold}, {partition} has fewer than {spec.constraints.minPatientsPerClass} patients in class '{label}'.",
-                        )
-        if not result["test"]["groups"]:
-            finding(
-                "NO_TEST_SET",
-                "This protocol has no held-out test patients; validation results must not be presented as held-out test performance.",
-                "warning",
-            )
-        return result
 
     def freeze(
         self,

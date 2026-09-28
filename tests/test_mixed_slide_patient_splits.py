@@ -7,9 +7,10 @@ from pathlib import Path
 import pytest
 
 from histopilot.application.development_splits import ALGORITHM_V4, ALGORITHM_V4_MIXED
+from histopilot.storage.project_lock import StorageError
 
 support = runpy.run_path(str(Path(__file__).with_name("test_development_protocols.py")))
-pools = support["support"]
+pools = support
 
 
 def mixed_store(mode="kfold", *, stratify=True, fixed_validation=False):
@@ -80,12 +81,12 @@ def test_mixed_patient_target_remains_blocked():
 
 def test_legacy_mixed_slide_target_remains_blocked():
     store = mixed_store()
-    store.draft["payload"]["spec"]["split"] = pools["specification"]()["split"]
-    result = pools["preview"](store)
-    assert not result["canFreeze"]
-    assert "MIXED_PATIENT_STRATIFICATION_UNSUPPORTED" in {
-        item["code"] for item in result["findings"]
-    }
+    split = store.draft["payload"]["spec"]["split"]
+    split["version"] = 3
+    split["pools"]["rules"]["test"] = [{"field": "partition", "op": "eq", "value": "test"}]
+    with pytest.raises(StorageError) as error:
+        pools["preview"](store)
+    assert error.value.code == "LEGACY_PROTOCOL_SPLIT"
 
 
 def test_multiple_slides_of_one_patient_do_not_satisfy_class_group_minimum():

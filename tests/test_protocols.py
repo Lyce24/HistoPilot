@@ -1,4 +1,8 @@
-"""Patient grouping, explicit labels, safe filtering, split reproducibility and freeze CAS."""
+"""Patient grouping, explicit labels, safe filtering, split reproducibility and freeze CAS.
+
+Protocols are previewed with development-only (version 4) splits. Frozen records of
+split versions 1-3 are covered by test_legacy_protocols.py.
+"""
 
 import copy
 import json
@@ -52,10 +56,11 @@ def specification():
             "positiveClass": "high",
         },
         "split": {
+            "version": 4,
             "mode": "kfold",
             "folds": 3,
             "seeds": [42, 7],
-            "rules": {"test": [{"field": "grade", "op": "eq", "value": "2"}]},
+            "pools": {"trainSelection": "remaining"},
         },
     }
 
@@ -114,27 +119,6 @@ def assert_patient_disjoint(result):
         key = (item["seed"], item["fold"], item["patientId"])
         assert key not in states or states[key] == item["partition"]
         states[key] = item["partition"]
-
-
-def test_generated_kfold_expands_grade2_test_and_preserves_every_patient():
-    result = preview()
-    assert result["canFreeze"], result["findings"]
-    assert result["executionEnabled"] is False
-    assert result["summary"]["includedPatients"] == 16
-    assert result["summary"]["includedSlides"] == 32
-    assert result["summary"]["fixedPatients"] == {"train": 0, "val": 0, "test": 4}
-    assert len(result["partitions"]) == 6
-    assert len(result["memberships"]) == 32 * 3 * 2
-    assert_patient_disjoint(result)
-    for part in result["partitions"]:
-        assert part["test"]["patients"] == 4
-        assert part["val"]["classes"] == {"low": 2, "high": 2}
-        assert part["train"]["classes"] == {"low": 4, "high": 4}
-    assert all(
-        item["partition"] == "test"
-        for item in result["memberships"]
-        if int(item["patientId"][1:]) >= 12
-    )
 
 
 def test_row_order_and_python_hash_seed_do_not_change_memberships_or_preview():
@@ -201,17 +185,20 @@ def test_missing_patient_identity_never_falls_back_to_slide_or_case(patient):
     assert result["memberships"] == []
 
 
-@pytest.mark.parametrize(
-    "unit,expected",
-    [("patient", "MIXED_PATIENT_LABELS"), ("slide", "MIXED_PATIENT_STRATIFICATION_UNSUPPORTED")],
-)
-def test_mixed_patient_labels_never_select_majority(unit, expected):
+def test_mixed_patient_labels_never_select_majority():
     store = MemoryStore()
-    store.draft["payload"]["spec"]["target"]["unit"] = unit
     store.rows[0]["attributes"]["label"] = "1"
     result = preview(store)
-    assert expected in codes(result)
+    assert "MIXED_PATIENT_LABELS" in codes(result)
     assert not result["canFreeze"]
+    # A slide target keeps each slide's own label rather than choosing one for the patient.
+    store.draft["payload"]["spec"]["target"]["unit"] = "slide"
+    result = preview(store)
+    assert result["canFreeze"], result["findings"]
+    assert "MIXED_SLIDE_LABEL_PATIENT_GROUPS" in {item["code"] for item in result["findings"]}
+    labels = {row["slideId"]: row["label"] for row in result["memberships"]}
+    assert (labels["s00-0"], labels["s00-1"]) == ("high", "low")
+    assert_patient_disjoint(result)
 
 
 def test_consistent_slide_target_still_splits_whole_patients():
@@ -251,84 +238,25 @@ def test_eligibility_conditions_apply_to_the_same_slide():
     assert "EMPTY_COHORT" in codes(result)
 
 
-def test_fixed_rules_expand_matching_slide_to_patient_and_detect_cross_slide_overlap():
+def test_pool_rules_expand_matching_slide_to_patient_and_detect_cross_slide_overlap():
     store = MemoryStore()
-    rules = store.draft["payload"]["spec"]["split"]["rules"]
-    rules["test"] = [{"field": "Slide_ID", "op": "regex", "value": "^s1[2-5]-0$"}]
-    result = preview(store)
-    assert result["canFreeze"]
-    assert result["summary"]["fixedPatients"]["test"] == 4
-    rules["train"] = [{"field": "Slide_ID", "op": "regex", "value": "^s12-1$"}]
-    result = preview(store)
-    assert "OVERLAPPING_PATIENT_RULES" in codes(result)
-
-
-def test_holdout_uses_declared_remaining_pool_ratios_and_class_minimums():
-    store = MemoryStore()
-    split = store.draft["payload"]["spec"]["split"]
-    split.update(mode="holdout", ratios={"train": 0.8, "val": 0.2, "test": 0})
+    pools = store.draft["payload"]["spec"]["split"]["pools"]
+    pools.update(
+        trainSelection="rules",
+        rules={"train": [{"field": "Slide_ID", "op": "regex", "value": "^s(0[0-9]|1[01])-0$"}]},
+    )
     result = preview(store)
     assert result["canFreeze"], result["findings"]
-    assert all(part["fold"] is None for part in result["partitions"])
-    assert all(part["test"]["patients"] == 4 for part in result["partitions"])
-    assert all(part["train"]["patients"] == 10 for part in result["partitions"])
-    assert all(part["val"]["patients"] == 2 for part in result["partitions"])
+    # Twelve matching first slides select all 24 slides of their patients.
+    assert result["summary"]["poolCounts"]["train"]["patients"] == 12
+    assert result["summary"]["poolCounts"]["train"]["slides"] == 24
     assert_patient_disjoint(result)
+    pools["validationSource"] = "fixed"
+    pools["rules"]["val"] = [{"field": "Slide_ID", "op": "regex", "value": "^s00-1$"}]
+    assert "OVERLAPPING_PATIENT_RULES" in codes(preview(store))
 
 
-def imported_store():
-    store = MemoryStore()
-    store.draft["payload"]["spec"]["split"] = {
-        "mode": "imported",
-        "folds": 3,
-        "seeds": [42],
-        "imported": {
-            "foldField": "fold",
-            "foldLabels": {"0": 0, "1": 1, "2": 2},
-            "testFoldLabels": ["-1"],
-        },
-    }
-    return store
-
-
-def test_imported_folds_require_explicit_test_mapping_and_patient_coherence():
-    store = imported_store()
-    result = preview(store)
-    assert result["canFreeze"], result["findings"]
-    assert_patient_disjoint(result)
-    store.draft["payload"]["spec"]["split"]["imported"]["testFoldLabels"] = []
-    assert "INVALID_IMPORTED_FOLD" in codes(preview(store))
-    store = imported_store()
-    store.rows[0]["attributes"]["fold"] = "1"
-    assert "IMPORTED_PATIENT_LEAKAGE" in codes(preview(store))
-
-
-def test_imported_fold_range_must_be_complete():
-    store = imported_store()
-    for row in store.rows:
-        if row["attributes"]["fold"] == "2":
-            row["attributes"]["fold"] = "1"
-    result = preview(store)
-    assert "INCOMPLETE_IMPORTED_FOLDS" in codes(result)
-    assert not result["canFreeze"]
-
-
-def test_imported_partition_leakage_is_blocked():
-    store = MemoryStore()
-    store.draft["payload"]["spec"]["split"] = {
-        "mode": "imported",
-        "seeds": [42],
-        "imported": {
-            "partitionField": "partition",
-            "partitionLabels": {"trainval": "train", "test": "val"},
-        },
-    }
-    assert preview(store)["canFreeze"]
-    store.rows[0]["attributes"]["partition"] = "test"
-    assert "IMPORTED_PATIENT_LEAKAGE" in codes(preview(store))
-
-
-def imported_alias_store(version, *, target_alias=False):
+def imported_alias_store(*, target_alias=False):
     store = MemoryStore()
     store.dataset["manifest"]["dictionary"].extend(
         {"key": key, "sourceColumn": "assignment_code", "owner": "slide", "type": "text"}
@@ -338,62 +266,37 @@ def imported_alias_store(version, *, target_alias=False):
     labels = {}
     for row in store.rows:
         patient = int(row["patientId"][1:])
-        role = "train" if patient < 8 else "val" if patient < 12 else "test"
+        role = "train" if patient < 10 else "val"
         value = f"{role}-{patient % 2}" if target_alias else role
         row["attributes"].update(cohort=value, covariate=value)
         mappings[value] = role
         labels[value] = "low" if patient % 2 == 0 else "high"
     imported = {"partitionField": "cohort", "partitionLabels": mappings}
-    split = {"version": version, "mode": "imported", "seeds": [7, 42], "imported": imported}
-    if version == 2:
-        split.update(mode="held_out", heldOutSource="imported")
-    elif version == 3:
-        split.pop("imported")
-        split.update(
-            mode="held_out",
-            pools={"source": "imported", "validationSource": "fixed", "imported": imported},
-        )
-    store.draft["payload"]["spec"]["split"] = split
+    store.draft["payload"]["spec"]["split"]["pools"] = {
+        "source": "imported",
+        "validationSource": "fixed",
+        "imported": imported,
+    }
     if target_alias:
         store.draft["payload"]["spec"]["target"].update(field="covariate", labels=labels)
-    else:
-        store.draft["payload"]["spec"]["predictors"] = ["covariate"]
     return store
 
 
-@pytest.mark.parametrize("version", [1, 2, 3])
-def test_imported_partition_source_alias_cannot_be_a_predictor_in_any_version(version):
-    result = preview(imported_alias_store(version))
+def test_imported_partition_source_alias_cannot_be_a_predictor():
+    assert preview(imported_alias_store())["canFreeze"]
+    store = imported_alias_store()
+    store.draft["payload"]["spec"]["predictors"] = ["covariate"]
+    result = preview(store)
     assert "FORBIDDEN_PREDICTOR" in codes(result)
     assert not result["canFreeze"]
     assert result["memberships"] == []
 
 
-@pytest.mark.parametrize("version", [1, 2, 3])
-def test_imported_assignment_source_cannot_be_target_even_with_valid_balanced_mapping(version):
-    result = preview(imported_alias_store(version, target_alias=True))
+def test_imported_assignment_source_cannot_be_target_even_with_valid_balanced_mapping():
+    result = preview(imported_alias_store(target_alias=True))
     assert codes(result) == {"SPLIT_TARGET_LEAKAGE"}
     assert not result["canFreeze"]
     assert result["memberships"] == []
-
-
-def test_legacy_imported_fold_source_alias_cannot_be_a_predictor():
-    store = imported_alias_store(1)
-    for row in store.rows:
-        patient = int(row["patientId"][1:])
-        value = str((patient // 2) % 3) if patient < 12 else "external"
-        row["attributes"].update(cohort=value, covariate=value)
-    store.draft["payload"]["spec"]["split"].update(
-        folds=3,
-        imported={
-            "foldField": "cohort",
-            "foldLabels": {"0": 0, "1": 1, "2": 2},
-            "testFoldLabels": ["external"],
-        },
-    )
-    result = preview(store)
-    assert codes(result) == {"FORBIDDEN_PREDICTOR"}
-    assert not result["canFreeze"]
 
 
 @pytest.mark.parametrize(
@@ -704,7 +607,6 @@ def test_arbitrarily_named_source_identifiers_and_oceanpath_k_fold_are_not_predi
         assert "FORBIDDEN_PREDICTOR" in codes(result)
 
 
-@pytest.mark.parametrize("version", [1, 2, 3])
 @pytest.mark.parametrize(
     "identity_column,record_key",
     [
@@ -714,17 +616,9 @@ def test_arbitrarily_named_source_identifiers_and_oceanpath_k_fold_are_not_predi
         ("patientSourcePatientIdColumn", "patientId"),
     ],
 )
-def test_renaming_an_identity_source_cannot_make_it_a_target(version, identity_column, record_key):
+def test_renaming_an_identity_source_cannot_make_it_a_target(identity_column, record_key):
     store = MemoryStore()
     spec = store.draft["payload"]["spec"]
-    if version >= 2:
-        spec["split"] = {"version": version, "mode": "kfold", "folds": 3, "seeds": [42]}
-    if version == 3:
-        spec["split"]["pools"] = {
-            "source": "rules",
-            "trainSelection": "remaining",
-            "rules": {"test": [{"field": "grade", "op": "eq", "value": "2"}]},
-        }
     store.dataset["manifest"]["dictionary"].append(
         {"key": "SubjectCode", "sourceColumn": "Registry number", "owner": "slide", "type": "text"}
     )
@@ -748,10 +642,19 @@ def test_renaming_an_identity_source_cannot_make_it_a_target(version, identity_c
     assert error.value.code == "PROTOCOL_PREFLIGHT_BLOCKED"
 
 
-def test_nondefault_holdout_ratios_cannot_silently_create_or_imply_a_kfold_test_set():
-    store = MemoryStore()
-    store.draft["payload"]["spec"]["split"]["ratios"] = {"train": 0.7, "val": 0.1, "test": 0.2}
-    assert "UNUSED_HOLDOUT_RATIOS" in codes(preview(store))
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"ratios": {"train": 0.7, "val": 0.1, "test": 0.2}},
+        {"heldOutSource": "rules"},
+        {"pools": {"rules": {"test": [{"field": "grade", "op": "eq", "value": "2"}]}}},
+    ],
+)
+def test_holdout_settings_cannot_create_or_imply_a_development_test_set(change):
+    spec = specification()
+    spec["split"].update(change)
+    with pytest.raises(ValidationError, match="test data|external holdout"):
+        ProtocolSpec.model_validate(spec)
 
 
 def test_oversized_protocol_is_blocked_during_preview(monkeypatch):
@@ -815,50 +718,6 @@ def test_live_cohort_needs_no_labels_or_feature_configuration_and_uses_every_row
     assert store.draft["payload"] == {}
 
 
-def test_rules_test_expands_to_whole_patient_and_empty_train_uses_complement():
-    store = MemoryStore()
-    split = store.draft["payload"]["spec"]["split"]
-    split.update(mode="rules")
-    split["rules"] = {"test": [{"field": "Slide_ID", "op": "regex", "value": "^s1[2-5]-0$"}]}
-    frozen = preview(store)
-    assert frozen["canFreeze"], frozen["findings"]
-    assert len(frozen["partitions"]) == 2
-    assert {part["fold"] for part in frozen["partitions"]} == {0}
-    for part in frozen["partitions"]:
-        # Four matching slides expand to their four patients' eight slides.
-        slides = {role: part[role]["slides"] for role in ("train", "val", "test")}
-        assert slides == {"train": 24, "val": 0, "test": 8}
-        assert (part["train"]["patients"], part["test"]["patients"]) == (12, 4)
-    assert_patient_disjoint(frozen)
-
-
-def test_rules_validation_is_optional_but_explicit_validation_is_reserved():
-    store = MemoryStore()
-    split = store.draft["payload"]["spec"]["split"]
-    split.update(mode="rules")
-    split["rules"]["val"] = [{"field": "number", "op": "lt", "value": 2}]
-    result = preview(store)
-    assert result["canFreeze"], result["findings"]
-    assert all(part["val"]["patients"] == 2 for part in result["partitions"])
-    assert all(part["train"]["patients"] == 10 for part in result["partitions"])
-    split["rules"] = {}
-    result = preview(store)
-    assert result["canFreeze"], result["findings"]
-    assert all(part["train"]["patients"] == 16 for part in result["partitions"])
-    assert all(part["val"]["patients"] == 0 for part in result["partitions"])
-
-
-def test_explicit_train_rule_never_silently_drops_unassigned_groups():
-    store = MemoryStore()
-    split = store.draft["payload"]["spec"]["split"]
-    split.update(mode="rules")
-    split["rules"]["train"] = [{"field": "number", "op": "lt", "value": 2}]
-    result = preview(store)
-    assert "UNASSIGNED_RULE_GROUPS" in codes(result)
-    assert not result["canFreeze"]
-    assert result["memberships"] == []
-
-
 @pytest.mark.parametrize(
     "condition,code",
     [
@@ -878,8 +737,8 @@ def test_invalid_live_rules_clear_counts_instead_of_showing_unfiltered_success(c
 def test_preview_cannot_hide_bad_numeric_values_behind_another_matching_slide():
     store = MemoryStore()
     store.rows[1]["attributes"]["number"] = "unknown"
-    rules = {"test": [{"field": "number", "op": "gte", "value": 0}]}
-    store.draft["payload"]["spec"]["split"]["rules"] = rules
+    rules = {"train": [{"field": "number", "op": "gte", "value": 0}]}
+    store.draft["payload"]["spec"]["split"]["pools"] = {"trainSelection": "rules", "rules": rules}
     assert "INVALID_FILTER_VALUE" in codes(preview(store))
 
 

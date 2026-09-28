@@ -188,7 +188,13 @@ def test_protocol_preview_freeze_and_replay_ignore_changes_to_personal_labels(tm
                     "labels": {"0": "low", "1": "high"},
                     "positiveClass": "high",
                 },
-                "split": {"mode": "kfold", "folds": 3, "seeds": [42]},
+                "split": {
+                    "version": 4,
+                    "mode": "kfold",
+                    "folds": 3,
+                    "seeds": [42],
+                    "pools": {"trainSelection": "remaining"},
+                },
             },
         },
     )

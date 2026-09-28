@@ -1,11 +1,11 @@
 """Development-only source selection and versioned plans.
 
 The existing `test` assignment key describes an assessment fold internally. It
-never identifies an external inference cohort in this version. Legacy algorithms
-and frozen documents are left unchanged.
+never identifies an external inference cohort in this version. Frozen protocols
+of earlier split versions keep their stored memberships; nothing regenerates them.
 """
 
-from histopilot.application.modern_splits import modern_assignments
+from histopilot.application.modern_splits import group_class_counts, modern_assignments
 
 ALGORITHM_V4 = "histopilot-development-plans-v4"
 ALGORITHM_V4_MIXED = "histopilot-development-labelset-plans-v4"
@@ -78,7 +78,6 @@ def development_assignments(spec, groups, assignments, evaluator, finding, max_r
     plans = modern_assignments(
         spec,
         training,
-        {},
         evaluator,
         finding,
         max_rows,
@@ -86,6 +85,27 @@ def development_assignments(spec, groups, assignments, evaluator, finding, max_r
         fixed_validation=validation if spec.split.pools.validationSource == "fixed" else None,
     )
     return [({**metadata, "pool": "development"}, members) for metadata, members in plans], training
+
+
+def pool_counts(groups, assignments, classes, *, split_unit="patient"):
+    result = {}
+    for role in ROLES:
+        patients = [patient for patient in sorted(groups) if assignments.get(patient) == role]
+        rows = [row for patient in patients for row in groups[patient]]
+        counts = group_class_counts(groups, set(patients))
+        result[role] = {
+            "patients": 0
+            if split_unit == "slide"
+            else sum(
+                groups[patient][0].get("patientIdSource") != "slide_fallback"
+                for patient in patients
+            ),
+            "groups": len(patients),
+            "slides": len(rows),
+            "fallbackSlides": sum(row.get("patientIdSource") == "slide_fallback" for row in rows),
+            "classes": {label: counts[label] for label in classes},
+        }
+    return result
 
 
 def development_summary(spec):
