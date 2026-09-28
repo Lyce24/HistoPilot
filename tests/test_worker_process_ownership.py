@@ -42,8 +42,11 @@ if child == 0:
     while True:
         time.sleep(1)
 fields = Path(f"/proc/{os.getpid()}/stat").read_text().rsplit(")", 1)[1].split()
-path.write_text(json.dumps({"pid": os.getpid(), "startTicks": int(fields[19]),
+# Publish atomically: the test polls for the file and reads it at once.
+staged = path.with_suffix(".tmp")
+staged.write_text(json.dumps({"pid": os.getpid(), "startTicks": int(fields[19]),
     "bootId": Path("/proc/sys/kernel/random/boot_id").read_text().strip(), "childPid": child}))
+staged.replace(path)
 while True:
     time.sleep(1)
 """
