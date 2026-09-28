@@ -168,7 +168,7 @@ A cohort that shares any slide, or any source slide file, with the predictor's d
 
 Results can compare an ensemble with a refit only within the same cohort and scoring unit, and only for matching groups. Choosing between strategies on a test cohort uses up that cohort's independence for the chosen strategy.
 
-An inference run applies a predictor to an unlabeled cohort. It reads no labels and computes no metrics. The same development-overlap rules apply, with one exception: in a patient-grouped design whose target is slide-level, new slides from development patients are allowed and flagged in every view and export. Its descriptions of the predictions are:
+An inference run applies a predictor to an unlabeled cohort. It reads no labels and computes no metrics. The same development-overlap rules apply, with one exception: in a patient-grouped design whose target is slide-level, new slides from development patients are allowed and flagged on the run page and in Case Review (the `developmentPatients` filter). The downloaded prediction files do not carry the flag. Its descriptions of the predictions are:
 
 | Quantity | Definition |
 | --- | --- |
