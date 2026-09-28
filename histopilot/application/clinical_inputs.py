@@ -66,7 +66,7 @@ def _condition_fields(conditions):
 def excluded_clinical_fields(store, protocol):
     """Fields that define the label or the split, each with the reason it is refused."""
     spec = protocol["spec"]
-    excluded = {spec["target"]["field"]: "It is the prediction target."}
+    excluded = {spec["target"].get("field"): "It is the prediction target."}
     source_id = spec.get("sourceTargetSplitId")
     if source_id:
         source = store.get_configuration(source_id)["manifest"]["spec"]
@@ -103,6 +103,8 @@ def clinical_field_choices(store, filesystem, protocol):
 
 
 def development_clinical_values(store, filesystem, protocol, recipes):
+    if not any(clinical_fields(recipe) for recipe in recipes):
+        return {}
     choices = {row["field"]: row for row in clinical_field_choices(store, filesystem, protocol)}
     unit = protocol["spec"].get("splitUnit", "patient")
     fields = {}

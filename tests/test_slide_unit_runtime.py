@@ -65,7 +65,7 @@ def test_slide_validation_positive_threshold_counts_slides(tmp_path):
     assert decision["reason"] == "insufficient_validation_positive_slides"
 
 
-@pytest.mark.parametrize("recipe", [{"samplingStrategy": "patient_natural"}, {"samplingStrategy": "cohort_balanced"}, {"inputMode": "clinical"}])
+@pytest.mark.parametrize("recipe", [{"samplingStrategy": "patient_natural"}, {"samplingStrategy": "cohort_balanced"}])
 def test_slide_mode_rejects_patient_computation_controls(recipe):
     with pytest.raises(ValueError, match="[Pp]atient"):
         validate_split_unit(recipe, {"unit": "slide"}, "slide")

@@ -86,6 +86,7 @@ def test_slide_level_design_exports_each_slides_own_fold(execution, monkeypatch)
         if identity == protocol_id:
             document = deepcopy(document)
             document["manifest"]["spec"]["splitUnit"] = "slide"
+            document["manifest"]["spec"]["target"]["unit"] = "slide"
         return document
 
     monkeypatch.setattr(service.store, "get_configuration", slide_unit)
