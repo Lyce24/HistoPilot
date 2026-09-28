@@ -52,7 +52,7 @@ def packed_evaluation(tmp_path):
     memberships = [{"slideId": row["slideId"], "patientId": row["patientId"], "label": "low"}
                    for row in rows]
 
-    def make_plan(*, historical=False):
+    def make_plan(*, historical=False, purpose=None):
         cohort = store.publish_configuration(manifest={
             "kind": "evaluation-cohort", "datasetId": data["id"], "memberships": memberships,
             "pack": packing.artifact(first_id) if historical else None,
@@ -61,10 +61,13 @@ def packed_evaluation(tmp_path):
         manifest = {"kind": "model-evaluation", "datasetId": data["id"],
                     "predictorId": predictor["id"], "cohortId": cohort["id"],
                     "features": feature_contract(feature, bundle), "target": target,
-                    "inference": inference}
-        evaluation = store.publish_configuration(manifest=manifest, operation_id=f"evaluation-{historical}")
+                    "inference": inference, **({"purpose": purpose} if purpose else {})}
+        evaluation = store.publish_configuration(
+            manifest=manifest, operation_id=f"evaluation-{historical}-{purpose}"
+        )
         files = {row["slideId"]: row for row in feature["manifest"]["files"]}
         return {"kind": "evaluation", "recordId": evaluation["id"],
+                **({"purpose": "inference"} if purpose == "inference" else {}),
                 "recordContentHash": evaluation["contentHash"], "projectFolder": str(store.folder),
                 "projectId": store.project_id, "target": target, "method": "ensemble",
                 "checkpoints": [], "inference": inference,
@@ -98,3 +101,18 @@ def test_changed_loading_policy_cannot_hide_pack_binding(packed_evaluation):
     plan["data"].update(loadingPolicy="native", packPath=None, packStamps=None)
     with pytest.raises(ValueError, match="loading contract changed"):
         verify_plan_inputs(plan)
+
+
+@pytest.mark.parametrize("purpose", [None, "inference", "review"])
+def test_worker_runs_only_the_purpose_saved_with_its_record(packed_evaluation, purpose):
+    make_plan, _ = packed_evaluation
+    plan = make_plan(purpose=purpose)
+    verify_plan_inputs(plan)
+    changed = copy.deepcopy(plan)
+    if purpose == "inference":
+        changed.pop("purpose")
+    else:
+        # Earlier review runs and evaluations keep label scoring; neither may skip it.
+        changed["purpose"] = "inference"
+    with pytest.raises(ValueError, match="differ"):
+        verify_plan_inputs(changed)

@@ -2,11 +2,30 @@
 
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.feature_packs import FeaturePackService
-from histopilot.application.protocols import pack_binding_snapshot, protocol_bundle_findings
+from histopilot.application.protocols import pack_binding_snapshot
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
+
+
+def protocol_bundle_findings(protocol: dict, bundle: dict) -> list[dict]:
+    """Honor feature bindings on legacy frozen protocols during experiment checks."""
+    pinned = protocol["spec"].get("featureBundleId")
+    if pinned and pinned != bundle["id"]:
+        return [{
+            "severity": "error",
+            "code": "PROTOCOL_BUNDLE_MISMATCH",
+            "message": "This older protocol pins another feature bundle. Use that bundle or create a dataset-only protocol revision.",
+        }]
+    snapshot = protocol.get("featureBundle")
+    if snapshot and snapshot["contentHash"] != bundle.get("contentHash"):
+        return [{
+            "severity": "error",
+            "code": "PROTOCOL_BUNDLE_CHANGED",
+            "message": "The feature bundle no longer matches the version saved in this older protocol.",
+        }]
+    return []
 
 
 class MILInputService:
@@ -47,13 +66,13 @@ class MILInputService:
                 "BUNDLE_STALE",
                 "Bundle inputs changed. Prepare and freeze a current bundle in PFM & features.",
             )
-            findings.extend(bundle["findings"])
+        findings.extend(bundle["findings"])
         findings.extend(protocol_bundle_findings(protocol, bundle))
         protocol_spec = protocol["spec"]
         if protocol_spec.get("predictors"):
             findings.append({
                 "severity": "info", "code": "CLINICAL_INPUTS_AVAILABLE",
-                "message": "Clinical fields are declared. Choose image-only, clinical-only, or combined inputs in each training recipe; all arms share this feature-covered cohort.",
+                "message": "Clinical fields are declared. Choose image-only, clinical-only, or combined inputs in each training recipe; all arms share this frozen development cohort.",
             })
         if protocol_spec.get("featureSetId") not in (None, "", feature_id):
             error(
@@ -65,15 +84,25 @@ class MILInputService:
         except StorageError as failure:
             error(failure.code, str(failure))
             return result
+        if feature["manifest"].get("kind") != "feature":
+            error("INVALID_FEATURE_SET", "The bundle must contain a saved feature inventory.")
+            return result
         # Which extraction output this bundle holds decides which architectures can
         # read it. Records frozen before slide encoders were supported hold patches.
         result["featureKind"] = feature["manifest"].get("spec", {}).get("featureKind", "patch")
-        present = {row["slideId"] for row in feature["manifest"].get("files", [])}
+        feature_slides = [row["slideId"] for row in feature["manifest"].get("files", [])]
+        present = set(feature_slides)
+        if len(feature_slides) != len(present):
+            error(
+                "DUPLICATE_FEATURE_ID",
+                "The selected feature inventory contains duplicate slide identities.",
+            )
         required = {row["slideId"] for row in protocol.get("memberships", [])}
         if required - present:
             error(
                 "MISSING_FEATURES",
-                f"The bundle lacks features for {len(required - present)} eligible protocol slides.",
+                f"The bundle lacks features for {len(required - present)} eligible protocol slides. "
+                "Provide features for every frozen development slide; experiment checks do not change the cohort.",
             )
 
         packs = {item["id"]: item for item in manifest["packs"]}

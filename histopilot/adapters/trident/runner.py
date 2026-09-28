@@ -44,6 +44,72 @@ def _process_identity(pid):
     return identity
 
 
+def _worker_environment(python_path, *, cwd=None):
+    """Resolve native SDPC libraries in the selected worker's Python environment.
+
+    Looking up the top-level package spec avoids importing OpenSDPC before the
+    dynamic linker has its search path. This also supports editable installs,
+    without borrowing packages from a different project or Python environment.
+    """
+    env = os.environ.copy()
+    # DataLoader processes already supply parallelism. Avoid a native thread
+    # pool per worker unless the operator explicitly configured one.
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        env.setdefault(name, "1")
+    if not sys.platform.startswith("linux"):
+        return env
+    probe = (
+        "import importlib.util, json; "
+        "spec = importlib.util.find_spec('opensdpc'); "
+        "print(json.dumps(list(spec.submodule_search_locations or []) if spec else []))"
+    )
+    try:
+        result = subprocess.run(
+            [python_path, "-c", probe],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+            env=env,
+            cwd=cwd,
+        )
+        package_roots = json.loads(result.stdout)
+        if not isinstance(package_roots, list) or any(
+            not isinstance(root, str) for root in package_roots
+        ):
+            return env
+    except (OSError, ValueError, subprocess.SubprocessError):
+        # OpenSDPC is optional for other slide formats. The actual TRIDENT
+        # command remains responsible for reporting unavailable dependencies.
+        return env
+    libraries = []
+    for root in package_roots:
+        for relative in ("LINUX", "LINUX/ffmpeg"):
+            directory = Path(root) / relative
+            if directory.is_dir() and str(directory) not in libraries:
+                libraries.append(str(directory))
+    if libraries:
+        previous = env.get("LD_LIBRARY_PATH")
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(
+            [*libraries, *([previous] if previous else [])]
+        )
+    return env
+
+
+def _worker_command(command):
+    """Bootstrap recognized batch scripts; retain historical fixture commands."""
+    script_index = 2 if len(command) > 1 and command[1] == "-u" else 1
+    if len(command) <= script_index:
+        return command
+    script = Path(command[script_index])
+    if script.name != "run_batch_of_slides.py" or not script.is_file():
+        return command
+    return [
+        command[0], "-u", str(Path(__file__).with_name("bootstrap.py")),
+        *command[script_index:],
+    ]
+
+
 def run_plan(path):
     plan = json.loads(Path(path).read_text(encoding="utf-8"))
     result_path = Path(plan["resultPath"])
@@ -92,19 +158,29 @@ def run_plan(path):
                     lambda: interrupted or bool(cancel_path and cancel_path.exists()),
                 ))
             for phase, command in commands:
-                # A cancellation between stages prevents the verifier from starting.
+                worker_env = (
+                    _worker_environment(command[0], cwd=plan.get("cwd"))
+                    if phase == "TRIDENT"
+                    else None
+                )
+                # Cancellation during discovery or between stages prevents
+                # the next worker from starting.
                 if interrupted or (cancel_path and cancel_path.exists()):
                     result["state"] = "cancelled"
                     break
                 log.write(f"[{_now()}] Starting {phase} worker\n")
+                effective_command = _worker_command(command) if phase == "TRIDENT" else command
+                if effective_command != command:
+                    log.write(f"[{_now()}] HistoPilot TRIDENT performance bootstrap enabled\n")
                 process = subprocess.Popen(
-                    command,
+                    effective_command,
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL,
                     shell=False,
                     start_new_session=True,
                     cwd=plan.get("cwd"),
+                    env=worker_env,
                 )
                 if reservation is not None:
                     reservation.attach(process.pid)

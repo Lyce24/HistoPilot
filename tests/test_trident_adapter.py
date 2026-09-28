@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+import venv
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from histopilot.adapters.trident import (
 )
 
 RUNNER = Path(__file__).parents[1] / "histopilot/adapters/trident/runner.py"
+THREAD_VARIABLES = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
 
 
 def fixture_checkout(tmp_path, extra=""):
@@ -333,3 +335,135 @@ def test_cancellation_between_stages_skips_validation(tmp_path):
     subprocess.run([sys.executable, "-S", str(RUNNER), str(path)], timeout=10, check=True)
     assert not marker.exists()
     assert json.loads(Path(plan["resultPath"]).read_text())["state"] == "cancelled"
+
+
+@pytest.fixture
+def sdpc_interpreter(tmp_path, monkeypatch):
+    # Use a real, isolated interpreter to exercise the selected environment,
+    # rather than whichever optional packages happen to be in the service.
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    environment = tmp_path / "trident environment"
+    venv.EnvBuilder(with_pip=False).create(environment)
+    python = environment / "bin/python"
+    site = next((environment / "lib").glob("python*/site-packages"))
+    return python, site
+
+
+def test_sdpc_environment_preserves_parent_when_package_is_missing(sdpc_interpreter, monkeypatch):
+    from histopilot.adapters.trident.runner import _worker_environment
+
+    python, _site = sdpc_interpreter
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/existing/native:/another/native")
+    original = os.environ.copy()
+    worker = _worker_environment(str(python))
+    assert all(worker[key] == value for key, value in original.items())
+    assert all(worker[name] == original.get(name, "1") for name in THREAD_VARIABLES)
+    assert dict(os.environ) == original
+
+
+def test_sdpc_environment_leaves_missing_library_path_unset(sdpc_interpreter, monkeypatch):
+    from histopilot.adapters.trident.runner import _worker_environment
+
+    python, _site = sdpc_interpreter
+    monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
+    assert "LD_LIBRARY_PATH" not in _worker_environment(str(python))
+
+
+def test_sdpc_runner_discovers_selected_package_without_import_and_scopes_env(
+    tmp_path, sdpc_interpreter, monkeypatch
+):
+    python, site = sdpc_interpreter
+    package = site / "opensdpc"
+    native = package / "LINUX"
+    ffmpeg = native / "ffmpeg"
+    ffmpeg.mkdir(parents=True)
+    # Importing the package in the probing process would fail; find_spec must
+    # still locate its native libraries before starting the actual worker.
+    (package / "__init__.py").write_text("raise RuntimeError('do not import during discovery')\n")
+    old_libraries = "/custom/native:/other/native"
+    monkeypatch.setenv("LD_LIBRARY_PATH", old_libraries)
+    monkeypatch.setenv("SDPC_WORKER_ENV_FIXTURE", "preserved")
+    worker_env = tmp_path / "worker-env.json"
+    validation_env = tmp_path / "validation-env.json"
+
+    def write_environment(output):
+        return (
+            "import json, os, pathlib; "
+            f"pathlib.Path({str(output)!r}).write_text(json.dumps(dict(os.environ)))"
+        )
+
+    path, plan = make_plan(tmp_path, [str(python), "-c", write_environment(worker_env)])
+    plan["validationCommand"] = [sys.executable, "-c", write_environment(validation_env)]
+    path.write_text(json.dumps(plan))
+    subprocess.run([sys.executable, "-S", str(RUNNER), str(path)], timeout=15, check=True)
+    worker = json.loads(worker_env.read_text())
+    validator = json.loads(validation_env.read_text())
+    assert worker["LD_LIBRARY_PATH"] == os.pathsep.join([str(native), str(ffmpeg), old_libraries])
+    assert worker["SDPC_WORKER_ENV_FIXTURE"] == "preserved"
+    assert validator["LD_LIBRARY_PATH"] == old_libraries
+    assert os.environ["LD_LIBRARY_PATH"] == old_libraries
+    assert json.loads(Path(plan["resultPath"]).read_text())["state"] == "succeeded"
+
+
+def test_sdpc_environment_ignores_missing_bundled_directories(sdpc_interpreter):
+    from histopilot.adapters.trident.runner import _worker_environment
+
+    python, site = sdpc_interpreter
+    package = site / "opensdpc"
+    package.mkdir()
+    (package / "__init__.py").write_text("raise RuntimeError('do not import during discovery')\n")
+    worker = _worker_environment(str(python))
+    assert all(worker[key] == value for key, value in os.environ.items())
+    assert all(worker[name] == os.environ.get(name, "1") for name in THREAD_VARIABLES)
+
+
+@pytest.mark.parametrize("unbuffered", [False, True])
+def test_worker_bootstrap_keeps_original_argv_and_paths(tmp_path, unbuffered):
+    from histopilot.adapters.trident.runner import _worker_command
+
+    script = tmp_path / "TRIDENT checkout" / "run_batch_of_slides.py"
+    script.parent.mkdir()
+    script.write_text("# fixture")
+    command = [sys.executable, *(["-u"] if unbuffered else []), str(script), "--job_dir", "/output path"]
+    original = list(command)
+    assert _worker_command(command) == [
+        sys.executable, "-u", str(RUNNER.with_name("bootstrap.py")),
+        str(script), "--job_dir", "/output path",
+    ]
+    assert command == original
+
+
+@pytest.mark.parametrize("arguments", [["-c", "print('fixture')"], ["-m", "fixture"], ["other.py"], ["missing/run_batch_of_slides.py"]])
+def test_worker_bootstrap_preserves_historical_nontrident_commands(arguments):
+    from histopilot.adapters.trident.runner import _worker_command
+
+    command = [sys.executable, *arguments]
+    assert _worker_command(command) == command
+
+
+def test_native_thread_defaults_apply_only_to_trident_child(tmp_path, monkeypatch):
+    for name in THREAD_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "3")
+    worker_path = tmp_path / "worker.json"
+    validator_path = tmp_path / "validator.json"
+
+    def snapshot(output):
+        return [sys.executable, "-c", (
+            "import json, os, pathlib; "
+            f"pathlib.Path({str(output)!r}).write_text(json.dumps(dict(os.environ)))"
+        )]
+
+    plan_path, plan = make_plan(tmp_path, snapshot(worker_path))
+    plan["validationCommand"] = snapshot(validator_path)
+    plan_path.write_text(json.dumps(plan))
+    subprocess.run([sys.executable, "-S", str(RUNNER), str(plan_path)], timeout=15, check=True)
+    worker = json.loads(worker_path.read_text())
+    validator = json.loads(validator_path.read_text())
+    assert {name: worker[name] for name in THREAD_VARIABLES} == {
+        "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "3", "NUMEXPR_NUM_THREADS": "1",
+    }
+    assert validator["OPENBLAS_NUM_THREADS"] == "3"
+    for name in set(THREAD_VARIABLES) - {"OPENBLAS_NUM_THREADS"}:
+        assert name not in validator and name not in os.environ

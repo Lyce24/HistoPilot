@@ -25,7 +25,7 @@ from histopilot.schemas.morphology import MorphologyIndexRequest
 from histopilot.storage.attention_inputs import _dataset, _geometry
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.packed import PackedStoreError, _same_stamp, _source, _stamp
-from histopilot.storage.project_lock import StorageError
+from histopilot.storage.project_lock import StorageError, _reject_symlink_components
 from histopilot.viewer.slide_images import allowed_file, inspect_slide, render_slide
 
 MAX_INDEX_VALUES = 8_000_000  # At most 32 MB of float32 patch features per index.
@@ -39,6 +39,12 @@ _BUILD_SLOT = Semaphore(1)
 
 def _error(message, code="MORPHOLOGY_INVALID", status=422):
     return StorageError(message, code, status)
+
+
+def _image_fingerprint(path, stamp):
+    """Bind one prepared viewing session, including legacy datasets, to its source."""
+    value = json.dumps({"path": str(path), "stamp": stamp}, sort_keys=True).encode()
+    return hashlib.sha256(value).hexdigest()
 
 
 def sample_rows(count, limit):
@@ -400,15 +406,32 @@ class MorphologyService:
             ) from error
         return path, actual, authenticated
 
-    def image(self, dataset_id, slide_id, *, max_size=1024, region=None):
-        path, before, _ = self._slide(dataset_id, slide_id)
-        content = render_slide(path, max_size=max_size, region=region)
+    def _image_source(self, dataset_id, slide_id, source_fingerprint=None):
+        path, before, authenticated = self._slide(dataset_id, slide_id)
+        if source_fingerprint is not None and source_fingerprint != _image_fingerprint(
+            path, before
+        ):
+            raise _error(
+                "The slide changed after preparation. Reopen the slide before viewing.",
+                "MORPHOLOGY_SLIDE_CHANGED",
+                409,
+            )
+        return path, before, authenticated
+
+    @staticmethod
+    def _verify_image_source(path, before):
+        _reject_symlink_components(path)
         try:
             _same_stamp(_stamp(path.stat()), before, path)
-        except PackedStoreError as error:
+        except (PackedStoreError, OSError) as error:
             raise _error(
                 "The slide changed while it was read.", "MORPHOLOGY_SLIDE_CHANGED", 409
             ) from error
+
+    def image(self, dataset_id, slide_id, *, max_size=1024, region=None, source_fingerprint=None):
+        path, before, _ = self._image_source(dataset_id, slide_id, source_fingerprint)
+        content = render_slide(path, max_size=max_size, region=region)
+        self._verify_image_source(path, before)
         return content
 
     def quality(self, dataset_id, slide_id, bundle_id=None):
@@ -417,6 +440,7 @@ class MorphologyService:
         result = {
             "slideId": slide_id,
             "datasetId": dataset_id,
+            "sourceFingerprint": _image_fingerprint(path, before),
             **geometry,
             "patches": [],
             "patchCount": None,
@@ -589,9 +613,12 @@ class MorphologyService:
                 "MORPHOLOGY_PATCH_FEATURES_REQUIRED",
             )
 
-    def patch_region(self, dataset_id, slide_id, bundle_id, patch_index):
-        path, _, _ = self._slide(dataset_id, slide_id)
+    def patch_region(
+        self, dataset_id, slide_id, bundle_id, patch_index, *, source_fingerprint=None
+    ):
+        path, before, _ = self._image_source(dataset_id, slide_id, source_fingerprint)
         geometry = inspect_slide(path)
+        self._verify_image_source(path, before)
         _, _, feature, files = self._source(
             MorphologyIndexRequest(datasetId=dataset_id, featureBundleId=bundle_id)
         )
@@ -617,6 +644,7 @@ class MorphologyService:
         x, y = map(int, coords[0])
         if not (0 <= x < geometry["width"] and 0 <= y < geometry["height"]):
             raise _error("The selected patch is outside this exact slide image.")
+        self._verify_image_source(path, before)
         return {
             "x": x,
             "y": y,
@@ -624,11 +652,18 @@ class MorphologyService:
             "height": min(height, geometry["height"] - y),
         }
 
-    def patch_image(self, dataset_id, slide_id, bundle_id, patch_index):
-        region = self.patch_region(dataset_id, slide_id, bundle_id, patch_index)
+    def patch_image(self, dataset_id, slide_id, bundle_id, patch_index, *, source_fingerprint=None):
+        path, before, _ = self._image_source(dataset_id, slide_id, source_fingerprint)
+        # Bind geometry and pixels to the same source, including legacy API callers
+        # that did not supply a prepared-session fingerprint themselves.
+        fingerprint = _image_fingerprint(path, before)
+        region = self.patch_region(
+            dataset_id, slide_id, bundle_id, patch_index, source_fingerprint=fingerprint
+        )
         return self.image(
             dataset_id,
             slide_id,
             max_size=512,
             region=tuple(region[key] for key in ("x", "y", "width", "height")),
+            source_fingerprint=fingerprint,
         )

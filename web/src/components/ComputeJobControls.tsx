@@ -8,6 +8,8 @@ import { Badge, ErrorNotice } from './ui';
 type Props = {
   project: string; id: string; kind: 'refit' | 'evaluation' | 'interpretation'; initial?: ComputeExecution;
   readOnly?: boolean; readOnlyReason?: string; onComplete?: () => void;
+  /** Inference runs share the evaluation job but produce predictions only. */
+  inference?: boolean;
 };
 
 /** Requests and their retry IDs belong to exactly one compute record. */
@@ -16,7 +18,7 @@ export default function ComputeJobControls(props: Props) {
 }
 
 /** Durable jobs have one explicit action and stable operation ID across lost responses. */
-function ComputeJobState({ project, id, kind, initial, readOnly = false, readOnlyReason, onComplete }: Props) {
+function ComputeJobState({ project, id, kind, initial, readOnly = false, readOnlyReason, onComplete, inference = false }: Props) {
   const client = useQueryClient();
   const queryKey = ['compute-job', project, kind, id];
   // Cleanup listings include historical status for trashed records. Their
@@ -56,8 +58,8 @@ function ComputeJobState({ project, id, kind, initial, readOnly = false, readOnl
     {pending && !busy ? <p className="callout callout-warning" role="status">The {pending.action} response was lost. The request may already have been accepted. Retry uses the same request and operation ID.</p> : null}
     <div className="inline-actions">
       {pending && !busy ? <button className="btn btn-secondary" onClick={() => void run(pending.action)}>Retry {pending.action} request</button> : null}
-      {!pending && !readOnly && state?.status === 'not_started' ? <button className="btn btn-primary" disabled={busy || job.isError} onClick={() => void run('launch')}>{kind === 'refit' ? 'Train refit model' : kind === 'interpretation' ? 'Compute slide attention' : 'Run evaluation'}</button> : null}
-      {!pending && !readOnly && state && ['failed', 'cancelled', 'interrupted'].includes(state.status) ? <button className="btn btn-secondary" disabled={busy || job.isError} onClick={() => void run('resume')}>{kind === 'refit' ? 'Resume refit training' : kind === 'interpretation' ? 'Retry attention computation' : 'Retry evaluation'}</button> : null}
+      {!pending && !readOnly && state?.status === 'not_started' ? <button className="btn btn-primary" disabled={busy || job.isError} onClick={() => void run('launch')}>{kind === 'refit' ? 'Train refit model' : kind === 'interpretation' ? 'Compute slide attention' : inference ? 'Run inference' : 'Run evaluation'}</button> : null}
+      {!pending && !readOnly && state && ['failed', 'cancelled', 'interrupted'].includes(state.status) ? <button className="btn btn-secondary" disabled={busy || job.isError} onClick={() => void run('resume')}>{kind === 'refit' ? 'Resume refit training' : kind === 'interpretation' ? 'Retry attention computation' : inference ? 'Retry inference' : 'Retry evaluation'}</button> : null}
       {!pending && active ? <button className="btn btn-secondary" disabled={busy || state?.cancellationRequested} onClick={() => void run('cancel')}>{state?.cancellationRequested ? 'Cancellation requested…' : 'Cancel job'}</button> : null}
       {onComplete && state?.status === 'completed' ? <button className="btn btn-secondary" onClick={onComplete}>Refresh completed result</button> : null}
     </div>

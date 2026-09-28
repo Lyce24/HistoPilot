@@ -22,6 +22,8 @@ import './protocol-workflow.css';
 import './LocalEvaluationSetup.css';
 import { readEditorRecovery, recoveredStep, useEditorRecoveryBackup, type EditorRecovery } from '../lib/editorRecovery';
 import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
+import { useHashParameters } from '../lib/hashRoute';
+import { cohortKind, cohortKindLabel, isInferencePurpose } from '../lib/inference';
 
 const newTestTarget = (): ProtocolSpec['target'] => ({ field: '', task: '', unit: 'patient', classes: [], labels: {}, missing: 'block', unmapped: 'block' });
 
@@ -31,6 +33,9 @@ export const newEvaluationSpec = (): EvaluationSpec => ({
   inference: { loadingPolicy: 'per_slide', packArtifactId: null, batchSize: 1, numWorkers: 0,
     device: 'auto', precision: 'float32', patientAggregation: 'mean', decisionThreshold: 0.5 },
 });
+
+/** Unlabeled slides for Run inference: membership only, never a target. */
+export const newInferenceSpec = (): EvaluationSpec => ({ ...newEvaluationSpec(), purpose: 'inference', target: null });
 
 export { parseConditionValue as evaluationConditionValue } from '../lib/conditions';
 
@@ -105,8 +110,10 @@ export function cohortDatasetIds(spec: EvaluationSpec): string[] {
 }
 
 export function independentCohortSpec(spec: EvaluationSpec): EvaluationSpec {
+  // Copies of inference or earlier review cohorts continue as inference cohorts.
   return { ...newEvaluationSpec(), datasetId: spec.datasetId, datasetIds: spec.datasetIds,
-    target: spec.target, eligibility: spec.eligibility };
+    target: spec.target, eligibility: spec.eligibility,
+    ...(isInferencePurpose(spec.purpose) ? { purpose: 'inference' as const, target: null } : {}) };
 }
 
 export function mergeTestDistributions(results: ProtocolExploration[]) {
@@ -149,13 +156,13 @@ function useTestExploration(project: string, ids: string[], eligibility: Conditi
     loading: enabled && ids.length > 0 && (changing || query.isPending) };
 }
 
-export function TestCohortSummary({ preview }: { preview: Pick<EvaluationPreview, 'summary' | 'findings' | 'memberships'> & { coverage: { selectedSlideIds: string[] } } }) {
+export function TestCohortSummary({ preview, inference = false }: { preview: Pick<EvaluationPreview, 'summary' | 'findings' | 'memberships'> & { coverage: { selectedSlideIds: string[] } }; inference?: boolean }) {
   const summary = preview.summary;
   return <div className="stack">
     <div className="science-metrics protocol-metrics">
-      <Metric label="Selected test slides" value={summary.includedSlides.toLocaleString()} />
+      <Metric label={inference ? 'Slides to predict' : 'Selected test slides'} value={summary.includedSlides.toLocaleString()} />
       <Metric label="Patient / slide groups" value={summary.includedPatients.toLocaleString()} note={cohortIdentityNote(preview)} />
-      <Metric label="Labeled slides" value={summary.labeledSlides.toLocaleString()} />
+      {inference ? null : <Metric label="Labeled slides" value={summary.labeledSlides.toLocaleString()} />}
       <Metric label="Excluded slides" value={summary.excludedSlides.toLocaleString()} />
     </div>
     {Object.keys(summary.classCounts).length ? <DistributionBars values={Object.entries(summary.classCounts).map(([value, count]) => ({ value, count }))} caption="Prediction target · selected test slides by class" /> : null}
@@ -166,6 +173,11 @@ export function TestCohortSummary({ preview }: { preview: Pick<EvaluationPreview
 
 export default function LocalEvaluationSetup({ workspace }: { workspace: Workspace }) {
   const project = workspace.project.id;
+  // #test-data?purpose=inference opens a new inference cohort from Run inference.
+  const parameters = useHashParameters();
+  const [presetInference] = useState(() => parameters.get('purpose') === 'inference');
+  const defaultName = `${workspace.project.name} test cohort`;
+  const inferenceName = `${workspace.project.name} inference cohort`;
   const datasets = useDatasets(project);
   const drafts = useQuery({ queryKey: ['evaluation-drafts', project], queryFn: () => evaluation.drafts(project) });
   const frozen = useQuery({ queryKey: ['evaluation-cohorts', project], queryFn: () => evaluation.list(project) });
@@ -179,9 +191,9 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
   // reopens the work.
   const [recovered] = useState(() => readEditorRecovery<EvaluationSpec, EvaluationDraft>(project, 'test-cohort'));
   const [resumeStep] = useState<0 | 1 | 2>(recoveredStep(recovered?.step, 2) as 0 | 1 | 2);
-  const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
-  const [spec, setSpec] = useState<EvaluationSpec>(() => recovered?.spec ?? newEvaluationSpec());
-  const [name, setName] = useState(recovered?.name ?? `${workspace.project.name} test cohort`);
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(presetInference && !recovered ? 1 : 0);
+  const [spec, setSpec] = useState<EvaluationSpec>(() => recovered?.spec ?? (presetInference ? newInferenceSpec() : newEvaluationSpec()));
+  const [name, setName] = useState(recovered?.name ?? (presetInference ? inferenceName : defaultName));
   const [draft, setDraft] = useState<EvaluationDraft | null>(recovered?.draft ?? null);
   const [savedCohort, setSavedCohort] = useState<EvaluationCohort | null>(null);
   const [preview, setPreview] = useState<EvaluationPreview | null>(null);
@@ -209,7 +221,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
   // as it differs from its saved revision.
   const unsaved = editable && (draft
     ? dirty
-    : name !== `${workspace.project.name} test cohort` || !sameJSON(spec, newEvaluationSpec()));
+    : !(name === defaultName && sameJSON(spec, newEvaluationSpec())) && !(name === inferenceName && sameJSON(spec, newInferenceSpec())));
   const recovery: EditorRecovery<EvaluationSpec, EvaluationDraft> | null = unsaved
     ? { version: 1, name, spec, draft, step: step === 0 ? 0 : step }
     : null;
@@ -219,7 +231,10 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
     : recovery && backup.error
       ? 'Unsaved test cohort input cannot be recovered in this browser. Save the draft before leaving Test cohorts.'
       : null);
-  const targetReady = spec.target === null || Boolean(spec.target.field && spec.target.task && spec.target.classes.length >= 2 && (spec.target.task !== 'binary_classification' || spec.target.positiveClass));
+  const inference = isInferencePurpose(spec.purpose);
+  // Evaluation cohorts need a target; unlabeled slides belong in an inference cohort.
+  const targetReady = inference || Boolean(spec.target && spec.target.field && spec.target.task && spec.target.classes.length >= 2 && (spec.target.task !== 'binary_classification' || spec.target.positiveClass));
+  const nextModule = inference ? 'Run inference' : 'Evaluate models';
   const dataReady = ids.length > 0 && selectedDatasets.length === ids.length;
   const datasetNames = (value: EvaluationSpec) => cohortDatasetIds(value).map((id) => {
     const item = datasets.data?.datasets.find((dataset) => dataset.id === id);
@@ -237,7 +252,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
     setSpec((current) => ({ ...current, ...update }));
     setPreview(null); setError(null); setMessage(''); setFreezeReview(null);
   }
-  function reset(nextSpec = newEvaluationSpec(), nextName = `${workspace.project.name} test cohort`) {
+  function reset(nextSpec = newEvaluationSpec(), nextName = defaultName) {
     targetRequest.current += 1;
     setSpec(nextSpec); setName(nextName); setDraft(null); setSavedCohort(null); setPreview(null);
     setDistributionField(''); setLabel({ tag: '', note: '' }); setError(null); setMessage(''); setFreezeReview(null);
@@ -303,7 +318,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
     ...cohortRows.map((record) => ({ kind: 'configuration' as const, record, name: versionLabelText(record, 'Test cohort'), spec: record.manifest.spec, status: record.current === false ? 'review' : 'frozen', created: record.createdAt, updated: record.versionLabel?.updatedAt ?? record.createdAt })),
   ];
   const visibleRows = libraryRows.filter((item) => (libraryStatus === 'all' || item.status === libraryStatus)
-    && `${item.name} ${item.record.id} ${datasetNames(item.spec)} ${item.spec.target?.field ?? ''} ${item.kind === 'configuration' ? item.record.versionLabel?.note ?? '' : ''}`.toLowerCase().includes(librarySearch.trim().toLowerCase()))
+    && `${item.name} ${item.record.id} ${datasetNames(item.spec)} ${item.spec.target?.field ?? ''} ${cohortKindLabel[cohortKind(item.spec)]} ${item.kind === 'configuration' ? item.record.versionLabel?.note ?? '' : ''}`.toLowerCase().includes(librarySearch.trim().toLowerCase()))
     .sort((a, b) => (librarySort === 'name' ? a.name.localeCompare(b.name) : librarySort === 'oldest' ? a.created.localeCompare(b.created) : b.updated.localeCompare(a.updated)) || a.record.id.localeCompare(b.record.id));
   function resetLibraryFilters() { setLibrarySearch(''); setLibraryStatus('all'); setLibrarySort('recent'); }
   // Returning to the library saves real work; an untouched new cohort leaves no record.
@@ -311,9 +326,9 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
   useStageLibrary(openLibrary);
 
   return <div className="clinical-workspace protocol-workspace evaluation-setup" id="test-cohort-page" tabIndex={-1}>
-    <PageHeader eyebrow="03 EVALUATE · TEST COHORTS" title={step === 0 ? 'Test cohorts' : savedCohort ? name : 'Create test cohort'}
-      description={step === 0 ? 'Open a test cohort or create one from your datasets.' : 'Select test data, define prediction targets, then review and freeze your cohort.'}
-      actions={step === 0 ? <StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create test cohort</StageCreateButton> : <StageBackButton disabled={busy || Boolean(freezeReview)} onClick={openLibrary}>Back to test cohorts</StageBackButton>} />
+    <PageHeader eyebrow="03 EVALUATE · TEST COHORTS" title={step === 0 ? 'Test cohorts' : savedCohort ? name : inference ? 'Create inference cohort' : 'Create test cohort'}
+      description={step === 0 ? 'Open a cohort, or create a labeled evaluation cohort or an unlabeled inference cohort from your datasets.' : inference ? 'Select unlabeled slides, then review and freeze the inference cohort. No labels are read.' : 'Select test data, define prediction targets, then review and freeze your cohort.'}
+      actions={step === 0 ? <div className="inline-actions"><StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create test cohort</StageCreateButton><button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(newInferenceSpec(), inferenceName); })}>Create inference cohort</button></div> : <StageBackButton disabled={busy || Boolean(freezeReview)} onClick={openLibrary}>Back to test cohorts</StageBackButton>} />
     <ErrorNotice error={error ?? datasets.error ?? drafts.error ?? frozen.error} />
     {error && draft && editable && step !== 0 ? <button type="button" className="btn btn-secondary science-fit" disabled={busy} onClick={() => void run(() => openDraft(draft.id))}>Reload saved draft</button> : null}
     <SavedNotice>{message}</SavedNotice>
@@ -328,16 +343,16 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
         <label className="label">Status<select className="field" aria-label="Test cohort status" value={libraryStatus} onChange={(event) => setLibraryStatus(event.target.value)}><option value="all">All statuses</option><option value="planned">Planned</option><option value="frozen">Frozen</option><option value="review">Needs review</option></select></label>
         <label className="label">Sort<select className="field" aria-label="Sort test cohorts" value={librarySort} onChange={(event) => setLibrarySort(event.target.value)}><option value="recent">Last updated</option><option value="oldest">Oldest first</option><option value="name">Name</option></select></label>
       </StageLibraryToolbar>
-      {drafts.isPending || frozen.isPending ? <p className="muted" role="status">Loading test cohorts…</p> : visibleRows.length ? <div className="table-wrap"><table className="test-cohort-registry"><thead><tr><th scope="col">Cohort</th><th scope="col">Status</th><th scope="col">Datasets</th><th scope="col">Slides</th><th scope="col">Prediction target</th><th scope="col">Actions</th></tr></thead><tbody>
-        {visibleRows.map((item) => <tr key={`${item.kind}:${item.record.id}`}><th scope="row"><button type="button" className="text-button stage-record-name" disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); await (item.kind === 'draft' ? openDraft(item.record.id) : openCohort(item.record.id)); })}>{item.name}</button>{item.kind === 'draft' ? <small>Revision {item.record.revision}</small> : item.record.versionLabel?.note ? <small>{item.record.versionLabel.note}</small> : null}</th><td><Badge tone={item.status === 'frozen' ? 'frozen' : 'orange'}>{item.status === 'planned' ? 'Planned' : item.status === 'frozen' ? 'Frozen' : 'Needs review'}</Badge></td><td>{datasetNames(item.spec)}</td><td>{item.kind === 'draft' ? 'Pending review' : item.record.manifest.summary.includedSlides.toLocaleString()}</td><td>{item.spec.target?.field || (item.spec.target === null ? 'Unlabeled predictions' : 'Not selected')}</td><td><StageRecordManageButton type={item.kind} id={item.record.id} name={item.name} /></td></tr>)}
+      {drafts.isPending || frozen.isPending ? <p className="muted" role="status">Loading test cohorts…</p> : visibleRows.length ? <div className="table-wrap"><table className="test-cohort-registry"><thead><tr><th scope="col">Cohort</th><th scope="col">Status</th><th scope="col">Datasets</th><th scope="col">Slides</th><th scope="col">Type · target</th><th scope="col">Actions</th></tr></thead><tbody>
+        {visibleRows.map((item) => <tr key={`${item.kind}:${item.record.id}`}><th scope="row"><button type="button" className="text-button stage-record-name" disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); await (item.kind === 'draft' ? openDraft(item.record.id) : openCohort(item.record.id)); })}>{item.name}</button>{item.kind === 'draft' ? <small>Revision {item.record.revision}</small> : item.record.versionLabel?.note ? <small>{item.record.versionLabel.note}</small> : null}</th><td><Badge tone={item.status === 'frozen' ? 'frozen' : 'orange'}>{item.status === 'planned' ? 'Planned' : item.status === 'frozen' ? 'Frozen' : 'Needs review'}</Badge></td><td>{datasetNames(item.spec)}</td><td>{item.kind === 'draft' ? 'Pending review' : item.record.manifest.summary.includedSlides.toLocaleString()}</td><td><Badge tone={cohortKind(item.spec) === 'inference' ? 'purple' : 'neutral'}>{cohortKindLabel[cohortKind(item.spec)]}</Badge>{item.spec.target?.field ? <small>{item.spec.target.field}</small> : null}</td><td><StageRecordManageButton type={item.kind} id={item.record.id} name={item.name} /></td></tr>)}
       </tbody></table></div> : libraryRows.length ? <EmptyState icon="folder" title="No matching test cohorts" description="Try another search or clear the filters." action={<button type="button" className="btn btn-secondary" onClick={resetLibraryFilters}>Clear filters</button>} /> : <EmptyState icon="folder" title="No test cohorts yet" description="Create a cohort to select test records and define its prediction target." action={<StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create test cohort</StageCreateButton>} />}
     </StageLibrary> : <>
       {!savedCohort ? <StageSteps label="Test cohort stages" current={String(step)} disabled={busy || Boolean(freezeReview)} steps={[
         { id: '1', title: 'Test Data', description: 'Select datasets and test records', complete: dataReady },
-        { id: '2', title: 'Prediction Targets', description: 'Choose the label to predict', disabled: !name.trim() || !dataReady, complete: targetReady },
+        { id: '2', title: inference ? 'Cohort type' : 'Prediction Targets', description: inference ? 'Unlabeled inference cohort' : 'Choose the label to predict', disabled: !name.trim() || !dataReady, complete: targetReady },
         { id: '3', title: 'Review and Freeze', description: 'Review the selected cohort', disabled: !name.trim() || !dataReady || !targetReady, complete: Boolean(preview?.canFreeze) },
       ]} onChange={(next) => void run(async () => { if (next === '3') await review(); else showStep(Number(next) as 1 | 2); }, true)} /> : null}
-      {!savedCohort ? <div className="test-cohort-draft-status"><Badge>{draft ? `${draft.status} · revision ${draft.revision}${dirty ? ' · unsaved changes' : ''}` : 'New cohort'}</Badge><span className="muted">Features and model compatibility are checked in Evaluate models.</span></div> : null}
+      {!savedCohort ? <div className="test-cohort-draft-status"><Badge>{draft ? `${draft.status} · revision ${draft.revision}${dirty ? ' · unsaved changes' : ''}` : 'New cohort'}</Badge><span className="muted">Features and model compatibility are checked in {nextModule}.</span></div> : null}
       <fieldset ref={editor} className="evaluation-fields" disabled={busy || !editable || Boolean(freezeReview)}>
         <legend className="sr-only">Test cohort preparation</legend>
         {step === 1 ? <section className="protocol-section test-cohort-stage"><Panel title="1. Choose the test data" subtitle="Select datasets, then use conditions to choose the slides in this test cohort." actions={<Badge>Test Data</Badge>}>
@@ -366,35 +381,40 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
                   {item.cohort ? <><CohortStats stats={item.cohort} total={item.dataset.totalSlides} /><CohortSample stats={item.cohort} fields={[...conditionFields(spec.eligibility), activeField]} /></> : null}
                   <Findings findings={item.findings} />
                 </div>)}
-                <p className="muted">These counts apply the conditions above. Label exclusions and patient consistency are checked in Review and Freeze.</p>
+                <p className="muted">These counts apply the conditions above. {inference ? 'Slide membership and patient grouping' : 'Label exclusions and patient consistency'} are checked in Review and Freeze.</p>
               </div> : null}
             </> : null}
           </div>
         </Panel></section> : null}
-        {step === 2 ? <section className="protocol-section test-cohort-stage"><Panel title="2. What should the model predict?" subtitle="Choose the target column and review the classes found in your selected test data." actions={<Badge>Prediction Targets</Badge>}>
+        {step === 2 ? <section className="protocol-section test-cohort-stage"><Panel title={inference ? '2. Cohort type' : '2. What should the model predict?'} subtitle={inference ? 'An inference cohort has no labels. Each model predicts its own frozen target for these slides.' : 'Choose the target column and review the classes found in your selected test data.'} actions={<Badge>{inference ? 'Cohort type' : 'Prediction Targets'}</Badge>}>
           <div className="stack">
-            <label className="science-check"><input type="checkbox" checked={spec.target === null} onChange={(event) => edit({ target: event.target.checked ? null : newTestTarget() })} /><span>Unlabeled predictions<small>This cohort has no known outcomes. It can receive predictions; scoring needs labeled records.</small></span></label>
-            {spec.target ? <PredictionTargetEditor key={draft?.id ?? 'new'} target={spec.target} fieldContext={fieldContext} unlinkedSlideCount={selectedDatasets.reduce((sum, item) => sum + (item.manifest.summary?.unlinkedSlideCount ?? 0), 0)} labelValues={{ data: targetValues, isPending: live.loading, error: live.error }} rawValues={rawValues} dataLabel="selected test records" onChooseTarget={chooseTarget} onChange={(update) => edit({ target: { ...spec.target!, ...update } })} /> : null}
+            <div className="predictor-methods cohort-type-choice" role="radiogroup" aria-label="Cohort type">
+              <label className={`predictor-method${inference ? '' : ' selected'}`}><input type="radio" name="cohort-type" checked={!inference} onChange={() => edit({ purpose: undefined, target: spec.target ?? newTestTarget() })} /><span><strong>Evaluation cohort · labeled</strong><small>Map a label column to each model&rsquo;s classes. Evaluate models reports AUROC, calibration and clinical utility.</small></span></label>
+              <label className={`predictor-method${inference ? ' selected' : ''}`}><input type="radio" name="cohort-type" checked={inference} onChange={() => edit({ purpose: 'inference', target: null })} /><span><strong>Inference cohort · unlabeled</strong><small>No labels are read. Run inference produces predictions, label-free analysis, attention maps and exports. Patients seen in development are allowed for slide-level predictors and flagged; development slides are never predicted.</small></span></label>
+            </div>
+            {!inference && spec.target === null ? <div className="callout"><p>This draft has no prediction target. Choose <strong>Inference cohort</strong> for slides without labels, or define a target to evaluate models.</p><button type="button" className="btn btn-secondary btn-small" onClick={() => edit({ target: newTestTarget() })}>Define a prediction target</button></div> : null}
+            {!inference && spec.target ? <PredictionTargetEditor key={draft?.id ?? 'new'} target={spec.target} fieldContext={fieldContext} unlinkedSlideCount={selectedDatasets.reduce((sum, item) => sum + (item.manifest.summary?.unlinkedSlideCount ?? 0), 0)} labelValues={{ data: targetValues, isPending: live.loading, error: live.error }} rawValues={rawValues} dataLabel="selected test records" onChooseTarget={chooseTarget} onChange={(update) => edit({ target: { ...spec.target!, ...update } })} /> : null}
             {live.data?.filter((item) => item.findings.length > 0).map((item) => <Findings key={item.datasetId} findings={item.findings} />)}
           </div>
         </Panel></section> : null}
-        {step === 3 ? <section className="protocol-section test-cohort-stage"><Panel title={savedCohort ? 'Frozen test cohort' : '3. Review and Freeze'} subtitle="Review the test records and prediction target saved in this cohort." actions={savedCohort ? <Badge tone="green">Frozen</Badge> : undefined}>
+        {step === 3 ? <section className="protocol-section test-cohort-stage"><Panel title={savedCohort ? 'Frozen test cohort' : '3. Review and Freeze'} subtitle={inference ? 'Review the slides and patient grouping saved in this inference cohort.' : 'Review the test records and prediction target saved in this cohort.'} actions={savedCohort ? <Badge tone="green">Frozen</Badge> : undefined}>
           <dl className="protocol-review-facts">
             <div><dt>Cohort name</dt><dd>{name}</dd></div><div><dt>Test Data</dt><dd>{datasetNames(spec)}</dd></div>
-            <div><dt>Prediction target</dt><dd>{spec.target?.field || (spec.target === null ? 'Unlabeled predictions' : 'Not selected')}{spec.target?.task ? ` · ${taskLabel(spec.target.task)} · ${unitLabel(spec.target.unit)}` : ''}</dd></div>
+            <div><dt>Cohort type</dt><dd>{cohortKindLabel[cohortKind(spec)]}{inference ? ' · predictions only · no labels or metrics' : ''}</dd></div>
+            <div><dt>Prediction target</dt><dd>{inference ? 'Each model predicts its frozen target' : spec.target?.field || (spec.target === null ? 'Unlabeled predictions' : 'Not selected')}{spec.target?.task ? ` · ${taskLabel(spec.target.task)} · ${unitLabel(spec.target.unit)}` : ''}</dd></div>
             <div><dt>Included records</dt><dd>{spec.eligibility.length ? spec.eligibility.map(describeCondition).join(' AND ') : 'All slides in the selected datasets'}</dd></div>
             {spec.target ? <><div><dt>Class order</dt><dd>{spec.target.classes.join(' → ') || 'Not selected'}</dd></div><div><dt>Positive class</dt><dd>{spec.target.positiveClass || 'Not selected'}</dd></div><div><dt>Label mapping</dt><dd>{Object.entries(spec.target.labels).map(([raw, mapped]) => `${raw} → ${mapped}`).join('; ') || 'Not configured'}</dd></div><div><dt>Missing / unmapped labels</dt><dd>{spec.target.missing} / {spec.target.unmapped}</dd></div></> : null}
           </dl>
-          {preview ? <TestCohortSummary preview={preview} /> : savedCohort ? <TestCohortSummary preview={{ summary: savedCohort.manifest.summary, coverage: savedCohort.manifest.coverage ?? { selectedSlideIds: [] }, findings: savedCohort.findings ?? savedCohort.manifest.findings, memberships: savedCohort.manifest.memberships }} /> : <p className="callout">Review the cohort to check selected records, labels and patient consistency before freezing.</p>}
-          {!savedCohort ? <div className="inline-actions evaluation-actions"><button type="button" className="btn btn-secondary" disabled={!name.trim() || !dataReady || !targetReady} onClick={() => void run(review, true)}><Icon name="check" />{preview ? 'Review cohort again' : 'Review cohort'}</button><button type="button" className="btn btn-primary" disabled={!preview?.canFreeze || dirty || !draft} onClick={() => { if (preview && draft) setFreezeReview({ draft, preview, operationId: `evaluation:${crypto.randomUUID()}` }); }}><Icon name="lock" />Freeze test cohort</button></div> : null}
+          {preview ? <TestCohortSummary preview={preview} inference={inference} /> : savedCohort ? <TestCohortSummary inference={inference} preview={{ summary: savedCohort.manifest.summary, coverage: savedCohort.manifest.coverage ?? { selectedSlideIds: [] }, findings: savedCohort.findings ?? savedCohort.manifest.findings, memberships: savedCohort.manifest.memberships }} /> : <p className="callout">Review the cohort to check {inference ? 'selected slides and patient grouping' : 'selected records, labels and patient consistency'} before freezing.</p>}
+          {!savedCohort ? <div className="inline-actions evaluation-actions"><button type="button" className="btn btn-secondary" disabled={!name.trim() || !dataReady || !targetReady} onClick={() => void run(review, true)}><Icon name="check" />{preview ? 'Review cohort again' : 'Review cohort'}</button><button type="button" className="btn btn-primary" disabled={!preview?.canFreeze || dirty || !draft} onClick={() => { if (preview && draft) setFreezeReview({ draft, preview, operationId: `evaluation:${crypto.randomUUID()}` }); }}><Icon name="lock" />{inference ? 'Freeze inference cohort' : 'Freeze test cohort'}</button></div> : null}
         </Panel></section> : null}
       </fieldset>
-      {savedCohort ? <div className="inline-actions"><button type="button" className="btn btn-secondary" disabled={busy} onClick={copyCohort}>Copy into a new draft</button><StageContinueButton href={`#evaluation?cohort=${encodeURIComponent(savedCohort.id)}`}>Continue to model evaluation</StageContinueButton></div> : <div className="protocol-step-actions test-cohort-step-actions">
-        <p>{step === 1 ? 'Select test records before defining the prediction target.' : step === 2 ? 'Review the class mapping and positive class before continuing.' : 'The frozen cohort can be selected later in Evaluate models.'}</p>
+      {savedCohort ? <div className="inline-actions"><button type="button" className="btn btn-secondary" disabled={busy} onClick={copyCohort}>Copy into a new draft</button>{inference ? <StageContinueButton href={`#inference?cohort=${encodeURIComponent(savedCohort.id)}`}>Continue to Run inference</StageContinueButton> : <StageContinueButton href={`#evaluation?cohort=${encodeURIComponent(savedCohort.id)}`}>Continue to model evaluation</StageContinueButton>}</div> : <div className="protocol-step-actions test-cohort-step-actions">
+        <p>{step === 1 ? (inference ? 'Select the unlabeled slides to predict.' : 'Select test records before defining the prediction target.') : step === 2 ? (inference ? 'Inference cohorts have no target or label mapping.' : 'Review the class mapping and positive class before continuing.') : `The frozen cohort can be selected later in ${nextModule}.`}</p>
         <div className="inline-actions">
           {step > 1 ? <StageBackButton disabled={busy || Boolean(freezeReview)} onClick={() => showStep((step - 1) as 1 | 2)}>Back</StageBackButton> : null}
           <button type="button" className="btn btn-secondary" disabled={busy || Boolean(freezeReview) || !name.trim()} onClick={() => void run(async () => { await save(); setMessage('Test cohort draft saved.'); }, true)}>Save draft</button>
-          {step < 3 ? <StageContinueButton disabled={busy || !name.trim() || !dataReady || (step === 2 && !targetReady)} onClick={() => void run(async () => { if (step === 2) await review(); else { await save(); showStep(2); } }, true)}>Continue to {step === 1 ? 'prediction targets' : 'review and freeze'}</StageContinueButton> : null}
+          {step < 3 ? <StageContinueButton disabled={busy || !name.trim() || !dataReady || (step === 2 && !targetReady)} onClick={() => void run(async () => { if (step === 2) await review(); else { await save(); showStep(2); } }, true)}>Continue to {step === 1 ? (inference ? 'cohort type' : 'prediction targets') : 'review and freeze'}</StageContinueButton> : null}
         </div>
       </div>}
     </>}
@@ -403,7 +423,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
       try {
         const saved = await evaluation.freeze(project, freezeReview.draft, freezeReview.preview.previewHash, freezeReview.operationId, versionLabel);
         setSavedCohort(saved); setDraft(null); setPreview(null); setName(versionLabelText(saved, 'Test cohort')); setSpec(saved.manifest.spec);
-        setMessage('Test cohort frozen. Select it with a development model in Evaluate models when you are ready.');
+        setMessage(isInferencePurpose(saved.manifest.spec.purpose) ? 'Inference cohort frozen. Select it with a predictor in Run inference when you are ready.' : 'Test cohort frozen. Select it with a development model in Evaluate models when you are ready.');
         await refresh();
       } catch (reason) {
         if (scientificReviewInvalidated(reason)) { setFreezeReview(null); setPreview(null); setError(new Error(`${reason.message} Review the cohort again before freezing. Your tag and note have been kept.`)); }

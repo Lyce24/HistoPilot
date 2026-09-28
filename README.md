@@ -52,7 +52,7 @@ Choose **Start a new project** and select a dedicated new or empty project folde
 
 1. **Prepare:** import a CSV/XLSX dataset, attach or extract features, and freeze targets and development splits.
 2. **Train:** create an experiment, choose models and batches, review the plan, and follow runs and predictors.
-3. **Evaluate:** define a separate test cohort, inspect predictions and errors, then explore clinical utility and compatible slide attention.
+3. **Apply predictors:** choose **Evaluate models** for labeled test performance, or **Run inference** for unlabeled cohorts, predictions, confidence, review and export. Both support compatible slide attention; SDPC slides use OpenSDPC. See the [inference design and assessment](docs/INFERENCE_MODE.md).
 
 Models include ABMIL, nnMIL, mean/max pooling, slide-embedding probes, and clinical/image comparisons. Real extraction and training require their compute environments; clinical comparisons require verified patient identities. Follow the [workflow guide](docs/WORKFLOW_GUIDE.md) for setup and input requirements.
 

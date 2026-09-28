@@ -199,7 +199,9 @@ def test_import_feature_patient_split_freeze_and_new_registry_reopen(tmp_path):
             content.attrs["changed"] = "after freeze"
         report = client.get(base + f"/protocols/{protocol['id']}/preflight").json()
         assert not report["scientificReady"]
-        assert any(item["code"] == "FEATURE_SOURCE_CHANGED" for item in report["findings"])
+        assert report["scope"] == "protocol"
+        assert report["protocolReady"]
+        assert report["findings"] == []
         blocked = post(client, base + "/jobs", {"protocolId": protocol["id"]}, 422)
         assert blocked["code"] == "PREFLIGHT_BLOCKED"
         assert client.get("/api/v1/jobs").json()["jobs"] == []

@@ -8,7 +8,9 @@ Configure inference cohorts in **Model evaluation**, while experiments are runni
 
 Start with a frozen dataset and select eligible records using cohort conditions. Within that selection, use **all remaining eligible slides**, custom training conditions, or a predefined source column. A matching slide selects its entire eligible patient group.
 
-Predefined values can map to `train`, `trainval` (training), or `val`. Unmapped values and rows outside custom training/validation conditions remain outside the development protocol. These rows are not automatically reserved for any later evaluation. Targets and feature coverage are checked only for the selected development records. Target suggestions and value counts use this same selected population.
+**Targets & splits** requires only a dataset. Define the development population, targets and splits independently of features. **Experiments → Inputs** checks the selected bundle against the frozen protocol, including complete feature coverage and compatibility. Missing features block experiment preparation without silently removing development slides. Older feature-bound protocols retain their frozen memberships and bindings.
+
+Predefined values can map to `train`, `trainval` (training), or `val`. Unmapped values and rows outside custom training/validation conditions remain outside the development protocol. These rows are not automatically reserved for any later evaluation. Targets are checked only for the selected development records. Target suggestions and value counts use this same selected population.
 
 The **Early-stop validation source** defaults to **Sample a percentage of training**, initially 15%. Choose **Use my fixed validation set** to preserve an official validation partition or select validation groups with conditions. Fixed validation groups stay outside fitting and assessment folds. An imported validation partition is never silently added to training: choose fixed validation or explicitly remap those values.
 
@@ -54,6 +56,8 @@ Outer assessment groups are absent from every inner plan. Inner tuning scores an
 ## Grouping, coverage, and interpretation
 
 All eligible slides belonging to a supplied Patient_ID stay in one role within each plan. Confirmed Slide_ID fallback groups remain visibly separate from verified patient identities. Slide IDs alone do not establish patient independence.
+
+Version-4 **slide targets** may have different labels on different slides from one patient. Each slide keeps its own target, and the patient remains indivisible. When stratification is enabled, patient groups are stratified by their observed set of slide labels; no majority or highest grade is substituted. Per-class group counts count a patient once in every class represented by their slides, so those counts can sum to more than the patient count. The preview identifies this policy as `histopilot-development-labelset-plans-v4` and warns that patient-grade metrics are unavailable for conflicting labels. Use uniform slide sampling for the slide-based objective; patient samplers still require consistent patient labels. Patient targets and saved legacy protocol versions retain their consistency requirements.
 
 Stratification is enabled by default. Whole-site assessment folds retain their observed label composition; the service does not move patients between sites to balance them. Missing or inconsistent domain values block site/cohort splitting. A domain assessment fold missing a class produces a warning because some metrics cannot be computed for that fold.
 

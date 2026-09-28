@@ -11,7 +11,9 @@ import react from '@vitejs/plugin-react';
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = await mkdtemp(join(tmpdir(), 'histopilot-preparation-pages-'));
 const fixture = join(output, 'fixture.tsx');
-const artifacts = resolve(web, '../docs/dev-review/2026-09-14-dataset-bundle-workflow');
+const artifacts = process.env.HISTOPILOT_VERIFICATION_ARTIFACTS
+  ? resolve(process.env.HISTOPILOT_VERIFICATION_ARTIFACTS)
+  : join(output, 'artifacts');
 await mkdir(artifacts, { recursive: true });
 const source = (path) => JSON.stringify(join(web, 'src', path));
 await writeFile(fixture, `
@@ -31,7 +33,8 @@ import ${source('clinical-workspace.css')};
 import ${source('components/StageWorkflow.css')};
 
 const copy = (value) => structuredClone(value);
-const state = window.workflow = { calls: [], drafts: [], datasets: [], protocols: [], bundles: [], errors: [], revision: 0 };
+const state = window.workflow = { calls: [], drafts: [], datasets: [], protocols: [], bundles: [], errors: [], revision: 0, confirms: [], confirmNavigation: false, holdFreeze: false, freezeFailures: 0, refreshMode: 'ready', pendingRefresh: [] };
+window.confirm = (message) => { state.confirms.push(message); return state.confirmNavigation; };
 window.fetch = async (...args) => { state.errors.push('Unexpected network request: ' + args[0]); throw new Error(state.errors.at(-1)); };
 const rows = ['low', 'high', 'low', 'high'].map((grade, index) => ({ slideId: 'slide-' + index, patientId: 'patient-' + index, patientIdSource: 'source', slidePath: '/slides/' + index + '.svs', attributes: { grade, cohort: ['TCGA', 'SurGen', 'RIH', 'TCGA'][index] } }));
 const dictionary = [{ key: 'grade', sourceColumn: 'grade', owner: 'patient', type: 'categorical' }, { key: 'cohort', sourceColumn: 'cohort', owner: 'patient', type: 'categorical' }];
@@ -40,18 +43,24 @@ const importSummary = { sourceRowCount: 4, slideCount: 4, mappedPatientCount: 4,
 const protocolSpec = (datasetId) => ({ datasetId, target: { field: 'grade', task: 'binary_classification', unit: 'patient', classes: ['low', 'high'], labels: { low: 'low', high: 'high' }, positiveClass: 'high', missing: 'block', unmapped: 'block' }, predictors: [], eligibility: [], split: newSplit([42], 2), constraints: { minPatientsPerClass: 1, minPatientsPerPartition: 1 }, featureBundleId: 'bundle-shared' });
 const datasets = ['a', 'b'].map((key, index) => ({ id: 'dataset-' + key, projectId: 'project', createdAt: '2026-09-' + (10 + index) + 'T12:00:00Z', contentHash: key, artifacts: {}, versionLabel: { tag: 'Hospital ' + key.toUpperCase(), note: 'Saved dataset ' + key, revision: 1 }, manifest: { name: key, dictionary: copy(dictionary), summary: copy(importSummary), provenance: { mapping: copy(importSpec) } } }));
 const featureBundles = [{ id: 'bundle-shared', current: true, findings: [], versionLabel: { tag: 'All slides · UNI' }, manifest: { kind: 'feature-bundle', datasetId: 'another-dataset', spec: { featureSetId: 'source', packArtifactIds: [] }, summary: { slideCount: 6, patchCount: 600, dimensions: 1024, dtype: 'float32', packCount: 0 }, feature: { validation: { tensorValidationComplete: true } }, packs: [] } }];
-const protocols = ['a', 'b'].map((key, index) => ({ id: 'protocol-' + key, projectId: 'project', createdAt: '2026-09-' + (10 + index) + 'T12:00:00Z', versionLabel: { tag: 'Protocol ' + key.toUpperCase(), note: 'Saved protocol ' + key, revision: 1 }, manifest: { kind: 'protocol', datasetId: 'dataset-' + key, spec: protocolSpec('dataset-' + key) } }));
+const protocols = ['a', 'b'].map((key, index) => ({ id: 'protocol-' + key, projectId: 'project', createdAt: '2026-09-' + (10 + index) + 'T12:00:00Z', versionLabel: { tag: 'Protocol ' + key.toUpperCase(), note: 'Saved protocol ' + key, revision: 1 }, manifest: { kind: 'protocol', datasetId: 'dataset-' + key, spec: protocolSpec('dataset-' + key), summary: { splitVersion: 4, includedPatients: 4, includedSlides: 4, totalSlides: 4, excludedSlides: 0, includedGroups: 4, strategy: 'kfold', evaluationPlanCount: 2 }, partitions: [], findings: [] } }));
 const drafts = [
   { id: 'import-draft', name: 'Existing import draft', kind: 'import', payload: { type: 'dataset-import', spec: { ...copy(importSpec), source: { path: '/saved-import.csv' } } } },
   { id: 'protocol-draft', name: 'Existing protocol draft', kind: 'experiment', payload: { type: 'analysis-protocol', spec: protocolSpec('dataset-b') } },
 ].map((draft) => ({ ...draft, projectId: 'project', status: 'editable', revision: 3, createdAt: '2026-09-12T12:00:00Z', updatedAt: '2026-09-12T12:00:00Z' }));
 const values = (field) => field ? [...new Set(rows.map((row) => row.attributes[field]))].map((value) => ({ value, count: rows.filter((row) => row.attributes[field] === value).length })) : [];
 const stats = { totalSlides: 4, patientCount: 4, fallbackSlideCount: 0, groupCount: 4, unlinkedSlideCount: 0, sample: rows };
-scientific.datasets = async () => ({ datasets: copy(state.datasets) });
+const refreshRead = async (method) => {
+  state.calls.push({ method });
+  if (state.refreshMode === 'held') await new Promise((resolve) => state.pendingRefresh.push(resolve));
+  if (state.refreshMode === 'failed') throw new Error('The version list could not refresh.');
+};
+window.releaseRefresh = () => { state.refreshMode = 'ready'; state.pendingRefresh.splice(0).forEach((resolve) => resolve()); };
+scientific.datasets = async () => { await refreshRead('datasets'); return { datasets: copy(state.datasets) }; };
 scientific.drafts = async () => ({ drafts: copy(state.drafts) });
-scientific.configurations = async (_, kind) => ({ configurations: kind === 'protocol' ? copy(state.protocols) : [] });
-packing.jobs = async () => ({ jobs: [], artifacts: [] });
-bundles.list = async () => ({ items: copy(state.bundles) });
+scientific.configurations = async (_, kind) => { await refreshRead('configurations-' + kind); return { configurations: kind === 'protocol' ? copy(state.protocols) : [] }; };
+packing.jobs = async () => { state.calls.push({ method: 'packing.jobs' }); throw new Error('Features are unavailable during dataset preparation.'); };
+bundles.list = async () => { state.calls.push({ method: 'bundles.list' }); throw new Error('Feature bundles are unavailable during dataset preparation.'); };
 scientific.draft = async (_, id) => { state.calls.push({ method: 'draft', id }); return copy(state.drafts.find((draft) => draft.id === id)); };
 scientific.queryDataset = async (_, id, query) => {
   state.calls.push({ method: 'queryDataset', id });
@@ -71,9 +80,24 @@ scientific.saveDraft = async (_, input, current) => {
 scientific.importPreview = async (_, draftId, revision) => { state.calls.push({ method: 'importPreview', draftId, revision }); return { draftId, revision, previewHash: 'import-' + revision, canFreeze: true, findings: [], summary: copy(importSummary), dictionary: copy(dictionary), records: copy(rows), recordsTruncated: false }; };
 scientific.protocolPreview = async (_, draftId, revision) => { state.calls.push({ method: 'protocolPreview', draftId, revision }); return { draftId, revision, previewHash: 'protocol-' + revision, canFreeze: true, findings: [], partitions: [], summary: { splitVersion: 4, includedPatients: 4, includedSlides: 4, totalSlides: 4, excludedSlides: 0, includedGroups: 4, strategy: 'kfold', evaluationPlanCount: 2 } }; };
 scientific.protocolPreflight = async (_, protocolId) => { state.calls.push({ method: 'protocolPreflight', protocolId }); return { protocolId, findings: [] }; };
+const freezeVersion = async (kind, draftId, revision, previewHash, versionLabel, operationId) => {
+  state.calls.push({ method: kind === 'dataset' ? 'importFreeze' : 'protocolFreeze', draftId, revision, previewHash, versionLabel: copy(versionLabel), operationId });
+  if (state.holdFreeze) await new Promise((resolve) => { window.releaseFreeze = () => { state.holdFreeze = false; resolve(); }; });
+  if (state.freezeFailures > 0) { state.freezeFailures -= 1; throw new Error('The freeze response was interrupted. Please retry.'); }
+  const draft = state.drafts.find((item) => item.id === draftId);
+  const record = { id: kind + '-frozen-' + state.revision, projectId: 'project', contentHash: kind + '-content', createdAt: '2026-09-25T12:00:00Z', artifacts: {}, versionLabel: { ...copy(versionLabel), revision: 1 }, manifest: kind === 'dataset'
+    ? { name: draft.name, dictionary: copy(dictionary), summary: copy(importSummary), provenance: { mapping: copy(draft.payload.spec) } }
+    : { kind: 'protocol', datasetId: draft.payload.spec.datasetId, spec: copy(draft.payload.spec), summary: { splitVersion: 4, includedPatients: 4, includedSlides: 4, totalSlides: 4, excludedSlides: 0, includedGroups: 4, strategy: 'kfold', evaluationPlanCount: 2 }, partitions: [], findings: [] } };
+  const key = kind === 'dataset' ? 'datasets' : 'protocols';
+  state[key] = [...state[key], record]; state.drafts = state.drafts.map((item) => item.id === draftId ? { ...item, status: 'frozen', revision: revision + 1 } : item);
+  return copy(record);
+};
+scientific.importFreeze = async (_, ...args) => freezeVersion('dataset', ...args);
+scientific.protocolFreeze = async (_, ...args) => freezeVersion('protocol', ...args);
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 const root = createRoot(document.getElementById('app'));
 window.configure = (page, empty = false, hash = '') => {
+  window.releaseRefresh(); state.holdFreeze = false; state.freezeFailures = 0; state.confirms = []; state.confirmNavigation = false;
   state.datasets = empty ? [] : copy(datasets); state.protocols = empty ? [] : copy(protocols); state.drafts = empty ? [] : copy(drafts); state.bundles = empty ? [] : copy(featureBundles);
   state.revision += 1; client.clear(); window.history.replaceState({}, '', location.pathname + hash);
   const workspace = { project: { id: 'project', name: 'Preparation study', config: { seed: 42, folds: 2 } }, dataset: { id: 'dataset-a' }, sources: [{ role: 'slides', path: '/slides' }] };
@@ -187,6 +211,36 @@ async function configure(page, empty = false, hash = '') {
   await evaluate('window.configure(' + [page, empty, hash].map(JSON.stringify).join(', ') + ')');
   await waitFor('document.querySelector(".stage-library") && !document.body.innerText.includes("Loading ")');
   await verifyHeader(true);
+}
+async function reviewNewDataset(name) {
+  await configure('data', true, '#dataset');
+  await click('Create dataset');
+  await fill('Dataset name', name);
+  await fill('Metadata file path', '/freeze-regression.csv');
+  await click('Read file & show columns');
+  await click('Continue to column mapping');
+  await click('Preview dataset');
+  await click('Name & freeze dataset');
+}
+async function doubleSubmitFreeze(text) {
+  await waitFor(button(text) + ' && !' + button(text) + '.matches(":disabled")');
+  await evaluate('(() => { const submit = ' + button(text) + '; submit.click(); submit.click(); })()');
+}
+async function tryPendingNavigation(hash, message) {
+  const before = await evaluate('window.workflow.confirms.length');
+  const current = await evaluate('location.hash');
+  await evaluate('(() => { const anchor = document.createElement("a"); anchor.href = ' + JSON.stringify(hash) + '; document.body.append(anchor); anchor.click(); anchor.remove(); })()');
+  assert.equal(await evaluate('window.workflow.confirms.length'), before + 1, 'Leaving during an actual freeze still requires confirmation');
+  assert.match(await evaluate('window.workflow.confirms.at(-1)'), message);
+  assert.equal(await evaluate('location.hash'), current, 'Rejecting pending navigation keeps the current module');
+}
+async function clickNextLink(hash) {
+  const anchor = '[...document.querySelectorAll("a")].find(el => el.getAttribute("href") === ' + JSON.stringify(hash) + ')';
+  await waitFor(anchor + '?.checkVisibility()', 'visible next-step link ' + hash);
+  const before = await evaluate('window.workflow.confirms.length');
+  await evaluate(anchor + '.click()');
+  await waitFor('location.hash === ' + JSON.stringify(hash));
+  assert.equal(await evaluate('window.workflow.confirms.length'), before, 'Explicit next-step navigation after a completed freeze must not prompt');
 }
 async function verifyLibraryControls({ emptyTitle, names, draftName, managementKeys }) {
   assert.equal(await evaluate('document.querySelectorAll(".stage-library h2, .stage-library-eyebrow").length'), 0);
@@ -306,17 +360,15 @@ try {
   assert.equal(await evaluate(field('Dataset version', 'select') + '.value'), 'dataset-b');
   assert.equal(await evaluate(visible('.protocol-section')), 1);
   await fill('Protocol name', 'Retained development draft');
-  assert.equal(await evaluate(button('Continue to target') + '.matches(":disabled")'), true);
-  await fill('Feature bundle', 'bundle-shared', 'select');
-  await waitFor('document.querySelector(".protocol-bundle-source .science-metrics")?.innerText.includes("Shared slides")');
+  assert.equal(await evaluate(button('Continue to target') + '.matches(":disabled")'), false);
+  assert.equal(await evaluate(field('Feature bundle', 'select') + ' === undefined'), true);
   assert.equal(await evaluate(visible('select') + ' >= 1'), true);
   assert.equal(await evaluate('document.body.innerText.includes("Training set selection")'), false);
   assert.equal(await evaluate('document.body.innerText.includes("Training slide filters")'), true);
   await fill('Dataset version', 'dataset-a', 'select');
-  assert.equal(await evaluate(field('Feature bundle', 'select') + '.value'), 'bundle-shared');
   await fill('Dataset version', 'dataset-b', 'select');
-  await waitFor('window.workflow.calls.some(call => call.method === "exploreProtocol" && call.request.featureBundleId === "bundle-shared" && call.request.datasetId === "dataset-b")');
-  await screenshot('03a-dataset-bundle-selection');
+  await waitFor('window.workflow.calls.some(call => call.method === "exploreProtocol" && !call.request.featureBundleId && call.request.datasetId === "dataset-b")');
+  await screenshot('03a-dataset-selection');
   await click('Add condition');
   await waitFor(field('Field', 'select') + '?.value === "cohort"');
   await waitFor(field('TCGA', 'input'));
@@ -354,21 +406,21 @@ try {
   assert.equal(await evaluate(field('Protocol name', 'input') + '.value'), 'Retained development draft');
   await click('Continue to target'); await click('Continue to split design'); await click('Continue to review');
   await currentPage('protocol-4');
-  await click('Preview & preflight');
+  await click('Preview & validate');
   await waitFor(button('Name & freeze protocol'));
   await currentPage('protocol-4-preview-protocol-1');
   assert.equal(await evaluate(visible('.protocol-section')), 1);
   assert.equal(await evaluate('document.getElementById("protocol-review").checkVisibility()'), false);
   assert.equal(await evaluate('document.querySelector(".setup-step-actions").checkVisibility()'), false);
-  assert.equal(await evaluate(button('Preview & preflight') + ' === undefined'), true);
+  assert.equal(await evaluate(button('Preview & validate') + ' === undefined'), true);
   assert.equal(await evaluate(button('Back to split design') + '?.checkVisibility()'), true);
   const saved = await evaluate('window.workflow.calls.filter(call => call.method === "saveDraft" && call.input.payload.type === "analysis-protocol").at(-1).input');
   assert.equal(saved.name, 'Retained development draft');
   assert.equal(saved.payload.spec.datasetId, 'dataset-b');
-  assert.equal(saved.payload.spec.featureBundleId, 'bundle-shared');
+  for (const key of ['featureBundleId', 'featureSetId', 'featurePackId', 'featureCoverage']) assert.equal(key in saved.payload.spec, false);
   assert.equal(saved.payload.spec.split.pools.trainSelection, 'remaining');
   assert.deepEqual(saved.payload.spec.split.pools.rules.train, []);
-  assert.ok(await evaluate('window.workflow.calls.some(call => call.method === "exploreProtocol" && call.request.targetField === "grade" && call.request.featureBundleId === "bundle-shared")'));
+  assert.ok(await evaluate('window.workflow.calls.some(call => call.method === "exploreProtocol" && call.request.targetField === "grade" && !call.request.featureBundleId)'));
   assert.deepEqual(saved.payload.spec.split.seeds, [13, 27]);
   assert.equal(saved.payload.spec.target.positiveClass, 'high');
   await screenshot('04-protocol-review');
@@ -377,7 +429,7 @@ try {
   assert.equal(await evaluate(field('Version tag', 'input') + '.value'), 'Retained development draft');
   await click('Back to review');
   await evaluate('[...document.querySelectorAll("summary")].find(el => el.textContent === "Review settings and rerun checks").click()');
-  await click('Preview & preflight');
+  await click('Preview & validate');
   await waitFor('window.workflow.calls.filter(call => call.method === "protocolPreview").length === 2');
   await currentPage('protocol-4-preview-protocol-1');
   await click('Back to split design');
@@ -390,8 +442,8 @@ try {
   await openRecord('Open protocol Protocol B');
   await waitFor('document.querySelector(".panel-header")?.textContent.includes("Protocol B")');
   assert.ok(await evaluate('document.querySelector(".detail-list")?.textContent.includes("Hospital B")'));
-  await click('Recheck input preflight');
-  await waitFor('window.workflow.calls.some(call => call.method === "protocolPreflight" && call.protocolId === "protocol-b")');
+  assert.equal(await evaluate(button('Recheck input preflight') + ' === undefined'), true);
+  assert.ok(await evaluate('document.body.innerText.includes("Select features and check their coverage and compatibility in Experiments")'));
   await click('Copy into a new draft');
   await currentPage('protocol-1');
   assert.equal(await evaluate(field('Dataset version', 'select') + '.value'), 'dataset-b');
@@ -412,10 +464,87 @@ try {
   await verifyHeader(false);
   await screenshot('05-mobile-protocol');
   assert.ok(await evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), 'Protocol editor overflows the mobile viewport');
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false });
+  await reviewNewDataset('Dataset freeze stays here');
+  const firstFreezeCount = await evaluate('window.workflow.calls.filter(call => call.method === "importFreeze").length');
+  await evaluate('window.workflow.holdFreeze = true; window.workflow.refreshMode = "held"');
+  await doubleSubmitFreeze('Freeze dataset version');
+  await waitFor('window.workflow.calls.filter(call => call.method === "importFreeze").length === ' + (firstFreezeCount + 1));
+  await waitFor(button('Freezing version…'));
+  assert.equal(await evaluate('Boolean(document.querySelector("[role=dialog]"))'), true);
+  await tryPendingNavigation('#cohort', /A dataset request is still pending/);
+  await evaluate('window.releaseFreeze()');
+  await waitFor('!document.querySelector("[role=dialog]") && document.querySelector(".science-version")?.textContent.includes("Dataset freeze stays here")');
+  await waitFor('window.workflow.pendingRefresh.length > 0', 'background version refresh is still pending');
+  assert.equal(await evaluate('location.hash'), '#dataset', 'Freezing a dataset stays in Datasets');
+  assert.equal(await evaluate('window.workflow.confirms.length'), 1, 'Successful freeze must not trigger its pending-write guard');
+  assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "importFreeze").length'), firstFreezeCount + 1, 'Double click freezes exactly once');
+  assert.ok(await evaluate('document.body.innerText.includes("frozen") && document.body.innerText.includes("Your tag and note are saved")'));
+  const frozenDatasetId = await evaluate('window.workflow.datasets.at(-1).id');
+  assert.equal(await evaluate('document.querySelector(".science-version strong").title'), frozenDatasetId, 'The returned dataset is shown before list refresh completes');
+  await screenshot('06-dataset-freeze-completed-refresh-pending');
+  await clickNextLink('#cohort?dataset=' + frozenDatasetId);
+  await evaluate('window.releaseRefresh()');
+
+  await reviewNewDataset('Retry dataset freeze');
+  await fill('Version tag', 'Retry preserves this version');
+  await fill('Commit note', 'Keep this note when the response fails.', 'textarea');
+  await evaluate('window.workflow.freezeFailures = 1; window.workflow.refreshMode = "failed"');
+  await click('Freeze dataset version');
+  await waitFor('document.querySelector("[role=dialog]")?.textContent.includes("The freeze response was interrupted")');
+  assert.equal(await evaluate('location.hash'), '#dataset', 'Failed freeze stays in Datasets');
+  assert.deepEqual(await evaluate('window.workflow.confirms'), []);
+  assert.equal(await evaluate(field('Version tag') + '.value'), 'Retry preserves this version');
+  assert.equal(await evaluate(field('Commit note', 'textarea') + '.value'), 'Keep this note when the response fails.');
+  const failedFreeze = await evaluate('window.workflow.calls.filter(call => call.method === "importFreeze").at(-1)');
+  assert.ok(failedFreeze.operationId, 'Freeze has an idempotent operation identity');
+  await click('Freeze dataset version');
+  await waitFor('!document.querySelector("[role=dialog]") && document.querySelector(".science-version")?.textContent.includes("Retry preserves this version")');
+  const retriedFreeze = await evaluate('window.workflow.calls.filter(call => call.method === "importFreeze").at(-1)');
+  assert.deepEqual(retriedFreeze, failedFreeze, 'Retry preserves the complete freeze request, including operation identity');
+  assert.equal(await evaluate('location.hash'), '#dataset');
+  assert.deepEqual(await evaluate('window.workflow.confirms'), []);
+  assert.equal(await evaluate('window.workflow.datasets.length'), 1, 'Retry produces one saved dataset');
+  assert.equal(await evaluate('document.querySelector(".version-tag-note").textContent'), 'Keep this note when the response fails.');
+  await screenshot('07-dataset-freeze-refresh-failed');
+  await click('Back to datasets');
+  assert.equal(await evaluate('document.querySelectorAll(".stage-library tbody tr").length'), 1, 'Frozen import disappears from the editable draft list');
+  assert.equal(await evaluate('document.querySelector(".stage-record-name").textContent'), 'Retry preserves this version');
+
+  await configure('targets', false, '#cohort');
+  await click('Create protocol');
+  await fill('Protocol name', 'Protocol freeze stays here');
+  await click('Continue to target');
+  await fill('Target attribute', 'grade', 'select');
+  await waitFor(field('Class names', 'input') + '?.value.includes("high")');
+  await fill('Positive class', 'high', 'select');
+  await click('Continue to split design');
+  await click('Continue to review');
+  await click('Preview & validate');
+  await click('Name & freeze protocol');
+  const protocolFreezeCount = await evaluate('window.workflow.calls.filter(call => call.method === "protocolFreeze").length');
+  await evaluate('window.workflow.holdFreeze = true; window.workflow.refreshMode = "failed"');
+  await doubleSubmitFreeze('Freeze development protocol version');
+  await waitFor(button('Freezing version…'));
+  await tryPendingNavigation('#experiments', /request is still pending/);
+  await evaluate('window.releaseFreeze()');
+  await waitFor('!document.querySelector("[role=dialog]") && document.querySelector(".detail-list")');
+  assert.equal(await evaluate('location.hash'), '#cohort', 'Freezing a protocol stays in Targets & splits');
+  assert.equal(await evaluate('window.workflow.confirms.length'), 1);
+  assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "protocolFreeze").length'), protocolFreezeCount + 1);
+  assert.ok(await evaluate('document.querySelector(".panel-header")?.textContent.includes("Protocol freeze stays here")'));
+  assert.ok(await evaluate('document.body.innerText.includes("Your tag and note are saved")'));
+  const frozenProtocol = await evaluate('window.workflow.protocols.at(-1)');
+  assert.equal(await evaluate('document.querySelector(".detail-list strong").title'), frozenProtocol.manifest.datasetId);
+  await screenshot('08-protocol-freeze-refresh-failed');
+  await clickNextLink('#experiments?protocol=' + frozenProtocol.id);
+  assert.equal('featureBundleId' in frozenProtocol.manifest.spec, false);
+  assert.equal(await evaluate('window.workflow.calls.some(call => ["bundles.list", "packing.jobs", "configurations-feature", "protocolPreflight"].includes(call.method))'), false, 'Targets and splits never fetch or preflight features');
+  const freezeChecks = ['dataset freeze keeps Datasets route and shows returned saved version', 'slow list refresh does not hold freeze modal or next-step navigation', 'completed freeze never triggers pending-write confirmation', 'actual pending dataset/protocol write still guards navigation', 'double-click freeze sends one request', 'failed freeze retains modal tag/note and route', 'retry keeps the identical operation identity', 'failed list refresh preserves successful dataset/protocol save', 'frozen import removed from editable library', 'protocol freeze stays in Targets & splits', 'explicit next-step links carry exact saved dataset/protocol IDs without confirmation'];
   assert.deepEqual(await evaluate('window.workflow.errors'), []);
   assert.deepEqual(exceptions, []);
-  await writeFile(join(artifacts, 'preparation-verification.json'), JSON.stringify({ passed: true, scope: 'Real React components and Chromium DOM; in-memory scientific APIs; no HistoPilot server.', checks: ['one Create action in library headers', 'one Back action and no competing Create in editor/detail headers', 'return to library before creating another record', 'empty and saved libraries', 'search and clear', 'combined draft/frozen filtering', 'recent/oldest/name sorting', 'search source dataset and target', 'exact Manage record keys', 'open/back retains search', 'exact dataset and protocol IDs', 'named cross-dataset bundle selection and shared-slide coverage', 'bundle retained across dataset changes', 'bundle passed to target-value exploration', 'direct training filters without duplicate selection gate', 'TCGA and SurGen selected as inclusive cohort values', 'removing final filter restores all shared slides', 'draft reopening', 'create and copy', 'one active substage', 'forward validation gates', 'review and freeze gates', 'version name reused when freezing', 'back/forward retained form state', 'same-module library event', 'focus and scroll reset', 'mobile snapshot'], calls: await evaluate('window.workflow.calls') }, null, 2));
-  console.log('PASS: dataset/protocol libraries, transitions, exact records, validation gates, draft state, and same-module entry.');
+  await writeFile(join(artifacts, 'preparation-verification.json'), JSON.stringify({ passed: true, scope: 'Real React components and Chromium DOM; in-memory scientific APIs; no HistoPilot server.', checks: ['one Create action in library headers', 'one Back action and no competing Create in editor/detail headers', 'return to library before creating another record', 'empty and saved libraries', 'search and clear', 'combined draft/frozen filtering', 'recent/oldest/name sorting', 'search source dataset and target', 'exact Manage record keys', 'open/back retains search', 'exact dataset and protocol IDs', 'construct and freeze protocols with feature APIs unavailable', 'no feature controls or compatibility preflight in Targets and splits', 'dataset-only target-value exploration', 'direct training filters without duplicate selection gate', 'TCGA and SurGen selected as inclusive cohort values', 'removing final filter restores all dataset slides', 'draft reopening', 'create and copy', 'one active substage', 'forward validation gates', 'review and freeze gates', 'version name reused when freezing', 'back/forward retained form state', 'same-module library event', 'focus and scroll reset', 'mobile snapshot', ...freezeChecks], calls: await evaluate('window.workflow.calls') }, null, 2));
+  console.log('PASS: dataset/protocol libraries, transitions, exact records, validation gates, draft state, same-module entry, and dataset/protocol freeze completion, retries, and navigation guards.');
   console.log('Artifacts: ' + artifacts);
 } catch (error) {
   try { await writeFile(join(artifacts, 'preparation-failure.txt'), await evaluate('document.body.innerText')); await screenshot('failure'); } catch { /* Chromium may not have launched. */ }

@@ -31,13 +31,21 @@ const initialSpec = (): MILExperimentSpec => ({
   protocolId: '', featureBundleId: '', loadingPolicy: 'auto', packArtifactId: null,
 });
 
-/** Suggest a unique compatible pair, retaining explicit prepared inputs when the other choice is ambiguous. */
+/** Suggest a unique compatible pair, retaining valid explicit choices while other inputs are missing. */
 export function suggestedExperimentInputs(protocols: Configuration[], featureBundles: FeatureBundle[], context: PreparationContext = {}): MILExperimentSpec {
-  const pairs = protocols.filter((protocol) => (!context.protocolId || protocol.id === context.protocolId) && (!context.datasetId || protocol.manifest.datasetId === context.datasetId)).flatMap((protocol) => featureBundles
-    .filter((bundle) => (!context.bundleId || bundle.id === context.bundleId) && bundle.current && !bundle.findings.some((finding) => finding.severity === 'error') && protocolBundleCompatible(protocol, bundle))
+  const availableProtocols = protocols.filter((protocol) => (!context.protocolId || protocol.id === context.protocolId) && (!context.datasetId || protocol.manifest.datasetId === context.datasetId));
+  const availableBundles = featureBundles.filter((bundle) => (!context.bundleId || bundle.id === context.bundleId) && bundle.current && !bundle.findings.some((finding) => finding.severity === 'error'));
+  const pairs = availableProtocols.flatMap((protocol) => availableBundles
+    .filter((bundle) => protocolBundleCompatible(protocol, bundle))
     .map((bundle) => ({ protocolId: protocol.id, featureBundleId: bundle.id })));
   if (pairs.length === 1) return { ...initialSpec(), ...pairs[0] };
-  return pairs.length > 1 ? { ...initialSpec(), protocolId: context.protocolId ?? '', featureBundleId: context.bundleId ?? '' } : initialSpec();
+  const explicitProtocol = availableProtocols.find((protocol) => protocol.id === context.protocolId);
+  const explicitBundle = availableBundles.find((bundle) => bundle.id === context.bundleId);
+  return {
+    ...initialSpec(),
+    protocolId: explicitProtocol?.id ?? '',
+    featureBundleId: explicitBundle && (!explicitProtocol || protocolBundleCompatible(explicitProtocol, explicitBundle)) ? explicitBundle.id : '',
+  };
 }
 
 const loadingOptions: { value: LoadingPolicy; title: string; description: string }[] = [
@@ -247,7 +255,7 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
     <ExperimentNavigation stage={stage} current={tab} disabled={busy || planBusy || submitting} inputsReady={!inputsNeedVerification} hasBatches={Boolean(record.batchPlans?.length || record.batches.length) && !planDirty} onChange={changeTab} />
     <StagePage pageKey={tab}>
     <div hidden={tab !== 'setup'}>
-    <p className="experiment-input-intro">Choose the development protocol. Its saved feature bundle is selected automatically; verify the inputs, then configure one or more batches.</p>
+    <p className="experiment-input-intro">Choose saved targets and splits, then select the feature bundle for this experiment. Verify compatibility before configuring training batches.</p>
     {context.bundleId ? <p className="muted">Prepared inputs are suggested only for experiments without saved inputs. Existing experiment inputs are retained. Review the selected protocol and feature bundle below.</p> : null}
     <ErrorNotice error={error ?? protocols.error ?? featureBundles.error} />
     {stale && !readOnly ? <p className="callout" role="alert">The saved inputs changed while these edits were open. Your draft has not replaced them. <button className="text-button" onClick={() => { setSpec(record.inputs); setBaseInputs(record.inputs); setRecovered(null); setPreview(null); setError(null); }}>Reload saved inputs</button></p> : null}
@@ -256,7 +264,7 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
     <SavedNotice>{message}</SavedNotice>
     <fieldset className="mil-plan-fields" disabled={busy || planBusy || submitting || readOnly || stale || planDirty}>
       <legend className="sr-only">MIL experiment plan</legend>
-      <Panel title="Training inputs" subtitle="The protocol supplies the dataset, feature bundle, target and splits.">
+      <Panel title="Training inputs" subtitle="Targets and splits define the development cohort. This experiment selects its feature bundle.">
         <div className="experiment-input-choices">
           <label className="label">Development protocol
             <select className="field" value={spec.protocolId} onChange={(event) => {
@@ -272,23 +280,23 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
             </select>
           </label>
           {protocolSpec?.featureBundleId ? <div className="label">
-            <span>Feature bundle from protocol</span>
+            <span>Feature bundle pinned by older protocol</span>
             <strong>{bundle ? versionLabelText(bundle, 'Feature bundle') : versionLabelText({ id: protocolSpec.featureBundleId }, 'Feature bundle')}</strong>
-            <small>Saved with this protocol. Choose another protocol to change the bundle.</small>
+            <small>Retained for this older protocol. Create a dataset-only protocol revision to select features independently.</small>
           </div> : <label className="label">Feature bundle
             <select className="field" value={spec.featureBundleId} disabled={!protocol} onChange={(event) => edit({ featureBundleId: event.target.value, packArtifactId: null })}>
               <option value="">{featureBundles.isPending ? 'Loading features…' : 'Choose verified features'}</option>
               {spec.featureBundleId && !bundle ? <option value={spec.featureBundleId} disabled>Retained feature bundle (archived or unavailable to new selections)</option> : null}
               {(featureBundles.data?.items ?? []).map((item) => {
                 const incompatible = Boolean(protocol && !protocolBundleCompatible(protocol, item));
-                return <option key={item.id} value={item.id} disabled={item.current === false || incompatible}>{versionLabelText(item, 'Feature bundle')} · {item.manifest.summary.packCount} pack(s){item.current === false ? ' · needs verification' : incompatible ? ' · different protocol inputs' : ''}</option>;
+                return <option key={item.id} value={item.id} disabled={item.current === false || incompatible}>{versionLabelText(item, 'Feature bundle')} · {item.manifest.summary.packCount} pack(s){item.current === false ? ' · needs verification' : incompatible ? ' · conflicts with older protocol binding' : ''}</option>;
               })}
             </select>
           </label>}
         </div>
         <div className="stack experiment-input-summary">
           {!protocol || !bundle ? <p className="callout">Prepare missing inputs in <a href="#cohort">Targets &amp; splits</a> or <a href="#features">Features</a>, then return here.</p> : null}
-          {protocolSpec ? <div className="mil-inherited-protocol"><strong>Selected development protocol</strong><div className="mil-protocol-summary"><Badge>{taskLabel(protocolSpec.target.task)}</Badge><Badge>Target: {protocolSpec.target.field}</Badge><Badge>{unitLabel(protocolSpec.target.unit)} predictions</Badge><Badge>{splitModeLabel(protocolSpec.split.mode)}</Badge><Badge>Split seeds: {protocolSpec.split.seeds.join(', ')}</Badge></div><p className="muted">The protocol supplies the dataset, feature bundle, target and splits. <a href="#cohort">View protocol</a></p></div> : null}
+          {protocolSpec ? <div className="mil-inherited-protocol"><strong>Selected development protocol</strong><div className="mil-protocol-summary"><Badge>{taskLabel(protocolSpec.target.task)}</Badge><Badge>Target: {protocolSpec.target.field}</Badge><Badge>{unitLabel(protocolSpec.target.unit)} predictions</Badge><Badge>{splitModeLabel(protocolSpec.split.mode)}</Badge><Badge>Split seeds: {protocolSpec.split.seeds.join(', ')}</Badge></div><p className="muted">Targets and splits define the development cohort. This experiment selects its feature bundle. <a href="#cohort">View protocol</a></p></div> : null}
           {bundle ? <div className="mil-bundle-summary"><Badge>{bundle.manifest.summary.slideCount.toLocaleString()} slides</Badge><Badge>{bundle.manifest.summary.patchCount.toLocaleString()} patches</Badge><Badge>{bundle.manifest.summary.dimensions ?? '?'} dimensions</Badge><Badge>{Array.isArray(bundle.manifest.summary.dtype) ? bundle.manifest.summary.dtype.join(', ') : bundle.manifest.summary.dtype ?? 'Unknown dtype'}</Badge></div> : null}
           {bundle?.findings?.length ? <Findings findings={bundle.findings} /> : null}
           {protocolSpec?.featurePackId ? <p className="callout">This older protocol pins pack <code>{protocolSpec.featurePackId}</code>. The selected bundle must include that pack, and this plan must retain its loading source.</p> : null}
@@ -310,11 +318,11 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
         <p className="muted mil-memory-note">Packed mmap can read a pack larger than available RAM. Full RAM/GPU preloading and resource-based tuning are not enabled.</p>
       </details>
     </fieldset>
-    {!readOnly ? <Panel title="Verify inputs" subtitle="Check feature coverage and protocol compatibility before adding batches.">
+    {!readOnly ? <Panel title="Verify inputs" subtitle="Check feature coverage and compatibility for every frozen development slide before adding batches.">
       {preview ? <div className="mil-plan-review">
         <Findings findings={preview.findings} />
         {preview.canPlan ? <p className="science-success">Resolved source: <strong>{preview.resolvedLoadingPolicy === 'mmap' ? 'Packed mmap' : 'Original feature files'}</strong>{preview.packArtifactId ? <> · <code>{preview.packArtifactId}</code></> : null}</p> : null}
-      </div> : <p className="muted">This check uses the current feature files and the saved protocol and bundle versions.</p>}
+      </div> : <p className="muted">This check verifies the selected bundle and complete development-slide coverage. The saved targets and split memberships stay fixed.</p>}
       <div className="inline-actions">
         <StageContinueButton type="button" disabled={busy || planBusy || submitting || !ready || readOnly || stale || planDirty} onClick={() => void run(async () => { if (await reviewAndSave(true)) changeTab('batches'); })}>{busy ? 'Checking inputs…' : 'Check & continue to batches'}</StageContinueButton>
         {dirty ? <button type="button" className="text-button" disabled={busy} onClick={() => { setSpec(record.inputs); setBaseInputs(record.inputs); setRecovered(null); setPreview(null); setError(null); }}>Discard input edits</button> : null}

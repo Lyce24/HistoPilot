@@ -189,8 +189,3 @@
     flex-direction: column;
   }
 }
-
-.protocol-bundle-source { display: grid; gap: 12px; min-width: 0; }
-.protocol-bundle-source > p { margin: 0; }
-.protocol-bundle-source .science-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-@media (max-width: 560px) { .protocol-bundle-source .science-metrics { grid-template-columns: minmax(0, 1fr); } }

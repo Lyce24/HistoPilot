@@ -335,7 +335,7 @@ export function SplitStrategy({
         </>
       ) : null}
       <p className="muted">
-        Preview & preflight calculates exact group assignments, class counts and feasibility.
+        Preview & validate calculates exact group assignments, class counts and feasibility.
         Percentages are approximate because a group stays intact.
       </p>
     </div>

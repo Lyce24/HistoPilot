@@ -86,7 +86,7 @@ describe('guided preparation', () => {
     const html = render('targets', [dataset, older]);
     expect(html).toContain('<option value="older" selected="">');
     expect(html).not.toContain('<option value="dataset" selected="">');
-    expect(html).toContain('Dataset saved. Choose a feature bundle, then define the target and development splits.');
+    expect(html).toContain('Dataset saved. Define the target and development splits.');
   });
 
   it('shows a missing linked dataset honestly instead of displaying a different dataset', () => {
@@ -109,8 +109,8 @@ describe('guided preparation', () => {
     expect(firstStep).not.toContain('Choose how to compare models');
     expect(firstStep).not.toContain('Final test set');
     expect(html).toContain('Development data only. Select training records here; prepare test data later in Evaluate.');
-    expect(html).toMatch(/<button(?=[^>]*data-stage-action="continue")(?=[^>]*disabled="")[^>]*><span>Continue to target/);
-    expect(html).toContain('Choose a verified feature bundle to continue.');
+    expect(html).toMatch(/<button(?=[^>]*data-stage-action="continue")(?![^>]*disabled)[^>]*><span>Continue to target/);
+    expect(html).toContain('Features and compatibility are checked in Experiments.');
   });
 
   it('explains a missing frozen dataset and prevents continuing with an unresolved dataset ID', () => {
@@ -121,11 +121,11 @@ describe('guided preparation', () => {
     expect(html).toContain('No imported dataset yet');
   });
 
-  it('shows one training filter editor and a required named bundle without redundant selection gates', () => {
+  it('shows dataset selection and training filters without feature controls', () => {
     pageSnapshot.view = 'editor';
     const html = render('targets');
-    expect(html).toContain('<details class="setup-details"><summary>Explore shared slide records');
-    expect(html).toContain('Choose a named feature bundle');
+    expect(html).toContain('<details class="setup-details"><summary>Explore dataset records');
+    expect(html).not.toContain('Choose a named feature bundle');
     expect(html).toContain('Training slide filters');
     expect(html).not.toContain('Training set selection');
     expect(html).not.toContain('Which slides should be included?');
@@ -135,15 +135,32 @@ describe('guided preparation', () => {
     expect(html).not.toContain('Execution unavailable');
   });
 
-  it('accepts a named bundle from another dataset and keeps it selected from the preparation route', () => {
+  it('ignores a bundle on an older preparation route when constructing targets and splits', () => {
     pageSnapshot.view = 'editor';
     vi.stubGlobal('window', { location: { hash: '#cohort?dataset=dataset&bundle=shared-bundle' } });
     const shared = { id: 'shared-bundle', current: true, findings: [], versionLabel: { tag: 'All slides · UNI' }, manifest: { datasetId: 'different-dataset', summary: { slideCount: 50 } } } as unknown as FeatureBundle;
     const html = render('targets', [dataset], false, { bundles: [shared] });
-    expect(html).toContain('<option value="shared-bundle" selected="">All slides · UNI · 50 slides');
-    expect(html).toContain('Dataset and bundle coverage');
-    expect(html).toContain('Shared slides');
+    expect(html).not.toContain('All slides · UNI');
+    expect(html).not.toContain('Dataset and bundle coverage');
+    expect(html).not.toContain('Shared slides');
     expect(html).toMatch(/<button(?=[^>]*data-stage-action="continue")(?![^>]*disabled)[^>]*><span>Continue to target/);
+  });
+
+  it('can review a recovered protocol without its old feature bundle', () => {
+    stubRecovery('protocol', {
+      version: 1, step: 4, name: 'Recovered targets', draft: null,
+      spec: {
+        datasetId: 'dataset', featureBundleId: 'deleted-bundle', featureCoverage: 'restrict',
+        target: { field: 'diagnosis', task: 'binary_classification', unit: 'patient', classes: ['no', 'yes'], labels: { no: 'no', yes: 'yes' }, positiveClass: 'yes', missing: 'block', unmapped: 'block' },
+        predictors: [], eligibility: [], split: newSplit(), constraints: { minPatientsPerClass: 1, minPatientsPerPartition: 1 },
+      },
+    });
+    pageSnapshot.view = 'editor';
+    const html = render('targets');
+    expect(html).toMatch(/<button(?=[^>]*data-stage-action="continue")(?![^>]*disabled)[^>]*><span>Preview &amp; validate/);
+    expect(html).not.toContain('deleted-bundle');
+    expect(html).not.toContain('Feature coverage');
+    expect(html).not.toContain('needs verification');
   });
 
   it('keeps metadata-only dataset rows enabled when starting an import', () => {
@@ -218,7 +235,7 @@ describe('guided preparation', () => {
     expect(html).not.toContain('Protocol name');
     expect(html).not.toContain('Protocol sections');
     expect(html).not.toContain('protocol-cohort');
-    expect(html).not.toContain('Preview &amp; preflight');
+    expect(html).not.toContain('Preview &amp; validate');
   });
 
   it('keeps empty protocols on their library without requiring a dataset before creating a draft', () => {

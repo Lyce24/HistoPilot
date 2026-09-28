@@ -155,12 +155,12 @@ All routes below use `/projects/{id}` and the same session boundary. A saved imp
 | `POST /protocols/{draftId}/freeze` | `{expectedRevision,previewHash,operationId}`; regenerate/validate and atomically freeze protocol and draft. |
 | `GET /configurations?kind=protocol` | Frozen protocol configurations; `kind=feature` selects feature bindings. |
 | `GET /configurations/{configurationId}` | Checksum-verified immutable configuration envelope. |
-| `GET /protocols/{configurationId}/preflight` | Verify dataset and selected feature file availability/headers against the frozen binding; report pending full validation, `executionReady:false`. |
-| `POST /jobs` (project-scoped) | `{protocolId}`; 422 on input blockers, otherwise 501 because execution is unavailable. No job is submitted. |
+| `GET /protocols/{configurationId}/preflight` | Confirm the frozen protocol and dataset remain available; returns `scope:"protocol"` and `protocolReady:true`. Feature compatibility is checked in Experiments. |
+| `POST /jobs` (project-scoped) | `{protocolId}`; returns 422 directing clients to choose features and check compatibility in Experiments. No job is submitted. |
 
 Configuration envelopes contain `id`, `projectId`, `contentHash`, `manifest`, `createdAt`. The manifest distinguishes `kind:protocol` from `kind:feature` and pins `datasetId`. Protocol manifests retain the full spec, algorithm version, exact memberships, counts and findings. Publication retries use the same operation ID; changed content with that ID is rejected. See [implementation notes](p0-import-protocol-implementation.md) for limits and semantics.
 
-The frozen input-preflight response declares `scope: "protocol-and-feature-headers"`, `protocolReady`, `headerInputsReady`, and `fullFeatureValidationComplete: false`. `scientificReady` is the compatibility flag for that stated limited scope; it never overrides `executionReady: false` or substitutes for full feature validation.
+Targets and splits use dataset records, eligibility filters, target labels and split settings only. Legacy feature fields in construction requests are accepted and discarded; existing frozen manifests retain their original provenance. The protocol preflight response declares `scope: "protocol"`, `protocolReady: true`, `scientificReady: false` and `executionReady: false`. Experiments verifies the selected bundle, coverage of every frozen development slide and loading compatibility before training; feature availability never changes the saved cohort.
 
 ### Explicit patient-ID fallback
 
@@ -335,3 +335,32 @@ CV plans carry `pool: "training"` and retain their evaluation/inner/outer phases
 New UI target fields start unconfigured; saved drafts may contain unfinished settings, while preview continues to require a valid target contract. Source-value suggestions do not alter that backend validation.
 
 Version-1 and version-2 serialized specs and hashes remain unchanged. See [split strategies](split-strategies.md) for the current UI and validation behavior.
+
+## Inference runs (unlabeled cohorts)
+
+An inference cohort is a test cohort with `"purpose": "inference"` and `"target": null`. `"review"` is accepted as its earlier name. Runs are created, launched and resumed with the `evaluation-runs` endpoints, as evaluations are. Their manifests carry `"purpose": "inference"`, no label analysis policy, and the development overlap disclosed at review. Runs never compute metrics; paired metric comparison returns `COMPARISON_REQUIRES_LABELS`.
+
+| Method / path | Behavior |
+| --- | --- |
+| `POST /projects/{id}/evaluation-runs/{run}/inference/summary` | Label-free summary of verified `predictions.json`. Body: `unit` (`selected`, `slide`, `patient`), optional `attribute` (a frozen dictionary key) and `comparisonId` (another run on the same cohort, unit and classes). Returns predicted-class counts, confidence and margin histograms, binary threshold sweep, fold-member agreement, development-patient split, attribute cross-tab and run agreement (agreement, Cohen's κ, matrix). |
+| `POST /projects/{id}/evaluation-runs/{run}/inference/export` | CSV, one row per slide or patient. Columns: predicted class, per-class probabilities, confidence, margin, member agreement, `Development_patient` and frozen attributes (`attributes: null` for all, `[]` for none), plus the predictions SHA-256. |
+| `POST /projects/{id}/evaluation-runs/{run}/attention` | Queue attention for 1–32 cohort slide IDs through the run's frozen feature bundle, pack and dataset slide folder. HTTP 202. Reuses completed or running studies; the `operationId` makes retries idempotent. |
+| `POST /projects/{id}/evaluation-runs/{run}/cases/query` | Case review. It adds `sort` (`confidence_desc`, `confidence_asc`, `margin_asc`, `agreement_asc`), `maxConfidence`, `developmentPatients` (`all`, `shared`, `new`) and `memberDisagreement`. Items report `margin`, `memberAgreement` and `developmentPatient`. |
+
+Inference artifacts are `predictions.json`, `summary.json`, `slide-predictions.csv` and `patient-predictions.csv`. `predictions.json` includes `memberProbabilities` for multi-member ensembles while retained member evidence ≤ 1,000,000 values (including optional `memberLogProbabilities` for patient mean-logit aggregation); `summary.json` states `memberProbabilities` as `recorded`, `omitted_for_size` or `single_model`. `metrics.json` is not produced. See [inference mode](INFERENCE_MODE.md).
+
+Slide inspection and image/patch endpoints use isolated native reader processes. Returned geometry reports `backend: "opensdpc"`, `"openslide"`, or `"pillow"` and `coordinateSpace: "level0"`. OpenSlide and bounded raster fallback share the same two-worker limit, native-operation deadline and crash isolation as OpenSDPC. Reader errors retain structured status: `SLIDE_VIEWER_UNAVAILABLE` / `SLIDE_READER_BUSY` (503), `SLIDE_READER_TIMEOUT` (504), and `SLIDE_READER_FAILED` (422). The service never falls back to decoding SDPC as a full raster.
+
+
+## Prepared slide viewing
+
+The React viewer prepares bounded whole-slide zoom levels through the existing authenticated region APIs; preparation does not create a new dataset or modify the source slide.
+
+- `GET /projects/{id}/morphology/quality?datasetId=...&slideId=...` returns level-0 geometry and a `sourceFingerprint` (64 lowercase hexadecimal characters) derived from the resolved slide path and file metadata.
+- `GET /projects/{id}/morphology/image?datasetId=...&slideId=...&sourceFingerprint=...&max_size=512&x=...&y=...&width=...&height=...` returns a lossless PNG region. Coordinates are level-0 pixels; supply all four coordinates or omit all four for an overview. `max_size` accepts 64–2048.
+- `GET /projects/{id}/morphology/patch-region?datasetId=...&slideId=...&featureBundleId=...&patchIndex=...&sourceFingerprint=...` returns the selected feature patch's exact level-0 bounds, clipped to the slide edge. `patchIndex` is a nonnegative integer.
+- `GET /projects/{id}/morphology/patch?datasetId=...&slideId=...&featureBundleId=...&patchIndex=...&sourceFingerprint=...` returns that patch as a lossless PNG, bounded to 512 pixels on its longest side.
+
+New viewers pass the geometry fingerprint for overview, detail, patch bounds and patch images. Each route accepts the optional `sourceFingerprint` query parameter as exactly 64 lowercase hexadecimal characters; invalid values return HTTP 422. A changed source returns HTTP 409 with `MORPHOLOGY_SLIDE_CHANGED`, preventing images from different file versions from sharing a prepared view. Patch geometry is checked before and after reading the slide and feature coordinates. A patch-image request pins geometry and pixels to one source identity even when an older client omits the parameter. Omitting it does not protect separate requests from an intervening legacy-file replacement; clients should use the fingerprint from `/quality`. Existing frozen-dataset inventory checks still apply and cannot be bypassed by supplying a fresh fingerprint. Image responses remain `private, no-store`; the viewer owns a bounded in-memory image cache. The server also retains bounded lossless encoded results, with source checks on every access and identical concurrent renders deduplicated; authentication and frozen-source validation still run before rendering or reuse.
+
+OpenSlide handles and OpenSDPC readers are reused inside one bounded pool of isolated processes. The 20-second native-operation deadline includes opening the file and reading the image; a hung or crashed child is retired so the next request can recover. Temporary reader-capacity errors preserve valid browser tiles and offer retry; changed-source errors invalidate the prepared view. Reloading a legacy slide obtains fresh geometry and a new fingerprint; a changed image in a modern frozen inventory still requires a new dataset version. See [slide viewer performance](SLIDE_VIEWER_PERFORMANCE.md) for preparation limits, reader lifetimes, measurements and verification.

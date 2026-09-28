@@ -151,7 +151,7 @@ describe('runtime suggestion presentation and batch integration', () => {
       recipe: value.recipe, resources: value.resources, mode: 'single', rows: [{ id: 0, recipe: value.recipe }], explicitInitialized: false,
       seeds: '42', lrs: '0.0001', wds: '0.005', epochs: '40', gpus: '0', notes: '', numericDrafts: {}, ...overrides };
     const key = sessionDraftKey('project', 'experiment', 'batch-editor');
-    vi.stubGlobal('window', { sessionStorage: { getItem: (requested: string) => requested === key ? JSON.stringify({ version: 1, value: draft }) : null } });
+    vi.stubGlobal('window', { location: { hash: '' }, sessionStorage: { getItem: (requested: string) => requested === key ? JSON.stringify({ version: 1, value: draft }) : null } });
     return renderToStaticMarkup(<QueryClientProvider client={client()}><DevelopmentBatches project="project" experimentName="CRC KRAS" experimentId="experiment"
       experimentRevision={1} inputs={inputs} experimentStage="planning" ownedBatches={[]} ownedDrafts={[]} tab="batches" readOnly={readOnly} onOpenSetup={() => {}} /></QueryClientProvider>);
   }

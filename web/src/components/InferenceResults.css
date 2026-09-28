@@ -1,0 +1,71 @@
+/* Categorical slots validated on the white card surface (adjacent pairs; CVD ΔE ≥ 9.1).
+   Slots 3–5 sit below 3:1 contrast, so every chart keeps direct labels or a table view. */
+.inference-results, .inference-figure {
+  --inference-series-1: #2a78d6;
+  --inference-series-2: #eb6834;
+  --inference-series-3: #1baf7a;
+  --inference-series-4: #eda100;
+  --inference-series-5: #e87ba4;
+  --inference-series-6: #008300;
+  --inference-series-7: #4a3aa7;
+  --inference-series-8: #e34948;
+  --inference-grid: var(--theme-line);
+}
+.inference-results { display: grid; gap: 1.25rem; min-width: 0; }
+.inference-note { margin: 0; }
+.inference-controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; }
+.inference-controls .label { min-width: 12rem; }
+.inference-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; }
+.inference-tiles > div { padding: 1rem; border: 1px solid var(--theme-line); border-radius: 10px; background: var(--theme-surface); }
+.inference-tiles strong { display: block; font-size: 1.5rem; font-weight: 600; color: var(--theme-ink); }
+.inference-tiles span { display: block; color: var(--theme-muted); font-size: .85rem; }
+.inference-tiles small { display: block; color: var(--theme-muted); margin-top: .35rem; }
+.inference-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; align-items: start; }
+.inference-figure { margin: 0; min-width: 0; padding: 1rem 1.1rem; border: 1px solid var(--theme-line); border-radius: 12px; background: var(--theme-surface); }
+.inference-figure figcaption { font-weight: 600; color: var(--theme-ink); margin-bottom: .35rem; }
+.inference-figure > .muted { margin: 0 0 .75rem; font-size: .85rem; }
+.inference-legend { display: flex; flex-wrap: wrap; gap: .4rem 1rem; list-style: none; padding: 0; margin: 0 0 .5rem; font-size: .85rem; color: var(--theme-muted); }
+.inference-legend li { display: inline-flex; align-items: center; gap: .4rem; }
+.inference-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+.inference-class-bars { display: grid; gap: .45rem; }
+.inference-class-bar { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(6rem, 1fr) minmax(7rem, max-content); grid-template-areas: "name track value" ". note note"; column-gap: .75rem; align-items: center; padding: .15rem .25rem; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.inference-class-bar:hover, .inference-class-bar:focus-visible { background: var(--theme-surface-hover); outline: none; }
+.inference-class-name { grid-area: name; display: inline-flex; align-items: center; gap: .45rem; color: var(--theme-ink); overflow-wrap: anywhere; }
+.inference-class-track { grid-area: track; height: 12px; background: var(--theme-soft); border-radius: 0 4px 4px 0; overflow: hidden; }
+.inference-class-track span { display: block; height: 100%; border-radius: 0 4px 4px 0; min-width: 2px; }
+.inference-class-value { grid-area: value; color: var(--theme-muted); white-space: nowrap; }
+.inference-class-value strong { color: var(--theme-ink); margin-right: .35rem; }
+.inference-class-note { grid-area: note; color: var(--theme-muted); font-size: .8rem; }
+.inference-plot { position: relative; }
+.inference-plot svg { display: block; width: 100%; height: auto; overflow: visible; }
+.inference-plot path { cursor: pointer; transition: opacity .12s ease; }
+.inference-plot path:focus { outline: none; }
+.inference-plot path:focus-visible, .inference-plot path.is-active { stroke: var(--theme-ink); stroke-width: 1.5px; }
+.inference-grid line { stroke: var(--inference-grid); stroke-width: 1; }
+.inference-grid text, .inference-axis-label { fill: var(--theme-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.inference-axis-title { fill: var(--theme-muted); font-size: 11px; }
+.inference-marker line { stroke: var(--theme-ink); stroke-width: 1.5; }
+.inference-marker text { fill: var(--theme-ink); font-size: 11px; }
+.inference-tooltip { position: absolute; top: 0; transform: translateX(-50%); display: grid; gap: .1rem; padding: .45rem .6rem; background: var(--theme-surface); border: 1px solid var(--theme-line-strong); border-radius: 8px; box-shadow: var(--theme-shadow-card); pointer-events: none; font-size: .8rem; white-space: nowrap; z-index: 2; }
+.inference-tooltip strong { font-size: 1rem; color: var(--theme-ink); }
+.inference-tooltip span { display: inline-flex; align-items: center; gap: .4rem; color: var(--theme-muted); }
+.inference-tooltip small { color: var(--theme-muted); }
+.inference-tooltip-key { display: inline-block; width: 12px; height: 2px; border-radius: 1px; }
+.inference-table-view { margin-top: .5rem; }
+.inference-table-view summary { cursor: pointer; color: var(--brand-primary); font-size: .85rem; }
+.inference-composition td small { display: block; color: var(--theme-muted); }
+.inference-composition-bar { display: flex; gap: 2px; min-width: 8rem; height: 12px; border-radius: 0 4px 4px 0; overflow: hidden; background: var(--theme-soft); }
+.inference-composition-bar span { display: block; min-width: 2px; }
+.inference-inline-bar { display: inline-block; width: 6rem; height: 8px; margin-right: .5rem; vertical-align: middle; background: var(--theme-soft); border-radius: 0 4px 4px 0; overflow: hidden; }
+.inference-inline-bar span { display: block; height: 100%; border-radius: 0 4px 4px 0; }
+.inference-threshold tr.is-frozen th, .inference-threshold tr.is-frozen td { font-weight: 600; background: var(--theme-next-soft); }
+.inference-matrix td.is-agreement { font-weight: 600; background: var(--theme-next-soft); }
+.inference-downloads { display: flex; flex-wrap: wrap; gap: .75rem; }
+.inference-section { display: grid; gap: .75rem; margin-top: 1.75rem; }
+.inference-section > h3 { margin: 0; }
+.inference-flag { display: inline-block; margin-left: .35rem; padding: 0 .4rem; border-radius: 999px; font-size: .75rem; background: var(--theme-settled); color: var(--theme-settled-ink); border: 1px solid var(--theme-settled-line); }
+@media (max-width: 860px) { .inference-grid-2 { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .inference-grid text, .inference-axis-label, .inference-axis-title, .inference-marker text { font-size: 18px; } }
+@media (max-width: 560px) { .inference-class-bar { grid-template-columns: minmax(4rem, max-content) minmax(4rem, 1fr); grid-template-areas: "name track" "value value" "note note"; } }
+.inference-inline-select { margin-left: .3rem; padding: 0 .2rem; font: inherit; color: inherit; border: 1px solid var(--theme-line); border-radius: 6px; background: var(--theme-surface); }
+.inference-library-mix { font-variant-numeric: tabular-nums; }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { clinicalAnalyses, type ClinicalArtifact, type ClinicalReport, type ClinicalSelection } from '../api/clinicalUtility';
 import { modelEvaluations, predictors } from '../api/predictors';
+import { isInferenceRun } from '../lib/inference';
 import type { Workspace } from '../api/types';
 import { EmptyState, ErrorNotice, PageHeader, Panel } from '../components/ui';
 import { Findings } from '../components/ScientificUI';
@@ -56,7 +57,8 @@ function ClinicalWorkspace({ workspace, linkedEvaluation, linkedPredictor, linke
   const classes = selected?.execution?.result?.metrics?.classOrder ?? sourcePredictor?.manifest.target.classes ?? [];
   const frozenPositive = selected?.execution?.result?.metrics?.positiveClass ?? sourcePredictor?.manifest.target.positiveClass ?? '';
   const chosenClass = classes.length === 2 ? frozenPositive : positiveClass;
-  const available = (evaluations.data?.items ?? []).filter((item) => item.lifecycleState !== 'trashed' && item.execution?.status === 'completed' && (!linkedPredictor || item.manifest.predictorId === linkedPredictor));
+  // Clinical statistics need observed outcomes; inference runs have none.
+  const available = (evaluations.data?.items ?? []).filter((item) => item.lifecycleState !== 'trashed' && item.execution?.status === 'completed' && !isInferenceRun(item) && (!linkedPredictor || item.manifest.predictorId === linkedPredictor));
   const savedRecord = saved.data?.items.find((item) => item.id === savedId && item.lifecycleState !== 'trashed') ?? (publication.saved?.id === savedId ? publication.saved : null) ?? (linked.data?.id === savedId ? linked.data : null);
   const savedSelection = savedRecord?.manifest.selection;
   useEffect(() => {

@@ -1,14 +1,20 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { interpretations, type AttentionPatch, type Interpretation, type InterpretationSlide, type InterpretationSlideResult, type RankedAttentionPatch, type SlideRegion } from '../api/interpretation';
 import { ErrorNotice } from './ui';
-import { attentionAt, attentionColor, boundedRegion, fitRegion, integerRegion, markerScale, patchIntersectsRegion, patchRegion, zoomRegion } from '../lib/slideGeometry';
+import { attentionAt, boundedRegion, fitRegion, integerRegion, markerScale, patchIntersectsRegion, patchRegion, zoomRegion } from '../lib/slideGeometry';
+import { paintAttentionMap } from '../lib/attentionRaster';
 import { formatStatistic } from '../lib/evidenceCharts';
+import { useSlideFrame, useSlideZoom } from '../lib/useSlideZoom';
 import RankedAttentionPatches, { SelectedAttentionPatch } from './RankedAttentionPatches';
 import RankedPatchMarkers from './RankedPatchMarkers';
+import SlideTileLayer, { type SlideTileStatus } from './SlideTileLayer';
 import './RankedAttentionPatches.css';
 
 const MAX_VISIBLE_PATCHES = 100000;
+const EMPTY_RANKED: RankedAttentionPatch[] = [];
+const MemoRankedAttentionPatches = memo(RankedAttentionPatches);
+const MemoSelectedAttentionPatch = memo(SelectedAttentionPatch);
 function useBlobImage(blob?: Blob) {
   const [image, setImage] = useState<{ blob: Blob; url: string } | null>(null);
   useEffect(() => {
@@ -25,7 +31,11 @@ export default function AttentionSlideViewer(props: ViewerProps) {
 function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps) {
   const full = { x: 0, y: 0, width: slide.width, height: slide.height };
   const [view, setView] = useState<SlideRegion>(full);
+  const panFrame = useSlideFrame(setView);
   const [settledView, setSettledView] = useState<SlideRegion>(full);
+  const [detail, setDetail] = useState<SlideTileStatus>({ loading: false, error: null, preparing: true, prepared: 0, preparationTotal: 0 });
+  const [detailRetry, setDetailRetry] = useState(0);
+  const fetchDetail = useCallback((region: SlideRegion, signal: AbortSignal, maxSize: number) => interpretations.region(project, record.id, slide.slideId, region, signal, maxSize), [project, record.id, slide.slideId]);
   const [member, setMember] = useState('mean');
   const [opacity, setOpacity] = useState(.55);
   const [minimum, setMinimum] = useState(0);
@@ -35,7 +45,9 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
   const [expanded, setExpanded] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [selection, setSelection] = useState<{ patch: AttentionPatch; member: string; source: 'map' | 'rank' } | null>(null);
-  const [heatmap, setHeatmap] = useState<{ url: string; signature: string } | null>(null);
+  const [heatmap, setHeatmap] = useState<{ url: string; context: string; region: SlideRegion } | null>(null);
+  const [heatmapRendering, setHeatmapRendering] = useState(false);
+  const [heatmapError, setHeatmapError] = useState<Error | null>(null);
   const [downloadError, setDownloadError] = useState<Error | null>(null);
   const drag = useRef<{ x: number; y: number; scaleX: number; scaleY: number; view: SlideRegion; moved: boolean } | null>(null);
   const svg = useRef<SVGSVGElement>(null);
@@ -43,6 +55,10 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
   const viewerRef = useRef<HTMLDivElement>(null);
   const userMoved = useRef(false);
   const initialFit = useRef(false);
+  const zoomRef = useSlideZoom({ view, width: slide.width, height: slide.height, onInteraction: () => {
+    panFrame.cancel(); userMoved.current = true; drag.current = null;
+  }, onChange: setView });
+  const setSvgRef = useCallback((element: SVGSVGElement | null) => { svg.current = element; zoomRef(element); }, [zoomRef]);
   useEffect(() => {
     if (!svg.current) return;
     const element = svg.current;
@@ -51,7 +67,7 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
     if (typeof ResizeObserver === 'undefined') { window.addEventListener('resize', measure); return () => window.removeEventListener('resize', measure); }
     const observer = new ResizeObserver(measure); observer.observe(element); return () => observer.disconnect();
   }, []);
-  useEffect(() => { const timer = setTimeout(() => setSettledView(integerRegion(view, slide.width, slide.height)), 250); return () => clearTimeout(timer); }, [view, slide.width, slide.height]);
+  useEffect(() => { const timer = setTimeout(() => setSettledView(integerRegion(view, slide.width, slide.height)), 180); return () => clearTimeout(timer); }, [view, slide.width, slide.height]);
   useEffect(() => {
     if (!expanded) return;
     const previousFocus = document.activeElement as HTMLElement | null;
@@ -69,8 +85,7 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
     return () => { document.body.style.overflow = overflow; document.removeEventListener('keydown', handleKey); previousFocus?.focus(); };
   }, [expanded]);
   const thumbnail = useQuery({ queryKey: ['interpretation-thumbnail', project, record.id, slide.slideId], queryFn: ({ signal }) => interpretations.thumbnail(project, record.id, slide.slideId, signal), staleTime: Infinity });
-  const zoomed = settledView.width < slide.width || settledView.height < slide.height;
-  const region = useQuery({ queryKey: ['interpretation-region', project, record.id, slide.slideId, settledView], queryFn: ({ signal }) => interpretations.region(project, record.id, slide.slideId, settledView, signal), enabled: zoomed, staleTime: 60000, gcTime: 60000 });
+  const zoomed = view.width < slide.width || view.height < slide.height;
   const attention = useQuery({ queryKey: ['interpretation-attention', project, record.id, slide.slideId, member, settledView], queryFn: async ({ signal }) => {
     const first = await interpretations.attention(project, record.id, slide.slideId, member, settledView, 0, 10000, signal);
     const patches = [...first.patches];
@@ -82,7 +97,7 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
     return { ...first, patches };
   }, staleTime: 60000, gcTime: 60000 });
   const top = useQuery({ queryKey: ['interpretation-top-attention', project, record.id, slide.slideId, member, topCount], queryFn: ({ signal }) => interpretations.topAttention(project, record.id, slide.slideId, member, topCount, signal), staleTime: Infinity, gcTime: 60000 });
-  const ranked = !top.isError ? top.data?.patches ?? [] : [];
+  const ranked = !top.isError ? top.data?.patches ?? EMPTY_RANKED : EMPTY_RANKED;
   const coverage = !top.isError ? top.data?.coordinateBounds : null;
   useEffect(() => {
     if (!coverage || initialFit.current || userMoved.current || viewportSize.width <= 0 || viewportSize.height <= 0) return;
@@ -93,31 +108,37 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
   const selectedPatch = manualSelection?.patch ?? ranked[0] ?? null;
   const verifiedSelectedPatch = !top.isError && !(manualSelection?.source === 'map' && attention.isError) ? selectedPatch : null;
   const selectedRank = verifiedSelectedPatch ? ranked.find((patch) => patch.index === verifiedSelectedPatch.index)?.rank : undefined;
-  const cropContext = { project, interpretationId: record.id, slideId: slide.slideId, member };
+  const cropContext = useMemo(() => ({ project, interpretationId: record.id, slideId: slide.slideId, member }), [project, record.id, slide.slideId, member]);
   const rankMarkerScale = markerScale(view, viewportSize.width, viewportSize.height);
   const thumbnailURL = useBlobImage(thumbnail.data);
-  const regionURL = useBlobImage(zoomed ? region.data : undefined);
-  const signature = `${project}:${record.id}:${slide.slideId}:${member}:${JSON.stringify(settledView)}:${minimum}`;
+  const heatmapContext = `${project}:${record.id}:${slide.slideId}:${member}:${minimum}`;
   useEffect(() => {
-    if (!attention.data) return;
+    if (!attention.data) { setHeatmapRendering(false); return; }
+    const controller = new AbortController();
     const canvas = document.createElement('canvas');
     const scale = Math.min(2048 / settledView.width, 2048 / settledView.height);
     canvas.width = Math.max(1, Math.ceil(settledView.width * scale)); canvas.height = Math.max(1, Math.ceil(settledView.height * scale));
-    const scaleX = canvas.width / settledView.width, scaleY = canvas.height / settledView.height;
-    const context = canvas.getContext('2d'); if (!context) return;
-    const map = attention.data;
-    for (const patch of [...map.patches].sort((a, b) => a.weight - b.weight)) {
-      if (patch.percentile < minimum) continue;
-      context.fillStyle = attentionColor(patch.percentile);
-      context.fillRect((patch.x - settledView.x) * scaleX, (patch.y - settledView.y) * scaleY, map.patchWidthLevel0 * scaleX, map.patchHeightLevel0 * scaleY);
-    }
-    let alive = true, objectURL: string | undefined;
-    canvas.toBlob((blob) => { if (!alive || !blob) return; objectURL = URL.createObjectURL(blob); setHeatmap({ url: objectURL, signature }); });
-    return () => { alive = false; if (objectURL) URL.revokeObjectURL(objectURL); };
-  }, [attention.data, settledView, minimum, signature]);
-  function moveView(next: SlideRegion) { userMoved.current = true; setView(next); }
+    const context = canvas.getContext('2d');
+    if (!context) { setHeatmapRendering(false); setHeatmapError(new Error('The attention overlay could not be drawn in this browser.')); return; }
+    setHeatmapError(null); setHeatmapRendering(true);
+    void paintAttentionMap(context, attention.data, settledView, canvas.width, canvas.height, minimum, controller.signal).then(() => {
+      if (controller.signal.aborted) return;
+      canvas.toBlob((blob) => {
+        if (controller.signal.aborted) return;
+        setHeatmapRendering(false);
+        if (!blob) { setHeatmapError(new Error('The attention overlay could not be drawn. Adjust the view to retry.')); return; }
+        setHeatmap({ url: URL.createObjectURL(blob), context: heatmapContext, region: settledView });
+      });
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) { setHeatmapRendering(false); setHeatmapError(error instanceof Error ? error : new Error('The attention overlay could not be drawn.')); }
+    });
+    return () => controller.abort();
+  }, [attention.data, settledView, minimum, heatmapContext]);
+  // Retain the previous spatially anchored overlay until its replacement is ready.
+  useEffect(() => () => { if (heatmap) URL.revokeObjectURL(heatmap.url); }, [heatmap]);
+  const moveView = useCallback((next: SlideRegion) => { panFrame.cancel(); drag.current = null; userMoved.current = true; setView(next); }, [panFrame]);
   function fitCoverage() { moveView(coverage ? fitRegion(coverage, slide.width, slide.height, viewportSize.width, viewportSize.height, .08) : full); }
-  function zoom(factor: number) { userMoved.current = true; setView((value) => zoomRegion(value, factor, slide.width, slide.height)); }
+  function zoom(factor: number) { panFrame.cancel(); drag.current = null; userMoved.current = true; setView((value) => zoomRegion(value, factor, slide.width, slide.height)); }
   function pointAt(event: PointerEvent<SVGSVGElement>) {
     const transform = svg.current?.getScreenCTM();
     if (!transform || !svg.current) return null;
@@ -125,7 +146,7 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
     return point.matrixTransform(transform.inverse());
   }
   function pointerDown(event: PointerEvent<SVGSVGElement>) {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || !event.isPrimary || event.pointerType === 'touch') return;
     const transform = svg.current?.getScreenCTM(); if (!transform) return;
     svg.current?.setPointerCapture(event.pointerId); drag.current = { x: event.clientX, y: event.clientY, scaleX: transform.a, scaleY: transform.d, view, moved: false };
   }
@@ -134,7 +155,7 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
     if (Math.hypot(event.clientX - drag.current.x, event.clientY - drag.current.y) < 4 && !drag.current.moved) return;
     drag.current.moved = true; userMoved.current = true;
     const dx = (event.clientX - drag.current.x) / drag.current.scaleX, dy = (event.clientY - drag.current.y) / drag.current.scaleY;
-    setView(boundedRegion({ ...drag.current.view, x: drag.current.view.x - dx, y: drag.current.view.y - dy }, slide.width, slide.height));
+    panFrame.schedule(boundedRegion({ ...drag.current.view, x: drag.current.view.x - dx, y: drag.current.view.y - dy }, slide.width, slide.height));
   }
   function pointerUp(event: PointerEvent<SVGSVGElement>) {
     const point = pointAt(event);
@@ -142,22 +163,23 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
       const patch = attentionAt(attention.data.patches, point.x, point.y, attention.data.patchWidthLevel0, attention.data.patchHeightLevel0, minimum);
       if (patch) { setSelection({ patch, member, source: 'map' }); setRailOpen(true); }
     }
-    drag.current = null;
+    panFrame.flush(); drag.current = null;
     if (svg.current?.hasPointerCapture(event.pointerId)) svg.current.releasePointerCapture(event.pointerId);
   }
   function keyDown(event: KeyboardEvent<SVGSVGElement>) {
     const delta = { ArrowLeft: [-.2, 0], ArrowRight: [.2, 0], ArrowUp: [0, -.2], ArrowDown: [0, .2] }[event.key];
-    if (delta) { event.preventDefault(); userMoved.current = true; setView((value) => boundedRegion({ ...value, x: value.x + value.width * delta[0], y: value.y + value.height * delta[1] }, slide.width, slide.height)); }
+    if (delta) { event.preventDefault(); panFrame.cancel(); drag.current = null; userMoved.current = true; setView((value) => boundedRegion({ ...value, x: value.x + value.width * delta[0], y: value.y + value.height * delta[1] }, slide.width, slide.height)); }
     else if (event.key === '+' || event.key === '=' || event.key === '-') { event.preventDefault(); zoom(event.key === '-' ? .5 : 2); }
     else if (event.key === 'Home') { event.preventDefault(); fitCoverage(); }
   }
-  function centerPatch(patch: AttentionPatch) {
+  const centerPatch = useCallback((patch: AttentionPatch) => {
     moveView(patchRegion(patch, slide.patchWidthLevel0, slide.patchHeightLevel0, slide.width, slide.height, viewportSize.width / viewportSize.height));
-  }
-  function inspectRankedPatch(patch: RankedAttentionPatch) {
+  }, [moveView, slide.patchWidthLevel0, slide.patchHeightLevel0, slide.width, slide.height, viewportSize.width, viewportSize.height]);
+  const inspectRankedPatch = useCallback((patch: RankedAttentionPatch) => {
     setSelection({ patch, member, source: 'rank' }); setRailOpen(true); centerPatch(patch);
     if (!expanded && viewportSize.width < 600) viewerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
+  }, [member, centerPatch, expanded, viewportSize.width]);
+  const centerSelectedPatch = useCallback(() => { if (verifiedSelectedPatch) centerPatch(verifiedSelectedPatch); }, [centerPatch, verifiedSelectedPatch]);
   async function download() { setDownloadError(null); try { await interpretations.download(project, record.id, result.attentionArtifact); } catch (error) { setDownloadError(error instanceof Error ? error : new Error('Attention download failed.')); } }
   const zoomLabel = `${formatStatistic(Math.max(slide.width / view.width, slide.height / view.height), 1)}× view`;
   return <section ref={workspaceRef} className={`attention-workspace ${expanded ? 'is-expanded' : ''}`} role={expanded ? 'dialog' : 'region'} aria-modal={expanded ? true : undefined} aria-label={`Attention workspace for ${slide.slideId}`} tabIndex={expanded ? -1 : undefined}>
@@ -172,28 +194,30 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
       <label className="attention-box-toggle"><input type="checkbox" checked={showRankedBoxes} onChange={(event) => setShowRankedBoxes(event.target.checked)} /> Numbered locations</label>
       <details className="attention-filter-options"><summary>Filter overlay</summary><label>Minimum attention percentile: {Math.round(minimum * 100)}<input type="range" min="0" max=".99" step=".01" value={minimum} onChange={(event) => setMinimum(Number(event.target.value))} /></label></details>
     </div>
-    <ErrorNotice error={thumbnail.error ?? region.error ?? attention.error ?? top.error ?? downloadError} />
+    <ErrorNotice error={thumbnail.error ?? detail.error ?? attention.error ?? top.error ?? heatmapError ?? downloadError} />
+    {detail.error ? <button className="btn btn-secondary" disabled={detail.loading} onClick={() => setDetailRetry((value) => value + 1)}>Retry slide detail</button> : null}
     {top.isError ? <button className="btn btn-secondary" disabled={top.isFetching} onClick={() => void top.refetch()}>Retry top patch ranking</button> : null}
     <div className={`attention-stage ranked-viewer-layout ${railOpen ? '' : 'rail-hidden'}`} ref={viewerRef}>
       <div className="attention-canvas interpretation-viewer">
-        <svg ref={svg} viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`} preserveAspectRatio="xMidYMid meet" tabIndex={0} role="group" aria-label={`Slide ${slide.slideId} with ABMIL attention overlay and ranked patch buttons. Drag to pan, plus and minus to zoom, arrows to pan, Home to fit patch coverage.`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { drag.current = null; }} onKeyDown={keyDown}>
+        <svg ref={setSvgRef} viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`} preserveAspectRatio="xMidYMid meet" tabIndex={0} role="group" aria-label={`Slide ${slide.slideId} with ABMIL attention overlay and ranked patch buttons. Scroll or pinch to zoom, drag to pan, plus and minus to zoom, arrows to pan, Home to fit patch coverage.`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { panFrame.cancel(); drag.current = null; }} onLostPointerCapture={() => { panFrame.flush(); drag.current = null; }} onKeyDown={keyDown}>
           <title>{`${slide.slideId} — ABMIL pooling attention`}</title><rect x="0" y="0" width={slide.width} height={slide.height} fill="#eee9e2" />
           {thumbnailURL ? <image href={thumbnailURL} x="0" y="0" width={slide.width} height={slide.height} preserveAspectRatio="none" /> : null}
-          {zoomed && regionURL ? <image href={regionURL} x={settledView.x} y={settledView.y} width={settledView.width} height={settledView.height} preserveAspectRatio="none" /> : null}
-          {heatmap?.signature === signature && !attention.isError ? <image href={heatmap.url} x={settledView.x} y={settledView.y} width={settledView.width} height={settledView.height} preserveAspectRatio="none" opacity={opacity} /> : null}
+          <SlideTileLayer sourceKey={`interpretation:${project}:${record.id}:${slide.slideId}`} width={slide.width} height={slide.height} view={view} enabled={zoomed} fetchRegion={fetchDetail} onStatus={setDetail} retry={detailRetry} />
+          {heatmap?.context === heatmapContext && !attention.isError ? <image href={heatmap.url} x={heatmap.region.x} y={heatmap.region.y} width={heatmap.region.width} height={heatmap.region.height} preserveAspectRatio="none" opacity={opacity} /> : null}
           {verifiedSelectedPatch ? <g aria-hidden="true" pointerEvents="none"><rect x={verifiedSelectedPatch.x} y={verifiedSelectedPatch.y} width={slide.patchWidthLevel0} height={slide.patchHeightLevel0} fill="none" stroke="white" strokeWidth="6" vectorEffect="non-scaling-stroke" /><rect x={verifiedSelectedPatch.x} y={verifiedSelectedPatch.y} width={slide.patchWidthLevel0} height={slide.patchHeightLevel0} fill="none" stroke="#072b48" strokeWidth="3" vectorEffect="non-scaling-stroke" /></g> : null}
           {showRankedBoxes ? <RankedPatchMarkers patches={ranked.filter((patch) => patchIntersectsRegion(patch, slide.patchWidthLevel0, slide.patchHeightLevel0, view))} patchWidth={slide.patchWidthLevel0} patchHeight={slide.patchHeightLevel0} scale={rankMarkerScale} selectedIndex={verifiedSelectedPatch?.index} onSelect={inspectRankedPatch} /> : null}
         </svg>
         <div className="attention-canvas-tools" aria-label="Slide zoom controls"><button type="button" aria-label="Zoom in" onClick={() => zoom(2)}>+</button><button type="button" aria-label="Zoom out" onClick={() => zoom(.5)}>−</button><span>{zoomLabel}</span><button type="button" disabled={!verifiedSelectedPatch} onClick={() => { if (verifiedSelectedPatch) centerPatch(verifiedSelectedPatch); }}>Center selected</button></div>
-        {thumbnail.isPending || region.isFetching || attention.isFetching ? <span className="attention-loading" role="status">{thumbnail.isPending ? 'Loading slide…' : 'Updating view…'}</span> : null}
-        <span className="attention-pan-hint">Drag to pan · + / − to zoom</span>
+        {thumbnail.isPending || detail.preparing || detail.loading || attention.isFetching || heatmapRendering ? <span className="attention-loading" role="status">{thumbnail.isPending ? 'Loading slide…' : detail.preparing ? `Preparing slide · ${detail.preparationTotal ? Math.round(detail.prepared / detail.preparationTotal * 100) : 0}%` : heatmapRendering ? 'Updating attention…' : 'Updating view…'}</span> : null}
+        <span className="attention-pan-hint">Scroll or pinch to zoom · Drag to pan · + / − and arrows</span>
       </div>
       {railOpen ? <aside className="attention-patch-rail" aria-label="Patch inspection and ranked locations">
-        <SelectedAttentionPatch key={`${record.id}:${slide.slideId}:${member}`} compact context={cropContext} patch={verifiedSelectedPatch} rank={selectedRank} patchWidth={slide.patchWidthLevel0} patchHeight={slide.patchHeightLevel0} onShowLocation={() => { if (verifiedSelectedPatch) centerPatch(verifiedSelectedPatch); }} />
+        <MemoSelectedAttentionPatch key={`${record.id}:${slide.slideId}:${member}`} compact context={cropContext} patch={verifiedSelectedPatch} rank={selectedRank} patchWidth={slide.patchWidthLevel0} patchHeight={slide.patchHeightLevel0} onShowLocation={centerSelectedPatch} />
         {top.isPending ? <p className="attention-ranking-status" role="status">Finding the highest attention weights across the whole slide…</p> : null}
-        {top.data && !top.isError ? <RankedAttentionPatches key={`${project}:${record.id}:${slide.slideId}:${member}`} compact context={cropContext} patches={ranked} total={top.data.total} selectedPatch={verifiedSelectedPatch} onSelect={inspectRankedPatch} /> : null}
+        {top.data && !top.isError ? <MemoRankedAttentionPatches key={`${project}:${record.id}:${slide.slideId}:${member}`} compact context={cropContext} patches={ranked} total={top.data.total} selectedPatch={verifiedSelectedPatch} onSelect={inspectRankedPatch} /> : null}
       </aside> : null}
     </div>
+    <p className="muted" role="status">{detail.preparing ? 'Preparing slide for smooth zooming. This may take a moment.' : detail.error ? 'Some slide detail could not be prepared. The overview remains available.' : 'Slide ready · Nearby zoom levels are cached; finer detail loads as needed.'}</p>
     <div className="attention-view-footer"><span className="interpretation-attention-scale">Lower <i aria-hidden="true" /> Higher attention percentile</span><span>{attention.data ? `${attention.data.patches.length.toLocaleString()} / ${attention.data.total.toLocaleString()} patches in view` : 'Attention pending'}</span></div>
     {attention.data && attention.data.patches.length < attention.data.total ? <p className="callout" role="status">Partial overlay: this region exceeds the {MAX_VISIBLE_PATCHES.toLocaleString()}-patch display limit. Zoom in to see every patch. Top locations still rank the entire slide.</p> : null}
     <details className="attention-view-details"><summary>About this view and slide predictions</summary><p>ABMIL pooling attention is class-independent relative weighting within a slide. It is not tumor probability, a segmentation mask or evidence of causality. Overlapping patches show the highest weight; numbered locations rank the whole slide.</p><p>{slide.width.toLocaleString()} × {slide.height.toLocaleString()} level-0 pixels · {slide.patchCount.toLocaleString()} patches · patch footprint {slide.patchWidthLevel0} × {slide.patchHeightLevel0} level-0 pixels. Original crops keep tissue colors; edge patches are clipped to the slide.</p>{attention.data ? <div className="interpretation-member-probabilities" aria-label="Slide predictions">{attention.data.classOrder.map((name, index) => <span key={name}><strong>{name}</strong>: {formatStatistic(attention.data?.probabilities[index])}</span>)}</div> : null}<button className="btn btn-secondary" onClick={() => void download()}>{record.manifest.memberCount > 1 ? 'Download full ensemble mean attention' : 'Download full attention data'}</button></details>

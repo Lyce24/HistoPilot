@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from histopilot.application.feature_bundles import FeatureBundleService, _hash
+from histopilot.application.mil_inputs import protocol_bundle_findings
 from histopilot.application.protocols import (
     CANONICAL,
     FilterEvaluator,
@@ -16,10 +17,9 @@ from histopilot.application.protocols import (
     ProtocolService,
     _forbidden_name,
     _key,
-    protocol_bundle_findings,
 )
 from histopilot.domain.features import representation_kind
-from histopilot.schemas.evaluations import EvaluationSpec
+from histopilot.schemas.evaluations import EvaluationSpec, is_inference_purpose
 from histopilot.schemas.protocols import TargetSpec, iter_conditions
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.pack_import import _layout
@@ -104,6 +104,28 @@ def _duplicate_test_sources(sources, finding):
             f"{len(duplicates)} selected slide IDs refer to shared source files. Keep one record per physical slide to avoid counting the same slide more than once.",
         )
     return duplicates
+
+
+INFERENCE_COHORT_NOTE = (
+    "Inference cohort: selected slides receive predictions only. No labels are read and no "
+    "performance metrics are computed. Development overlap is checked for each predictor."
+)
+REVIEW_COHORT_NOTE = (
+    "Slide-level review predictions allow shared development patients. Outcomes are "
+    "unlabeled; independent test metrics are unavailable."
+)
+
+
+def purpose_findings(spec, finding):
+    if spec.purpose == "inference":
+        finding("INFERENCE_PREDICTIONS_ONLY", INFERENCE_COHORT_NOTE, "info")
+    elif spec.purpose == "review":
+        finding("REVIEW_PREDICTIONS_ONLY", REVIEW_COHORT_NOTE, "warning")
+
+
+def patient_overlap_allowed(purpose, unit):
+    """New slides from development patients are new prediction units only for slide targets."""
+    return is_inference_purpose(purpose) and unit == "slide"
 
 
 def _target_field_findings(datasets, fields, target, finding):
@@ -230,6 +252,7 @@ class EvaluationService:
             if item not in findings:
                 findings.append(item)
 
+        purpose_findings(spec, finding)
         datasets, fields, rows = self._load_datasets(spec)
         for condition in iter_conditions(spec.eligibility):
             if condition.field not in fields and condition.field not in CANONICAL:
@@ -362,6 +385,12 @@ class EvaluationService:
             raise StorageError(
                 "The development target is invalid.", "INVALID_PROTOCOL", 422
             ) from error
+        purpose_findings(spec, finding)
+        if spec.purpose == "review" and target.unit != "slide":
+            finding(
+                "REVIEW_REQUIRES_SLIDE_TARGET",
+                "Review predictions require a slide-level development target.",
+            )
         datasets, fields, rows = self._load_datasets(spec)
         dataset = datasets[0][0]
         same_dataset = protocol_manifest["datasetId"] in (spec.datasetIds or [spec.datasetId])
@@ -472,15 +501,34 @@ class EvaluationService:
             if same_dataset or spec.patientIdentifiers == "shared"
             else []
         )
+        inference = is_inference_purpose(spec.purpose)
+        # Inference never predicts a development unit: that prediction is in-sample.
+        in_sample = (
+            " Their predictions would be in-sample. Use this predictor's development "
+            "out-of-fold predictions for them and exclude them from the inference cohort."
+            if inference
+            else ""
+        )
         if slide_overlap:
             finding(
                 "DEVELOPMENT_SLIDE_OVERLAP",
-                f"{len(slide_overlap)} selected slide IDs occur in model development.",
+                f"{len(slide_overlap)} selected slide IDs occur in model development." + in_sample,
             )
         if patient_overlap:
+            allowed = patient_overlap_allowed(spec.purpose, target.unit)
             finding(
                 "DEVELOPMENT_PATIENT_OVERLAP",
-                f"{len(patient_overlap)} selected patient IDs occur in model development.",
+                f"{len(patient_overlap)} selected patient IDs occur in model development."
+                + (
+                    " Their new slides receive predictions and are flagged as development-patient "
+                    "slides in every analysis and export. This is not an independent test."
+                    if allowed
+                    else " This predictor scores patients, so their predictions would be in-sample. "
+                    "Exclude these patients or use a slide-level predictor."
+                    if inference
+                    else ""
+                ),
+                "warning" if allowed else "error",
             )
         development_dataset, _fields, development_rows = self.protocols._load_dataset(
             protocol_manifest["datasetId"]
@@ -501,7 +549,8 @@ class EvaluationService:
         if source_overlap:
             finding(
                 "DEVELOPMENT_SLIDE_SOURCE_OVERLAP",
-                f"{len(source_overlap)} selected slides refer to source files used in model development under different slide IDs. Reconcile their identities and select independent slides.",
+                f"{len(source_overlap)} selected slides refer to source files used in model development under different slide IDs. Reconcile their identities and select independent slides."
+                + in_sample,
             )
         guards, bindings, representations, feature_dtypes = [], {}, {}, {}
         feature_ids = set()

@@ -79,7 +79,7 @@ def input_snapshot(store, inputs, *, include_inactive=False):
         raise StorageError("Choose a target and split protocol.", "INVALID_PROTOCOL", 422)
     if bundle["manifest"].get("kind") != "feature-bundle":
         raise StorageError("Choose a frozen feature bundle.", "INVALID_FEATURE_BUNDLE", 422)
-    from histopilot.application.protocols import protocol_bundle_findings
+    from histopilot.application.mil_inputs import protocol_bundle_findings
 
     findings = protocol_bundle_findings(protocol["manifest"], bundle)
     if findings:

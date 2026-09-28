@@ -13,6 +13,7 @@ export type Page =
   | 'predictor'
   | 'test-data'
   | 'evaluation'
+  | 'inference'
   | 'clinical-utility'
   | 'interpretation'
   | 'reports'

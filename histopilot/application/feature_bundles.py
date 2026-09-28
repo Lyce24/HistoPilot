@@ -117,8 +117,8 @@ class FeatureBundleService:
         feature = {
             "id": configuration["id"],
             "contentHash": configuration["contentHash"],
-            # Selection provenance only. Protocols choose their own dataset and intersect
-            # its slide IDs with the verified feature inventory.
+            # Selection provenance only. Targets and splits use their own dataset;
+            # experiments check this inventory covers every frozen development slide.
             "datasetId": manifest.get("datasetId"),
             "sourceContentHash": source_hash,
             "validation": _validation_snapshot(validation),

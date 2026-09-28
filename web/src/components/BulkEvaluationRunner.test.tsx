@@ -7,13 +7,13 @@ import BulkEvaluationRunner from './BulkEvaluationRunner';
 import type { EvaluationCohort } from '../api/evaluation';
 import { initialEvaluationInputs } from './EvaluationInputSettings';
 
-function render(ids?: string[], linkedExperiment = '', cohorts: EvaluationCohort[] = []) {
+function render(ids?: string[], linkedExperiment = '', cohorts: EvaluationCohort[] = [], linkedPredictor = '') {
   const client = new QueryClient();
   client.setQueryData(['evaluation-batches', 'p'], { items: [] });
   client.setQueryData(['feature-bundles', 'p'], { items: [] });
   const items = [fixturePredictor(1, 11, 'ensemble', 'one'), fixturePredictor(1, 11, 'refit', 'one'), fixturePredictor(2, 22, 'ensemble', 'two')];
   try {
-    return renderToStaticMarkup(<QueryClientProvider client={client}><BulkEvaluationRunner project="p" predictors={items} experiments={[fixtureExperiment('one'), fixtureExperiment('two'), fixtureExperiment('pending', 'running'), fixtureExperiment('skip-policy')]} cohorts={cohorts} linkedCohort={cohorts[0]?.id} linkedExperiment={linkedExperiment} experimentIds={ids} onOpenEvaluation={() => {}} /></QueryClientProvider>);
+    return renderToStaticMarkup(<QueryClientProvider client={client}><BulkEvaluationRunner project="p" predictors={items} experiments={[fixtureExperiment('one'), fixtureExperiment('two'), fixtureExperiment('pending', 'running'), fixtureExperiment('skip-policy')]} cohorts={cohorts} linkedCohort={cohorts[0]?.id} linkedExperiment={linkedExperiment} linkedPredictor={linkedPredictor} experimentIds={ids} onOpenEvaluation={() => {}} /></QueryClientProvider>);
   } finally { client.clear(); }
 }
 
@@ -39,6 +39,13 @@ describe('evaluation source selection', () => {
     expect(multiple).toContain('3 predictors to evaluate from 2 selected experiments');
     expect(multiple).toMatch(/aria-label="Evaluate experiment two \(two\)"[^>]*checked=""/);
   });
+  it('honors a linked predictor without adding other ready predictors from its experiment', () => {
+    const linked = fixturePredictor(1, 11, 'ensemble', 'one');
+    const html = render(['one'], '', [], linked.id);
+    expect(html).toContain('1 predictor to evaluate from 1 selected experiment');
+    expect(html).not.toContain('2 predictors to evaluate');
+  });
+
   it('shows pending and skipped sources without substituting another experiment’s weights', () => {
     const html = render(undefined, 'skip-policy');
     expect(html).toContain('Running · No ready predictors');

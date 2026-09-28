@@ -25,6 +25,8 @@ describe('blocked module page', () => {
     expect(html).toContain('<a class="btn btn-secondary" href="#overview">');
     expect(html).toContain('Required modules');
     expect(html).toContain('No frozen dataset or saved import');
+    expect(html).not.toContain('href="#features"');
+    expect(html).toContain('Feature coverage and compatibility are checked in Experiments.');
   });
 
   it('uses the module phase rather than a generic label', () => {

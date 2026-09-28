@@ -1,6 +1,7 @@
 """MIL resolves read policy without rewriting frozen feature bundles or protocols."""
 
 import copy
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -14,12 +15,13 @@ from histopilot.api import create_app
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.mil_inputs import MILInputService
-from histopilot.application.protocols import pack_binding_snapshot
+from histopilot.application.protocols import ProtocolService, pack_binding_snapshot
 from histopilot.config import Settings
 from histopilot.schemas.feature_bundles import FeatureBundleSpec
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
+from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.pack_features import run_job
 
 PACK_A = "pack-" + "a" * 64
@@ -479,3 +481,84 @@ def test_protocol_bundle_content_identity_is_checked(inputs):
     assert "PROTOCOL_BUNDLE_CHANGED" in codes(inputs.service.preview(specification()))
     inputs.bundle["contentHash"] = "saved-hash"
     assert inputs.service.preview(specification())["canPlan"]
+
+
+def test_current_bundle_with_error_findings_cannot_authorize_experiment(inputs):
+    inputs.bundle["findings"] = [{
+        "severity": "error", "code": "FEATURE_VERIFICATION_CHANGED", "message": "Changed proof."
+    }]
+    result = inputs.service.preview(specification())
+    assert not result["canPlan"]
+    assert "FEATURE_VERIFICATION_CHANGED" in codes(result)
+
+
+@pytest.mark.parametrize("invalid", ["wrong_kind", "duplicate_slides"])
+def test_experiment_checks_feature_inventory_identity(inputs, invalid):
+    if invalid == "wrong_kind":
+        inputs.feature["manifest"]["kind"] = "protocol"
+    else:
+        inputs.feature["manifest"]["files"].append({"slideId": "slide-a"})
+    result = inputs.service.preview(specification())
+    assert not result["canPlan"]
+    assert ("INVALID_FEATURE_SET" if invalid == "wrong_kind" else "DUPLICATE_FEATURE_ID") in codes(result)
+
+
+def test_dataset_only_protocol_freezes_before_features_and_experiment_preserves_its_cohort(
+    tmp_path, monkeypatch
+):
+    store = ScientificStore(tmp_path, "project-test")
+    store.initialize()
+    imported = store.create_draft("import", "Source", {})
+    rows = [{
+        "slideId": f"slide-{index}", "patientId": f"patient-{index}", "slidePath": None,
+        "attributes": {"label": str(index % 2), "partition": "development" if index < 32 else "external"},
+    } for index in range(40)]
+    dataset = store.publish_dataset(
+        imported["id"], expected_revision=1,
+        manifest={"kind": "dataset", "dictionary": [
+            {"key": key, "sourceColumn": key, "owner": "slide", "type": "text"}
+            for key in ("label", "partition")
+        ]},
+        artifacts={"records.json": json.dumps(rows).encode()}, operation_id="dataset",
+    )
+    draft = store.create_draft("experiment", "Dataset-only protocol", {
+        "type": "analysis-protocol", "spec": {
+            "datasetId": dataset["id"],
+            "target": {"field": "label", "task": "binary_classification", "unit": "patient",
+                       "classes": ["negative", "positive"], "labels": {"0": "negative", "1": "positive"},
+                       "positiveClass": "positive"},
+            "split": {"version": 4, "mode": "kfold", "folds": 2, "seeds": [42],
+                      "validationFraction": 0.25, "pools": {
+                          "source": "rules", "trainSelection": "rules", "validationSource": "training_fraction",
+                          "rules": {"train": [{"field": "partition", "op": "eq", "value": "development"}]},
+                      }},
+        },
+    })
+    protocols = ProtocolService(store)
+    preview = protocols.preview(draft["id"], 1)
+    assert preview["canFreeze"], preview["findings"]
+    protocol = protocols.freeze(draft["id"], 1, preview["previewHash"], "protocol")
+    original = copy.deepcopy(protocol)
+    members = {row["slideId"] for row in protocol["manifest"]["memberships"]}
+    assert members == {f"slide-{index}" for index in range(32)}
+    assert not store.list_configurations("feature")
+    assert not store.list_configurations("feature-bundle")
+
+    bundle = {"id": BUNDLE_ID, "current": True, "findings": [], "manifest": {
+        "kind": "feature-bundle", "datasetId": "another-dataset",
+        "spec": {"featureSetId": ""}, "summary": {"dtype": "float32"}, "packs": [],
+    }}
+    monkeypatch.setattr("histopilot.application.mil_inputs.FeatureBundleService", lambda *_: SimpleNamespace(get=lambda _: bundle))
+    service = MILInputService(store, object())
+    for size in (31, 32):
+        feature = store.publish_configuration(manifest={
+            "kind": "feature", "datasetId": None,
+            "files": [{"slideId": f"slide-{index}"} for index in range(size)],
+        }, operation_id=f"feature-{size}")
+        bundle["manifest"]["spec"]["featureSetId"] = feature["id"]
+        result = service.preview(MILInputSpec(protocolId=protocol["id"], featureBundleId=BUNDLE_ID))
+        assert result["canPlan"] is (size == 32), result["findings"]
+        if size == 31:
+            assert "MISSING_FEATURES" in codes(result)
+            assert "1 eligible protocol slides" in next(item["message"] for item in result["findings"] if item["code"] == "MISSING_FEATURES")
+        assert store.get_configuration(protocol["id"]) == original

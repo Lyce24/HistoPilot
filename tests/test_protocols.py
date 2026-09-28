@@ -480,106 +480,36 @@ def test_infeasible_class_partition_counts_block_freeze():
     assert not result["canFreeze"]
 
 
-def test_feature_binding_uses_slide_coverage_across_dataset_versions():
+@pytest.mark.parametrize("coverage", ["require", "restrict"])
+def test_protocol_ignores_legacy_feature_bindings_without_reading_features(coverage):
     store = MemoryStore()
-    store.draft["payload"]["spec"]["featureSetId"] = "configuration-" + "f" * 64
-    store.feature = {
-        "contentHash": "f" * 64,
-        "manifest": {
-            "kind": "feature",
-            "datasetId": DATASET_ID,
-            "files": [{"slideId": row["slideId"]} for row in store.rows],
-        },
-    }
-    assert preview(store)["canFreeze"]
-    store.feature["manifest"]["files"].pop()
-    assert "MISSING_FEATURE_COVERAGE" in codes(preview(store))
-    store.feature["manifest"]["datasetId"] = "dataset-" + "b" * 64
-    assert "FEATURE_DATASET_MISMATCH" not in codes(preview(store))
-    assert "MISSING_FEATURE_COVERAGE" in codes(preview(store))
-    # A store-scoped feature set names no dataset; coverage alone decides whether it binds.
-    store.feature["manifest"]["datasetId"] = None
-    assert "FEATURE_DATASET_MISMATCH" not in codes(preview(store))
-    assert "MISSING_FEATURE_COVERAGE" in codes(preview(store))
-    store.feature["manifest"]["files"] = [{"slideId": row["slideId"]} for row in store.rows] + [
-        {"slideId": "slide-outside-this-cohort"}
-    ]
-    assert preview(store)["canFreeze"]
-    # Eligibility that excludes rows narrows what must be covered, never what may exist:
-    # features for the excluded slides are neither required nor in the way.
-    primary = [row for row in store.rows if row["attributes"]["stage"] == "Primary"]
-    store.draft["payload"]["spec"]["eligibility"] = [
-        {"field": "stage", "op": "eq", "value": "Primary"}
-    ]
-    store.feature["manifest"]["files"] = [{"slideId": row["slideId"]} for row in primary] + [
-        {"slideId": "slide-outside-this-cohort"}
-    ]
-    assert 0 < len(primary) < len(store.rows)
-    assert preview(store)["canFreeze"]
-
-
-def test_unselected_pack_preserves_existing_protocol_preview_hash():
-    store = MemoryStore()
-    before = preview(store)
-    store.draft["payload"]["spec"]["featurePackId"] = None
-    assert preview(store) == before
-    with pytest.raises(ValidationError, match="Select a feature version"):
-        ProtocolSpec.model_validate({**specification(), "featurePackId": "pack-" + "c" * 64})
-
-
-def test_protocol_pins_explicit_pack_and_blocks_changed_pack(monkeypatch):
-    from types import SimpleNamespace
-
-    store = MemoryStore()
-    feature_id, pack_id = "configuration-" + "f" * 64, "pack-" + "c" * 64
-    store.draft["payload"]["spec"].update(featureSetId=feature_id, featurePackId=pack_id)
-    store.feature = {
-        "contentHash": "f" * 64,
-        "manifest": {
-            "kind": "feature",
-            "datasetId": DATASET_ID,
-            "files": [{"slideId": row["slideId"]} for row in store.rows],
-        },
-    }
-    artifact = {
-        "id": pack_id,
-        "materializationId": "pack-" + "d" * 64,
-        "featureSetId": feature_id,
-        "outputPath": "/data/reusable-pack",
-        "outputDtype": "float32",
-        "sourceContentHash": "e" * 64,
-        "verification": "full",
-        "files": {"large": "inventory"},
-    }
-    resolved = {"artifact": artifact, "current": True, "findings": []}
-
-    def resolve(feature, pack):
-        assert (feature, pack) == (feature_id, pack_id)
-        return resolved
-
-    monkeypatch.setattr(
-        "histopilot.application.protocols.FeaturePackService",
-        lambda *_: SimpleNamespace(resolve_artifact=resolve),
+    baseline = preview(store)
+    store.draft["payload"]["spec"].update(
+        featureSetId="configuration-unavailable",
+        featurePackId="pack-" + "c" * 64,
+        featureBundleId="configuration-unavailable-bundle",
+        featureCoverage=coverage,
     )
+    store.get_configuration = lambda *_: pytest.fail("Targets and splits read features")
     result = preview(store)
-    assert result["canFreeze"], result["findings"]
-    assert result["featurePack"]["id"] == pack_id
-    assert "files" not in result["featurePack"]
-    assert "FEATURE_VALUES_UNVERIFIED" not in {row["code"] for row in result["findings"]}
+    assert result == baseline
+    assert result["summary"]["includedSlides"] == len(store.rows)
+    assert not any("FEATURE" in item["code"] for item in result["findings"])
     store.publish_configuration = lambda *args, **kwargs: kwargs
     frozen = ProtocolService(store).freeze("draft-test", 1, result["previewHash"], "freeze")
-    assert frozen["manifest"]["featurePack"] == result["featurePack"]
-    assert frozen["manifest"]["spec"]["featurePackId"] == pack_id
-    resolved.update(
-        current=False,
-        findings=[
-            {"severity": "warning", "code": "PACK_SOURCE_CHANGED", "message": "Pack bytes changed"}
-        ],
-    )
-    stale = preview(store)
-    assert not stale["canFreeze"]
-    assert "PACK_SOURCE_CHANGED" in codes(stale)
-    assert stale["previewHash"] != result["previewHash"]
+    assert not any(key.startswith("feature") for key in frozen["manifest"])
+    assert not any(key.startswith("feature") for key in frozen["manifest"]["spec"])
+
+
+def test_protocol_schema_migrates_incomplete_legacy_feature_choices():
+    baseline = ProtocolSpec.model_validate(specification())
+    for settings in (
+        {"featurePackId": "pack-" + "c" * 64},
+        {"featureCoverage": "restrict"},
+        {"featureBundleId": "old-bundle", "featureSetId": "old-features"},
+    ):
+        assert ProtocolSpec.model_validate({**specification(), **settings}) == baseline
+    assert not any(key.startswith("feature") for key in baseline.model_dump())
 
 
 def test_multiclass_target_and_explicit_class_mapping():
@@ -645,11 +575,9 @@ def test_changed_draft_revision_and_blocking_findings_prevent_publication():
     assert error.value.code == "PROTOCOL_PREFLIGHT_BLOCKED"
 
 
-def test_completed_protocol_retry_ignores_later_pack_drift_and_checks_original_intent(
+def test_completed_legacy_protocol_retry_preserves_feature_bindings_and_original_intent(
     tmp_path, monkeypatch
 ):
-    from types import SimpleNamespace
-
     store = ScientificStore(tmp_path, "project-replay")
     imported = store.create_draft("import", "Source", {})
     dataset = store.publish_dataset(
@@ -659,46 +587,33 @@ def test_completed_protocol_retry_ignores_later_pack_drift_and_checks_original_i
         artifacts={"records.json": json.dumps(records()).encode()},
         operation_id="import-replay",
     )
-    feature = store.publish_configuration(
-        manifest={
-            "kind": "feature",
-            "datasetId": dataset["id"],
-            "files": [{"slideId": row["slideId"]} for row in records()],
-        },
-        operation_id="feature-replay",
-    )
+    feature_id = "configuration-" + "f" * 64
     pack_id = "pack-" + "c" * 64
-    resolved = {
-        "current": True,
-        "findings": [],
-        "artifact": {
-            "id": pack_id,
-            "materializationId": pack_id,
-            "featureSetId": feature["id"],
-            "outputPath": "/synthetic/pack",
-            "outputDtype": "float32",
-            "sourceContentHash": "d" * 64,
-            "verification": "exact-source-values",
-        },
-    }
-    monkeypatch.setattr(
-        "histopilot.application.protocols.FeaturePackService",
-        lambda *_: SimpleNamespace(resolve_artifact=lambda *args: resolved),
-    )
     spec = specification()
-    spec.update(datasetId=dataset["id"], featureSetId=feature["id"], featurePackId=pack_id)
+    spec.update(datasetId=dataset["id"], featureSetId=feature_id, featurePackId=pack_id)
     draft = store.create_draft(
         "experiment", "Protocol", {"type": "analysis-protocol", "spec": spec}
     )
     service = ProtocolService(store)
     review = service.preview(draft["id"], 1)
     label = {"tag": "Original intent", "note": "Reviewed"}
-    frozen = service.freeze(
-        draft["id"], 1, review["previewHash"], "retry-protocol", version_label=label
-    )
-    resolved.update(
-        current=False,
-        findings=[{"severity": "error", "code": "PACK_SOURCE_CHANGED", "message": "Changed"}],
+    # Simulate an immutable protocol published by an older release. Replays must
+    # return it byte-for-byte, even though new construction no longer binds features.
+    manifest = {
+        "kind": "protocol",
+        "datasetId": dataset["id"],
+        "spec": spec,
+        "previewHash": review["previewHash"],
+        "summary": review["summary"],
+        "memberships": review["memberships"],
+        "featurePack": {"id": pack_id, "featureSetId": feature_id},
+    }
+    frozen = store.publish_configuration(
+        draft["id"],
+        expected_revision=1,
+        manifest=manifest,
+        operation_id="retry-protocol",
+        version_label=label,
     )
     assert (
         service.freeze(draft["id"], 1, review["previewHash"], "retry-protocol", version_label=label)
@@ -1069,104 +984,37 @@ def test_generated_split_modes_leave_unfixed_live_cohort_for_generation():
     assert result["unassigned"]["totalSlides"] == 24
 
 
-def test_restricting_to_feature_coverage_defines_the_population_as_the_intersection():
-    """Development data can be the dataset's eligible slides that actually have features."""
+@pytest.mark.parametrize("coverage", ["require", "restrict"])
+def test_live_counts_and_preview_use_dataset_rows_despite_legacy_feature_settings(coverage):
     store = MemoryStore()
-    covered = store.rows[: len(store.rows) - 4]
-    store.feature = {
-        "contentHash": "f" * 64,
-        "manifest": {
-            "kind": "feature",
-            "datasetId": None,
-            "files": [{"slideId": row["slideId"]} for row in covered]
-            + [{"slideId": "encoded-but-outside-this-dataset"}],
-        },
+    store.get_configuration = lambda *_: pytest.fail("Exploration read features")
+    legacy = {
+        "featureSetId": "configuration-unavailable",
+        "featureBundleId": "configuration-unavailable-bundle",
+        "featureCoverage": coverage,
     }
-    store.draft["payload"]["spec"]["featureSetId"] = "configuration-features"
-    # Requiring coverage blocks, because four eligible slides have no features.
-    assert "MISSING_FEATURE_COVERAGE" in codes(preview(store))
-    # Restricting instead makes the intersection the population.
-    store.draft["payload"]["spec"]["featureCoverage"] = "restrict"
-    reviewed = preview(store)
-    assert "MISSING_FEATURE_COVERAGE" not in codes(reviewed)
-    assert reviewed["canFreeze"], reviewed["findings"]
-    summary = reviewed["summary"]
-    assert summary["populationSource"] == "dataset_and_features"
-    assert summary["featureExclusions"] == 4
-    assert summary["eligibleSlides"] == len(covered)
-    assert summary["labelExclusions"].get("withoutFeatures") is None
-    assert any(item["code"] == "RESTRICTED_TO_FEATURE_COVERAGE" for item in reviewed["findings"])
-
-
-def test_restricting_to_a_feature_set_that_covers_nothing_is_refused():
-    store = MemoryStore()
-    store.feature = {
-        "contentHash": "f" * 64,
-        "manifest": {"kind": "feature", "datasetId": None, "files": [{"slideId": "elsewhere"}]},
-    }
-    store.draft["payload"]["spec"]["featureSetId"] = "configuration-features"
-    store.draft["payload"]["spec"]["featureCoverage"] = "restrict"
-    assert "NO_FEATURE_COVERAGE" in codes(preview(store))
-
-
-def test_restriction_requires_a_feature_version():
-    with pytest.raises(ValidationError):
-        ProtocolSpec.model_validate({**specification(), "featureCoverage": "restrict"})
-
-
-def test_live_counts_apply_the_same_feature_restriction_as_the_frozen_protocol():
-    """The number shown while choosing development data is the number that gets frozen."""
-    store = MemoryStore()
-    covered = store.rows[: len(store.rows) - 4]
-    store.feature = {
-        "contentHash": "f" * 64,
-        "manifest": {
-            "kind": "feature",
-            "datasetId": None,
-            "files": [{"slideId": row["slideId"]} for row in covered],
-        },
-    }
-    service = ProtocolService(store, None)
-    base = {
-        "datasetId": DATASET_ID,
-        "targetField": "label",
-        "eligibility": [],
-        "featureSetId": "configuration-features",
-    }
-    unrestricted = service.explore(ProtocolExploreRequest.model_validate(base))
-    restricted = service.explore(
-        ProtocolExploreRequest.model_validate({**base, "featureCoverage": "restrict"})
+    service = ProtocolService(store)
+    live = service.explore(
+        ProtocolExploreRequest(datasetId=DATASET_ID, targetField="label", **legacy)
     )
-    assert unrestricted["cohort"]["totalSlides"] == len(store.rows)
-    assert restricted["cohort"]["totalSlides"] == len(covered)
-    assert restricted["featureExclusions"] == 4
-    assert restricted["populationSource"] == "dataset_and_features"
-    # The restricted live count equals what the frozen protocol will include.
-    store.draft["payload"]["spec"]["featureSetId"] = "configuration-features"
-    store.draft["payload"]["spec"]["featureCoverage"] = "restrict"
-    assert preview(store)["summary"]["eligibleSlides"] == restricted["cohort"]["totalSlides"]
+    assert live["valid"], live["findings"]
+    assert live["cohort"]["totalSlides"] == len(store.rows)
+    assert not any(key.startswith("feature") for key in live)
+    store.draft["payload"]["spec"].update(legacy)
+    assert preview(store)["summary"]["eligibleSlides"] == live["cohort"]["totalSlides"]
 
 
-def test_the_default_coverage_rule_leaves_every_existing_preview_hash_untouched():
-    """A protocol frozen before this field must still hash, freeze and retry identically."""
+def test_feature_configuration_changes_do_not_change_construction_preview_hash():
     store = MemoryStore()
-    baseline = preview(store)["previewHash"]
-    store.draft["payload"]["spec"]["featureCoverage"] = "require"
-    assert preview(store)["previewHash"] == baseline
-    assert "featureCoverage" not in preview(store)["spec"]
-    assert "populationSource" not in preview(store)["summary"]
-    assert "featureExclusions" not in preview(store)["summary"]
-    # Restricting is a different protocol and must hash differently.
+    baseline = preview(store)
+    store.draft["payload"]["spec"].update(
+        featureSetId="configuration-features", featureCoverage="restrict"
+    )
     store.feature = {
         "contentHash": "f" * 64,
-        "manifest": {
-            "kind": "feature",
-            "datasetId": None,
-            "files": [{"slideId": row["slideId"]} for row in store.rows],
-        },
+        "manifest": {"kind": "feature", "files": []},
     }
-    store.draft["payload"]["spec"]["featureSetId"] = "configuration-features"
-    store.draft["payload"]["spec"]["featureCoverage"] = "restrict"
-    restricted = preview(store)
-    assert restricted["previewHash"] != baseline
-    assert restricted["spec"]["featureCoverage"] == "restrict"
+    assert preview(store) == baseline
+    store.feature["contentHash"] = "e" * 64
+    store.feature["manifest"]["files"] = [{"slideId": row["slideId"]} for row in store.rows]
+    assert preview(store) == baseline

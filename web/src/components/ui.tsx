@@ -18,6 +18,13 @@ const paths: Record<string, ReactNode> = {
   features: <path d="m12 2 9 5-9 5-9-5zM3 12l9 5 9-5M3 17l9 5 9-5" />,
   experiments: <path d="M9 3h6M10 3v7L4 20a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1l-6-10V3M7 16h10" />,
   evaluation: <path d="M4 3v17h17M8 15v-4M13 15V7M18 15V4" />,
+  inference: (
+    <>
+      <rect x="3" y="4" width="11" height="16" rx="2" />
+      <path d="M6.5 8h4M6.5 12h4M6.5 16h2" />
+      <path d="m16 9 5 3-5 3z" />
+    </>
+  ),
   explorer: (
     <>
       <rect x="3" y="3" width="18" height="18" rx="3" />

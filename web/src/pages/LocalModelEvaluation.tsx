@@ -23,6 +23,7 @@ import CaseReviewWorkspace from '../components/CaseReviewWorkspace';
 import type { CaseQuery } from '../api/caseReview';
 import EvaluationResultsTable, { newEvaluationRecordFilters } from '../components/EvaluationResultsTable';
 import EvidenceChain, { evidenceLink } from '../components/EvidenceChain';
+import { isInferenceBatch, isInferenceCohort, isInferenceRun } from '../lib/inference';
 import { groupPredictors, predictorConfigurationLabel, experimentPredictorLink } from '../lib/predictorGroups';
 import './ModelChains.css';
 
@@ -76,15 +77,19 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
     async (record) => { setSelectedRecord(record.id); setView('detail'); await Promise.all([client.invalidateQueries({ queryKey: ['model-evaluations', project] }), client.invalidateQueries({ queryKey: ['cleanup', project] })]); },
   );
   const predictor = registry.data?.items.find((item) => item.id === chosenPredictor && item.lifecycleState !== 'trashed');
-  const cohort = cohorts.data?.items.find((item) => item.id === cohortId);
-  const availableCohorts = cohorts.data?.items ?? [];
+  // Metrics need labels: inference cohorts and their prediction runs live in Run inference.
+  const labeledCohorts = (cohorts.data?.items ?? []).filter((item) => !isInferenceCohort(item));
+  const scoredRecords = (records.data?.items ?? []).filter((item) => !isInferenceRun(item));
+  const inferenceRecord = (records.data?.items ?? []).find((item) => item.id === selectedRecord && isInferenceRun(item));
+  const cohort = labeledCohorts.find((item) => item.id === cohortId);
+  const availableCohorts = labeledCohorts;
   const inputs = executionInputs ?? initialEvaluationInputs(cohort);
   const cohortReady = Boolean(cohort);
   const canReview = predictor?.lifecycleState === 'active' && cohortReady && name.trim() && !registry.isError && !cohorts.isError;
   const sources = groupPredictors((registry.data?.items ?? []).filter((item) => item.lifecycleState === 'active' || (item.id === chosenPredictor && item.lifecycleState === 'archived')));
   const choices = sources.filter((item) => !experimentId || item.id === experimentId);
-  const visible = (records.data?.items ?? []).filter((item) => (!experimentIds.length || experimentIds.includes(item.manifest.experimentId)) && (mode !== 'single' || !chosenPredictor || item.manifest.predictorId === chosenPredictor));
-  const detail = (records.data?.items ?? []).find((item) => item.id === selectedRecord) ?? (publication.saved?.id === selectedRecord ? publication.saved : undefined);
+  const visible = scoredRecords.filter((item) => (!experimentIds.length || experimentIds.includes(item.manifest.experimentId)) && (mode !== 'single' || !chosenPredictor || item.manifest.predictorId === chosenPredictor));
+  const detail = scoredRecords.find((item) => item.id === selectedRecord) ?? (publication.saved?.id === selectedRecord ? publication.saved : undefined);
   const singlePage = publication.review ? 'review' : 'inputs';
   const locked = bulkLocked || publication.locked;
   function openRecord(id: string) { if (locked) return; setSelectedRecord(id); setView('detail'); void records.refetch(); }
@@ -98,7 +103,9 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
   }
   const predictorName = (id: string) => registry.data?.items.find((item) => item.id === id)?.manifest.name ?? id;
   const cohortName = (id: string) => { const item = cohorts.data?.items.find((item) => item.id === id); return item ? versionLabelText(item, 'Test cohort') : id; };
-  const batchRows = batches.data?.items ?? [];
+  const inferenceCohortIds = new Set((cohorts.data?.items ?? []).filter(isInferenceCohort).map((item) => item.id));
+  const inferenceRunIds = new Set((records.data?.items ?? []).filter(isInferenceRun).map((item) => item.id));
+  const batchRows = (batches.data?.items ?? []).filter((item) => !isInferenceBatch(item, inferenceRunIds, inferenceCohortIds));
   const visibleBatches = batchRows.filter((item) => (batchState === 'all' || (item.lifecycleState ?? 'active') === batchState)
     && (batchStatus === 'all' || item.status === batchStatus)
     && `${item.name ?? ''} ${item.id} ${cohortName(item.cohortId)} ${item.items.map((source) => source.predictorName ?? source.predictorId).join(' ')}`.toLowerCase().includes(batchSearch.trim().toLowerCase()))
@@ -111,9 +118,9 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
     <ErrorNotice error={publication.error ?? records.error ?? registry.error ?? cohorts.error ?? experimentRegistry.error ?? batches.error} />
     <StagePage pageKey={`${view}:${mode}:${view === 'setup' ? singlePage : selectedRecord || batchId}`}>
     {setupStarted ? <div hidden={view !== 'setup'}>
-    <p className="callout">Choose one or more experiments to evaluate. Each ready ensemble or refit predictor keeps its own results. Unlabeled slides receive predictions; metrics use labeled records only.</p>
+    <p className="callout">Choose one or more experiments to evaluate on a labeled test cohort. Each ready ensemble or refit predictor keeps its own results. For slides without labels, use <a href="#inference">Run inference</a>.</p>
     <nav className="run-tabs" aria-label="Evaluation setup"><button className={mode === 'batch' ? 'selected' : ''} disabled={locked} onClick={() => { setBulkOpened(true); setMode('batch'); }}>Evaluate experiments</button><button className={mode === 'single' ? 'selected' : ''} disabled={locked} onClick={() => setMode('single')}>Advanced: single predictor plan</button></nav>
-    {bulkOpened ? <div hidden={mode !== 'batch'}><Panel title="Evaluate selected experiments" subtitle="Choose experiments and methods to compare on one test cohort."><BulkEvaluationRunner key={setupKey} project={project} predictors={registry.data?.items ?? []} experiments={experimentRegistry.data?.items ?? []} experimentsLoading={experimentRegistry.isPending} cohorts={cohorts.data?.items ?? []} linkedCohort={linkedCohort} experimentIds={experimentIds} onExperimentsChange={setExperimentIds} onLockChange={setBulkLocked} onOpenEvaluation={openRecord} /></Panel></div> : null}
+    {bulkOpened ? <div hidden={mode !== 'batch'}><Panel title="Evaluate selected experiments" subtitle="Choose experiments and methods to compare on one test cohort."><BulkEvaluationRunner key={setupKey} project={project} predictors={registry.data?.items ?? []} experiments={experimentRegistry.data?.items ?? []} experimentsLoading={experimentRegistry.isPending} cohorts={labeledCohorts} linkedCohort={linkedCohort} experimentIds={experimentIds} onExperimentsChange={setExperimentIds} onLockChange={setBulkLocked} onOpenEvaluation={openRecord} /></Panel></div> : null}
     {mode === 'single' ? <>
     <StageSteps label="Single evaluation steps" current={singlePage} disabled={publication.locked} steps={[{ id: 'inputs', title: 'Evaluation inputs', description: 'Predictor, test cohort and features' }, { id: 'review', title: 'Review and save', description: 'Verify compatibility and coverage', disabled: !publication.review }]} onChange={(next) => { if (next === 'inputs') publication.reset(); }} />
     {!publication.review ? <Panel title="Select evaluation inputs" subtitle="Each plan uses one frozen predictor and one test cohort. The same predictor can have several evaluations.">
@@ -153,7 +160,7 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
       </>}
     </StageLibrary> : null}
     {view === 'comparison' ? <Panel title="Ensemble and refit comparison" subtitle="Compare matched results on the same test cohort and scoring unit."><EvaluationResultsTable project={project} view="comparison" filters={recordFilters} onFiltersChange={setRecordFilters} records={visible} predictors={registry.data?.items ?? []} experiments={experimentRegistry.data?.items ?? []} cohorts={cohorts.data?.items ?? []} loading={records.isPending} onOpen={openRecord} /></Panel> : null}
-    {view === 'detail' ? <>{detail ? <EvaluationDetail key={detail.id} project={project} record={detail} comparisons={records.data?.items ?? []} /> : <Panel title="Evaluation results"><p role="status">{records.isPending ? 'Loading evaluation…' : records.isError ? 'The evaluation could not be loaded. Retry to check this record.' : 'This evaluation is unavailable. Return to the evaluation library to choose a saved record.'}</p>{records.isError ? <button className="btn btn-secondary" onClick={() => void records.refetch()}>Retry loading evaluation</button> : null}</Panel>}</> : null}
+    {view === 'detail' ? <>{detail ? <EvaluationDetail key={detail.id} project={project} record={detail} comparisons={scoredRecords} /> : inferenceRecord ? <Panel title={inferenceRecord.manifest.name}><p className="callout">This record predicts an unlabeled inference cohort, so it has no metrics. <a href={`#inference?evaluation=${encodeURIComponent(inferenceRecord.id)}`}>Open its predictions in Run inference</a>.</p></Panel> : <Panel title="Evaluation results"><p role="status">{records.isPending ? 'Loading evaluation…' : records.isError ? 'The evaluation could not be loaded. Retry to check this record.' : 'This evaluation is unavailable. Return to the evaluation library to choose a saved record.'}</p>{records.isError ? <button className="btn btn-secondary" onClick={() => void records.refetch()}>Retry loading evaluation</button> : null}</Panel>}</> : null}
     {view === 'batch' ? <><Panel title="Evaluation batch"><EvaluationBatchStatus project={project} id={batchId} onOpen={openRecord} /></Panel></> : null}
     </StagePage>
   </div>;

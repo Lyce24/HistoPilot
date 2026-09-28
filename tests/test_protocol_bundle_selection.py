@@ -1,4 +1,4 @@
-"""Dataset/bundle intersection defines protocols before labels or patient splits."""
+"""Dataset selection defines protocols; bundles are bound later in Experiments."""
 
 import copy
 import runpy
@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from pydantic import ValidationError
 
 from histopilot.application.protocols import ProtocolService
 from histopilot.schemas.protocols import ProtocolExploreRequest, ProtocolSpec
@@ -29,9 +28,6 @@ def selection(monkeypatch):
         "validationFraction": 0.25,
         "pools": {"trainSelection": "remaining"},
     }
-    # These four patients are absent from the bundle and cannot affect target validation.
-    for row in store.rows[24:]:
-        row["attributes"]["label"] = None
     store.feature = {
         "id": FEATURE_ID,
         "contentHash": "f" * 64,
@@ -56,25 +52,24 @@ def selection(monkeypatch):
     }
     service = Mock()
     service.get.return_value = bundle
-    monkeypatch.setattr("histopilot.application.protocols.FeatureBundleService", lambda *_: service)
+    monkeypatch.setattr(
+        "histopilot.application.feature_bundles.FeatureBundleService", lambda *_: service
+    )
     return store, bundle, service
 
 
-def test_bundle_intersection_precedes_target_checks_and_agrees_with_live_counts(selection):
-    store, bundle, _service = selection
+def test_bundle_settings_do_not_restrict_dataset_construction_or_live_counts(selection):
+    store, _bundle, bundle_service = selection
     service = ProtocolService(store)
     preview = service.preview("draft-test", 1)
     assert preview["canFreeze"], preview["findings"]
     assert preview["summary"]["totalSlides"] == 32
-    assert preview["summary"]["includedSlides"] == 24
-    assert preview["summary"]["bundleSlides"] == 25
-    assert preview["summary"]["matchedSlides"] == 24
-    assert preview["summary"]["featureExclusions"] == 8
-    assert preview["summary"]["populationSource"] == "dataset_and_bundle"
+    assert preview["summary"]["includedSlides"] == 32
+    assert "featureExclusions" not in preview["summary"]
     assert preview["summary"]["labelExclusions"] == {}
-    assert preview["featureBundle"]["contentHash"] == bundle["contentHash"]
+    assert "featureBundle" not in preview
     assert {row["slideId"] for row in preview["memberships"]} == {
-        row["slideId"] for row in store.rows[:24]
+        row["slideId"] for row in store.rows
     }
     live = service.explore(
         ProtocolExploreRequest(
@@ -85,11 +80,11 @@ def test_bundle_intersection_precedes_target_checks_and_agrees_with_live_counts(
         )
     )
     assert live["valid"], live["findings"]
-    assert live["cohort"]["totalSlides"] == 24
-    assert live["matchedSlides"] == 24
-    assert live["featureBundle"] == preview["featureBundle"]
+    assert live["cohort"]["totalSlides"] == 32
+    assert "featureBundle" not in live
     assert live["target"]["distinctCount"] == 2
     assert not any(item["value"] is None for item in live["target"]["values"])
+    bundle_service.get.assert_not_called()
 
 
 def specification(store):
@@ -97,7 +92,7 @@ def specification(store):
 
 
 @pytest.mark.parametrize("failure", ["empty", "stale", "missing", "wrong-kind"])
-def test_unusable_bundle_never_falls_back_to_the_whole_dataset(selection, failure):
+def test_unusable_bundle_does_not_block_dataset_construction(selection, failure):
     store, bundle, service = selection
     if failure == "empty":
         store.feature["manifest"]["files"] = [{"slideId": "elsewhere"}]
@@ -108,37 +103,39 @@ def test_unusable_bundle_never_falls_back_to_the_whole_dataset(selection, failur
     else:
         store.feature["manifest"]["kind"] = "protocol"
     result = ProtocolService(store).preview("draft-test", 1)
-    assert not result["canFreeze"]
+    assert result["canFreeze"], result["findings"]
+    assert result["summary"]["includedSlides"] == 32
     live = ProtocolService(store).explore(
         ProtocolExploreRequest(
             datasetId=specification(store)["datasetId"],
             featureBundleId=BUNDLE_ID,
         )
     )
-    assert not live["valid"]
+    assert live["valid"], live["findings"]
+    assert live["cohort"]["totalSlides"] == 32
+    service.get.assert_not_called()
 
 
-def test_freeze_pins_bundle_and_rejects_changed_review(selection):
+def test_freeze_omits_bundle_and_is_independent_of_bundle_drift(selection):
     store, bundle, _service = selection
     store.publish_configuration = Mock(side_effect=lambda *args, **kwargs: kwargs["manifest"])
     service = ProtocolService(store)
     preview = service.preview("draft-test", 1)
     frozen = service.freeze("draft-test", 1, preview["previewHash"], "save")
-    assert frozen["featureBundle"] == preview["featureBundle"]
-    assert frozen["spec"]["featureBundleId"] == BUNDLE_ID
+    assert "featureBundle" not in frozen
+    assert "featureBundleId" not in frozen["spec"]
     bundle["contentHash"] = "c" * 64
-    with pytest.raises(StorageError, match="preview changed"):
-        service.freeze("draft-test", 1, preview["previewHash"], "save-again")
+    assert service.freeze("draft-test", 1, preview["previewHash"], "save-again") == frozen
 
 
-def test_bundle_and_legacy_feature_choices_cannot_be_combined(selection):
+def test_obsolete_feature_choices_are_removed_when_loading_protocol_specs(selection):
     store, _bundle, _service = selection
     for extra in ({"featureSetId": FEATURE_ID}, {"featurePackId": "pack-" + "a" * 64}):
-        with pytest.raises(ValidationError):
-            ProtocolSpec.model_validate({**copy.deepcopy(specification(store)), **extra})
+        parsed = ProtocolSpec.model_validate({**copy.deepcopy(specification(store)), **extra})
+        assert not any(key.startswith("feature") for key in parsed.model_dump())
 
 
-def test_verified_bundle_reused_by_new_dataset_through_development_planning(tmp_path):
+def test_dataset_only_protocol_binds_reusable_bundle_later_in_experiments(tmp_path):
     from histopilot.application.development import DevelopmentService
     from histopilot.application.mil_inputs import MILInputService
     from histopilot.application.model_experiments import ModelExperimentService
@@ -184,7 +181,9 @@ def test_verified_bundle_reused_by_new_dataset_through_development_planning(tmp_
             "version": 4,
             "mode": "kfold",
             "folds": 2,
-            "pools": {"trainSelection": "remaining"},
+            "pools": {
+                "rules": {"train": [{"field": "cohort", "op": "in", "value": ["TCGA", "SurGen"]}]}
+            },
         },
     }
     protocols = ProtocolService(store, filesystem)
@@ -194,15 +193,20 @@ def test_verified_bundle_reused_by_new_dataset_through_development_planning(tmp_
     preview = protocols.preview(draft["id"], 1)
     assert preview["canFreeze"], preview["findings"]
     assert preview["summary"]["includedSlides"] == 24
-    assert preview["summary"]["bundleSlides"] == 26
+    assert "featureBundle" not in preview
+    assert "featureBundleId" not in preview["spec"]
     frozen = protocols.freeze(draft["id"], 1, preview["previewHash"], "study-protocol")
     inputs = MILInputSpec(protocolId=frozen["id"], featureBundleId=bundle["id"])
     resolved = MILInputService(store, filesystem).preview(inputs)
     assert resolved["canPlan"], resolved["findings"]
     assert resolved["resolvedLoadingPolicy"] == "native"
-    experiment = ModelExperimentService(store, filesystem).create(CreateModelExperiment(
-        name="Combined study", inputs=inputs, operationId="study-experiment",
-    ))
+    experiment = ModelExperimentService(store, filesystem).create(
+        CreateModelExperiment(
+            name="Combined study",
+            inputs=inputs,
+            operationId="study-experiment",
+        )
+    )
     plan = DevelopmentService(store, filesystem).preview(
         DevelopmentBatchSpec(
             experimentId=experiment["id"],
@@ -219,3 +223,73 @@ def test_verified_bundle_reused_by_new_dataset_through_development_planning(tmp_
     assert plan["inputSnapshot"]["dataset"]["id"] == study["id"]
     assert plan["inputSnapshot"]["featureBundle"]["id"] == bundle["id"]
     assert store.get_configuration(bundle["id"])["manifest"]["datasetId"] == original["id"]
+
+
+def test_obsolete_required_coverage_does_not_block_construction(selection):
+    store, _bundle, _service = selection
+    spec = specification(store)
+    spec["featureCoverage"] = "require"
+    for index, row in enumerate(store.rows):
+        row["attributes"]["label"] = str((index // 2) % 2)
+    service = ProtocolService(store)
+    result = service.preview("draft-test", 1)
+    assert result["canFreeze"], result["findings"]
+    assert result["summary"]["includedSlides"] == 32
+    assert "featureCoverage" not in result["spec"]
+    assert not any("FEATURE" in item["code"] for item in result["findings"])
+    assert not any(item["code"] == "RESTRICTED_TO_FEATURE_COVERAGE" for item in result["findings"])
+    live = service.explore(
+        ProtocolExploreRequest(
+            datasetId=spec["datasetId"],
+            featureBundleId=BUNDLE_ID,
+            featureCoverage="require",
+            split=spec["split"],
+        )
+    )
+    assert live["valid"], live["findings"]
+    assert live["cohort"]["totalSlides"] == 32
+    assert live["partitions"]["train"]["expanded"]["totalSlides"] == 32
+    assert not any("FEATURE" in item["code"] for item in live["findings"])
+
+
+def test_obsolete_bundle_restriction_cannot_hide_missing_target_labels(selection):
+    store, _bundle, _service = selection
+    specification(store)["featureCoverage"] = "restrict"
+    for row in store.rows[24:]:
+        row["attributes"]["label"] = None
+    result = ProtocolService(store).preview("draft-test", 1)
+    assert not result["canFreeze"]
+    assert result["summary"]["eligibleSlides"] == 32
+    assert "MISSING_LABEL" in {item["code"] for item in result["findings"]}
+    assert result["memberships"] == []
+    assert "featureCoverage" not in result["spec"]
+
+
+def test_explicit_dataset_selection_persists_without_legacy_bundle_settings(selection):
+    store, _bundle, _service = selection
+    spec = specification(store)
+    spec["featureCoverage"] = "require"
+    selected = [row["slideId"] for row in store.rows[:24]]
+    spec["split"]["pools"] = {
+        "trainSelection": "rules",
+        "rules": {"train": [{"field": "Slide_ID", "op": "in", "value": selected}]},
+    }
+    service = ProtocolService(store)
+    result = service.preview("draft-test", 1)
+    assert result["canFreeze"], result["findings"]
+    assert result["summary"]["includedSlides"] == 24
+    assert "featureCoverage" not in result["spec"]
+    store.draft["payload"]["spec"] = result["spec"]
+    reloaded = service.preview("draft-test", 1)
+    assert result["previewHash"] == reloaded["previewHash"]
+    live = service.explore(
+        ProtocolExploreRequest(
+            datasetId=spec["datasetId"],
+            featureBundleId=BUNDLE_ID,
+            featureCoverage="require",
+            split=spec["split"],
+        )
+    )
+    assert live["valid"], live["findings"]
+    assert live["partitions"]["train"]["expanded"]["totalSlides"] == 24
+    assert live["unassigned"]["totalSlides"] == 8

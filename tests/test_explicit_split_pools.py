@@ -411,12 +411,12 @@ def test_pool_exploration_reports_counts_before_target_mapping_is_complete():
     assert result["unassigned"]["patientCount"] == 0
 
 
-def test_version_two_preview_hash_is_unchanged_by_new_pool_fields():
+def test_version_two_preview_hash_omits_new_pool_fields_and_feature_metadata():
     legacy = runpy.run_path(str(Path(__file__).with_name("test_cv_strategies.py")))
     result = legacy["preview"](legacy["Store"]("kfold"))
     assert "pools" not in result["spec"]["split"]
     assert (
-        result["previewHash"] == "2fc3c27112d578d888894914d68ea6bd12d9dc538bbdccc73c2861b6f80cac3e"
+        result["previewHash"] == "876f7a780ad70a02d4e9f0c85692c45eee499f63be4589c8b74a353ed4d618fb"
     )
 
 

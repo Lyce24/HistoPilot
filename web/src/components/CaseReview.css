@@ -29,3 +29,9 @@
 .case-review-region { margin: .75rem 0; }
 @media (max-width: 900px) { .case-review-layout { grid-template-columns: 1fr; } .case-review-list { max-height: 360px; } }
 @media (max-width: 540px) { .case-review-fields { grid-template-columns: 1fr; } .case-review-controls .label { flex-basis: 100%; } }
+.attention-request { display: inline-flex; flex-direction: column; align-items: flex-start; gap: .3rem; max-width: 100%; }
+.attention-request small { color: var(--theme-muted); overflow-wrap: anywhere; }
+.case-review-list .case-review-inference th:first-child { width: 40%; }
+.case-review-list .case-review-inference th:nth-child(2) { width: 20%; }
+.case-review-list .case-review-inference th:nth-child(3) { width: 20%; }
+.case-review-list .case-review-inference th:last-child { width: 20%; }

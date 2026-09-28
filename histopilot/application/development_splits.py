@@ -8,6 +8,7 @@ and frozen documents are left unchanged.
 from histopilot.application.modern_splits import modern_assignments
 
 ALGORITHM_V4 = "histopilot-development-plans-v4"
+ALGORITHM_V4_MIXED = "histopilot-development-labelset-plans-v4"
 ROLES = ("train", "val", "test")
 
 

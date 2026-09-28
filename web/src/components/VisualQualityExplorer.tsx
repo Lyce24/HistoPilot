@@ -1,11 +1,13 @@
-import { useDeferredValue, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { bundles } from '../api/bundles';
 import { scientific, type FeatureSpec } from '../api/scientific';
 import { morphology, type MorphologyIndex, type MorphologyPoint, type MorphologyRegion, type QualityEvidence } from '../api/morphology';
+import { isSlideSourceError } from '../lib/slideTiles';
 import { versionLabelText } from '../lib/versionLabels';
 import { reviewStatusLabels } from '../api/slideReviews';
 import SlideReviewEditor from './SlideReviewEditor';
+import QualitySlideCanvas from './QualitySlideCanvas';
 import { useImageBlob } from './SlideGalleryCard';
 import { ErrorNotice, Panel } from './ui';
 import './VisualQualityExplorer.css';
@@ -40,65 +42,61 @@ export function MorphologyPlot({ index, selected, onSelect }: { index: Morpholog
   </div>;
 }
 
-function Contours({ evidence }: { evidence: QualityEvidence }) {
-  return <>{evidence.tissueContours.map((polygon, index) => <path key={index} d={polygon.map((ring) => `M${ring.map((xy) => `${xy[0]},${xy[1]}`).join('L')}Z`).join(' ')} fill="#27ae6040" stroke="#1e7543" strokeWidth={Math.max(evidence.width, evidence.height) / 900} fillRule="evenodd" />)}</>;
-}
-
-export function QualitySlide({ project, datasetId, slideId, featureBundleId, patchIndex: controlledPatch, onPatch, showReview = true, onRegion }: { project: string; datasetId: string; slideId: string; featureBundleId?: string; patchIndex?: number; onPatch?: (index: number) => void; showReview?: boolean; onRegion?: (region: MorphologyRegion) => void }) {
-  const [coverage, setCoverage] = useState(true);
-  const [contours, setContours] = useState(true);
-  const [localPatch, setLocalPatch] = useState<number | undefined>();
-  const [patchInput, setPatchInput] = useState('');
-  const [viewport, setViewport] = useState<MorphologyRegion>();
-  const [drawnRegion, setDrawnRegion] = useState<MorphologyRegion>();
-  const [drawing, setDrawing] = useState(false);
-  const dragStart = useRef<{ x: number; y: number } | null>(null);
-  const ignorePatchClick = useRef(false);
-  const patchIndex = controlledPatch ?? localPatch;
-  function selectPatch(index: number) { setLocalPatch(index); setDrawnRegion(undefined); onPatch?.(index); }
-  // Geometry must not depend on optional features; thumbnail pixels are not level-0 coordinates.
-  const geometry = useQuery({ queryKey: ['morphology-quality', project, datasetId, slideId, undefined], queryFn: ({ signal }) => morphology.quality(project, datasetId, slideId, undefined, signal), staleTime: 30000 });
-  const evidence = useQuery({ queryKey: ['morphology-quality', project, datasetId, slideId, featureBundleId], queryFn: ({ signal }) => morphology.quality(project, datasetId, slideId, featureBundleId, signal), enabled: Boolean(featureBundleId), staleTime: 30000 });
-  const thumbnail = useQuery({ queryKey: ['morphology-image', project, datasetId, slideId, viewport], queryFn: ({ signal }) => morphology.image(project, datasetId, slideId, signal, viewport), staleTime: 30000, gcTime: 60000 });
-  const patchRegion = useQuery({ queryKey: ['morphology-patch-region', project, datasetId, slideId, featureBundleId, patchIndex], queryFn: ({ signal }) => morphology.patchRegion(project, datasetId, slideId, featureBundleId!, patchIndex!, signal), enabled: patchIndex != null && Boolean(featureBundleId), staleTime: 30000 });
-  const patch = useQuery({ queryKey: ['morphology-patch', project, datasetId, slideId, featureBundleId, patchIndex], queryFn: ({ signal }) => morphology.patch(project, datasetId, slideId, featureBundleId!, patchIndex!, signal), enabled: patchIndex != null && Boolean(featureBundleId), staleTime: 30000, gcTime: 60000 });
-  const url = useImageBlob(thumbnail.data), patchUrl = useImageBlob(patch.data);
-  const quality = (!evidence.isError && evidence.data) || (!geometry.isError && geometry.data) || undefined;
-  const selectedRegion = drawnRegion ?? (patchRegion.isError ? undefined : patchRegion.data);
-  const field = viewport ?? (quality ? { x: 0, y: 0, width: quality.width, height: quality.height } : undefined);
-  function point(event: React.PointerEvent<SVGSVGElement>) {
-    const svg = event.currentTarget;
-    const matrix = svg.getScreenCTM();
-    if (!matrix || !field) return null;
-    const value = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
-    return { x: Math.max(field.x, Math.min(field.x + field.width, value.x)), y: Math.max(field.y, Math.min(field.y + field.height, value.y)) };
+export function QualitySlide({ project, datasetId, slideId, featureBundleId, patchIndex: controlledPatch, onPatch, showReview = true, onRegion }: { project: string; datasetId: string; slideId: string; featureBundleId?: string; patchIndex?: number; onPatch?: (index: number | undefined) => void; showReview?: boolean; onRegion?: (region: MorphologyRegion) => void }) {
+  // Geometry must not depend on optional features; its identity pins every
+  // image request and resets unsaved selections if a legacy source changes.
+  const [session, setSession] = useState(0);
+  const sessionKey = session ? [session] : [];
+  const [tileFailure, setTileFailure] = useState<{ source: string; error: Error }>();
+  const geometry = useQuery({ queryKey: ['morphology-quality', project, datasetId, slideId, undefined, ...sessionKey], queryFn: ({ signal }) => morphology.quality(project, datasetId, slideId, undefined, signal), staleTime: 30000 });
+  const verifiedGeometry = geometry.isError ? undefined : geometry.data;
+  const sourceFingerprint = verifiedGeometry?.sourceFingerprint;
+  const sourceScope = JSON.stringify([project, datasetId, slideId, sourceFingerprint, session]);
+  const sourceKey = [...(sourceFingerprint ? [sourceFingerprint] : []), ...sessionKey];
+  const reportSourceError = useCallback((error: Error) => setTileFailure({ source: sourceScope, error }), [sourceScope]);
+  const reloadSlide = () => { setSession((value) => value + 1); setTileFailure(undefined); onPatch?.(undefined); };
+  const [localPatch, setLocalPatch] = useState<{ source: string; index: number }>();
+  const [patchEntry, setPatchEntry] = useState<{ source: string; value: string }>();
+  const [drawnRegion, setDrawnRegion] = useState<{ source: string; region: MorphologyRegion }>();
+  const patchInput = patchEntry?.source === sourceScope ? patchEntry.value : '';
+  // An externally selected index belongs to the geometry at selection time.
+  // Bind an initial selection once geometry arrives; never carry it into a new source.
+  const [controlledBinding, setControlledBinding] = useState({ input: controlledPatch, source: verifiedGeometry ? sourceScope : null });
+  if (controlledBinding.input !== controlledPatch || (controlledBinding.source === null && verifiedGeometry)) {
+    setControlledBinding({ input: controlledPatch, source: verifiedGeometry ? sourceScope : null });
   }
-  const thickness = quality ? Math.max(quality.width, quality.height) / 700 : 1;
+  const scopedControlledPatch = controlledBinding.source === sourceScope ? controlledPatch : undefined;
+  const patchIndex = scopedControlledPatch ?? (localPatch?.source === sourceScope ? localPatch.index : undefined);
+  const selectPatch = useCallback((index: number) => { setLocalPatch({ source: sourceScope, index }); setDrawnRegion(undefined); onPatch?.(index); }, [onPatch, sourceScope]);
+  const evidence = useQuery({ queryKey: ['morphology-quality', project, datasetId, slideId, featureBundleId, ...sourceKey], queryFn: ({ signal }) => morphology.quality(project, datasetId, slideId, featureBundleId, signal), enabled: Boolean(featureBundleId) && Boolean(verifiedGeometry), staleTime: 30000 });
+  const evidenceMatches = Boolean(verifiedGeometry && evidence.data && !evidence.isError && evidence.data.sourceFingerprint === sourceFingerprint && evidence.data.width === verifiedGeometry.width && evidence.data.height === verifiedGeometry.height);
+  const thumbnail = useQuery({ queryKey: ['morphology-image', project, datasetId, slideId, undefined, ...sourceKey], queryFn: ({ signal }) => morphology.image(project, datasetId, slideId, signal, undefined, 1536, sourceFingerprint), enabled: Boolean(verifiedGeometry), staleTime: 30000, gcTime: 60000 });
+  const patchRegion = useQuery({ queryKey: ['morphology-patch-region', project, datasetId, slideId, featureBundleId, patchIndex, ...sourceKey], queryFn: ({ signal }) => morphology.patchRegion(project, datasetId, slideId, featureBundleId!, patchIndex!, signal, sourceFingerprint), enabled: patchIndex != null && Boolean(featureBundleId) && evidenceMatches, staleTime: 30000 });
+  const patch = useQuery({ queryKey: ['morphology-patch', project, datasetId, slideId, featureBundleId, patchIndex, ...sourceKey], queryFn: ({ signal }) => morphology.patch(project, datasetId, slideId, featureBundleId!, patchIndex!, signal, sourceFingerprint), enabled: patchIndex != null && Boolean(featureBundleId) && evidenceMatches, staleTime: 30000, gcTime: 60000 });
+  const url = useImageBlob(thumbnail.data), patchUrl = useImageBlob(patch.data);
+  const evidenceError = evidence.error as (Error & { code?: string }) | null;
+  const evidenceSourceError = ['MORPHOLOGY_SLIDE_CHANGED', 'SLIDE_SOURCE_CHANGED'].includes(evidenceError?.code ?? '') ? evidenceError : undefined;
+  const sourceError = (tileFailure?.source === sourceScope ? tileFailure.error : undefined)
+    ?? evidenceSourceError ?? [geometry.error, thumbnail.error, patchRegion.error, patch.error].find(isSlideSourceError);
+  const quality = !sourceError ? evidenceMatches ? evidence.data : verifiedGeometry : undefined;
+  const selectedRegion = verifiedGeometry && !sourceError ? (drawnRegion?.source === sourceScope ? drawnRegion.region : evidenceMatches && !patchRegion.isError ? patchRegion.data : undefined) : undefined;
   return <section className="morphology-slide" aria-label={`Visual quality of ${slideId}`}>
     <h3>{slideId}</h3>
-    <ErrorNotice error={geometry.error ?? thumbnail.error} />
-    {featureBundleId && evidence.isError ? <div className="callout" role="status">Optional feature coverage is unavailable. Image review and notes remain available.<ErrorNotice error={evidence.error} /></div> : null}
-    {geometry.isPending || thumbnail.isPending ? <p role="status">Reading the exact linked slide geometry…</p> : null}
+    <ErrorNotice error={sourceError ?? geometry.error ?? thumbnail.error} />
+    {sourceError || geometry.isError ? <div className="callout" role="status">The slide could not be verified. Reload it to refresh the image and its overlays.<button type="button" className="btn btn-secondary" onClick={reloadSlide}>Reload slide</button></div> : null}
+    {featureBundleId && evidence.isError && !sourceError ? <div className="callout" role="status">Optional feature coverage is unavailable. Image review and notes remain available.<ErrorNotice error={evidence.error} /></div> : null}
+    {featureBundleId && evidence.data && !evidence.isError && verifiedGeometry && !evidenceMatches ? <div className="callout" role="status">Feature coverage does not match the current slide image. Reload the slide before using its overlays.<button type="button" className="btn btn-secondary" onClick={reloadSlide}>Reload slide</button></div> : null}
+    {!sourceError && (geometry.isPending || thumbnail.isPending) ? <p role="status">Reading the exact linked slide geometry…</p> : null}
     {quality ? <>
-      <div className="inline-actions">{quality.patchCount != null ? <label className="checkbox-label"><input type="checkbox" checked={coverage} onChange={(event) => setCoverage(event.target.checked)} />Patch coverage</label> : null}{quality.tissueContours.length ? <label className="checkbox-label"><input type="checkbox" checked={contours} onChange={(event) => setContours(event.target.checked)} />Recorded tissue contours</label> : null}<button className="btn btn-secondary" aria-pressed={drawing} onClick={() => setDrawing(!drawing)}>{drawing ? 'Cancel region selection' : 'Draw review region'}</button><button className="btn btn-secondary" disabled={!selectedRegion} onClick={() => setViewport(selectedRegion)}>Zoom to selection</button><button className="btn btn-secondary" disabled={!viewport} onClick={() => setViewport(undefined)}>Fit slide</button></div>
-      {drawing ? <p role="status">Drag a rectangle on the image. Its level-0 coordinates can be saved with the review.</p> : null}
-      {url && !thumbnail.isError && field ? <div className="morphology-image-scroll"><svg style={{ width: '100%', touchAction: drawing ? 'none' : undefined }} viewBox={`${field.x} ${field.y} ${field.width} ${field.height}`} role="group" aria-label={`Exact slide ${slideId}${quality.patchCount != null ? ' with patch coverage' : ''}`}
-        onPointerDown={(event) => { ignorePatchClick.current = drawing; if (!drawing) return; dragStart.current = point(event); event.currentTarget.setPointerCapture(event.pointerId); }}
-        onPointerUp={(event) => { if (!drawing || !dragStart.current) return; const end = point(event), start = dragStart.current; dragStart.current = null; if (!end) return; const region = { x: Math.floor(Math.min(start.x, end.x)), y: Math.floor(Math.min(start.y, end.y)), width: Math.floor(Math.abs(end.x - start.x)), height: Math.floor(Math.abs(end.y - start.y)) }; if (region.width >= 1 && region.height >= 1) { setDrawnRegion(region); setDrawing(false); onRegion?.(region); } }}
-        onPointerCancel={() => { dragStart.current = null; ignorePatchClick.current = false; }}>
-        <image href={url} x={field.x} y={field.y} width={field.width} height={field.height} />
-        {contours ? <Contours evidence={quality} /> : null}
-        {coverage ? quality.patches.map((row) => quality.patchWidth && quality.patchHeight ? <rect key={row.patchIndex} x={row.x} y={row.y} width={Math.min(quality.patchWidth, quality.width - row.x)} height={Math.min(quality.patchHeight, quality.height - row.y)} fill={row.patchIndex === patchIndex ? '#f2a90080' : '#285c7624'} stroke={row.patchIndex === patchIndex ? '#a44900' : '#285c76'} strokeWidth={thickness} onClick={() => { if (!drawing && !ignorePatchClick.current) selectPatch(row.patchIndex); }}><title>{`Patch ${row.patchIndex} at ${row.x}, ${row.y}`}</title></rect> : <circle key={row.patchIndex} cx={row.x} cy={row.y} r={thickness * 1.5} fill="#285c76"><title>{`Patch origin ${row.patchIndex}; footprint unknown`}</title></circle>) : null}
-        {selectedRegion ? <rect {...selectedRegion} fill="none" stroke="#a44900" strokeWidth={thickness * 3} pointerEvents="none" /> : null}
-      </svg></div> : null}
+      <QualitySlideCanvas key={sourceScope} project={project} datasetId={datasetId} slideId={slideId} quality={quality} overviewURL={thumbnail.isError ? undefined : url} patchIndex={patchIndex} selectedRegion={selectedRegion} onPatch={selectPatch} onSourceError={reportSourceError} onReload={reloadSlide} onRegion={(region) => { setDrawnRegion({ source: sourceScope, region }); onRegion?.(region); }} />
       <p className="muted">{quality.width.toLocaleString()} × {quality.height.toLocaleString()} level-0 pixels · {quality.patchCount == null ? quality.featureKind === 'slide' ? 'One slide embedding; patch coverage not applicable' : 'No patch coverage available' : `${quality.patchCount.toLocaleString()} extracted patches`}{quality.coverageSampled ? ` · Overlay shows ${quality.patches.length.toLocaleString()} evenly spaced patches; coverage bounds use every patch` : ''}. {quality.artifactRemoval === true ? 'Recorded extraction enabled GrandQC artifact removal.' : quality.artifactRemoval === false ? 'Recorded extraction did not enable artifact removal.' : 'Artifact-removal evidence unavailable.'}</p>
-      {quality.patchCount && quality.patchWidth ? <form className="inline-actions" onSubmit={(event) => { event.preventDefault(); const value = Number(patchInput); if (/^\d+$/.test(patchInput) && Number.isSafeInteger(value) && value < quality.patchCount!) selectPatch(value); }}><label className="label">Inspect exact patch index<input className="field" type="number" min={0} max={quality.patchCount - 1} step={1} value={patchInput} onChange={(event) => setPatchInput(event.target.value)} placeholder={`0–${quality.patchCount - 1}`} /></label><button className="btn btn-secondary" disabled={!/^\d+$/.test(patchInput) || Number(patchInput) >= quality.patchCount}>Open patch</button></form> : null}
+      {quality.patchCount && quality.patchWidth ? <form className="inline-actions" onSubmit={(event) => { event.preventDefault(); const value = Number(patchInput); if (/^\d+$/.test(patchInput) && Number.isSafeInteger(value) && value < quality.patchCount!) selectPatch(value); }}><label className="label">Inspect exact patch index<input className="field" type="number" min={0} max={quality.patchCount - 1} step={1} value={patchInput} onChange={(event) => setPatchEntry({ source: sourceScope, value: event.target.value })} placeholder={`0–${quality.patchCount - 1}`} /></label><button className="btn btn-secondary" disabled={!/^\d+$/.test(patchInput) || Number(patchInput) >= quality.patchCount}>Open patch</button></form> : null}
       {quality.coordinateBounds ? <p className="muted">Patch coverage bounds: ({quality.coordinateBounds.x}, {quality.coordinateBounds.y}), {Math.round(quality.coordinateBounds.width)} × {Math.round(quality.coordinateBounds.height)} pixels.</p> : null}
       {quality.warnings.map((warning) => <p className="muted" key={warning}>{warning}</p>)}
     </> : null}
-    {patchIndex != null ? <div className="morphology-patch"><h4>Original patch {patchIndex}</h4><ErrorNotice error={patch.error} />{patch.isPending ? <p role="status">Reading patch crop…</p> : null}{patchUrl && !patch.isError ? <img src={patchUrl} alt={`Exact original-color patch ${patchIndex} in ${slideId}`} /> : null}</div> : null}
+    {!sourceError && patchIndex != null ? <div className="morphology-patch"><h4>Original patch {patchIndex}</h4><ErrorNotice error={patch.error} />{patch.isPending ? <p role="status">Reading patch crop…</p> : null}{patchUrl && !patch.isError && evidenceMatches ? <img src={patchUrl} alt={`Exact original-color patch ${patchIndex} in ${slideId}`} /> : null}</div> : null}
     {selectedRegion ? <p>Selected region: ({selectedRegion.x}, {selectedRegion.y}), {Math.round(selectedRegion.width)} × {Math.round(selectedRegion.height)} level-0 pixels.</p> : null}
-    {showReview ? <SlideReviewEditor key={`${datasetId}:${slideId}`} project={project} datasetId={datasetId} slideId={slideId} selectedRegion={selectedRegion} /> : selectedRegion && onRegion ? <button className="btn btn-secondary" onClick={() => onRegion(selectedRegion)}>Use selected region for review</button> : null}
+    {showReview && !sourceError ? <SlideReviewEditor key={`${datasetId}:${slideId}`} project={project} datasetId={datasetId} slideId={slideId} selectedRegion={selectedRegion} /> : selectedRegion && onRegion ? <button className="btn btn-secondary" onClick={() => onRegion(selectedRegion)}>Use selected region for review</button> : null}
   </section>;
 }
 

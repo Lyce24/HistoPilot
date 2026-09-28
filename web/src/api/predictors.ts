@@ -5,6 +5,7 @@ import type { Finding, ProtocolSpec } from './scientific';
 import type { MILExperimentSpec } from './mil';
 import type { EvaluationInference, EvaluationPreview } from './evaluation';
 import type { PatientComparison } from './statistics';
+import type { InferenceResultSummary } from './inference';
 
 export interface PredictorChoice {
   experimentId: string; experimentName: string; batchId: string; batchName: string;
@@ -50,7 +51,7 @@ export interface ComputeExecution {
   progressWarning?: string | null;
   status: 'not_started' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   cancellationRequested?: boolean; error?: string | null; sessionName?: string; logPath?: string; updatedAt?: string;
-  result?: { metrics?: EvaluationMetrics; [key: string]: unknown } | null;
+  result?: { metrics?: EvaluationMetrics; purpose?: 'inference'; summary?: InferenceResultSummary; [key: string]: unknown } | null;
   progress?: { epoch?: number; maxEpochs?: number; trainingLoss?: number | null; completedModels?: number; totalModels?: number; slideCount?: number; completedPairs?: number; totalPairs?: number; currentSlide?: string; completedSlides?: number; totalSlides?: number } | null;
 }
 export const computeActive = (job?: ComputeExecution) => Boolean(job && ['queued', 'running'].includes(job.status));
@@ -69,7 +70,7 @@ export interface RefitBuild {
 export interface EvaluationSelection { predictorId: string; cohortId: string; name: string; featureBundleId?: string; inference?: EvaluationInference; patientIdentifiers?: 'shared' | 'independent' }
 export interface ModelEvaluation {
   id: string; createdAt: string; contentHash: string; lifecycleState: LifecycleState;
-  manifest: EvaluationSelection & { kind: 'model-evaluation'; experimentId: string; status: 'planned'; coverage?: EvaluationPreview['coverage']; overlap?: EvaluationPreview['overlap']; [key: string]: unknown };
+  manifest: EvaluationSelection & { kind: 'model-evaluation'; experimentId: string; status: 'planned'; purpose?: 'inference' | 'review'; coverage?: EvaluationPreview['coverage']; overlap?: EvaluationPreview['overlap']; [key: string]: unknown };
   execution?: ComputeExecution;
 }
 export interface ModelEvaluationPreview {
@@ -95,5 +96,5 @@ export const modelEvaluations = {
   save: (project: string, selection: EvaluationSelection, previewHash: string, operationId: string) => request<ModelEvaluation>(`${base(project)}/evaluation-runs`, post({ ...selection, previewHash, operationId })),
   execution: (project: string, id: string) => request<ComputeExecution>(`${base(project)}/evaluation-runs/${encodeURIComponent(id)}/execution`),
   job: (project: string, id: string, action: 'launch' | 'resume' | 'cancel', operationId: string) => request<ComputeExecution>(`${base(project)}/evaluation-runs/${encodeURIComponent(id)}/${action}`, post({ operationId })),
-  download: (project: string, id: string, filename: 'slide-predictions.csv' | 'patient-predictions.csv' | 'predictions.json' | 'metrics.json') => downloadArtifact(`${base(project)}/evaluation-runs/${encodeURIComponent(id)}/artifacts/${filename}`, filename),
+  download: (project: string, id: string, filename: 'slide-predictions.csv' | 'patient-predictions.csv' | 'predictions.json' | 'metrics.json' | 'summary.json') => downloadArtifact(`${base(project)}/evaluation-runs/${encodeURIComponent(id)}/artifacts/${filename}`, filename),
 };

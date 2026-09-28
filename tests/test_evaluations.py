@@ -790,3 +790,43 @@ def test_combined_cohort_target_checks_each_imports_own_dictionary_and_identity_
     result = preview(service, spec)
     assert not result["canFreeze"]
     assert "IDENTIFIER_TARGET" in codes(result)
+
+
+def test_review_mode_is_explicit_unlabeled_and_legacy_shape_is_preserved():
+    base = {"datasetId": "dataset-" + "a" * 64}
+    assert "purpose" not in EvaluationSpec(**base).model_dump()
+    assert EvaluationSpec(**base, purpose="review").model_dump()["purpose"] == "review"
+    for extra in ({"target": TARGET}, {"patientIdentifiers": "independent"}):
+        with pytest.raises(ValidationError, match="Review predictions require"):
+            EvaluationSpec(**base, purpose="review", **extra)
+
+
+@pytest.mark.parametrize("development_unit", ["slide", "patient"])
+def test_review_allows_patient_overlap_only_for_unlabeled_slide_target(evaluation, development_unit):
+    service, spec, _ = evaluation
+    old = service.store.get_configuration(spec["protocolId"])["manifest"]
+    manifest = copy.deepcopy(old)
+    manifest["spec"]["target"]["unit"] = development_unit
+    protocol = service.store.publish_configuration(manifest=manifest, operation_id="review-protocol")
+    data, _ = dataset(service.store, "review-patient", [
+        {"slideId": "s2", "patientId": "p0", "attributes": {"label": "0", "cohort": "test"}},
+    ])
+    spec.update(protocolId=protocol["id"], datasetId=data["id"], target=None)
+    strict = preview(service, spec)
+    assert "DEVELOPMENT_PATIENT_OVERLAP" in codes(strict)
+    result = preview(service, {**spec, "purpose": "review"})
+    assert result["overlap"]["patientIds"] == ["p0"]
+    assert result["summary"]["labeledSlides"] == 0
+    assert all(row["label"] is None for row in result["memberships"])
+    # A patient-level predictor would score a development patient in-sample.
+    assert ("DEVELOPMENT_PATIENT_OVERLAP" in codes(result)) == (development_unit == "patient")
+    assert result["canFreeze"] == (development_unit == "slide"), result["findings"]
+    if development_unit == "patient":
+        assert "REVIEW_REQUIRES_SLIDE_TARGET" in codes(result)
+
+
+def test_review_mode_never_allows_development_slides(evaluation):
+    service, spec, _ = evaluation
+    result = preview(service, {**spec, "purpose": "review", "target": None, "eligibility": []})
+    assert not result["canFreeze"]
+    assert "DEVELOPMENT_SLIDE_OVERLAP" in codes(result)

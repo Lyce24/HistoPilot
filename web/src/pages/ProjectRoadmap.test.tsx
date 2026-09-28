@@ -14,9 +14,9 @@ function roadmap(overrides: Partial<Roadmap> = {}): Roadmap {
 }
 
 describe('compact project workflow launcher', () => {
-  it('groups six primary modules into three phases with two separate optional analyses', () => {
+  it('groups six primary modules and optional inference into three phases with two separate optional analyses', () => {
     const html = renderToStaticMarkup(<RoadmapLauncher modules={buildRoadmap(workspace)} />);
-    expect(html.match(/data-module="/g)).toHaveLength(8);
+    expect(html.match(/data-module="/g)).toHaveLength(9);
     const section = (phase: string) => html.match(new RegExp(`data-phase="${phase}"[^>]*>(.*?)</section>`))?.[1] ?? '';
     expect(section('prepare')).toContain('data-module="dataset"');
     expect(section('prepare')).toContain('data-module="cohort"');
@@ -24,11 +24,12 @@ describe('compact project workflow launcher', () => {
     expect(section('develop')).toContain('data-module="experiments"');
     expect(section('evaluate')).toContain('data-module="test-data"');
     expect(section('evaluate')).toContain('data-module="evaluation"');
+    expect(section('evaluate')).toContain('data-module="inference"');
     expect(html).toContain('Optional analyses');
     expect(html).toContain('data-module="clinical-utility"');
     expect(html).toContain('data-module="interpretation"');
     // A module icon anchors each row; arrows, legends and counts stay off the page.
-    expect(html.match(/class="roadmap-item-icon"/g)).toHaveLength(8);
+    expect(html.match(/class="roadmap-item-icon"/g)).toHaveLength(9);
     expect(html).not.toContain('roadmap-legend');
   });
 
@@ -36,7 +37,8 @@ describe('compact project workflow launcher', () => {
     const html = renderToStaticMarkup(<RoadmapLauncher modules={buildRoadmap(workspace)} />);
     expect(html).toContain('data-module="cohort" href="#cohort"');
     expect(html).toContain('Needs Datasets');
-    expect(html).toContain('Needs Datasets and Slide features');
+    expect(html).not.toContain('Needs Datasets and Slide features');
+    expect(html).toContain('Needs Targets &amp; splits and Slide features');
     // Slide features depend on slide files, so they open with no dataset in the project.
     for (const id of ['dataset', 'features', 'experiments', 'test-data', 'evaluation', 'clinical-utility', 'interpretation']) expect(html).toContain(`href="#${id}"`);
   });
@@ -47,11 +49,11 @@ describe('compact project workflow launcher', () => {
       ? { ...module, unlocked: true, blockers: [], status: 'draft' as const, evidence: '1 saved development plan' }
       : { ...module, unlocked: true, blockers: [], status: 'complete' as const, evidence: '1 frozen dataset' });
     const html = renderToStaticMarkup(<RoadmapLauncher modules={modules} />);
-    expect(html.match(/class="roadmap-item-action">Open</g)).toHaveLength(8);
+    expect(html.match(/class="roadmap-item-action">Open</g)).toHaveLength(9);
     // Each row states what the project actually holds, in one line.
     expect(html).toContain('1 frozen dataset');
     expect(html).toContain('1 saved development plan');
-    expect(html.match(/roadmap-item-status status-complete/g)).toHaveLength(7);
+    expect(html.match(/roadmap-item-status status-complete/g)).toHaveLength(8);
     expect(html.match(/roadmap-item-status status-draft/g)).toHaveLength(1);
     expect(html).not.toContain('Ready');
     expect(html).not.toContain('Review experiment outputs');
@@ -131,7 +133,7 @@ describe('compact project workflow launcher', () => {
     const modules = buildRoadmap(workspace).map((module) => ({ ...module, status: 'complete' as const, unlocked: true }));
     const html = renderToStaticMarkup(<ProjectRoadmap workspace={{ ...workspace, mode: 'synthetic-demo' }} roadmap={roadmap({ modules })} />);
     expect(html).toContain('Synthetic demo. These are illustrative records.');
-    expect(html.match(/>Example</g)).toHaveLength(8);
+    expect(html.match(/>Example</g)).toHaveLength(9);
     expect(html).not.toContain('frozen dataset');
   });
 
@@ -140,5 +142,6 @@ describe('compact project workflow launcher', () => {
     expect(html).toContain('Experiment outputs available');
     expect(html).not.toContain('frozen');
     expect(completedModuleLabel('evaluation')).toBe('Evaluation results available');
+    expect(completedModuleLabel('inference')).toBe('Predictions available');
   });
 });

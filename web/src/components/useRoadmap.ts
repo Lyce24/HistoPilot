@@ -7,6 +7,7 @@ import { evaluation } from '../api/evaluation';
 import { computePollInterval, modelEvaluations, predictors } from '../api/predictors';
 import { clinicalAnalyses } from '../api/clinicalUtility';
 import { interpretations } from '../api/interpretation';
+import { extractionActive, trident } from '../api/trident';
 import type { Workspace } from '../api/types';
 import { buildRoadmap, type RoadmapModule, type RoadmapModuleId } from '../lib/roadmap';
 
@@ -19,6 +20,7 @@ export function useRoadmap(workspace: Workspace) {
   const protocols = useQuery({ queryKey: ['scientific', project, 'configurations', 'protocol'], queryFn: () => scientific.configurations(project, 'protocol'), enabled });
   const features = useQuery({ queryKey: ['scientific', project, 'configurations', 'feature'], queryFn: () => scientific.configurations(project, 'feature'), enabled });
   const featureBundles = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project), enabled });
+  const extractions = useQuery({ queryKey: ['extractions', project, 'jobs'], queryFn: () => trident.jobs(project), enabled, refetchIntervalInBackground: false, refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 3000 : false });
   const batches = useQuery({ queryKey: ['development-batches', project], queryFn: () => development.list(project), enabled, refetchIntervalInBackground: false, refetchInterval: (query) => developmentPollInterval(query.state.data) });
   const evaluationCohorts = useQuery({ queryKey: ['evaluation-cohorts', project], queryFn: () => evaluation.list(project), enabled });
   // Predictors are published by finished training and by the predictor coordinator,
@@ -33,6 +35,7 @@ export function useRoadmap(workspace: Workspace) {
     protocols: protocols.data?.configurations ?? [],
     features: features.data?.configurations ?? [],
     bundles: featureBundles.data?.items ?? [],
+    extractions: extractions.data?.jobs ?? [],
     batches: batches.data?.items ?? [],
     executions: batches.data?.executions ?? [],
     evaluationCohorts: evaluationCohorts.data?.items ?? [],
@@ -40,9 +43,9 @@ export function useRoadmap(workspace: Workspace) {
     modelEvaluations: evaluationRecords.data?.items ?? [],
     clinicalAnalyses: clinicalRecords.data?.items ?? [],
     interpretations: interpretationRecords.data?.items ?? [],
-  }), [workspace, drafts.data, datasets.data, protocols.data, features.data, featureBundles.data, batches.data, evaluationCohorts.data, frozenPredictors.data, evaluationRecords.data, clinicalRecords.data, interpretationRecords.data]);
+  }), [workspace, drafts.data, datasets.data, protocols.data, features.data, featureBundles.data, extractions.data, batches.data, evaluationCohorts.data, frozenPredictors.data, evaluationRecords.data, clinicalRecords.data, interpretationRecords.data]);
   const byId = useMemo(() => Object.fromEntries(modules.map((module) => [module.id, module])) as Record<RoadmapModuleId, RoadmapModule>, [modules]);
-  const queries = [drafts, datasets, protocols, features, featureBundles, batches, evaluationCohorts, frozenPredictors, evaluationRecords, clinicalRecords, interpretationRecords];
+  const queries = [drafts, datasets, protocols, features, featureBundles, extractions, batches, evaluationCohorts, frozenPredictors, evaluationRecords, clinicalRecords, interpretationRecords];
   const check = (required: typeof queries) => ({
     isLoading: enabled && required.some((query) => query.isPending),
     error: enabled ? required.find((query) => query.error)?.error ?? null : null,
@@ -53,9 +56,9 @@ export function useRoadmap(workspace: Workspace) {
   const inputQueries = [datasets, protocols, featureBundles];
   const checksById = Object.fromEntries(modules.map(({ id, retainedWork }) => {
     const result = check(
-    id === 'dataset' || (enabled && ['cohort', 'features', 'experiments', 'test-data', 'evaluation', 'clinical-utility', 'interpretation'].includes(id))
+    id === 'dataset' || (enabled && ['cohort', 'features', 'experiments', 'test-data', 'evaluation', 'inference', 'clinical-utility', 'interpretation'].includes(id))
       ? []
-      : id === 'evaluation'
+      : id === 'evaluation' || id === 'inference'
         ? [batches, evaluationCohorts]
       : id === 'clinical-utility'
         ? [evaluationRecords]

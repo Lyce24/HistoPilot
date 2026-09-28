@@ -455,3 +455,36 @@ def test_evaluation_operation_cannot_be_reused_for_other_predictor_or_name(regis
     with pytest.raises(StorageError) as error:
         evaluations.save(request.model_copy(update={"name": "Other"}))
     assert error.value.code == "OPERATION_CONFLICT"
+
+
+@pytest.mark.parametrize("overlap_kind", ["patient", "slide", "source"])
+def test_review_prediction_plan_keeps_slide_exclusion_and_discloses_patient_overlap(registry, monkeypatch, overlap_kind):
+    service, cohort = registry
+    selection, *_ = candidate(service)
+    predictor, _ = freeze(service, selection)
+    evaluations = EvaluationRunService(service.store, service.filesystem)
+    predictor = copy.deepcopy(predictor)
+    altered = copy.deepcopy(evaluations.cohorts.get(cohort["id"]))
+    predictor["manifest"]["target"]["unit"] = "slide"
+    test = altered["manifest"]
+    test["target"]["unit"] = "slide"
+    test["spec"].update(purpose="review", target=None, patientIdentifiers="shared")
+    test["overlap"]["patientIds"] = ["development-patient"]
+    if overlap_kind == "slide":
+        test["overlap"]["slideIds"] = ["development-slide"]
+    elif overlap_kind == "source":
+        test["overlap"]["sourceSlideIds"] = ["source-alias"]
+    for row in test["memberships"]:
+        row["label"] = None
+    monkeypatch.setattr(evaluations.predictors, "get", lambda _: predictor)
+    monkeypatch.setattr(evaluations.cohorts, "get", lambda _: altered)
+    selected = EvaluationRunSelection(predictorId=predictor["id"], cohortId=cohort["id"], name="Review")
+    result = evaluations.preview(selected)
+    assert result["canSave"] == (overlap_kind == "patient"), result
+    if overlap_kind == "patient":
+        # Review cohorts are the earlier name of inference cohorts; new runs execute as inference.
+        assert result["manifest"]["purpose"] == "inference"
+        assert "analysis" not in result["manifest"]
+        assert result["manifest"]["overlap"]["patientIds"] == ["development-patient"]
+    else:
+        assert result["findings"][0]["code"] == "EVALUATION_DEVELOPMENT_OVERLAP"

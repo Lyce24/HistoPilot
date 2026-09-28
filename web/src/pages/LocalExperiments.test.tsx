@@ -69,6 +69,34 @@ describe('MIL experiment loading ownership', () => {
     } finally { client.clear(); }
   });
 
+  it('selects experiment features independently for dataset-only targets and splits', () => {
+    const workspace = { project: { id: 'project', name: 'BLCA', config: {} } } as Workspace;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const protocol = { id: 'protocol', manifest: { datasetId: 'development-dataset', spec: {
+      target: { field: 'label', task: 'binary_classification', unit: 'patient' },
+      split: { mode: 'kfold', seeds: [42] },
+    } } } as Configuration;
+    const feature = { id: 'bundle', current: true, findings: [], manifest: {
+      datasetId: 'other-dataset', spec: { featureSetId: 'source', packArtifactIds: [] },
+      summary: { slideCount: 12, patchCount: 120, dimensions: 4, dtype: 'float32', packCount: 0 }, packs: [],
+    } } as unknown as FeatureBundle;
+    client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: [protocol] });
+    client.setQueryData(['feature-bundles', 'project'], { items: [feature] });
+    client.setQueryData(['development-batches', 'project'], { items: [], executions: [], executionImplemented: true });
+    const record: ModelExperiment = { id: 'dataset-only', key: 'draft:dataset-only', name: 'Dataset-only inputs', notes: '', tags: [], revision: 1, state: 'active', status: 'created', legacy: false, createdAt: '', updatedAt: '', inputs: null, batches: [], drafts: [], predictorId: null };
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentDetail workspace={workspace} record={record} onBack={() => {}} onOpen={() => {}} /></QueryClientProvider>);
+      expect(html).toMatch(/<option value="bundle" selected=""/);
+      expect(html).not.toMatch(/<option value="bundle"[^>]*disabled/);
+      expect(html).toContain('This experiment selects its feature bundle');
+      expect(html).toContain('complete development-slide coverage');
+      expect(html).toContain('saved targets and split memberships stay fixed');
+      expect(html).not.toContain('feature bundle is selected automatically');
+      expect(html).not.toContain('Feature bundle pinned by older protocol');
+      expect(html).toMatch(/id="development-tab-batches"[^>]*disabled=""/);
+    } finally { client.clear(); }
+  });
+
   it('locks future stages and protects deep links while keeping saved inputs readable', () => {
     const workspace = { project: { id: 'project', name: 'BLCA', config: {} } } as Workspace;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
@@ -128,6 +156,14 @@ describe('MIL experiment loading ownership', () => {
     expect(experimentRoute('#source-cv', 'results')).toEqual({ id: '', tab: 'results' });
   });
 
+  it('retains an explicit dataset-only protocol while its experiment features are still missing', () => {
+    const protocol = { id: 'protocol', manifest: { datasetId: 'data', spec: {} } } as Configuration;
+    expect(suggestedExperimentInputs([protocol], [], { datasetId: 'data', protocolId: 'protocol' })).toMatchObject({ protocolId: 'protocol', featureBundleId: '' });
+    expect(suggestedExperimentInputs([protocol], [], { protocolId: 'missing' }).protocolId).toBe('');
+    expect(suggestedExperimentInputs([protocol], [], { datasetId: 'other', protocolId: 'protocol' }).protocolId).toBe('');
+    expect(suggestedExperimentInputs([protocol], []).protocolId).toBe('');
+  });
+
   it('preselects only one verified compatible pair and never guesses between versions', () => {
     const protocol = { id: 'protocol', manifest: { datasetId: 'data', spec: {} } } as Configuration;
     const feature = { id: 'features', current: true, findings: [], manifest: { datasetId: 'data', spec: { featureSetId: 'source', packArtifactIds: [] } } } as unknown as FeatureBundle;
@@ -135,13 +171,14 @@ describe('MIL experiment loading ownership', () => {
     expect(suggestedExperimentInputs([protocol], [feature, { ...feature, id: 'other' }]).protocolId).toBe('');
     expect(suggestedExperimentInputs([protocol], [{ ...feature, current: false }]).featureBundleId).toBe('');
     expect(suggestedExperimentInputs([protocol], [{ ...feature, findings: [{ severity: 'error', code: 'STALE', message: 'Stale features' }] }]).featureBundleId).toBe('');
+    expect(suggestedExperimentInputs([protocol], [{ ...feature, manifest: { ...feature.manifest, datasetId: 'another-dataset' } }])).toMatchObject({ protocolId: 'protocol', featureBundleId: 'features' });
     const named = { ...protocol, manifest: { ...protocol.manifest, spec: { featureBundleId: 'features' } } } as Configuration;
     expect(suggestedExperimentInputs([named], [{ ...feature, manifest: { ...feature.manifest, datasetId: 'another-dataset' } }, { ...feature, id: 'other' }])).toMatchObject({ protocolId: 'protocol', featureBundleId: 'features' });
     const pinned = { ...protocol, manifest: { ...protocol.manifest, spec: { featurePackId: 'required-pack' } } } as Configuration;
     expect(suggestedExperimentInputs([pinned], [feature]).protocolId).toBe('');
     const context = { datasetId: 'data', protocolId: 'protocol', bundleId: 'features' };
     expect(suggestedExperimentInputs([protocol, { ...protocol, id: 'other-protocol' }], [feature, { ...feature, id: 'other-features' }], context)).toMatchObject({ protocolId: 'protocol', featureBundleId: 'features' });
-    expect(suggestedExperimentInputs([protocol], [feature], { ...context, bundleId: 'missing' }).protocolId).toBe('');
+    expect(suggestedExperimentInputs([protocol], [feature], { ...context, bundleId: 'missing' })).toMatchObject({ protocolId: 'protocol', featureBundleId: '' });
     expect(suggestedExperimentInputs([protocol], [feature], { ...context, datasetId: 'different-dataset' }).protocolId).toBe('');
     expect(suggestedExperimentInputs([protocol], [{ ...feature, current: false }], context).featureBundleId).toBe('');
     expect(suggestedExperimentInputs([protocol, { ...protocol, id: 'other-protocol' }], [feature], { bundleId: 'features' })).toMatchObject({ protocolId: '', featureBundleId: 'features' });

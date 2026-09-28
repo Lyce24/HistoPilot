@@ -24,6 +24,8 @@ describe('focused attention workspace', () => {
     expect(html).toContain('Expand view');
     expect(html).toContain('Hide patches');
     expect(html).toContain('aria-label="Slide zoom controls"');
+    expect(html).toContain('Scroll or pinch to zoom, drag to pan, plus and minus to zoom, arrows to pan, Home to fit patch coverage.');
+    expect(html).toContain('Scroll or pinch to zoom · Drag to pan');
     expect(html).toContain('class="ranked-patch-inspector is-compact"');
     expect(html).toContain('>Center selected</button>');
     expect(html).not.toContain('aspect-ratio:');

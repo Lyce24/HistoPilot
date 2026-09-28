@@ -1,11 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { defaultRecipe, defaultResources } from '../api/development';
 import type { DevelopmentResults, FrozenBatch, TrainingExecution, TrainingMetricDetails, TrainingRuntime } from '../api/development';
-import { ConfigurationTable, RecipeFields, batchVersionTag, developmentTabs } from './DevelopmentBatches';
+import DevelopmentBatches, { ConfigurationTable, RecipeFields, batchVersionTag, developmentTabs } from './DevelopmentBatches';
 import { executionActions, RunTable, ResultsTable, TrainingControls, ExecutionEvidence } from './DevelopmentExecution';
 import JobTray from './JobTray';
+import type { ExperimentBatch } from '../api/experiments';
 
 const inputs = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native' as const, packArtifactId: null };
 const batch = {
@@ -26,6 +27,19 @@ function controls(value?: TrainingExecution | null, available = true) {
 }
 
 describe('development execution controls', () => {
+  it('selects the exact batch from a compute job link when an experiment has several batches', () => {
+    vi.stubGlobal('window', { location: { hash: '#experiments?experiment=study&tab=runs&batch=batch%2Fsecond' } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const first = { ...batch, key: 'configuration:batch', state: 'active', status: 'running', execution: execution('running') } as ExperimentBatch;
+    const second = { ...first, id: 'batch/second', key: 'configuration:batch/second', manifest: { ...batch.manifest, spec: { ...batch.manifest.spec, batchName: 'Second batch' } }, execution: execution('running', { batchId: 'batch/second' }) };
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="project" inputs={inputs} experimentName="Study" experimentId="study" experimentRevision={1} ownedBatches={[first, second]} ownedDrafts={[]} executionImplemented experimentStage="running" tab="runs" onOpenSetup={() => {}} /></QueryClientProvider>);
+      expect(html).toContain('<option value="batch/second" selected="">Second batch');
+      expect(html).not.toContain('<option value="batch" selected="">');
+      expect(html).toContain('Cancel batch');
+    } finally { client.clear(); vi.unstubAllGlobals(); }
+  });
+
   it('namespaces identical batch names by stable experiment identity without changing readable names', () => {
     expect(batchVersionTag('Baseline', 'draft-one')).not.toBe(batchVersionTag('Baseline', 'draft-two'));
     expect(batchVersionTag('Baseline', 'draft-one')).toBe('Baseline · draft-one');

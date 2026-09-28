@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { StageBackButton } from './StageActions';
 import type { FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -24,6 +24,7 @@ import SlideListField from './SlideListField';
 import { slideListReady, type SlideListSource } from '../api/slideLists';
 import ExtractionProgress, { extractionModelLabel, extractionStateLabel, extractionTaskLabel } from './ExtractionProgress';
 import { StagePage, StageSteps } from './StageWorkflow';
+import { readHashParameters } from '../lib/hashRoute';
 import './TridentExtraction.css';
 
 const stages = [
@@ -62,11 +63,13 @@ export default function TridentExtraction({
   workspace: w,
   datasets,
   initialDatasetId,
+  requestedJob,
   onAttach,
 }: {
   workspace: Workspace;
   datasets: DatasetVersion[];
   initialDatasetId?: string;
+  requestedJob?: { id: string };
   onAttach: (input: { datasetId: string | null; path: string; encoderId?: string; featureKind?: 'patch' | 'slide'; sourceExtractionJobId?: string }) => void;
 }) {
   const project = w.project.id;
@@ -89,11 +92,14 @@ export default function TridentExtraction({
   const [outputPath, setOutputPath] = useState(`${w.project.storagePath.replace(/\/$/, '')}/trident`);
   const [overrides, setOverrides] = useState<Record<string, unknown>>({});
   const [preview, setPreview] = useState<ExtractionPreview | null>(null);
-  const [selectedJob, setSelectedJob] = useState('');
+  const [selectedJob, setSelectedJob] = useState(requestedJob?.id ?? '');
   const [busy, setBusy] = useState<'preview' | 'start' | 'cancel' | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const operationId = useRef<string | null>(null);
-  const [selectedPage, setPage] = useState<'settings' | 'review' | 'activity' | null>(null);
+  const [selectedPage, setPage] = useState<'settings' | 'review' | 'activity' | null>(requestedJob ? 'activity' : null);
+  useEffect(() => {
+    if (requestedJob) { setSelectedJob(requestedJob.id); setPage('activity'); }
+  }, [requestedJob]);
   const activeJobs = jobs.data?.jobs.filter(extractionActive) ?? [];
   const page = selectedPage ?? (activeJobs.length ? 'activity' : 'settings');
   const finishedJobs = jobs.data?.jobs.filter((item) => !extractionActive(item)) ?? [];
@@ -116,6 +122,13 @@ export default function TridentExtraction({
     const dataset = datasetById.get(identity);
     return dataset ? datasetVersionLabel(dataset) : versionLabelText({ id: identity }, 'Dataset');
   };
+
+  function selectJob(id: string) {
+    setSelectedJob(id);
+    const parameters = readHashParameters();
+    parameters.set('extraction', id);
+    window.location.hash = `#features?${parameters.toString()}`;
+  }
 
   function invalidatePreview() {
     setPreview(null); setPage('settings');
@@ -152,7 +165,7 @@ export default function TridentExtraction({
   }
   async function updateJob(next: ExtractionJob) {
     client.setQueryData([...queryKey, 'job', next.id], next);
-    setSelectedJob(next.id);
+    selectJob(next.id);
     await client.invalidateQueries({ queryKey: [...queryKey, 'jobs'] });
   }
 
@@ -351,21 +364,21 @@ export default function TridentExtraction({
         subtitle="Follow active runs. When features are ready, inspect and save them before choosing a pack."
         actions={activeJobs.length ? <Badge tone="purple">{activeJobs.length} active</Badge> : undefined}
       >
-        {jobs.isPending ? <p className="muted" role="status">Loading extraction history…</p> : jobs.data?.jobs.length ? (
+        {jobs.isPending && !selectedJob ? <p className="muted" role="status">Loading extraction history…</p> : jobs.data?.jobs.length || selectedJob ? (
           <div className="trident-jobs">
             <nav className="trident-job-navigation" aria-label="Extraction jobs">
               <p className="trident-job-group-label">{activeJobs.length ? 'Active & latest runs' : 'Latest run'}</p>
               <div className="trident-job-list">
                 {recentJobs.map((item) => (
-                  <ExtractionJobButton key={item.id} job={item} selected={selectedId === item.id} datasetLabel={datasetLabel(item.spec.datasetId)} onSelect={() => setSelectedJob(item.id)} />
+                  <ExtractionJobButton key={item.id} job={item} selected={selectedId === item.id} datasetLabel={datasetLabel(item.spec.datasetId)} onSelect={() => selectJob(item.id)} />
                 ))}
               </div>
               {historyJobs.length ? (
-                <details className="trident-job-history">
+                <details className="trident-job-history" open={historyJobs.some((item) => item.id === selectedId) || undefined}>
                   <summary>Earlier runs <span>{historyJobs.length}</span></summary>
                   <div className="trident-job-list">
                     {historyJobs.map((item) => (
-                      <ExtractionJobButton key={item.id} job={item} selected={selectedId === item.id} datasetLabel={datasetLabel(item.spec.datasetId)} onSelect={() => setSelectedJob(item.id)} />
+                      <ExtractionJobButton key={item.id} job={item} selected={selectedId === item.id} datasetLabel={datasetLabel(item.spec.datasetId)} onSelect={() => selectJob(item.id)} />
                     ))}
                   </div>
                 </details>
@@ -388,7 +401,7 @@ export default function TridentExtraction({
                 }}
                 onAttach={onAttach}
               />
-            ) : <p className="muted" role="status">Loading job details…</p>}
+            ) : jobDetail.isError ? <p className="muted">This extraction could not be opened. Select another run or try again.</p> : <p className="muted" role="status">Loading job details…</p>}
           </div>
         ) : (
           <EmptyState title="No extraction jobs yet" description="Choose extraction settings, then preview your TRIDENT pipeline." />

@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from histopilot.adapters.trident.performance import execution_device_count, resolve_max_workers
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import _capacity, _leases, available_device
 from histopilot.workers.training_process import (
@@ -21,9 +22,10 @@ def preparation_resources(kind, options=None):
     options = options or {}
     gpus = options.get("gpus") or [options.get("gpu", 0)] if kind == "extraction" else []
     gpus = sorted(set(gpu for gpu in gpus if gpu >= 0))
-    workers = options.get("max_workers")
-    workers = 2 if workers is None and kind == "extraction" else (workers or 0)
-    devices = max(1, len(gpus))
+    workers = (
+        resolve_max_workers(options) if kind == "extraction" else (options.get("max_workers") or 0)
+    )
+    devices = execution_device_count(options) if kind == "extraction" else 1
     return {
         "maxConcurrentRuns": 1,
         "gpuIds": gpus,

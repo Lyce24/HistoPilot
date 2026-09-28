@@ -159,8 +159,13 @@ def test_accepted_attention_retry_never_reinspects_complete_feature_arrays(study
     service, _, executor = study
     document, _ = save(study)
     first = service.launch(document["id"], "launch")
-    monkeypatch.setattr(service, "_execution_plan", lambda *args, **kwargs: pytest.fail(
-        "Accepted attention retry must not rescan feature tensors"))
+    monkeypatch.setattr(
+        service,
+        "_execution_plan",
+        lambda *args, **kwargs: pytest.fail(
+            "Accepted attention retry must not rescan feature tensors"
+        ),
+    )
     assert service.launch(document["id"], "launch")["planHash"] == first["planHash"]
     assert len(executor.calls) == 1
 
@@ -169,18 +174,28 @@ def test_nnmil_attention_publication_preserves_window_method_and_feature_provena
     service, selection, _ = study
     source = service.predictors.get(selection.predictorId)
     predictor = service.store.publish_configuration(
-        manifest={**source["manifest"], "recipe": {
-            "model": "nnmil", "attentionDim": 2, "nnmilWindowStrideDivisor": 2,
-            "nnmilWindowAggregation": "mean_logits", "nnmilWindowSeed": 42,
-        }},
+        manifest={
+            **source["manifest"],
+            "recipe": {
+                "model": "nnmil",
+                "attentionDim": 2,
+                "nnmilWindowStrideDivisor": 2,
+                "nnmilWindowAggregation": "mean_logits",
+                "nnmilWindowSeed": 42,
+            },
+        },
         operation_id="nnmil-predictor",
     )
     selected = selection.model_copy(update={"predictorId": predictor["id"]})
     preview = service.preview(selected)
     assert preview["canSave"], preview
-    document = service.save(SaveInterpretation(
-        **selected.model_dump(), previewHash=preview["previewHash"], operationId="nnmil-attention"
-    ))
+    document = service.save(
+        SaveInterpretation(
+            **selected.model_dump(),
+            previewHash=preview["previewHash"],
+            operationId="nnmil-attention",
+        )
+    )
     assert document["manifest"]["predictorId"] == predictor["id"]
     assert document["manifest"]["slides"][0]["patchCount"] == 3
     assert "nnMIL maps average normalized attention" in preview["executionNote"]
@@ -402,8 +417,11 @@ def test_corrupt_and_oversized_rasters_fail_clearly(tmp_path, monkeypatch):
     image = tmp_path / "large.png"
     Image.new("RGB", (11, 10)).save(image)
     monkeypatch.setattr("histopilot.viewer.slide_images.MAX_RASTER_PIXELS", 100)
-    with pytest.raises(StorageError, match="pyramidal"):
-        inspect_slide(image)
+    from histopilot.viewer.slide_images import _open
+
+    # Exercise the worker-local raster limit with a small synthetic image.
+    with pytest.raises(StorageError, match="pyramidal"), _open(image):
+        pass
 
 
 def test_empty_explicit_resources_and_missing_geometry_infer_stable_preview(study):
@@ -503,9 +521,17 @@ def test_pyramid_render_uses_exact_fractional_field_of_view(tmp_path, monkeypatc
     monkeypatch.setattr(Image.Image, "resize", record_resize)
     path = tmp_path / "pyramid.svs"
     path.touch()
-    render_slide(path, max_size=128)
+    from histopilot.viewer.slide_images import _open, _render_open_slide
+
+    # Affine geometry is worker-local; native integration is verified separately.
+    with _open(path) as (slide, backend):
+        _render_open_slide(slide, backend, max_size=128, region=None)
     assert recorded["size"] == (157, 102)
     assert recorded["box"] == (0, 0, 156.25, 101.5625)
+    from histopilot.viewer.reader_cache import OPENSLIDE_READERS
+
+    assert not recorded.get("closed")
+    OPENSLIDE_READERS.close()
     assert recorded["closed"] is True
 
 

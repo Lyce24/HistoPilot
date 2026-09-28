@@ -10,11 +10,7 @@ from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.features import FeatureService
 from histopilot.application.imports import ImportService
 from histopilot.application.project_workspace import ProjectWorkspace
-from histopilot.application.protocols import (
-    ProtocolService,
-    pack_binding_snapshot,
-    protocol_bundle_findings,
-)
+from histopilot.application.protocols import ProtocolService
 from histopilot.schemas.extractions import ExtractionSpec, SubmitExtractionRequest
 from histopilot.schemas.feature_bundles import FeatureBundleSpec, FreezeFeatureBundleRequest
 from histopilot.schemas.feature_packs import (
@@ -263,133 +259,16 @@ def scientific_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -
         if protocol.get("kind") != "protocol":
             raise StorageError("Select a frozen target/split protocol.", "INVALID_PROTOCOL", 422)
         store.get_dataset(protocol["datasetId"])
-        feature_id = protocol["spec"].get("featureSetId")
-        findings = []
-        bundle_id = protocol["spec"].get("featureBundleId")
-        if bundle_id:
-            bundle = bundles(identity).get(bundle_id)
-            findings.extend(bundle["findings"])
-            findings.extend(protocol_bundle_findings(protocol, bundle))
-            feature_id = bundle["manifest"]["spec"]["featureSetId"]
-        if feature_id:
-            feature = store.get_configuration(feature_id)
-            if feature["manifest"].get("kind") != "feature":
-                raise StorageError(
-                    "The feature binding is not a feature inventory.",
-                    "INVALID_FEATURE_SET",
-                    422,
-                )
-            eligible = {row["slideId"] for row in protocol["memberships"]}
-            selected_files = [
-                row for row in feature["manifest"]["files"] if row["slideId"] in eligible
-            ]
-            if eligible - {row["slideId"] for row in selected_files}:
-                findings.append(
-                    {
-                        "severity": "error",
-                        "code": "MISSING_FEATURES",
-                        "message": "Some eligible slides have no assigned features.",
-                    }
-                )
-            findings.extend(
-                FeatureService(
-                    store, LocalFilesystem((store.folder, *filesystem.roots))
-                ).verify_binding(
-                    {**feature, "manifest": {**feature["manifest"], "files": selected_files}}
-                )
-            )
-        else:
-            findings.append(
-                {
-                    "severity": "error",
-                    "code": "FEATURES_UNASSIGNED",
-                    "message": "Attach features and select them in a new protocol revision.",
-                }
-            )
-        pack_id = protocol["spec"].get("featurePackId")
-        pack_status = None
-        if pack_id:
-            try:
-                if not feature_id:
-                    raise StorageError(
-                        "The selected pack has no feature binding.", "FEATURES_UNASSIGNED", 422
-                    )
-                pack_status = packing(identity).resolve_artifact(feature_id, pack_id)
-                if not pack_status["current"]:
-                    findings.append(
-                        {
-                            "severity": "error",
-                            "code": "FEATURE_PACK_UNAVAILABLE",
-                            "message": "The selected pack changed or needs verification in PFM & features.",
-                        }
-                    )
-                    findings.extend(
-                        {**item, "severity": "error"} for item in pack_status["findings"]
-                    )
-                if pack_binding_snapshot(pack_status["artifact"]) != protocol.get("featurePack"):
-                    findings.append(
-                        {
-                            "severity": "error",
-                            "code": "FEATURE_PACK_BINDING_CHANGED",
-                            "message": "The pack no longer matches the representation frozen in this protocol.",
-                        }
-                    )
-                    pack_status = None
-            except StorageError as error:
-                findings.append({"severity": "error", "code": error.code, "message": str(error)})
-        validation = (
-            {**pack_status["artifact"]["validation"], "current": pack_status["current"]}
-            if pack_status
-            else None
-            if pack_id
-            else packing(identity).validation_for(feature_id)
-            if feature_id
-            else None
-        )
-        tensor_complete = bool(
-            validation
-            and validation.get("valid")
-            and validation.get("current")
-            and validation.get("tensorValidationComplete")
-        )
-        provenance_complete = bool(tensor_complete and validation.get("provenanceComplete"))
-        if validation:
-            findings.extend(validation.get("findings", []))
-        if not provenance_complete:
-            findings.append(
-                {
-                    "severity": "warning",
-                    "code": "ENCODER_PROVENANCE_UNVERIFIED"
-                    if tensor_complete
-                    else "FULL_FEATURE_VALIDATION_PENDING",
-                    "message": (
-                        "Feature contents were validated. Complete encoder/checkpoint provenance has not been authenticated."
-                        if tensor_complete
-                        else "Validate feature contents in PFM & features before preparing training."
-                    ),
-                }
-            )
+        # A saved target/split protocol is a dataset construction. Features and
+        # execution compatibility are assessed through experiment input preview.
         return {
             "protocolId": configuration_id,
-            "featureBundleId": bundle_id,
-            "featurePackId": pack_id,
-            "featureSource": {"type": "pack", **protocol.get("featurePack", {})}
-            if pack_id
-            else {"type": "native", "featureSetId": feature_id},
-            "scope": "protocol-and-feature-contents"
-            if tensor_complete
-            else "protocol-and-feature-headers",
+            "scope": "protocol",
             "protocolReady": True,
-            "headerInputsReady": not any(row["severity"] == "error" for row in findings),
-            "tensorValidationComplete": tensor_complete,
-            "provenanceComplete": provenance_complete,
-            "fullFeatureValidationComplete": tensor_complete and provenance_complete,
-            "scientificReady": tensor_complete
-            and provenance_complete
-            and not any(row["severity"] == "error" for row in findings),
+            "scientificReady": False,
             "executionEnabled": False,
             "executionReady": False,
-            "findings": findings,
+            "findings": [],
         }
 
     @router.post("/jobs")
@@ -398,7 +277,7 @@ def scientific_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -
         if not report["scientificReady"]:
             return JSONResponse(
                 {
-                    "detail": "Preflight blocked this experiment.",
+                    "detail": "Choose a feature source and check compatibility in Experiments before execution.",
                     "code": "PREFLIGHT_BLOCKED",
                     **report,
                 },

@@ -12,6 +12,7 @@ const keys = {
   protocols: ['scientific', 'project', 'configurations', 'protocol'],
   features: ['scientific', 'project', 'configurations', 'feature'],
   bundles: ['feature-bundles', 'project'],
+  extractions: ['extractions', 'project', 'jobs'],
   batches: ['development-batches', 'project'],
   evaluation: ['evaluation-cohorts', 'project'],
   predictors: ['predictors', 'project'],
@@ -70,6 +71,7 @@ function seed(value: QueryClient) {
   value.setQueryData(keys.protocols, { configurations: [protocol] });
   value.setQueryData(keys.features, { configurations: [] });
   value.setQueryData(keys.bundles, { items: [bundle] });
+  value.setQueryData(keys.extractions, { jobs: [] });
   value.setQueryData(keys.batches, { items: [], executionImplemented: false });
   value.setQueryData(keys.evaluation, { items: [] });
   value.setQueryData(keys.predictors, { items: [] });
@@ -95,6 +97,37 @@ function probe(value: QueryClient, source = workspace()) {
 }
 
 describe('roadmap prerequisite query isolation', () => {
+  it('uses the extraction jobs cache for live progress before a feature bundle exists', () => {
+    const value = client();
+    seed(value);
+    value.setQueryData(keys.bundles, { items: [] });
+    value.setQueryData(keys.extractions, { jobs: [{ id: 'extraction-live', state: 'running', progress: {
+      label: 'Tissue segmentation', completed: 128, total: 1111, unit: 'slides', scope: 'stage',
+    } }] });
+    const roadmap = probe(value);
+    expect(roadmap.byId.features.status).toBe('draft');
+    expect(roadmap.byId.features.evidence).toBe('1 extraction in progress · Tissue segmentation · 128/1111 slides in stage');
+    expect(roadmap.byId.experiments.blockers).toContain('features');
+    value.setQueryData(keys.extractions, { jobs: [{ id: 'extraction-live', state: 'succeeded' }] });
+    const updated = probe(value);
+    expect(updated.byId.features.status).toBe('draft');
+    expect(updated.byId.features.evidence).toContain('latest completed · review outputs and freeze a bundle');
+  });
+
+  it('retains visible extraction progress when its background refresh fails', () => {
+    const value = client();
+    seed(value);
+    value.setQueryData(keys.bundles, { items: [] });
+    value.setQueryData(keys.extractions, { jobs: [{ id: 'extraction-live', state: 'running' }] });
+    const failure = new Error('Extraction refresh unavailable');
+    fail(value, keys.extractions, failure);
+    const roadmap = probe(value);
+    expect(roadmap.byId.features.evidence).toContain('1 extraction in progress');
+    expect(roadmap.error).toBe(failure);
+    expect(roadmap.hasData).toBe(true);
+    expect(roadmap.checksById.features).toEqual({ isLoading: false, error: null, hasData: true });
+  });
+
   it('opens registries while execution evidence is loading without claiming completion', () => {
     const value = client();
     seed(value);

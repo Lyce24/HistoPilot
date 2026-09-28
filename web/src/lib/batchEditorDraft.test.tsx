@@ -60,7 +60,7 @@ describe('batch editor recovery', () => {
 
   it('restores raw fields in the correct editor and preserves its stale baseline', () => {
     const key = sessionDraftKey('project', 'experiment', 'batch-editor');
-    vi.stubGlobal('window', { sessionStorage: { getItem: (requested: string) => requested === key ? JSON.stringify({ version: 1, value: draft() }) : null } });
+    vi.stubGlobal('window', { location: { hash: '' }, sessionStorage: { getItem: (requested: string) => requested === key ? JSON.stringify({ version: 1, value: draft() }) : null } });
     const client = new QueryClient();
     const record = { id: 'experiment', revision: 2, batchPlans: [], state: 'active' } as unknown as ModelExperiment;
     const render = (project: string) => renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project={project} experimentId="experiment" experimentName="Study" experimentRevision={2} inputs={inputs} record={record} experimentStage="planning" ownedBatches={[]} ownedDrafts={[]} tab="batches" onOpenSetup={() => {}} /></QueryClientProvider>);
@@ -78,7 +78,7 @@ describe('batch editor recovery', () => {
 
   it('does not crash when an unfinished recovered grid is on the review step', () => {
     const value = { ...draft(), mode: 'grid', batchPage: 4 };
-    vi.stubGlobal('window', { sessionStorage: { getItem: () => JSON.stringify({ version: 1, value }) } });
+    vi.stubGlobal('window', { location: { hash: '' }, sessionStorage: { getItem: () => JSON.stringify({ version: 1, value }) } });
     const client = new QueryClient();
     try {
       const html = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="project" experimentId="experiment" experimentName="Study" experimentRevision={1} inputs={inputs} experimentStage="planning" ownedBatches={[]} ownedDrafts={[]} tab="batches" onOpenSetup={() => {}} /></QueryClientProvider>);

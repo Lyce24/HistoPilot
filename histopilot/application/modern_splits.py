@@ -30,14 +30,37 @@ def _ordered(patients, seed, context):
 def _strata(patients, groups, stratify):
     result = defaultdict(list)
     for patient in sorted(patients):
-        result[groups[patient][0]["label"] if stratify else "all"].append(patient)
+        labels = tuple(sorted({row["label"] for row in groups[patient]}))
+        # A slide target may vary within a patient. Keep the entire patient in
+        # one stratum defined by the observed label set; never choose one slide's
+        # grade as that patient's label. Single-label strata retain their exact
+        # historical keys and deterministic orders.
+        label = labels[0] if len(labels) == 1 else labels
+        result[label if stratify else "all"].append(patient)
     return result
+
+
+def _stratum_order(item):
+    label, _members = item
+    return isinstance(label, tuple), label
+
+
+def group_class_counts(groups, patients=None):
+    """Count each patient once in every class represented by their slides."""
+    return Counter(
+        label
+        for patient in groups
+        if patients is None or patient in patients
+        for label in {row["label"] for row in groups[patient]}
+    )
 
 
 def _subset(patients, fraction, seed, context, spec, groups, finding, *, role):
     """Nearest per-stratum fraction, preserving feasible minimum group counts."""
     selected = set()
-    for label, members in sorted(_strata(patients, groups, spec.split.stratify).items()):
+    for label, members in sorted(
+        _strata(patients, groups, spec.split.stratify).items(), key=_stratum_order
+    ):
         ordered = _ordered(members, seed, [context, label])
         requested_count = math.floor(len(ordered) * fraction + 0.5)
         count = requested_count
@@ -49,7 +72,13 @@ def _subset(patients, fraction, seed, context, spec, groups, finding, *, role):
         if len(ordered) >= 2 * minimum:
             count = min(len(ordered) - minimum, max(minimum, count))
         if count != requested_count:
-            stratum = f" in class '{label}'" if spec.split.stratify else ""
+            stratum = (
+                f" in label combination {label}"
+                if isinstance(label, tuple)
+                else f" in class '{label}'"
+                if spec.split.stratify
+                else ""
+            )
             finding(
                 "SPLIT_FRACTION_ADJUSTED",
                 f"Seed {seed}, {context[0]}: {role} requests {fraction * 100:.6g}% "
@@ -66,7 +95,9 @@ def _folds(patients, count, seed, context, spec, groups, finding):
         finding("INFEASIBLE_FOLDS", "There are fewer groups than requested folds.")
         return None
     result = [set() for _ in range(count)]
-    for label, members in sorted(_strata(patients, groups, spec.split.stratify).items()):
+    for label, members in sorted(
+        _strata(patients, groups, spec.split.stratify).items(), key=_stratum_order
+    ):
         ordered = _ordered(members, seed, [context, label])
         offset = min(range(count), key=lambda fold: (len(result[fold]), fold))
         for index, patient in enumerate(ordered):
@@ -396,7 +427,7 @@ def check_modern_plan(spec, groups, metadata, assignment, finding):
     for role in ROLES:
         patients = [patient for patient, assigned in assignment.items() if assigned == role]
         rows = [row for patient in patients for row in groups[patient]]
-        classes = Counter(groups[patient][0]["label"] for patient in patients)
+        classes = group_class_counts(groups, set(patients))
         result[role] = {
             "patients": sum(
                 groups[patient][0].get("patientIdSource") != "slide_fallback"

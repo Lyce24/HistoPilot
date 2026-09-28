@@ -7,9 +7,17 @@
 .morphology-slide-button { display: grid; text-align: left; width: 100%; gap: .2rem; padding: .7rem; background: transparent; border: 0; border-bottom: 1px solid var(--theme-line); color: inherit; cursor: pointer; overflow-wrap: anywhere; }
 .morphology-slide-button.is-selected { background: var(--theme-accent-soft); box-shadow: inset 3px 0 var(--brand-primary); }
 .morphology-slide-button small { color: var(--theme-muted); }
-.morphology-image-scroll { overflow: auto; max-height: 42rem; background: var(--theme-canvas); border: 1px solid var(--theme-line); border-radius: .6rem; }
-.morphology-image-scroll svg { display: block; min-height: 16rem; }
-.morphology-image-scroll rect { cursor: pointer; }
+.morphology-image-scroll { position: relative; overflow: hidden; background: var(--theme-canvas); border: 1px solid var(--theme-line); border-radius: .6rem; }
+.morphology-image-scroll svg { display: block; width: 100%; height: clamp(18rem, 48vw, 34rem); cursor: grab; user-select: none; }
+.morphology-image-scroll svg:focus-visible { outline: 3px solid var(--brand-primary); outline-offset: -3px; }
+.morphology-image-scroll.is-drawing svg, .morphology-image-scroll.is-drawing rect { cursor: crosshair; }
+.morphology-image-scroll.is-panning svg, .morphology-image-scroll.is-panning rect { cursor: grabbing; }
+.morphology-zoom-controls { position: absolute; bottom: .7rem; left: .7rem; display: flex; align-items: center; background: var(--theme-surface, white); border: 1px solid var(--theme-line); border-radius: .45rem; overflow: hidden; }
+.morphology-zoom-controls button { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: inherit; font: inherit; font-size: 1.25rem; cursor: pointer; }
+.morphology-zoom-controls button:disabled { opacity: .4; cursor: default; }
+.morphology-zoom-controls span { min-width: 5.5rem; text-align: center; font-size: .8rem; }
+.morphology-image-status { position: absolute; top: .7rem; right: .7rem; padding: .25rem .5rem; border-radius: .3rem; background: #ffffffde; font-size: .8rem; pointer-events: none; }
+.morphology-navigation-hint { margin-top: .5rem; font-size: .8rem; }
 .morphology-projection svg { width: 100%; max-height: 32rem; font-size: 12px; }
 .morphology-projection svg [role=button] { cursor: pointer; outline: none; }
 .morphology-projection svg [role=button]:focus circle { stroke: #111; stroke-width: 4px; }

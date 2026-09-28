@@ -15,6 +15,7 @@ from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import checkpoint_snapshot
 from histopilot.datasets.datamodule import _worker_init
 from histopilot.datasets.mil import SlideDataset, collate_mil
+from histopilot.inference_summary import describe, patient_member_probabilities, summarize
 from histopilot.scoring import patient_predictions
 from histopilot.storage.project_lock import _reject_symlink_components, ensure_managed_directory
 from histopilot.storage.scientific import ScientificStore
@@ -50,12 +51,17 @@ def evaluation_metrics(records, target, threshold):
     }
 
 
-def _write_csv(path, rows, classes, *, patient=False):
-    fields = (
-        (["patientId", "slideIds"] if patient else ["slideId", "patientId"])
-        + ["label", "predictedLabel"]
-        + [f"probability:{label}" for label in classes]
-    )
+# Member probabilities are recorded per record only while predictions.json stays
+# well inside its 64 MiB artifact limit; larger ensembles omit them explicitly.
+MAX_MEMBER_VALUES = 1_000_000
+EVALUATION_COLUMNS = ("label", "predictedLabel")
+# Inference exports carry no label column; they describe the decision instead.
+INFERENCE_COLUMNS = ("predictedLabel", "confidence", "margin", "membersAgreeing", "memberCount")
+
+
+def _write_csv(path, rows, classes, *, patient=False, columns=EVALUATION_COLUMNS):
+    identity = ["patientId", "slideIds"] if patient else ["slideId", "patientId"]
+    fields = identity + list(columns) + [f"probability:{label}" for label in classes]
     _reject_symlink_components(path)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
@@ -63,7 +69,7 @@ def _write_csv(path, rows, classes, *, patient=False):
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         for row in rows:
-            value = {key: row.get(key) for key in fields[:4]}
+            value = {key: row.get(key) for key in fields[: len(identity) + len(columns)]}
             if patient:
                 value["slideIds"] = json.dumps(row["slideIds"], ensure_ascii=False)
             value.update(
@@ -72,10 +78,121 @@ def _write_csv(path, rows, classes, *, patient=False):
                     for label, probability in zip(classes, row["probabilities"], strict=True)
                 }
             )
-            writer.writerow(value)
+            # Spreadsheet applications interpret these text cells as formulas,
+            # even when CSV quoting is present. Preserve identifiers as text.
+            writer.writerow({
+                key: "'" + cell if isinstance(cell, str) and cell.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")) else cell
+                for key, cell in value.items()
+            })
         stream.flush()
         os.fsync(stream.fileno())
     temporary.replace(path)
+
+
+def _described_rows(rows, target, threshold):
+    """Export rows describing each decision; predictions.json keeps only the evidence."""
+    result = []
+    for row in rows:
+        described = describe(row, target, threshold)
+        agreement = described.get("memberAgreement")
+        result.append({
+            **row,
+            "confidence": described["confidence"],
+            "margin": described["margin"],
+            "membersAgreeing": agreement["agree"] if agreement else None,
+            "memberCount": agreement["total"] if agreement else None,
+        })
+    return result
+
+
+def _patient_members(records, patients, aggregation):
+    """Transient patient member probabilities under the frozen slide-combination rule."""
+    groups = {}
+    for row in records:
+        if row.get("patientId"):
+            groups.setdefault(row["patientId"], []).append(row)
+    result = []
+    for patient in patients:
+        members = patient_member_probabilities(groups[patient["patientId"]], aggregation)
+        result.append({**patient, **({"memberProbabilities": members} if members else {})})
+    return result
+
+
+def _finish_inference(plan, folder, records, *, method, checkpoints, input_hash, member_evidence):
+    """Predictions and a label-free summary; unlabeled rows are never scored."""
+    target, classes = plan["target"], plan["target"]["classes"]
+    threshold = plan["inference"]["decisionThreshold"]
+    aggregation = plan["inference"]["patientAggregation"]
+    try:
+        patients = _decisions(patient_predictions(records, aggregation), target, threshold)
+        patient_summary = summarize(
+            _patient_members(records, patients, aggregation), target, threshold
+        )
+    except ValueError as error:
+        if target["unit"] == "patient":
+            raise
+        patients, patient_summary = [], {"available": False, "count": 0, "reason": str(error)}
+    slide_summary = summarize(records, target, threshold)
+    summary = {
+        "purpose": "inference",
+        "unit": target["unit"],
+        "classOrder": classes,
+        "positiveClass": target.get("positiveClass"),
+        "decisionThreshold": threshold,
+        "patientAggregation": "mean_logits" if aggregation == "mean_logits" else "mean_probabilities",
+        "memberCount": len(checkpoints),
+        "memberProbabilities": member_evidence,
+        "slide": slide_summary,
+        "patient": patient_summary,
+        "selected": patient_summary if target["unit"] == "patient" else slide_summary,
+    }
+    write_json(
+        folder / "predictions.json",
+        {"classOrder": classes, "records": records, "patientRecords": patients},
+    )
+    write_json(folder / "summary.json", summary)
+    _write_csv(
+        folder / "slide-predictions.csv",
+        _described_rows(records, target, threshold),
+        classes,
+        columns=INFERENCE_COLUMNS,
+    )
+    _write_csv(
+        folder / "patient-predictions.csv",
+        _described_rows(_patient_members(records, patients, aggregation), target, threshold),
+        classes,
+        patient=True,
+        columns=INFERENCE_COLUMNS,
+    )
+    artifacts = {}
+    for name in (
+        "predictions.json",
+        "summary.json",
+        "slide-predictions.csv",
+        "patient-predictions.csv",
+    ):
+        path = folder / name
+        artifacts[name] = {
+            "path": str(path),
+            "bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    result = {
+        "state": "succeeded",
+        "purpose": "inference",
+        "runId": plan.get("recordId", plan.get("runId")),
+        "method": method,
+        "checkpointCount": len(checkpoints),
+        "slideCount": len(records),
+        "patientCount": len(patients),
+        "classOrder": classes,
+        "summary": summary,
+        "artifacts": artifacts,
+        "inputHash": input_hash,
+        "resumePolicy": "reuse_completed_members_replay_interrupted_member",
+    }
+    write_json(folder / "result.json", result)
+    return result
 
 
 def _valid_probabilities(probabilities, log_probabilities, shape):
@@ -180,10 +297,16 @@ def evaluate(plan, output_dir):
         raise ValueError(
             "A refit requires one checkpoint; an ensemble requires its selected fold checkpoints."
         )
+    purpose = plan.get("purpose")
+    if purpose not in {None, "inference"}:
+        raise ValueError("Unsupported evaluation purpose.")
+    inference_only = purpose == "inference"
     rows = data["memberships"]
     identities = [row["slideId"] for row in rows]
     if not identities or len(set(identities)) != len(identities):
         raise ValueError("Inference requires exactly one membership per selected slide.")
+    if inference_only and any(row.get("label") is not None for row in rows):
+        raise ValueError("Inference runs predict unlabeled memberships only.")
     if any(row.get("label") is not None and row["label"] not in classes for row in rows):
         raise ValueError("Test labels must preserve the frozen target class order.")
     if target["unit"] == "patient" and any(not row.get("patientId") for row in rows):
@@ -231,6 +354,19 @@ def evaluate(plan, output_dir):
     log_totals = np.full_like(totals, -np.inf)
     logit_totals = np.zeros_like(totals)
     window_uncertainty_members = [[] for _ in rows]
+    # Decide before collecting vectors: a late artifact-size check still retains
+    # every ensemble member in RAM, including for ordinary evaluation jobs.
+    member_evidence = "single_model" if len(checkpoints) == 1 else "recorded"
+    # Log probabilities are essential when patient voting averages logits:
+    # exponentiation may round an extreme but finite probability down to zero.
+    retain_member_logs = patient_aggregation == "mean_logits"
+    evidence_width = 2 if retain_member_logs else 1
+    if len(rows) * len(checkpoints) * len(classes) * evidence_width > MAX_MEMBER_VALUES:
+        member_evidence = "omitted_for_size" if len(checkpoints) > 1 else "single_model"
+    member_probabilities = (
+        [[] for _ in rows] if inference_only and member_evidence == "recorded" else None
+    )
+    member_logs = [[] for _ in rows] if member_probabilities is not None and retain_member_logs else None
     input_hash = _hash(
         {
             "data": data,
@@ -324,6 +460,12 @@ def evaluate(plan, output_dir):
                     members.append({
                         "memberIndex": index, "checkpointSha256": checkpoint["sha256"], **scores,
                     })
+            if member_probabilities is not None:
+                for members, values in zip(member_probabilities, probabilities.tolist(), strict=True):
+                    members.append(values)
+            if member_logs is not None:
+                for members, values in zip(member_logs, log_probabilities.tolist(), strict=True):
+                    members.append(values)
             totals += probabilities / len(checkpoints)
             log_totals = np.logaddexp(log_totals, log_probabilities - np.log(len(checkpoints)))
             logit_totals += log_probabilities / len(checkpoints)
@@ -356,8 +498,20 @@ def evaluate(plan, output_dir):
     for row, members in zip(records, window_uncertainty_members, strict=True):
         if members:
             row["windowUncertaintyByMember"] = members
+    if member_probabilities is not None:
+        # Each fold member's own probabilities expose ensemble agreement without labels.
+        for row, values in zip(records, member_probabilities, strict=True):
+            row["memberProbabilities"] = values
+    if member_logs is not None:
+        for row, values in zip(records, member_logs, strict=True):
+            row["memberLogProbabilities"] = values
     threshold = plan["inference"]["decisionThreshold"]
     records = _decisions(records, target, threshold)
+    if inference_only:
+        return _finish_inference(
+            plan, folder, records, method=method, checkpoints=checkpoints,
+            input_hash=input_hash, member_evidence=member_evidence,
+        )
     try:
         patients = _decisions(patient_predictions(records, patient_aggregation), target, threshold)
         patient_metrics = evaluation_metrics(patients, target, threshold)

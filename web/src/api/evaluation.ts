@@ -13,6 +13,8 @@ export interface EvaluationInference {
 }
 
 export interface EvaluationSpec {
+  /** Inference cohorts are unlabeled; `review` is their earlier name. */
+  purpose?: 'independent' | 'inference' | 'review';
   protocolId?: string | null;
   developmentFeatureBundleId?: string | null;
   datasetId: string;

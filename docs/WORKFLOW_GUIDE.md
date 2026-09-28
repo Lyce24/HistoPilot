@@ -39,19 +39,31 @@ By default, slide linkage scans the selected slide folder and matches `Slide_ID`
 
 Paths are relative to the slide folder; permitted absolute paths can be used without one. Keep `Slide_ID` equal to the filename stem because TRIDENT derives its output names from that stem. Explicit paths avoid scanning unrelated copies and the folder scan's 10,000-file limit. Empty or missing paths, unsupported extensions, paths leaving the selected folder, and duplicate file references appear in the preview. Common column names such as `Slide_Path`, `slidePath` and `wsi` are detected automatically.
 
+## Visual QC and morphology navigation
+
+Open **Visual QC & morphology** on a dataset to inspect its linked slides. Point inside the slide window and **scroll the mouse wheel** or **pinch the trackpad** to zoom. No modifier key is required. Zoom follows the pointer over tissue; over empty margins it uses the center. Scrolling inside the slide window, including its zoom controls, stays in the viewer even at the zoom limits. Move the pointer outside the slide window to scroll the application up or down. Drag with the mouse to pan; the zoom buttons and **Fit slide** are always available. When the canvas has keyboard focus, use **+ / −**, the arrow keys, and **Home** to zoom, pan, and fit the slide. The attention viewer uses the same wheel and pinch controls; its Home key fits patch coverage.
+
+Selecting a slide starts **Preparing slide**, with progress while the reader opens and nearby zoom levels are cached. **Slide ready** marks the end of that preparation. The overview stays visible during preparation; once ready, scroll and drag to explore. HistoPilot prepares a bounded set of full-slide pyramid tiles, not every full-resolution pixel. Nearby tissue and the next zoom level are loaded ahead during pauses. Previously unseen fine detail continues loading in the background as you zoom. Mouse-wheel steps ease smoothly, while trackpad pinch follows your fingers; reduced-motion preferences are respected. Dense attention overlays update in short batches so you can keep navigating.
+
+Small detail tiles appear progressively and are reused when neighboring views overlap. Image loading continues during navigation; it no longer waits for every gesture to stop. Slide images, coverage, attention and review regions share level-0 coordinates. The view scale is relative to the fitted slide, not microscope magnification. Slide reading continues through OpenSlide or OpenSDPC for SDPC files. See [slide-viewer performance](SLIDE_VIEWER_PERFORMANCE.md) for the cache and reader limits.
+
+Choose **Draw review region** to select tissue for a review. Navigation pauses while drawing; drag a rectangle, or press Escape to cancel. **Zoom to selection** focuses on the selected patch or review region. If sharper detail fails to load, the overview stays available and **Retry slide detail** retries the request. These gestures apply inside the slide canvas; trackpad support depends on the browser and operating system delivering pinch gestures.
+
 ## Define development targets and splits
 
-**Targets & splits** selects development records from a frozen dataset, defines labels and the positive class, and freezes patient-grouped assignments. Split seeds control those assignments; training seeds belong to Experiments and never redraw them.
+**Targets & splits** selects development records from a frozen dataset, defines labels and the positive class, and freezes patient-grouped assignments. Features and bundles are not required. Split seeds control those assignments; training seeds belong to Experiments and never redraw them.
 
 Current development protocols contain fitting, early-stop validation and development assessment roles. They do not reserve a final test cohort. Five split designs are available: k-fold, Monte Carlo, leave-one-site/cohort-out, nested k-fold and development holdout. Native training currently executes development-only k-fold protocols; the other designs remain available for study-design review. Nested-CV execution still needs its configuration-selection dependencies connected. See [development targets and split strategies](split-strategies.md) for exact semantics, fixed validation and legacy protocol compatibility.
 
-When selecting a feature version, **Develop on slides that have these features** makes feature coverage part of the population definition before labels and splits. Without that option, every eligible development slide must have features. Review excluded counts before freezing: packing does not repair missing coverage.
+**Experiments → Inputs** selects the feature bundle and checks compatibility with the frozen development protocol. Every selected development slide must have features; incomplete coverage blocks experiment preparation without changing the protocol population. Packing does not repair missing coverage.
 
-Test cohorts are defined separately in **Test cohorts**, and require a dataset but no development model or features. Choose records, define prediction targets or an unlabeled prediction cohort, then review and freeze. Model, feature and inference compatibility are checked later in **Evaluate models**.
+Test cohorts are defined separately in **Test cohorts**, and require a dataset but no development model or features. Choose records, then pick the cohort type: a labeled **evaluation cohort** (define prediction targets) or an unlabeled **inference cohort** (no target). Review and freeze it. Model, feature and inference compatibility are checked later, in **Evaluate models** or **Run inference**.
 
 ## Name frozen versions
 
 Choose **Name & freeze version** for a dataset or target/split protocol, or **Name & freeze bundle** for features. Supply a required **Version tag** and optional **Commit note**. Tags appear in saved-record selectors and experiment inputs; they are unique within the same record kind and project, ignoring case.
+
+After a dataset or development protocol is frozen, the naming dialog closes and the saved version stays open in its current module. A success message confirms the save. Use the next-step links when ready; freezing does not automatically move to another module. Background library refreshes do not delay the save confirmation.
 
 Tags can contain up to 80 characters and notes up to 2,000. Renaming a saved tag changes its display metadata while preserving its scientific ID, memberships, feature bindings and existing references. Clearing both fields removes the label and note. A cohort's target and split protocol share its version tag.
 
@@ -89,7 +101,26 @@ uv run histopilot serve --data-root /path/to/research-data --no-browser
 
 The usual `~/miniconda3/envs/trident` environment and a checkout at `.local/TRIDENT` are also discovered automatically. Model dependencies, checkpoint access and gated-model authentication must be available in that environment. Runtime discovery does not import Torch into the control service.
 
+For SDPC slides, install OpenSDPC into the **TRIDENT interpreter shown in the extraction preview**. Installing it only in HistoPilot's `.venv` does not install it in a separate TRIDENT environment. The pinned source below is also used by HistoPilot's optional `sdpc` extra:
+
+```bash
+uv pip install --python "$HISTOPILOT_TRIDENT_PYTHON" --reinstall-package opensdpc \
+  "opensdpc @ git+https://github.com/WonderLandxD/opensdpc@a07579eedde1dffddf8fa712ef236b97ca8cfc55"
+```
+
+Set `HISTOPILOT_TRIDENT_PYTHON` first using the path above, or replace it with the interpreter path shown in the preview. Reinstalling repairs stale editable installations whose source folder was moved or removed. On Linux, the isolated runner discovers OpenSDPC in that selected interpreter and adds its bundled `LINUX` and `LINUX/ffmpeg` directories to the TRIDENT child's `LD_LIBRARY_PATH`, preserving existing paths. No global library-path export is needed. To also install the optional dependency in HistoPilot's own uv environment, use `uv sync --locked --extra sdpc` when rebuilding.
+
 Extraction workers use `histopilot-pfm-<run-id>` tmux sessions. The job panel shows stages, current slide, progress and available timing estimates. **Troubleshooting** provides raw logs and the reconnect command. `<project>/extractions/<run-id>/` retains the command, selected-slide CSV, input evidence, settings, process records and `worker.log`. Successful process exit is followed by artifact validation; missing/corrupt outputs and unfinished locks fail the run. Failed or cancelled outputs remain available for compatible resume.
+
+### Tune extraction throughput
+
+Use **Advanced Options → Segmentation → Seg batch size** and **Features → Feat batch size** to tune the stages separately. Both inherit the shared `batch_size` (64) when unset. These sizes count image tiles per model call; `cache_batch_size` counts slide files and does not increase GPU inference batches. Keep patch geometry, encoder, MPP and segmentation thresholds unchanged when comparing throughput.
+
+HistoPilot resolves automatic `max_workers` before preview: up to eight loaders total, shared across devices and bounded by available CPUs and scheduler capacity. The saved specification, command and resource reservation use that same explicit count. Native CPU thread pools default to one thread unless already configured. Manual positive worker overrides remain available.
+
+For the recognized pinned SDPC reader, a standalone worker bootstrap removes redundant full Python garbage collection after each tile and reuses the owned native slide handle for metadata. It retains native buffer disposal, copied pixels and normal automatic garbage collection. No installed package files are changed. The worker log reports applied fixes; unknown implementations retain upstream behavior. `HISTOPILOT_SDPC_OPTIMIZATIONS=0` disables the fixes for comparison. These fixes have been validated for the single-GPU Linux/fork path; spawned multi-GPU workers are not yet performance-validated.
+
+Measured SDPC read improvements are separate from batch sizes that still need an idle-GPU benchmark. Existing processes keep their original settings; start the service manually after rebuilding when ready to use updated previews.
 
 TRIDENT's native layout is preserved, for example:
 
@@ -210,6 +241,36 @@ These commands operate on an existing frozen batch through the same API as the b
 Each batch's saved policy can publish fold ensembles, refit on all development data, or both. A refit budget is a chosen percentile of the folds' selected checkpoint epochs: best-validation epochs for standard ABMIL, and the frozen checkpoint policy for nnMIL. It is an epoch budget, not a fraction of the data. Predictor identity retains experiment, batch, configuration, training seed, split seed and method.
 
 In **Evaluate models**, select ready predictors and a frozen test cohort, then review target compatibility, feature representation, extracted/packed slide coverage, patient conventions and development overlap. The reviewed predictor list is fixed at submission. Completed results expose slide/patient metrics and prediction exports; evaluation predictions feed **Clinical utility**, and compatible predictors feed **Model interpretation**.
+
+### Run inference on unlabeled slides
+
+Use **Run inference** when slides have no labels and you want the model's predictions rather than a performance estimate. An example is a set of slides that readers have not yet agreed on.
+
+1. In **Test cohorts**, choose **Create inference cohort**. Select the dataset and a condition for the unlabeled slides, for example `Requested_Split = test`. There is no target step.
+2. In **Run inference**, choose experiments and methods, then the inference cohort. Review checks features, packs and development overlap for every predictor, as evaluation does.
+3. Run the batch. Each predictor gets its own run, with the same predictions an evaluation of the same inputs would produce.
+
+Overlap rules:
+
+- A development slide, or a source file used in development, is never predicted. Use that predictor's out-of-fold export for it instead.
+- Slides from patients seen in development are allowed for **slide-level** predictors and flagged in every view and export.
+- For **patient-level** predictors, development patients are blocked: their predictions would be in-sample.
+
+What a run shows:
+
+- predicted-class distribution;
+- confidence (predicted-class probability) and margin histograms;
+- for binary targets, the frozen threshold and a threshold sweep;
+- fold-member agreement for ensembles;
+- the new-patient versus development-patient split;
+- a breakdown by any frozen attribute;
+- agreement and Cohen's κ against another run on the same cohort.
+
+None of these is an accuracy estimate.
+
+The review queue starts with the predictions closest to a decision boundary. For binary targets the margin is measured from the frozen threshold, not from 0.5. It can also sort by least confidence or by member disagreement. Selecting **Margin below 0.2** filters the queue to those borderline predictions. **Compute attention for this slide** (or for the listed slides, up to 32) queues attention maps through the run's own features without opening Model interpretation. **Download predictions with metadata** exports one row per slide or patient with probabilities, confidence, agreement, the development-patient flag and frozen attributes, for analysis outside HistoPilot.
+
+SDPC attention overlays, thumbnails and patch crops use **OpenSDPC** in an isolated reader process. The viewer uses your working TRIDENT Python environment automatically (`HISTOPILOT_TRIDENT_PYTHON`); set `HISTOPILOT_SDPC_PYTHON` only if you want a separate reader environment. That interpreter needs OpenSDPC, Pillow and OpenSlide. Native library paths are resolved automatically. Missing dependencies, decoder failures and timeouts appear as recoverable slide-view errors. Ground-truth labels are not needed for attention, but the predictor must support attention and its frozen patch features must have matching coordinates. See [inference mode](INFERENCE_MODE.md).
 
 See [experiment lifecycle](EXPERIMENT_LIFECYCLE.md) for submission and tracking, and [experiments, predictors and evaluations](MODEL_DEVELOPMENT.md) for ownership, refit epoch calculations and evaluation batches.
 

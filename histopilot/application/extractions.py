@@ -18,6 +18,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from histopilot.adapters import trident
+from histopilot.adapters.trident.performance import resolve_max_workers
 from histopilot.adapters.trident.progress import build_progress
 from histopilot.application.slide_lists import (
     SlideListError,
@@ -268,6 +269,11 @@ class ExtractionService:
             options = trident.TridentOptions.model_validate(spec.options)
         except ValidationError as error:
             raise StorageError(str(error), "INVALID_TRIDENT_OPTIONS", 422) from error
+        # Freeze the resolved count in the preview and durable spec so command
+        # generation and resource reservations use exactly the same workers.
+        options = options.model_copy(
+            update={"max_workers": resolve_max_workers(options.model_dump())}
+        )
         values = options.model_dump(mode="json")
         output = self._path(spec.outputPath)
         # Outputs may be siblings of project data, never the project itself or its metadata.

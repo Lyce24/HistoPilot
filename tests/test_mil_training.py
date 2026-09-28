@@ -717,3 +717,26 @@ def test_interrupted_fit_shuts_down_both_cached_worker_pools(tmp_path, monkeypat
     with pytest.raises(SIGTERMException):
         train_fold(plan, tmp_path / "worker-cleanup")
     assert set(closed_workers) == {"train", "val"}
+
+
+@pytest.mark.parametrize("classes", [2, 4])
+def test_slide_target_trains_mixed_grade_patients_without_patient_grade_metrics(tmp_path, classes):
+    plan = tiny_plan(tmp_path, classes=classes)
+    plan["target"]["unit"] = "slide"
+    plan["recipe"].update(maxEpochs=1, samplingStrategy="slide_uniform")
+    for row in plan["data"]["memberships"]:
+        # Each patient contributes slides with different grades, entirely
+        # within one frozen role. The grade remains supervised per slide.
+        row["patientId"] = row["partition"] + "-patient-" + row["slideId"].rsplit("-", 1)[1]
+    output = tmp_path / "mixed-grade-training"
+    result = train_fold(plan, output)
+    assert result["state"] == "succeeded"
+    metrics = json.loads((output / "metrics.json").read_text())
+    for role in ("validation", "assessment"):
+        assert metrics[role]["unit"] == "slide"
+        assert metrics[role]["selected"] == metrics[role]["slide"]
+        assert metrics[role]["slide"]["count"] == 2 * classes
+        assert not metrics[role]["patient"]["available"]
+        predictions = json.loads((output / f"{role}-predictions.json").read_text())
+        assert predictions["patientRecords"] is None
+        assert len(predictions["records"]) == 2 * classes

@@ -296,3 +296,144 @@ def test_contour_holes_preserved_and_invalid_geometry_rejected(study, tmp_path):
     path.write_text(json.dumps({"type": "Polygon", "coordinates": rings}))
     value, warnings = service._contours({"jobId": identity}, "a", {"width": 64, "height": 64})
     assert value == [] and "unavailable" in warnings[0]
+
+
+def test_prepared_legacy_view_cannot_mix_replaced_slide_pixels(study, monkeypatch):
+    service, request, _, images = study
+    original_read = service.store.read_artifact
+
+    def without_inventory(identity, name, *args, **kwargs):
+        if identity == request.datasetId and name == "inventory.json":
+            raise StorageError("No legacy inventory", "ARTIFACT_NOT_FOUND", 404)
+        return original_read(identity, name, *args, **kwargs)
+
+    monkeypatch.setattr(service.store, "read_artifact", without_inventory)
+    first = service.quality(request.datasetId, "a")
+    fingerprint = first["sourceFingerprint"]
+    assert len(fingerprint) == 64
+    assert any("legacy dataset" in warning for warning in first["warnings"])
+    content = service.image(request.datasetId, "a", source_fingerprint=fingerprint)
+    with Image.open(io.BytesIO(content)) as image:
+        assert image.getpixel((0, 0)) == (255, 0, 0)
+    Image.new("RGB", (64, 64), "blue").save(images / "a.png")
+    with pytest.raises(StorageError) as error:
+        service.image(request.datasetId, "a", source_fingerprint=fingerprint)
+    assert error.value.code == "MORPHOLOGY_SLIDE_CHANGED"
+    assert error.value.status_code == 409
+    second = service.quality(request.datasetId, "a")
+    assert second["sourceFingerprint"] != fingerprint
+    content = service.image(request.datasetId, "a", source_fingerprint=second["sourceFingerprint"])
+    with Image.open(io.BytesIO(content)) as image:
+        assert image.getpixel((0, 0)) == (0, 0, 255)
+
+
+@pytest.fixture
+def legacy_study(study, monkeypatch):
+    service, request, _, _ = study
+    original = service.store.read_artifact
+
+    def without_inventory(identity, name, *args, **kwargs):
+        if identity == request.datasetId and name == "inventory.json":
+            raise StorageError("No legacy inventory", "ARTIFACT_NOT_FOUND", 404)
+        return original(identity, name, *args, **kwargs)
+
+    monkeypatch.setattr(service.store, "read_artifact", without_inventory)
+    return study
+
+
+def test_legacy_patch_and_viewport_routes_reject_replaced_slide(legacy_study):
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    from fastapi.testclient import TestClient
+
+    from histopilot.api.morphology import morphology_router
+
+    service, request, _, images = legacy_study
+    app = FastAPI()
+    app.include_router(
+        morphology_router(
+            SimpleNamespace(scientific_store=lambda identity: service.store), service.filesystem
+        )
+    )
+
+    @app.exception_handler(StorageError)
+    async def invalid_storage(_request, error):
+        return JSONResponse({"code": error.code}, status_code=error.status_code)
+
+    fingerprint = service.quality(request.datasetId, "a")["sourceFingerprint"]
+    common = {"datasetId": request.datasetId, "slideId": "a", "sourceFingerprint": fingerprint}
+    crop = {**common, "featureBundleId": request.featureBundleId, "patchIndex": 3}
+    endpoint = "/api/v1/projects/morphology-test/morphology/"
+    with TestClient(app) as client:
+        for kind, params in (("image", common), ("patch", crop)):
+            response = client.get(endpoint + kind, params=params)
+            assert response.status_code == 200, response.text
+            with Image.open(io.BytesIO(response.content)) as image:
+                assert image.getpixel((0, 0)) == (255, 0, 0)
+        Image.new("RGB", (64, 64), "blue").save(images / "a.png")
+        for kind, params in (("image", common), ("patch", crop), ("patch-region", crop)):
+            response = client.get(endpoint + kind, params=params)
+            assert response.status_code == 409, response.text
+            assert response.json()["code"] == "MORPHOLOGY_SLIDE_CHANGED"
+            response = client.get(endpoint + kind, params={**params, "sourceFingerprint": "bad"})
+            assert response.status_code == 422
+        fresh = service.quality(request.datasetId, "a")["sourceFingerprint"]
+        assert fresh != fingerprint
+        for kind, params in (("image", common), ("patch", crop)):
+            response = client.get(endpoint + kind, params={**params, "sourceFingerprint": fresh})
+            assert response.status_code == 200, response.text
+            with Image.open(io.BytesIO(response.content)) as image:
+                assert image.getpixel((0, 0)) == (0, 0, 255)
+
+
+@pytest.mark.parametrize("phase", ["geometry", "coordinates"])
+def test_patch_region_rejects_source_changed_during_geometry_or_feature_read(
+    legacy_study, monkeypatch, phase
+):
+    from histopilot.application import morphology
+
+    service, request, _, images = legacy_study
+    fingerprint = service.quality(request.datasetId, "a")["sourceFingerprint"]
+    target, name = (morphology, "inspect_slide") if phase == "geometry" else (service, "_features")
+    original = getattr(target, name)
+
+    def changed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        Image.new("RGB", (64, 64), "blue").save(images / "a.png")
+        return result
+
+    monkeypatch.setattr(target, name, changed)
+    with pytest.raises(StorageError) as error:
+        service.patch_region(
+            request.datasetId, "a", request.featureBundleId, 3, source_fingerprint=fingerprint
+        )
+    assert error.value.code == "MORPHOLOGY_SLIDE_CHANGED"
+    assert error.value.status_code == 409
+
+
+@pytest.mark.parametrize("supplied", [False, True])
+def test_legacy_patch_image_binds_geometry_to_pixels_even_without_client_fingerprint(
+    legacy_study, monkeypatch, supplied
+):
+    service, request, _, images = legacy_study
+    fingerprint = service.quality(request.datasetId, "a")["sourceFingerprint"]
+    original = service.patch_region
+
+    def changed(*args, **kwargs):
+        region = original(*args, **kwargs)
+        Image.new("RGB", (64, 64), "blue").save(images / "a.png")
+        return region
+
+    monkeypatch.setattr(service, "patch_region", changed)
+    with pytest.raises(StorageError) as error:
+        service.patch_image(
+            request.datasetId,
+            "a",
+            request.featureBundleId,
+            3,
+            source_fingerprint=fingerprint if supplied else None,
+        )
+    assert error.value.code == "MORPHOLOGY_SLIDE_CHANGED"
+    assert error.value.status_code == 409

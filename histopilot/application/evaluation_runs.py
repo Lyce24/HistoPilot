@@ -6,7 +6,7 @@ from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.compute_jobs import ComputeJobService
-from histopilot.application.evaluations import EvaluationService
+from histopilot.application.evaluations import EvaluationService, patient_overlap_allowed
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import (
     PredictorService,
@@ -18,7 +18,11 @@ from histopilot.application.predictors import (
 from histopilot.domain.features import representation_kind
 from histopilot.schemas.analysis import PatientAnalysisSettings
 from histopilot.schemas.development import ResourcePolicy
-from histopilot.schemas.evaluations import EvaluationSpec, InferenceSettings
+from histopilot.schemas.evaluations import (
+    EvaluationSpec,
+    InferenceSettings,
+    is_inference_purpose,
+)
 from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.schemas.protocols import TargetSpec
 from histopilot.storage.lifecycle import lifecycle_guard
@@ -32,6 +36,16 @@ EXECUTION_NOTE = (
     "aggregation and decision-threshold settings. Patient predictions combine eligible "
     "slides; metrics use labeled test records."
 )
+INFERENCE_NOTE = (
+    "Predict the frozen inference cohort with the recorded bag, aggregation and "
+    "decision-threshold settings. No labels are read and no performance metrics are "
+    "computed. Slides from development patients are flagged in every analysis and export."
+)
+
+
+def run_purpose(manifest):
+    """Inference and legacy review runs are prediction-only; everything else is evaluation."""
+    return "inference" if is_inference_purpose(manifest.get("purpose")) else "evaluation"
 
 
 class EvaluationRunService:
@@ -68,6 +82,12 @@ class EvaluationRunService:
 
         document = self.get(identity)
         manifest = document["manifest"]
+        if run_purpose(manifest) == "inference":
+            raise StorageError(
+                "Inference runs have no labels. Compare their predictions in Run inference.",
+                "COMPARISON_REQUIRES_LABELS",
+                409,
+            )
         cohort = self.store.get_configuration(manifest["cohortId"])
         predictor = self.store.get_configuration(manifest["predictorId"])
         if (manifest["cohort"] != reference(cohort)
@@ -175,6 +195,8 @@ class EvaluationRunService:
         return next(iter(candidates.values()))["id"]
 
     def _review_cohort(self, selection, model, test):
+        if test["spec"].get("purpose") == "review" and selection.patientIdentifiers == "independent":
+            raise StorageError("Slide review predictions require shared patient identifiers.", "INVALID_REVIEW_COHORT", 409)
         if test["spec"].get("target"):
             target = TargetSpec.model_validate(test["spec"]["target"])
             expected = TargetSpec.model_validate(model["target"])
@@ -259,9 +281,26 @@ class EvaluationRunService:
                 "EVALUATION_PREDICTOR_MISMATCH",
                 409,
             )
-        if test["overlap"]["slideIds"] or test["overlap"]["patientIds"]:
+        purpose = test["spec"].get("purpose", "independent")
+        inference = is_inference_purpose(purpose)
+        if inference and (
+            test["spec"].get("target") is not None
+            or any(row.get("label") is not None for row in test["memberships"])
+        ):
             raise StorageError(
-                "Test membership overlaps this predictor's development data.",
+                "Inference cohorts must be unlabeled.", "INVALID_INFERENCE_COHORT", 409
+            )
+        if purpose == "review" and (
+            test["spec"].get("patientIdentifiers") != "shared" or model["target"]["unit"] != "slide"
+        ):
+            raise StorageError("Review predictions require unlabeled slide outcomes and shared patient IDs.", "INVALID_REVIEW_COHORT", 409)
+        if (test["overlap"]["slideIds"] or test["overlap"].get("sourceSlideIds")
+                or (test["overlap"]["patientIds"]
+                    and not patient_overlap_allowed(purpose, model["target"]["unit"]))):
+            raise StorageError(
+                "Inference would predict slides or patients used in this predictor's development."
+                if inference
+                else "Test membership overlaps this predictor's development data.",
                 "EVALUATION_DEVELOPMENT_OVERLAP",
                 409,
             )
@@ -339,6 +378,9 @@ class EvaluationRunService:
         clinical_contract = self._clinical_contract(model, test)
         return {
             "kind": "model-evaluation",
+            # Review cohorts are the earlier name of inference cohorts; new runs of
+            # either execute as inference. Earlier "review" runs keep their manifest.
+            **({"purpose": "inference"} if inference else {}),
             "schemaVersion": 1,
             "datasetId": test["datasetId"],
             **(
@@ -354,8 +396,15 @@ class EvaluationRunService:
             "target": model["target"],
             **({"clinical": clinical_contract} if clinical_contract else {}),
             "inference": test["spec"]["inference"],
-            "analysis": model.get("recipe", {}).get("analysis")
-            or PatientAnalysisSettings().model_dump(),
+            # Patient bootstrap analysis needs observed outcomes; inference has none.
+            **(
+                {}
+                if inference
+                else {
+                    "analysis": model.get("recipe", {}).get("analysis")
+                    or PatientAnalysisSettings().model_dump()
+                }
+            ),
             "bagPolicy": {"evalBagSize": model.get("recipe", {}).get("evalBagSize"),
                           "trainingSeed": model["trainingSeed"]},
             "features": features,
@@ -363,14 +412,14 @@ class EvaluationRunService:
             "status": "planned",
             "results": None,
             "executionEnabled": True,
-            "executionNote": EXECUTION_NOTE,
+            "executionNote": INFERENCE_NOTE if inference else EXECUTION_NOTE,
             **(
                 {
                     "coverage": test["coverage"],
                     "overlap": test["overlap"],
                     "findings": test["findings"],
                 }
-                if reviewed_at_evaluation
+                if reviewed_at_evaluation or inference
                 else {}
             ),
         }
@@ -402,7 +451,7 @@ class EvaluationRunService:
                 "manifest": manifest,
                 "findings": manifest.get("findings", []),
                 "executionEnabled": True,
-                "executionNote": EXECUTION_NOTE,
+                "executionNote": manifest["executionNote"],
             }
         except StorageError as error:
             return {
@@ -464,7 +513,10 @@ class EvaluationRunService:
                     "Evaluation inputs changed. Create and review a new evaluation.",
                     "EVALUATION_INPUTS_CHANGED",
                 )
-        if "analysis" in manifest and reviewed["analysis"] != manifest["analysis"]:
+        # Earlier "review" runs froze a label analysis policy that inference omits;
+        # their saved plan keeps it, so only current policies are compared.
+        if ("analysis" in manifest and manifest.get("purpose") != "review"
+                and reviewed.get("analysis") != manifest["analysis"]):
             raise StorageError("The frozen analysis policy changed.", "EVALUATION_INPUTS_CHANGED", 409)
         if "bagPolicy" in manifest and reviewed["bagPolicy"] != manifest["bagPolicy"]:
             raise StorageError("The frozen evaluation bag policy changed.", "EVALUATION_INPUTS_CHANGED", 409)
@@ -528,6 +580,9 @@ class EvaluationRunService:
             ).model_dump()
         return {
             "kind": "evaluation",
+            # Only runs created as inference carry this key; earlier plans must keep
+            # their exact keys so interrupted jobs remain resumable.
+            **({"purpose": "inference"} if manifest.get("purpose") == "inference" else {}),
             "runId": identity,
             "method": predictor["manifest"].get("method", "ensemble"),
             **(
@@ -572,6 +627,7 @@ class EvaluationRunService:
         if filename not in {
             "predictions.json",
             "metrics.json",
+            "summary.json",
             "slide-predictions.csv",
             "patient-predictions.csv",
         }:
@@ -584,7 +640,13 @@ class EvaluationRunService:
                 "Evaluation results are available after the job finishes.",
                 "EVALUATION_NOT_COMPLETED",
             )
-        expected = execution["result"]["artifacts"].get(filename)
+        artifacts = execution["result"]["artifacts"]
+        if filename not in artifacts and filename in {"metrics.json", "summary.json"}:
+            # Inference writes a label-free summary; evaluations write metrics.
+            raise StorageError(
+                f"This run did not produce {filename}.", "EVALUATION_ARTIFACT_NOT_FOUND", 404
+            )
+        expected = artifacts.get(filename)
         path = self.jobs.folder(identity) / filename
         if not expected or expected["path"] != str(path):
             raise StorageError("Evaluation result provenance changed.", "EVALUATION_RESULT_CHANGED")

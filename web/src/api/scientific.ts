@@ -203,9 +203,6 @@ export interface ProtocolExploreRequest {
   datasetId: string;
   targetField?: string;
   eligibility: Condition[];
-  featureBundleId?: string;
-  featureSetId?: string;
-  featureCoverage?: 'require' | 'restrict';
   rules: { train: Condition[]; val: Condition[]; test: Condition[] };
   splitMode: ProtocolSpec['split']['mode'];
   split?: ProtocolSpec['split'];
@@ -293,10 +290,10 @@ export interface ProtocolSpec {
     };
   };
   constraints: { minPatientsPerClass: number; minPatientsPerPartition: number };
-  /** Named bundle pinned by this protocol; the population is its intersection with the dataset. */
+  /** Legacy frozen-protocol provenance. New construction selects features in Experiments. */
   featureBundleId?: string | null;
   featureSetId?: string | null;
-  /** "restrict" defines the population as the eligible slides that have features. */
+  /** Legacy coverage policy; ignored when creating or resuming a protocol draft. */
   featureCoverage?: 'require' | 'restrict';
   featurePackId?: string | null;
 }
@@ -370,12 +367,11 @@ export interface ProtocolPreview {
 }
 export interface ExecutionPreflight {
   protocolId: string;
-  scientificReady: boolean;
+  scope: 'protocol';
+  protocolReady: true;
+  scientificReady: false;
   executionEnabled: false;
   executionReady: false;
-  tensorValidationComplete?: boolean;
-  fullFeatureValidationComplete?: boolean;
-  provenanceComplete?: boolean;
   findings: Finding[];
 }
 export interface FeatureSpec {

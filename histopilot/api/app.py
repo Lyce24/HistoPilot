@@ -54,7 +54,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             workspace.initialize()
             yield
         finally:
-            database.close()
+            from histopilot.viewer.image_cache import SLIDE_IMAGES
+            from histopilot.viewer.reader_cache import OPENSLIDE_READERS
+            from histopilot.viewer.sdpc import close_readers
+
+            try:
+                SLIDE_IMAGES.clear()
+                OPENSLIDE_READERS.close()
+                close_readers()
+            finally:
+                database.close()
 
     app = FastAPI(
         title="HistoPilot local control service",
@@ -321,6 +330,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from histopilot.api.case_review import case_review_router
     from histopilot.api.clinical import clinical_router
     from histopilot.api.evaluations import evaluation_router
+    from histopilot.api.inference import inference_router
     from histopilot.api.interpretation import interpretation_router
     from histopilot.api.mil import mil_router
     from histopilot.api.model_experiments import model_experiments_router
@@ -339,6 +349,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(slide_review_router(projects, filesystem))
     app.include_router(morphology_router(projects, filesystem))
     app.include_router(case_review_router(projects, filesystem))
+    app.include_router(inference_router(projects, filesystem))
     app.include_router(operations_router(projects, filesystem))
 
     @app.get("/{path:path}")

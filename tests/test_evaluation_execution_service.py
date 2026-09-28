@@ -163,3 +163,11 @@ def test_artifact_exports_require_completed_verified_output(evaluation):
         service.artifact(identity, path.name)
     with pytest.raises(StorageError, match="not found"):
         service.artifact(identity, "../../plan.json")
+
+
+def test_review_namespace_override_is_a_structured_error(evaluation):
+    service, _, predictor, cohort, _ = evaluation
+    selected = EvaluationRunSelection(predictorId=predictor["id"], cohortId=cohort["id"], name="Review", patientIdentifiers="independent")
+    with pytest.raises(StorageError) as error:
+        service._review_cohort(selected, {}, {"spec": {"purpose": "review"}})
+    assert error.value.code == "INVALID_REVIEW_COHORT"

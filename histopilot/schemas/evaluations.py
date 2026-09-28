@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field, StrictInt, field_validator, model_validator
+from pydantic import Field, StrictInt, field_validator, model_serializer, model_validator
 
 from histopilot.schemas.protocols import (
     Conditions,
@@ -13,6 +13,14 @@ from histopilot.schemas.protocols import (
 from histopilot.schemas.workspace import RequestModel
 
 ConfigurationId = Annotated[str, Field(pattern=r"^configuration-[a-f0-9]{64}$")]
+
+# Unlabeled cohorts that receive predictions only. ``review`` is the earlier name
+# of the same cohort type; it keeps its stricter rules and its stored value.
+INFERENCE_PURPOSES = frozenset({"inference", "review"})
+
+
+def is_inference_purpose(value):
+    return value in INFERENCE_PURPOSES
 
 
 class InferenceSettings(RequestModel):
@@ -37,6 +45,23 @@ class InferenceSettings(RequestModel):
 
 
 class EvaluationSpec(RequestModel):
+    purpose: Literal["independent", "inference", "review"] = "independent"
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_purpose(self, handler):
+        serialized = handler(self)
+        if self.purpose == "independent":
+            serialized.pop("purpose", None)
+        return serialized
+
+    @model_validator(mode="after")
+    def inference_is_unlabeled(self):
+        if self.purpose == "inference" and self.target is not None:
+            raise ValueError("Inference cohorts are unlabeled. Remove the prediction target.")
+        if self.purpose == "review" and (self.target is not None or self.patientIdentifiers != "shared"):
+            raise ValueError("Review predictions require unlabeled slides and shared patient identifiers.")
+        return self
+
     # Keep old bindings readable; new cohorts have no development or feature dependencies.
     protocolId: ConfigurationId | None = None
     developmentFeatureBundleId: ConfigurationId | None = None

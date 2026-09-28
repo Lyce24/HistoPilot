@@ -4,7 +4,9 @@ import type { Workspace } from '../api/types';
 import { trainingActive, type FrozenBatch, type TrainingExecution } from '../api/development';
 import type { EvaluationCohort } from '../api/evaluation';
 import type { FrozenPredictor, ModelEvaluation } from '../api/predictors';
+import { extractionActive, type ExtractionJob } from '../api/trident';
 import { supportsAttention } from './modelCapabilities';
+import { isInferenceRun } from './inference';
 
 export type RoadmapModuleId =
   | 'dataset'
@@ -13,6 +15,7 @@ export type RoadmapModuleId =
   | 'experiments'
   | 'test-data'
   | 'evaluation'
+  | 'inference'
   | 'clinical-utility'
   | 'interpretation';
 
@@ -41,12 +44,12 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
   },
   {
     id: 'cohort', title: 'Targets & splits', shortTitle: 'Targets & splits', phase: 'prepare',
-    description: 'Combine a dataset and named feature bundle, filter their shared slides, then define targets and development splits.',
-    prerequisites: ['dataset', 'features'],
+    description: 'Select development records from a dataset, then define targets and development splits.',
+    prerequisites: ['dataset'],
   },
   {
     id: 'experiments', title: 'Experiments', shortTitle: 'Experiments', phase: 'develop',
-    description: 'Plan training, track runs, and generate ensemble or refit predictors for every configuration and seed.',
+    description: 'Check protocol and feature compatibility, plan training, and generate ensemble or refit predictors for every configuration and seed.',
     prerequisites: ['cohort', 'features'],
   },
   {
@@ -58,6 +61,12 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
     id: 'evaluation', title: 'Evaluate models', shortTitle: 'Evaluate models', phase: 'evaluate',
     description: 'Select development models and test cohorts, check matching targets and extracted or packed features, then evaluate.',
     prerequisites: ['experiments', 'test-data'],
+  },
+  {
+    id: 'inference', title: 'Run inference', shortTitle: 'Run inference', phase: 'evaluate',
+    description: 'Apply ready predictors to unlabeled slides: predictions, label-free analysis, attention and exports. No labels or metrics.',
+    prerequisites: ['experiments', 'test-data'],
+    optional: true,
   },
   {
     id: 'clinical-utility', title: 'Clinical utility', shortTitle: 'Clinical utility', phase: 'insights',
@@ -75,9 +84,10 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
 
 /** Main workflow branches. Cards describe additional inputs checked before execution. */
 export const ROADMAP_CONNECTIONS: readonly { from: RoadmapModuleId; to: RoadmapModuleId }[] = [
-  { from: 'dataset', to: 'cohort' }, { from: 'features', to: 'cohort' },
+  { from: 'dataset', to: 'cohort' },
   { from: 'cohort', to: 'experiments' }, { from: 'features', to: 'experiments' },
   { from: 'experiments', to: 'evaluation' }, { from: 'test-data', to: 'evaluation' },
+  { from: 'experiments', to: 'inference' }, { from: 'test-data', to: 'inference' },
   { from: 'evaluation', to: 'clinical-utility' }, { from: 'experiments', to: 'interpretation' },
 ];
 
@@ -97,6 +107,7 @@ export interface RoadmapEvidence {
   protocols: readonly Configuration[];
   features: readonly Configuration[];
   bundles: readonly FeatureBundle[];
+  extractions: readonly ExtractionJob[];
   batches: readonly FrozenBatch[];
   executions: readonly TrainingExecution[];
   evaluationCohorts: readonly EvaluationCohort[];
@@ -112,7 +123,7 @@ export function suggestedRoadmapModule(modules: readonly RoadmapModule[]): Roadm
     && module.unlocked && module.blockers.length === 0);
 }
 
-const EMPTY_EVIDENCE: RoadmapEvidence = { drafts: [], datasets: [], protocols: [], features: [], bundles: [], batches: [], executions: [], evaluationCohorts: [], predictors: [], modelEvaluations: [], clinicalAnalyses: [], interpretations: [] };
+const EMPTY_EVIDENCE: RoadmapEvidence = { drafts: [], datasets: [], protocols: [], features: [], bundles: [], extractions: [], batches: [], executions: [], evaluationCohorts: [], predictors: [], modelEvaluations: [], clinicalAnalyses: [], interpretations: [] };
 
 interface ModuleProgress {
   status: RoadmapStatus;
@@ -124,6 +135,24 @@ function progress(complete: number, draft: number, completedLabel: string, draft
   if (complete > 0) return { status: 'complete', artifactCount: complete, evidence: `${complete} ${completedLabel}${complete === 1 ? '' : 's'}` };
   if (draft > 0) return { status: 'draft', artifactCount: draft, evidence: `${draft} ${draftLabel}${draft === 1 ? '' : 's'}` };
   return { status: 'not-started', artifactCount: 0, evidence: emptyLabel };
+}
+
+function extractionEvidence(jobs: readonly ExtractionJob[]): string | undefined {
+  const active = jobs.filter(extractionActive);
+  if (active.length) {
+    const job = active[0];
+    const current = job.progress;
+    const label = job.state === 'queued' ? 'Queued' : current?.label ?? (job.state === 'cancelling' ? 'Stopping extraction' : 'Preparing');
+    // Each worker/batch owns its counter. Do not present it as whole-job coverage.
+    const count = current && current.completed !== null && current.total !== null && current.total > 0 && job.state !== 'queued'
+      ? ` · ${current.completed}/${current.total} ${current.unit} in ${current.scope === 'batch' ? 'latest batch' : 'stage'}`
+      : '';
+    return `${active.length} extraction${active.length === 1 ? '' : 's'} in progress · ${label}${count}`;
+  }
+  const latest = jobs[0];
+  if (!latest) return undefined;
+  const outcome = latest.state === 'succeeded' ? 'completed' : latest.state;
+  return `${jobs.length} extraction run${jobs.length === 1 ? '' : 's'} · latest ${outcome} · ${latest.state === 'succeeded' ? 'review outputs and freeze a bundle' : 'review run'}`;
 }
 
 /** A compatible input pair still requires the existing MIL review before a plan can be saved. */
@@ -191,6 +220,15 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     states.cohort = progress(protocols.length, protocolDrafts.length + saved.protocols.length - protocols.length, 'frozen protocol', 'saved protocol', 'No frozen protocol or saved target draft');
     states.features = progress(readyBundles.length, saved.features.length + saved.bundles.length - readyBundles.length, 'verified frozen bundle', 'saved feature artifact', 'No saved feature source or frozen bundle');
     if (states.features.status === 'draft') states.features.evidence += ' · complete bundle verification';
+    const extraction = extractionEvidence(saved.extractions);
+    if (extraction) {
+      const existing = states.features;
+      states.features = {
+        status: existing.status === 'complete' ? 'complete' : 'draft',
+        artifactCount: existing.status === 'complete' ? existing.artifactCount : existing.artifactCount + saved.extractions.length,
+        evidence: existing.status === 'not-started' ? extraction : `${existing.evidence} · ${extraction}`,
+      };
+    }
     states.experiments = progress(0, modelDrafts.length + saved.batches.length, '', 'saved development plan', 'No saved model development plan');
     if (saved.executions.length) {
       const finishedBatches = completedDevelopmentBatches(saved.batches, saved.executions);
@@ -212,8 +250,13 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     const published = `${retainedPredictors.length} ready predictor${retainedPredictors.length === 1 ? '' : 's'}`;
     states.experiments = { status: 'complete', artifactCount: Math.max(states.experiments.artifactCount, retainedPredictors.length), evidence: states.experiments.artifactCount ? `${states.experiments.evidence} · ${published}` : published };
   }
-  const completedEvaluations = retainedEvaluations.filter((item) => item.execution?.status === 'completed').length;
-  states.evaluation = progress(completedEvaluations, retainedEvaluations.length - completedEvaluations, 'completed evaluation', 'saved evaluation plan', 'No evaluation of a predictor');
+  // Inference runs share the evaluation record kind but never count as labeled evidence.
+  const scored = retainedEvaluations.filter((item) => !isInferenceRun(item));
+  const predicted = retainedEvaluations.filter(isInferenceRun);
+  const completedEvaluations = scored.filter((item) => item.execution?.status === 'completed').length;
+  states.evaluation = progress(completedEvaluations, scored.length - completedEvaluations, 'completed evaluation', 'saved evaluation plan', 'No evaluation of a predictor');
+  const completedInference = predicted.filter((item) => item.execution?.status === 'completed').length;
+  states.inference = progress(completedInference, predicted.length - completedInference, 'completed inference run', 'saved inference plan', 'No predictions for unlabeled slides');
   const clinicalAnalyses = demo ? [] : saved.clinicalAnalyses.filter((item) => item.lifecycleState !== 'trashed');
   const interpretations = demo ? [] : saved.interpretations.filter((item) => item.lifecycleState !== 'trashed');
   const completedInterpretations = interpretations.filter((item) => item.execution?.status === 'completed').length;
@@ -223,7 +266,7 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
   const compatibleInputs = demo || protocols.some((protocol) => readyBundles.some((bundle) => protocolBundleCompatible(protocol, bundle)));
   const retained: Partial<Record<RoadmapModuleId, boolean>> = demo ? {} : {
     cohort: saved.protocols.length > 0 || protocolDrafts.length > 0,
-    features: saved.features.length > 0 || saved.bundles.length > 0,
+    features: saved.features.length > 0 || saved.bundles.length > 0 || saved.extractions.length > 0,
     experiments: saved.batches.length > 0 || modelDrafts.length > 0 || retainedPredictors.length > 0,
     'test-data': saved.evaluationCohorts.length > 0 || saved.drafts.some((draft) => draft.payload.type === 'evaluation-cohort'),
   };
@@ -233,7 +276,7 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     // new publication or run, which always passes the backend input checks.
     const retainedWork = retained[module.id] === true;
     const blockers = retainedWork ? [] : module.prerequisites.filter((id) => {
-      if (id === 'experiments' && module.id === 'evaluation') return retainedPredictors.length === 0;
+      if (id === 'experiments' && (module.id === 'evaluation' || module.id === 'inference')) return retainedPredictors.length === 0;
       if (id === 'experiments' && module.id === 'interpretation') return !retainedPredictors.some((item) => supportsAttention(item.manifest?.recipe?.model));
       return states[id].status !== 'complete';
     });
@@ -244,7 +287,7 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     // These pages are registries: users can create an experiment before inputs,
     // inspect historical chains and recover records without completing all other
     // experiments. Individual training/freeze/evaluation actions check readiness.
-    const registry = !demo && ['dataset', 'features', 'cohort', 'experiments', 'test-data', 'evaluation', 'clinical-utility', 'interpretation'].includes(module.id);
+    const registry = !demo && ['dataset', 'features', 'cohort', 'experiments', 'test-data', 'evaluation', 'inference', 'clinical-utility', 'interpretation'].includes(module.id);
     return { ...module, ...states[module.id], blockers, unlocked: registry || blockers.length === 0, compatibilityIssue, retainedWork };
   });
 }

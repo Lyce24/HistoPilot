@@ -326,30 +326,34 @@ class Constraints(RequestModel):
     minPatientsPerPartition: Annotated[StrictInt, Field(ge=1, le=100000)] = 1
 
 
-class ProtocolSpec(RequestModel):
+class DatasetConstructionRequest(RequestModel):
+    """Discard old feature bindings when reopening dataset construction requests.
+
+    Published protocol manifests are immutable and retain their original bindings.
+    New constructions and live exploration use only dataset selections and labels;
+    feature compatibility is checked when configuring an experiment.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_feature_settings(cls, value):
+        if isinstance(value, dict):
+            return {
+                key: item
+                for key, item in value.items()
+                if key
+                not in {"featureSetId", "featureBundleId", "featurePackId", "featureCoverage"}
+            }
+        return value
+
+
+class ProtocolSpec(DatasetConstructionRequest):
     datasetId: str = Field(pattern=r"^dataset-[a-f0-9]{64}$")
     target: TargetSpec
     predictors: list[str] = Field(default_factory=list, max_length=100)
     eligibility: Conditions = Field(default_factory=list)
     split: SplitSpec = Field(default_factory=SplitSpec)
     constraints: Constraints = Field(default_factory=Constraints)
-    featureSetId: str | None = Field(default=None, max_length=128)
-    featureBundleId: str | None = Field(default=None, max_length=128)
-    featurePackId: str | None = Field(default=None, pattern=r"^pack-[a-f0-9]{64}$")
-    # "require" keeps the feature set a check on the population this protocol already
-    # defines. "restrict" makes it part of the definition: the development data becomes
-    # the dataset's eligible slides intersected with the slides that have features.
-    featureCoverage: Literal["require", "restrict"] = "require"
-
-    @model_validator(mode="after")
-    def pack_requires_features(self):
-        if self.featureBundleId and (self.featureSetId or self.featurePackId):
-            raise ValueError("Choose a feature bundle as the protocol's feature source.")
-        if self.featurePackId and not self.featureSetId:
-            raise ValueError("Select a feature version before selecting its pack.")
-        if self.featureCoverage == "restrict" and not (self.featureSetId or self.featureBundleId):
-            raise ValueError("Select a feature bundle to restrict the population to.")
-        return self
 
     @field_validator("predictors")
     @classmethod
@@ -361,17 +365,12 @@ class ProtocolSpec(RequestModel):
         return values
 
 
-class ProtocolExploreRequest(RequestModel):
+class ProtocolExploreRequest(DatasetConstructionRequest):
     """Read-only cohort feedback, independent of completed target/feature configuration."""
 
     datasetId: str = Field(pattern=r"^dataset-[a-f0-9]{64}$")
     targetField: str | None = Field(default=None, min_length=1, max_length=128)
     eligibility: Conditions = Field(default_factory=list)
-    # Live counts answer "how big is my development set", so they apply the same feature
-    # restriction the frozen protocol will apply.
-    featureSetId: str | None = Field(default=None, max_length=128)
-    featureBundleId: str | None = Field(default=None, max_length=128)
-    featureCoverage: Literal["require", "restrict"] = "require"
     rules: FixedRules = Field(default_factory=FixedRules)
     splitMode: Literal[
         "rules",
@@ -386,12 +385,6 @@ class ProtocolExploreRequest(RequestModel):
     # Live cohort counts remain available while strategy controls are incomplete.
     # Authoritative preview validates the full SplitSpec before assigning rows.
     split: dict[str, JsonValue] | None = Field(default=None, max_length=30)
-
-    @model_validator(mode="after")
-    def one_feature_source(self):
-        if self.featureBundleId and self.featureSetId:
-            raise ValueError("Choose a feature bundle as the protocol's feature source.")
-        return self
 
 
 class ProtocolPreviewRequest(RequestModel):

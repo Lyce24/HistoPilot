@@ -147,7 +147,7 @@ class TridentOptions(BaseModel):
         None,
         group="execution",
         ge=0,
-        description="Maximum data-loader workers; 0 uses the main process.",
+        description="Maximum data-loader workers per device. Automatic shares up to 8 workers across devices, limited by available CPUs. Use a positive override for manual tuning.",
     )
     batch_size: int = option(
         64,

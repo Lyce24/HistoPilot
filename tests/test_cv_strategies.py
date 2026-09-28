@@ -630,14 +630,14 @@ def test_acknowledged_slide_id_fallback_remains_visible_in_modern_cv():
             assert summary[role]["fallbackSlides"] == summary[role]["slides"]
 
 
-def test_legacy_kfold_hash_and_validation_rotation_remain_unchanged():
+def test_legacy_kfold_serialization_and_validation_rotation_remain_stable():
     store = Store()
     store.draft["payload"]["spec"]["split"] = {"mode": "kfold", "folds": 3, "seeds": [42]}
     result = successful(store)
     assert set(result["spec"]["split"]) == {"mode", "folds", "seeds", "ratios", "rules", "imported"}
-    # Recorded from the legacy engine and its original six-field split serialization.
+    # Original six-field split serialization; feature-only metadata is no longer hashed.
     assert (
-        result["previewHash"] == "79a7c195bab080473b9668072c05c425ab092fe8d9d4e9c1c13b856f2dde5e8f"
+        result["previewHash"] == "b6c46f940105496eb1e9e5d18256a6a066deb5da6ab0f5709249e9b989aa4c2e"
     )
     assert len(result["partitions"]) == 3
     for summary in result["partitions"]:

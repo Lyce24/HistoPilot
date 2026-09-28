@@ -46,6 +46,7 @@ describe('project operations workspace', () => {
   it('shows unified jobs, cancellation and reservation context', () => {
     const html = render({ ...empty, jobs: [{ key: 'extraction:x', id: 'x', kind: 'extraction', name: 'Slide embeddings', job: { status: 'queued', cancellable: true, waitingReason: 'Waiting for GPU capacity.' } }], reservations: [{ batchId: 'batch', runId: 'run', cpus: 4, ramGb: 8, gpu: 0, runsPerGpu: 1 }] });
     expect(html).toContain('Slide embeddings');
+    expect(html).toContain('href="#features?extraction=x"');
     expect(html).toContain('Waiting for GPU capacity.');
     expect(html).toContain('Cancel job');
     expect(html).toContain('Host reservations across all projects');

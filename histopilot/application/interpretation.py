@@ -728,6 +728,10 @@ class InterpretationService:
             if file_stamp(path) != row["slideSource"]:
                 raise ValueError("Slide image changed during rendering.")
             return image
+        except StorageError:
+            # Preserve actionable native-reader availability, busy and timeout
+            # statuses instead of turning every failure into invalid input.
+            raise
         except (OSError, ValueError) as error:
             raise as_input_error(error) from error
 

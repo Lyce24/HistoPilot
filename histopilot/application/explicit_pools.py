@@ -1,8 +1,11 @@
 """Explicit scientific source pools, before any cross-validation assignments."""
 
-from collections import Counter
-
-from histopilot.application.modern_splits import _json, _subset, modern_assignments
+from histopilot.application.modern_splits import (
+    _json,
+    _subset,
+    group_class_counts,
+    modern_assignments,
+)
 
 ALGORITHM_V3 = "histopilot-explicit-pools-evaluation-v3"
 POOL_ROLES = ("train", "val", "test")
@@ -87,7 +90,7 @@ def pool_counts(groups, assignments, classes):
     for role in POOL_ROLES:
         patients = [patient for patient in sorted(groups) if assignments.get(patient) == role]
         rows = [row for patient in patients for row in groups[patient]]
-        counts = Counter(groups[patient][0]["label"] for patient in patients)
+        counts = group_class_counts(groups, set(patients))
         result[role] = {
             "patients": sum(
                 groups[patient][0].get("patientIdSource") != "slide_fallback"

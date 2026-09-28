@@ -77,6 +77,6 @@ export const interpretations = {
   topAttention: (project: string, id: string, slideId: string, member: string, limit: 10 | 20, signal?: AbortSignal) => request<TopAttentionMap>(`${slide(project, id, slideId)}/attention/top?${new URLSearchParams({ member, limit: String(limit) })}`, { signal }),
   patchImage: (project: string, id: string, slideId: string, member: string, patchIndex: number, signal?: AbortSignal) => fetchArtifactBlob(`${slide(project, id, slideId)}/patches/${encodeURIComponent(patchIndex)}/image?${new URLSearchParams({ member, max_size: '512' })}`, signal),
   thumbnail: (project: string, id: string, slideId: string, signal?: AbortSignal) => fetchArtifactBlob(`${slide(project, id, slideId)}/thumbnail?max_size=1536`, signal),
-  region: (project: string, id: string, slideId: string, region: SlideRegion, signal?: AbortSignal) => fetchArtifactBlob(`${slide(project, id, slideId)}/region?${new URLSearchParams({ ...Object.fromEntries(Object.entries(region).map(([key, value]) => [key, String(value)])), max_size: '1536' })}`, signal),
+  region: (project: string, id: string, slideId: string, region: SlideRegion, signal?: AbortSignal, maxSize = 1536) => fetchArtifactBlob(`${slide(project, id, slideId)}/region?${new URLSearchParams({ ...Object.fromEntries(Object.entries(region).map(([key, value]) => [key, String(value)])), max_size: String(maxSize) })}`, signal),
   download: (project: string, id: string, filename: string) => downloadArtifact(`${record(project, id)}/artifacts/${encodeURIComponent(filename)}`, filename),
 };

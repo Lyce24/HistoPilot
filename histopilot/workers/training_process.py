@@ -275,6 +275,8 @@ def compute_snapshot() -> dict:
     paths = [
         root / "scoring.py",
         root / "statistics.py",
+        # The inference worker freezes its label-free summary with this module.
+        root / "inference_summary.py",
         root / "clinical_features.py",
         root / "domain" / "features.py",
         root / "application" / "clinical_inputs.py",

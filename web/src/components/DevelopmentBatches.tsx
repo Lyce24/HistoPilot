@@ -12,6 +12,7 @@ import { Badge, ErrorNotice, Icon, Panel } from './ui';
 import { Findings, SavedNotice } from './ScientificUI';
 import { downloadJSON } from '../lib/download';
 import { sameJSON } from '../lib/json';
+import { useHashParameters } from '../lib/hashRoute';
 import { batchPredictorPolicy, defaultPredictorPolicy, plannedBatchPredictorCount, plannedConfigurationCount } from '../lib/experimentPredictors';
 import { featureKindOf, modelLabel, modelSpec, modelsForFeatureKind, usesPatchFeatures, type FeatureKind } from '../lib/modelCapabilities';
 import './DevelopmentBatches.css';
@@ -273,7 +274,9 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   const [error, setError] = useState<Error | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const [selected, setSelected] = useState('');
+  const linkedBatch = useHashParameters().get('batch') ?? '';
+  const [selected, setSelected] = useState(linkedBatch);
+  useEffect(() => { setSelected(linkedBatch); }, [linkedBatch]);
   const [workingPlan, setWorkingPlan] = useState<string | null>(recovered?.workingPlan ?? null);
   const [dirty, setDirty] = useState(Boolean(recovered));
   const [editorRevision, setEditorRevision] = useState(recovered?.editorRevision ?? experimentRevision);

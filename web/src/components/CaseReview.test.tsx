@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ModelEvaluation } from '../api/predictors';
-import { defaultCaseQuery, type CasePage, type CaseSlide, type ReviewedCase } from '../api/caseReview';
+import { defaultCaseQuery, updateCaseQuery, type CasePage, type CaseSlide, type ReviewedCase } from '../api/caseReview';
 import { reviewStatusLabels, type SlideReview } from '../api/slideReviews';
-import CaseReviewWorkspace, { CaseDetail, CaseSlideDetail, compatibleComparisons } from './CaseReviewWorkspace';
+import CaseReviewWorkspace, { CaseDetail, CaseSlideDetail, compatibleComparisons, matchesRunAttention } from './CaseReviewWorkspace';
+import type { Interpretation } from '../api/interpretation';
 import { isReviewDraft, reviewValues } from './SlideReviewEditor';
 
 const review: SlideReview = { schemaVersion: 1, datasetId: 'dataset', slideId: 's1', revision: 4, status: 'review', notes: 'Inspect tumor', reviewer: 'YL', reasons: ['Limited tumor'], regions: [], evaluationId: null, updatedAt: null, history: [] };
@@ -28,6 +29,28 @@ describe('case review and editor recovery', () => {
     expect(defaultCaseQuery()).toMatchObject({ actualClass: null, predictedClass: null, unit: 'selected', minConfidence: 0, outcome: 'all' });
     expect(reviewValues(review, 'evaluation')).toMatchObject({ notes: 'Inspect tumor', status: 'review', evaluationId: 'evaluation' });
     expect(reviewStatusLabels.exclude).toBe('Recommend exclusion');
+  });
+
+  it('keeps confidence filters valid when either bound crosses the other', () => {
+    const current = { ...defaultCaseQuery(), minConfidence: .9, maxConfidence: 1, offset: 30 };
+    const reduced = updateCaseQuery(current, { maxConfidence: .6 });
+    expect(reduced).toMatchObject({ minConfidence: .6, maxConfidence: .6, offset: 0 });
+    expect(updateCaseQuery(reduced, { minConfidence: .95 })).toMatchObject({ minConfidence: .95, maxConfidence: .95 });
+    expect(updateCaseQuery(current, { maxMargin: .2 })).toMatchObject({ minConfidence: .9, maxConfidence: 1, maxMargin: .2, offset: 0 });
+    expect(current).toMatchObject({ minConfidence: .9, maxConfidence: 1, offset: 30 });
+  });
+
+  it('binds inference attention to the run, feature bundle, pack and actual slide path', () => {
+    const slide = { slideId: 's1', slidePath: '/slides/s1.sdpc' } as CaseSlide;
+    const run = { evaluationId: 'run', predictorId: 'predictor', featureBundleId: 'bundle', packArtifactId: 'pack' };
+    const study = { lifecycleState: 'active', manifest: { ...run, slides: [slide] } } as unknown as Interpretation;
+    expect(matchesRunAttention(study, slide, run, true)).toBe(true);
+    for (const key of ['evaluationId', 'predictorId', 'featureBundleId', 'packArtifactId'] as const) {
+      expect(matchesRunAttention({ ...study, manifest: { ...study.manifest, [key]: 'other' } }, slide, run, true)).toBe(false);
+    }
+    expect(matchesRunAttention(study, { ...slide, slidePath: '/other/s1.sdpc' }, run, true)).toBe(false);
+    expect(matchesRunAttention({ ...study, lifecycleState: 'trashed' }, slide, run, true)).toBe(false);
+    expect(matchesRunAttention({ ...study, manifest: { ...study.manifest, packArtifactId: undefined } }, slide, { ...run, packArtifactId: null }, true)).toBe(true);
   });
 
   it('rejects corrupt recovery copies and preserves revision and annotations in valid drafts', () => {

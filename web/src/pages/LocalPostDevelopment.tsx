@@ -23,11 +23,12 @@ export default function LocalPredictors({ workspace, historical = false }: { wor
   const parameters = useHashParameters();
   const sourceExperiment = parameters.get('experiment') ?? '';
   const sourcePredictor = parameters.get('predictor') ?? '';
+  const sourceRefit = parameters.get('refit') ?? '';
   const requestedTab = parameters.get('tab');
-  const initialTab = requestedTab === 'library' || requestedTab === 'refits' ? requestedTab : sourcePredictor || historical ? 'library' : 'build';
-  return <PredictorWorkspace key={`${workspace.project.id}:${sourceExperiment}:${sourcePredictor}:${initialTab}`} historical={historical} workspace={workspace} sourceExperiment={sourceExperiment} sourcePredictor={sourcePredictor} initialTab={initialTab} />;
+  const initialTab = sourceRefit ? 'refits' : requestedTab === 'library' || requestedTab === 'refits' ? requestedTab : sourcePredictor || historical ? 'library' : 'build';
+  return <PredictorWorkspace key={`${workspace.project.id}:${sourceExperiment}:${sourcePredictor}:${sourceRefit}:${initialTab}`} historical={historical} workspace={workspace} sourceExperiment={sourceExperiment} sourcePredictor={sourcePredictor} sourceRefit={sourceRefit} initialTab={initialTab} />;
 }
-function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, initialTab, historical }: { workspace: Workspace; sourceExperiment: string; sourcePredictor: string; initialTab: 'build' | 'library' | 'refits'; historical: boolean }) {
+function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, sourceRefit, initialTab, historical }: { workspace: Workspace; sourceExperiment: string; sourcePredictor: string; sourceRefit: string; initialTab: 'build' | 'library' | 'refits'; historical: boolean }) {
   const project = workspace.project.id;
   const client = useQueryClient();
   const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchInterval: 10000 });
@@ -39,7 +40,7 @@ function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, init
   const [method, setMethod] = useState('all');
   const [groupBy, setGroupBy] = useState('experiment');
   const [sort, setSort] = useState('seed');
-  const [buildId, setBuildId] = useState('');
+  const [buildId, setBuildId] = useState(sourceRefit);
   async function refresh() { await Promise.all(['predictors', 'predictor-choices', 'refit-builds', 'model-experiments', 'cleanup'].map((key) => client.invalidateQueries({ queryKey: [key, project] }))); }
   const allPredictors = (registry.data?.items ?? []).filter((item) => (!sourceExperiment || item.manifest.experimentId === sourceExperiment) && (!sourcePredictor || item.id === sourcePredictor));
   const visible = allPredictors.filter((item) => (state === 'all' || item.lifecycleState === state) && (method === 'all' || (item.manifest.method ?? 'ensemble') === method) && `${item.manifest.name} ${item.manifest.experimentId} ${item.manifest.trainingSeed} ${item.manifest.splitSeed}`.toLowerCase().includes(search.trim().toLowerCase())).sort((a,b) => sort === 'name' ? a.manifest.name.localeCompare(b.manifest.name) : sort === 'recent' ? b.createdAt.localeCompare(a.createdAt) : a.manifest.experimentId.localeCompare(b.manifest.experimentId) || a.manifest.trainingSeed-b.manifest.trainingSeed || a.manifest.splitSeed-b.manifest.splitSeed);

@@ -41,7 +41,7 @@ export function SplitPools({
         <h3>{development ? 'Training and validation' : 'Set aside test data first'}</h3>
         <p className="muted">
           {development
-            ? 'Use all shared dataset and bundle slides, or filter the training pool by cohort and other values. Patients stay together.'
+            ? 'Use all dataset slides, or filter the training pool by cohort and other values. Patients stay together.'
             : 'The remaining eligible groups become your training pool. You can also use your own training conditions.'}
         </p>
       </div>

@@ -1,8 +1,10 @@
 import { StageBackButton, StageContinueButton, StageCreateButton } from '../components/StageActions';
 import { useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { preparationLink } from '../lib/preparationRoute';
 import type { Workspace } from '../api/types';
 import type {
+  DatasetVersion,
   ImportPreview,
   ImportSpec,
   Inspection,
@@ -25,6 +27,7 @@ import {
   Findings,
   RecordExplorer,
   SavedNotice,
+  scienceKey,
   SourceFields,
   useDatasets,
   useDrafts,
@@ -58,6 +61,7 @@ export const newDatasetImportSpec = (workspace: Workspace): ImportSpec => ({
 });
 export default function LocalDataset({ workspace: w }: { workspace: Workspace }) {
   const project = w.project.id;
+  const client = useQueryClient();
   const versions = useDatasets(project);
   const savedDrafts = useDrafts(project);
   const refresh = useRefreshScientific(project);
@@ -1069,13 +1073,30 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
             setBusy(true);
             try {
               const version = await scientific.importFreeze(project, freezeReview.draftId, freezeReview.revision, freezeReview.preview.previewHash, versionLabel, freezeReview.operationId);
+              // The freeze response is the saved record. Show it immediately;
+              // library refreshes must not hold the dialog open or redirect while
+              // the pending-request navigation guard is still active.
+              const datasetKey = [...scienceKey(project), 'datasets'];
+              const draftKey = [...scienceKey(project), 'drafts'];
+              await Promise.all([
+                client.cancelQueries({ queryKey: datasetKey }),
+                client.cancelQueries({ queryKey: draftKey }),
+              ]);
+              client.setQueryData<{ datasets: DatasetVersion[] }>(datasetKey, (current) => ({
+                ...current, datasets: [version, ...(current?.datasets ?? []).filter((item) => item.id !== version.id)],
+              }));
+              client.setQueryData<{ drafts: ScientificDraft[] }>(draftKey, (current) => current ? ({
+                ...current, drafts: current.drafts.map((item) => item.id === freezeReview.draftId
+                  ? { ...item, status: 'frozen', revision: freezeReview.revision + 1 } : item),
+              }) : current);
               setVersionId(version.id);
               setView('dataset');
+              setResumeView('dataset');
               setDraft((current) => current?.id === freezeReview.draftId ? { ...current, status: 'frozen', revision: freezeReview.revision + 1 } : current);
               setPreview(null);
-              await refresh();
-              setMessage(`Dataset “${version.versionLabel?.tag || versionLabel.tag}” frozen. Its tag and commit note were saved with it.`);
-              window.location.hash = preparationLink('cohort', { datasetId: version.id, saved: 'dataset' });
+              setError(null);
+              setMessage(`Dataset “${version.versionLabel?.tag || versionLabel.tag}” frozen. Your tag and note are saved. Review it here, then choose your next step when ready.`);
+              void refresh().catch(() => setError(new Error('The dataset is saved, but the library could not refresh. Use Refresh in Datasets to retry.')));
               window.scrollTo({ top: 0 });
             } catch (reason) {
               if (scientificReviewInvalidated(reason)) {

@@ -1,6 +1,16 @@
 import type { ProtocolSpec } from '../api/scientific';
 import { DEFAULT_VALIDATION_FRACTION } from './split';
 
+/** New and resumed construction uses dataset records; frozen originals keep their provenance. */
+export function datasetProtocolSpec(spec: ProtocolSpec): ProtocolSpec {
+  const next = { ...spec };
+  delete next.featureBundleId;
+  delete next.featureSetId;
+  delete next.featurePackId;
+  delete next.featureCoverage;
+  return next;
+}
+
 export function newDevelopmentSplit(seeds: number[] = [42], folds = 5): ProtocolSpec['split'] {
   return {
     version: 4,

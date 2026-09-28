@@ -48,7 +48,7 @@ describe('frozen feature bundle library', () => {
     expect(html).not.toContain('Edit bundle name &amp; note');
     expect(html).not.toContain('/mmap/blca-verified');
   });
-  it('hands a reusable named bundle to targets and splits without imposing its original dataset', () => {
+  it('hands a reusable named bundle to experiments without imposing its original dataset', () => {
     const html = render([bundle()]);
     expect(html).toContain('UNI features');
     expect(html).toContain('Reviewed BLCA');
@@ -57,7 +57,7 @@ describe('frozen feature bundle library', () => {
     expect(html).toContain('/mmap/blca-verified');
     expect(html).toContain('float32');
     expect(html).toContain('1,191,065 patches');
-    expect(html).toContain('href="#cohort?bundle=bundle"');
+    expect(html).toContain('href="#experiments?bundle=bundle"');
     expect(html).toContain('Create another bundle to change the included packs.');
     expect(html).not.toContain('Use pack');
     expect(html).not.toContain('Load this feature version from');

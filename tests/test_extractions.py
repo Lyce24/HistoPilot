@@ -824,3 +824,32 @@ def test_legacy_extraction_preview_and_retry_keep_their_hashes(extraction):
     replay = service.submit(request, legacy_preview_hash, "legacy-extraction-submit")
     assert replay["id"] == job["id"]
     assert len(executor.launches) == 1
+
+
+@pytest.mark.parametrize("options, expected_workers, devices", [
+    ({}, 8, 1),
+    ({"gpus": [0, 1]}, 4, 2),
+    ({"gpus": [0, 1], "max_workers": 3}, 3, 2),
+])
+def test_preview_command_and_lease_share_frozen_worker_count(
+    extraction, monkeypatch, options, expected_workers, devices
+):
+    service, spec, executor, _slides = extraction
+    monkeypatch.setattr("histopilot.adapters.trident.performance.usable_cpu_count", lambda: 48)
+    seen = []
+
+    def command(normalized, **kwargs):
+        seen.append(normalized.max_workers)
+        return [kwargs["python_path"], "run_batch_of_slides.py", "--max_workers", str(normalized.max_workers)]
+
+    monkeypatch.setattr("histopilot.adapters.trident.build_command", command)
+    spec = spec.model_copy(update={"options": {"task": "seg", **options}})
+    preview = service.preview(spec)
+    assert preview["spec"]["options"]["max_workers"] == expected_workers
+    job = service.submit(spec, preview["previewHash"], "worker-plan")
+    assert job["spec"]["options"]["max_workers"] == expected_workers
+    plan = executor.launches[0]
+    assert plan["command"][-1] == str(expected_workers)
+    assert plan["resources"]["dataLoaderWorkers"] == expected_workers * devices
+    assert plan["resources"]["cpuThreadsPerRun"] == devices
+    assert seen and set(seen) == {expected_workers}

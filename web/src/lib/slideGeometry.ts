@@ -21,6 +21,28 @@ export function zoomRegion(region: SlideRegion, factor: number, width: number, h
   const nextHeight = Math.min(height, Math.max(Math.min(32, height), region.height / factor));
   return boundedRegion({ x: region.x + (region.width - nextWidth) / 2, y: region.y + (region.height - nextHeight) / 2, width: nextWidth, height: nextHeight }, width, height);
 }
+export interface SlidePoint { x: number; y: number }
+/** Map a client point through an SVG's centered, aspect-preserving viewBox; ignore letterboxing. */
+export function slidePointAt(region: SlideRegion, box: { left: number; top: number; width: number; height: number }, clientX: number, clientY: number): SlidePoint | null {
+  if (![region.x, region.y, region.width, region.height, box.left, box.top, box.width, box.height, clientX, clientY].every(Number.isFinite)
+    || region.width <= 0 || region.height <= 0 || box.width <= 0 || box.height <= 0) return null;
+  const scale = Math.min(box.width / region.width, box.height / region.height);
+  const x = (clientX - box.left - (box.width - region.width * scale) / 2) / scale;
+  const y = (clientY - box.top - (box.height - region.height * scale) / 2) / scale;
+  if (x < 0 || y < 0 || x > region.width || y > region.height) return null;
+  return { x: region.x + x, y: region.y + y };
+}
+/** Zoom both axes uniformly around a slide-space point, keeping the view inside the slide. */
+export function zoomRegionAt(region: SlideRegion, factor: number, width: number, height: number, anchor: SlidePoint): SlideRegion {
+  const source = boundedRegion(region, width, height);
+  if (!Number.isFinite(factor) || factor <= 0 || !Number.isFinite(anchor.x) || !Number.isFinite(anchor.y)) return source;
+  const minimumScale = Math.min(1, Math.max(Math.min(32, width) / source.width, Math.min(32, height) / source.height));
+  const maximumScale = Math.min(width / source.width, height / source.height);
+  const scale = Math.min(maximumScale, Math.max(Math.min(minimumScale, maximumScale), 1 / factor));
+  const x = Math.max(source.x, Math.min(source.x + source.width, anchor.x));
+  const y = Math.max(source.y, Math.min(source.y + source.height, anchor.y));
+  return boundedRegion({ x: x - (x - source.x) * scale, y: y - (y - source.y) * scale, width: source.width * scale, height: source.height * scale }, width, height);
+}
 /** A viewport is rounded outward so its edge patches and source pixels are retained. */
 export function integerRegion(region: SlideRegion, width: number, height: number): SlideRegion {
   const value = boundedRegion(region, width, height), x = Math.floor(value.x), y = Math.floor(value.y);

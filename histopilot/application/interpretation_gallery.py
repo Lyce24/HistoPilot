@@ -276,7 +276,8 @@ class InterpretationGalleryService:
         for identity in files:
             aliases[identity].add(identity)
         # Preserve custom imported slide IDs when images are moved as a folder.
-        records = self._records(original["datasetId"])
+        # Store-scoped features name no dataset; their IDs are the slide file stems.
+        records = self._records(original["datasetId"]) if original.get("datasetId") else []
         for row in records:
             if row.get("slidePath") and row["slideId"] in files:
                 aliases[Path(row["slidePath"]).stem].add(row["slideId"])

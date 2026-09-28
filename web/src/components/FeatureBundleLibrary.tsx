@@ -33,7 +33,7 @@ export function filterFeatureBundles(items: FeatureBundle[], features: Configura
   });
 }
 
-export default function FeatureBundleLibrary({ project, items, features, selectedId, onSelect, onPrepare, onRefresh, refreshBusy = false, filters: controlledFilters, onFiltersChange, context = {} }: {
+export default function FeatureBundleLibrary({ project, items, features, selectedId, onSelect, onPrepare, onRefresh, refreshBusy = false, preparationInProgress = false, filters: controlledFilters, onFiltersChange, context = {} }: {
   project: string;
   items: FeatureBundle[];
   features: Configuration[];
@@ -42,6 +42,7 @@ export default function FeatureBundleLibrary({ project, items, features, selecte
   onPrepare: (featureId?: string, packIds?: string[]) => void;
   onRefresh?: () => void;
   refreshBusy?: boolean;
+  preparationInProgress?: boolean;
   filters?: FeatureBundleLibraryFilters;
   onFiltersChange?: (filters: FeatureBundleLibraryFilters) => void;
   context?: PreparationContext;
@@ -71,8 +72,8 @@ export default function FeatureBundleLibrary({ project, items, features, selecte
       </tr>)}
     </tbody></table></div> : <EmptyState
       icon="features"
-      title={items.length ? 'No matching bundles' : 'No feature bundles yet'}
-      description={items.length ? 'Try another search or clear the filters.' : 'Create a feature bundle to choose features, check their coverage and save them for experiments.'}
+      title={items.length ? 'No matching bundles' : preparationInProgress ? 'Extraction in progress' : 'No feature bundles yet'}
+      description={items.length ? 'Try another search or clear the filters.' : preparationInProgress ? 'Your slide features are being prepared. Follow extraction progress above; once the features are ready, inspect them and save a bundle for experiments.' : 'Create a feature bundle to choose features, check their coverage and save them for experiments.'}
       action={items.length
         ? <button type="button" className="btn btn-secondary" onClick={() => setFilters({ search: '', status: '', sort: 'recent' })}>Clear filters</button>
         : undefined}
@@ -81,13 +82,13 @@ export default function FeatureBundleLibrary({ project, items, features, selecte
   const source = features.find((item) => item.id === bundle.manifest.spec.featureSetId);
   const slideFeatures = (source?.manifest.spec as FeatureSpec | undefined)?.featureKind === 'slide';
   return <>
-    <div className="pfm-version-detail"><Panel title={bundleLabel(bundle)} subtitle="Reuse this named bundle with any dataset. Targets & splits selects their shared slides." actions={<Badge tone={bundle.current ? 'green' : 'orange'}>{bundle.current ? 'Verified inputs' : 'Inputs need attention'}</Badge>}>
+    <div className="pfm-version-detail"><Panel title={bundleLabel(bundle)} subtitle="Select this bundle with a development protocol in Experiments to check feature coverage and compatibility." actions={<Badge tone={bundle.current ? 'green' : 'orange'}>{bundle.current ? 'Verified inputs' : 'Inputs need attention'}</Badge>}>
       <div className="stack">
         <dl className="pfm-version-facts"><div><dt>Feature source</dt><dd>{source ? configurationVersionLabel(source) : bundle.manifest.feature.id}</dd></div><div><dt>Contents</dt><dd>{bundle.manifest.packs.length ? `Features + ${bundle.manifest.packs.length} verified pack(s)` : 'Features alone'}</dd></div><div><dt>Coverage</dt><dd>{bundle.manifest.summary.slideCount.toLocaleString()} slides · {bundle.manifest.summary.patchCount.toLocaleString()} {slideFeatures ? 'slide embeddings' : 'patches'} · {bundle.manifest.summary.dimensions} dimensions</dd></div></dl>
         {bundle.versionLabel?.note ? <p>{bundle.versionLabel.note}</p> : null}
         {bundle.manifest.packs.length ? <div className="stack"><h3>Included packs</h3>{bundle.manifest.packs.map((pack) => <div key={pack.id} className="feature-bundle-pack"><Badge>{pack.outputDtype}</Badge><span className="mono">{pack.outputPath}</span></div>)}</div> : <p>No pack is included in this bundle.</p>}
         <Findings findings={bundle.findings} />
-        <div className="inline-actions"><a className="btn btn-primary" href={preparationLink('cohort', { datasetId: context.datasetId, bundleId: bundle.id, protocolId: context.protocolId })}>Use in Targets &amp; splits <Icon name="arrow" /></a><button type="button" className="btn btn-secondary" onClick={() => onPrepare(bundle.manifest.spec.featureSetId, bundle.manifest.spec.packArtifactIds)}>Prepare another bundle</button></div>
+        <div className="inline-actions"><a className="btn btn-primary" href={preparationLink('experiments', { datasetId: context.datasetId, bundleId: bundle.id, protocolId: context.protocolId })}>Use in Experiments <Icon name="arrow" /></a><button type="button" className="btn btn-secondary" onClick={() => onPrepare(bundle.manifest.spec.featureSetId, bundle.manifest.spec.packArtifactIds)}>Prepare another bundle</button></div>
         <p className="muted">{slideFeatures ? 'This bundle holds one embedding per slide; packing and patch attention are unavailable.' : 'Create another bundle to change the included packs. This bundle remains available to experiments that reference it.'}</p>
         <details><summary>Edit bundle name &amp; note</summary><VersionLabelEditor project={project} resourceType="configuration" resource={bundle} tagLabel="Bundle version tag" /></details>
         <details onToggle={(event) => setShowEvidence(event.currentTarget.open)}><summary>Frozen bundle evidence</summary>{showEvidence ? <pre className="code-block">{JSON.stringify(bundle.manifest, null, 2)}</pre> : null}</details>

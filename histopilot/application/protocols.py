@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from histopilot.application.development_splits import (
     ALGORITHM_V4,
+    ALGORITHM_V4_MIXED,
     development_assignments,
     development_summary,
     select_development_pools,
@@ -28,11 +29,10 @@ from histopilot.application.explicit_pools import (
     pool_counts,
     select_pools,
 )
-from histopilot.application.feature_bundles import FeatureBundleService
-from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.modern_splits import (
     ALGORITHM_V2,
     check_modern_plan,
+    group_class_counts,
     modern_assignments,
     modern_summary,
 )
@@ -72,16 +72,8 @@ def _json(value) -> bytes:
 
 def _serialized_spec(spec):
     value = spec.model_dump(mode="json")
-    if spec.featureBundleId is None:
-        value.pop("featureBundleId", None)
-    if spec.featurePackId is None:
-        value.pop("featurePackId", None)
-    if spec.featureCoverage == "require":
-        # The default is what every protocol frozen before this field meant, so it must not
-        # appear in the serialized spec: their preview hashes and retries stay identical.
-        value.pop("featureCoverage", None)
     if spec.split.version == 1:
-        # Preserve existing preview hashes and frozen retry behavior exactly.
+        # Retain the original six-field representation for legacy split strategies.
         value["split"] = {
             key: value["split"][key]
             for key in ("mode", "folds", "seeds", "ratios", "rules", "imported")
@@ -106,29 +98,6 @@ def pack_binding_snapshot(artifact: dict) -> dict:
         )
         if key in artifact
     }
-
-
-def protocol_bundle_findings(protocol: dict, bundle: dict) -> list[dict]:
-    """Enforce the protocol's immutable input choice at planning and execution."""
-    pinned = protocol["spec"].get("featureBundleId")
-    if pinned and pinned != bundle["id"]:
-        return [
-            {
-                "severity": "error",
-                "code": "PROTOCOL_BUNDLE_MISMATCH",
-                "message": "Use the feature bundle selected by this protocol, or create a protocol revision.",
-            }
-        ]
-    snapshot = protocol.get("featureBundle")
-    if snapshot and snapshot["contentHash"] != bundle.get("contentHash"):
-        return [
-            {
-                "severity": "error",
-                "code": "PROTOCOL_BUNDLE_CHANGED",
-                "message": "The feature bundle no longer matches the version saved in this protocol.",
-            }
-        ]
-    return []
 
 
 def _failure(message, code, status=409):
@@ -362,37 +331,6 @@ class ProtocolService:
         self.store = store
         self.filesystem = filesystem or LocalFilesystem(())
 
-    def _feature_source(self, spec, finding):
-        """Resolve a reusable bundle; dataset identity records provenance, not coverage."""
-        try:
-            if spec.featureBundleId:
-                bundle = FeatureBundleService(self.store, self.filesystem).get(spec.featureBundleId)
-                if not bundle["current"]:
-                    finding("BUNDLE_STALE", "Verify the selected feature bundle in Slide features.")
-                    for item in bundle["findings"]:
-                        finding(item["code"], item["message"], item["severity"])
-                manifest = bundle["manifest"]
-                feature_id = manifest["spec"]["featureSetId"]
-                feature = self.store.get_configuration(feature_id)
-                snapshot = {
-                    "id": bundle["id"],
-                    "contentHash": bundle["contentHash"],
-                    "featureSetId": feature_id,
-                    "sourceContentHash": manifest["feature"]["sourceContentHash"],
-                }
-            elif spec.featureSetId:
-                feature = self.store.get_configuration(spec.featureSetId)
-                snapshot = None
-            else:
-                return None, None
-            if feature["manifest"].get("kind") != "feature":
-                finding("INVALID_FEATURE_SET", "Select a feature inventory or a frozen bundle.")
-                return None, snapshot
-            return feature, snapshot
-        except StorageError as error:
-            finding(error.code, str(error))
-            return None, None
-
     def _load(self, draft_id, expected_revision, allow_frozen):
         if type(expected_revision) is not int or expected_revision < 1:
             raise _failure("Supply a positive draft revision.", "INVALID_REVISION", 422)
@@ -549,25 +487,6 @@ class ProtocolService:
         except FilterFailure as error:
             finding(error.code, str(error))
             return {**result, "valid": False}
-        if request.featureBundleId or request.featureCoverage == "restrict":
-            document, bundle = self._feature_source(request, finding)
-            if document is None:
-                return {**result, "valid": False}
-            covered = {item.get("slideId") for item in document["manifest"].get("files", [])}
-            excluded = len(eligible)
-            eligible = [row for row in eligible if row["slideId"] in covered]
-            result["featureExclusions"] = excluded - len(eligible)
-            result["populationSource"] = "dataset_and_bundle" if bundle else "dataset_and_features"
-            if bundle:
-                result.update(
-                    featureBundle=bundle,
-                    bundleSlides=len(covered),
-                    matchedSlides=sum(row["slideId"] in covered for row in rows),
-                )
-            if not eligible:
-                finding(
-                    "NO_FEATURE_COVERAGE", "No eligible dataset slides are in the selected bundle."
-                )
         result["cohort"] = _cohort_stats(eligible)
         if request.targetField:
             if request.targetField not in fields and request.targetField not in CANONICAL:
@@ -936,31 +855,6 @@ class ProtocolService:
                 eligible = [row for row in rows if evaluator.conjunction(row, spec.eligibility)]
             except FilterFailure as error:
                 finding(error.code, str(error))
-        feature_exclusions = 0
-        feature_document, feature_bundle = self._feature_source(spec, finding)
-        restrict_features = bool(spec.featureBundleId) or spec.featureCoverage == "restrict"
-        covered = set()
-        if restrict_features and feature_document is not None:
-            # The population is the intersection, decided before pools, labels and splits so
-            # every count downstream describes the slides this protocol can actually model.
-            covered = {
-                item.get("slideId") for item in feature_document["manifest"].get("files", [])
-            }
-            without = [row for row in eligible if row["slideId"] not in covered]
-            eligible = [row for row in eligible if row["slideId"] in covered]
-            if without:
-                feature_exclusions = len(without)
-                finding(
-                    "RESTRICTED_TO_FEATURE_COVERAGE",
-                    f"{len(without)} eligible slides have no features in the selected {'bundle' if feature_bundle else 'version'} "
-                    "and are excluded from this protocol.",
-                    "warning",
-                )
-            if not eligible and not any(item["severity"] == "error" for item in findings):
-                finding(
-                    "NO_FEATURE_COVERAGE",
-                    "No eligible slide has features in the selected bundle or feature version.",
-                )
         development_pool_assignments = {}
         if development and not any(item["severity"] == "error" for item in findings):
             # Select development sources before interpreting their labels. A
@@ -1034,17 +928,32 @@ class ProtocolService:
             if _valid_patient(row):
                 groups[row["patientId"]].append(row)
         self._identity_findings(included, groups, finding)
-        for group in groups.values():
-            if len({row["label"] for row in group}) != 1:
-                code = (
-                    "MIXED_PATIENT_LABELS"
-                    if spec.target.unit == "patient"
-                    else "MIXED_PATIENT_STRATIFICATION_UNSUPPORTED"
-                )
-                finding(
-                    code,
-                    "A patient has conflicting mapped target labels. No majority label is selected; mixed-label slide-target stratification is not supported yet.",
-                )
+        mixed_groups = sum(len({row["label"] for row in group}) > 1 for group in groups.values())
+        mixed_slide_target = development and spec.target.unit == "slide" and mixed_groups > 0
+        if mixed_slide_target:
+            algorithm = ALGORITHM_V4_MIXED
+            stratification = (
+                "Stratification uses each patient's observed label combination. "
+                if spec.split.stratify
+                else "Label stratification is disabled. "
+            )
+            finding(
+                "MIXED_SLIDE_LABEL_PATIENT_GROUPS",
+                f"{mixed_groups} patient groups contain different slide labels. Slides keep their own labels and patients stay together. "
+                + stratification
+                + "Class counts count a patient once in each represented class. Patient-level grade metrics are unavailable for conflicting labels.",
+                "warning",
+            )
+        elif mixed_groups:
+            code = (
+                "MIXED_PATIENT_LABELS"
+                if spec.target.unit == "patient"
+                else "MIXED_PATIENT_STRATIFICATION_UNSUPPORTED"
+            )
+            finding(
+                code,
+                "A patient has conflicting mapped target labels. No majority label is selected; mixed-label slide-target stratification requires a version-4 slide target.",
+            )
         for field in spec.predictors:
             pairs = [(evaluator.field(row, field), row["label"]) for row in included]
             if pairs and all(value is not None for value, _ in pairs):
@@ -1060,10 +969,14 @@ class ProtocolService:
                         f"Predictor '{field}' is a one-to-one encoding of the mapped target in this cohort.",
                     )
         class_counts = Counter(row["label"] for row in included)
-        patient_counts = Counter(
-            group[0]["label"]
-            for group in groups.values()
-            if len({row["label"] for row in group}) == 1
+        patient_counts = (
+            group_class_counts(groups)
+            if mixed_slide_target
+            else Counter(
+                group[0]["label"]
+                for group in groups.values()
+                if len({row["label"] for row in group}) == 1
+            )
         )
         for label in spec.target.classes:
             if patient_counts[label] < spec.constraints.minPatientsPerClass:
@@ -1107,56 +1020,6 @@ class ProtocolService:
                     )
             except FilterFailure as error:
                 finding(error.code, str(error))
-        feature_hash = None
-        feature_pack = None
-        if feature_document is not None:
-            feature = feature_document
-            feature_hash = feature["contentHash"]
-            feature_manifest = feature["manifest"]
-            if feature_manifest.get("kind") != "feature":
-                finding("INVALID_FEATURE_SET", "Select a feature inventory.")
-            else:
-                feature_slides = [item.get("slideId") for item in feature_manifest.get("files", [])]
-                if len(feature_slides) != len(set(feature_slides)):
-                    finding(
-                        "DUPLICATE_FEATURE_ID",
-                        "The selected feature set contains duplicate slide identities.",
-                    )
-                uncovered = set(row["slideId"] for row in included) - set(feature_slides)
-                if uncovered and not restrict_features:
-                    finding(
-                        "MISSING_FEATURE_COVERAGE",
-                        "The selected feature set does not cover every included slide.",
-                    )
-                if spec.featurePackId:
-                    try:
-                        resolved = FeaturePackService(self.store, self.filesystem).resolve_artifact(
-                            spec.featureSetId, spec.featurePackId
-                        )
-                        if resolved["current"]:
-                            feature_pack = pack_binding_snapshot(resolved["artifact"])
-                        else:
-                            finding(
-                                "FEATURE_PACK_UNAVAILABLE",
-                                "The selected pack needs verification in PFM & features.",
-                            )
-                            findings.extend(
-                                {**item, "severity": "error"} for item in resolved["findings"]
-                            )
-                    except StorageError as error:
-                        finding(error.code, str(error))
-                elif not feature_bundle:
-                    finding(
-                        "FEATURE_VALUES_UNVERIFIED",
-                        "Feature attachment validation covers headers; execution still requires content and runtime preflight.",
-                        "warning",
-                    )
-        elif not spec.featureBundleId:
-            finding(
-                "FEATURE_SET_NOT_SELECTED",
-                "A feature set can be selected later; this protocol does not authorize execution.",
-                "warning",
-            )
         memberships, partitions, plans = [], [], []
         training_groups = (
             {
@@ -1295,26 +1158,6 @@ class ProtocolService:
             "unlinkedSlideCount": cohort_stats["unlinkedSlideCount"],
             "excludedSlides": len(rows) - len(included),
             "labelExclusions": dict(exclusion_counts),
-            # Only a restricted protocol carries these: their absence is what every protocol
-            # frozen before this field meant, and the preview hash must keep meaning that.
-            **(
-                {
-                    "featureExclusions": feature_exclusions,
-                    "populationSource": "dataset_and_bundle"
-                    if spec.featureBundleId
-                    else "dataset_and_features",
-                    **(
-                        {
-                            "bundleSlides": len(covered),
-                            "matchedSlides": sum(row["slideId"] in covered for row in rows),
-                        }
-                        if spec.featureBundleId
-                        else {}
-                    ),
-                }
-                if restrict_features
-                else {}
-            ),
             "classCounts": {label: class_counts[label] for label in spec.target.classes},
             "patientClassCounts": {label: patient_counts[label] for label in spec.target.classes},
             "grouping": "patient_with_slide_fallback"
@@ -1364,10 +1207,6 @@ class ProtocolService:
             "memberships": memberships,
             "executionEnabled": False,
         }
-        if feature_pack is not None:
-            result["featurePack"] = feature_pack
-        if feature_bundle is not None:
-            result["featureBundle"] = feature_bundle
         if len(_json(result)) > MAX_PROTOCOL_BYTES:
             finding(
                 "PROTOCOL_DOCUMENT_LIMIT",
@@ -1379,7 +1218,6 @@ class ProtocolService:
             **result,
             "algorithm": algorithm,
             "datasetContentHash": dataset["contentHash"],
-            "featureContentHash": feature_hash,
         }
         return {**result, "previewHash": hashlib.sha256(_json(digest_input)).hexdigest()}
 
@@ -1652,7 +1490,7 @@ class ProtocolService:
                     "OPERATION_CONFLICT",
                 )
             # A completed request replays its immutable result. Live pack/source
-            # freshness belongs to preflight, and cannot rewrite a frozen protocol.
+            # freshness belongs to experiment input checks and cannot rewrite a frozen protocol.
             # Publication validates the original draft/revision/tag/note intent.
             return self.store.publish_configuration(
                 draft_id,
@@ -1684,10 +1522,6 @@ class ProtocolService:
             "findings": preview["findings"],
             "executionEnabled": False,
         }
-        if "featurePack" in preview:
-            manifest["featurePack"] = preview["featurePack"]
-        if "featureBundle" in preview:
-            manifest["featureBundle"] = preview["featureBundle"]
         return self.store.publish_configuration(
             draft_id,
             expected_revision=expected_revision,

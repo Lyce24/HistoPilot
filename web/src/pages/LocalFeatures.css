@@ -62,3 +62,15 @@
 .feature-bundle-pack > .badge { flex-shrink: 0; }
 
 .pfm-source-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 14px; }
+
+.pfm-extraction-runs { display: grid; gap: 24px; }
+.pfm-extraction-run { min-width: 0; }
+.pfm-extraction-run + .pfm-extraction-run { border-top: 1px solid var(--line); padding-top: 24px; }
+.pfm-extraction-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.pfm-extraction-heading > div { flex: 1; min-width: min(240px, 100%); }
+.pfm-extraction-heading h3 { margin: 0; font-size: 15px; }
+.pfm-extraction-heading h3 a { color: inherit; text-underline-offset: 3px; }
+.pfm-extraction-heading p { margin: 6px 0 0; font-size: 12px; }
+.pfm-extraction-history summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.pfm-extraction-history .pfm-source-list { margin-top: 16px; }
+.pfm-extraction-history a { text-decoration: none; }

@@ -18,6 +18,7 @@ export interface MorphologyIndex {
   points: MorphologyPoint[]; patches: MorphologyPatch[]; warnings: string[];
 }
 export interface QualityEvidence {
+  sourceFingerprint?: string;
   featureKind?: 'patch' | 'slide';
   slideId: string; datasetId: string; width: number; height: number;
   patchWidth: number | null; patchHeight: number | null; patchCount: number | null;
@@ -41,10 +42,10 @@ export const morphology = {
     request<{ items: Neighbor[]; candidateCount: number; scope: string }>(`${base(project)}/neighbors`, { method: 'POST', body: JSON.stringify(value), signal }),
   quality: (project: string, datasetId: string, slideId: string, featureBundleId?: string, signal?: AbortSignal) =>
     request<QualityEvidence>(`${base(project)}/quality?${params(datasetId, slideId, featureBundleId)}`, { signal }),
-  image: (project: string, datasetId: string, slideId: string, signal?: AbortSignal, region?: MorphologyRegion) =>
-    fetchArtifactBlob(`${base(project)}/image?${params(datasetId, slideId)}&max_size=1536${region ? `&${new URLSearchParams(Object.fromEntries(Object.entries(region).map(([key, value]) => [key, String(value)])))}` : ''}`, signal),
-  patchRegion: (project: string, datasetId: string, slideId: string, featureBundleId: string, patchIndex: number, signal?: AbortSignal) =>
-    request<MorphologyRegion>(`${base(project)}/patch-region?${params(datasetId, slideId, featureBundleId)}&patchIndex=${patchIndex}`, { signal }),
-  patch: (project: string, datasetId: string, slideId: string, featureBundleId: string, patchIndex: number, signal?: AbortSignal) =>
-    fetchArtifactBlob(`${base(project)}/patch?${params(datasetId, slideId, featureBundleId)}&patchIndex=${patchIndex}`, signal),
+  image: (project: string, datasetId: string, slideId: string, signal?: AbortSignal, region?: MorphologyRegion, maxSize = 1536, sourceFingerprint?: string) =>
+    fetchArtifactBlob(`${base(project)}/image?${params(datasetId, slideId)}&max_size=${maxSize}${sourceFingerprint ? `&${new URLSearchParams({ sourceFingerprint })}` : ''}${region ? `&${new URLSearchParams(Object.fromEntries(Object.entries(region).map(([key, value]) => [key, String(value)])))}` : ''}`, signal),
+  patchRegion: (project: string, datasetId: string, slideId: string, featureBundleId: string, patchIndex: number, signal?: AbortSignal, sourceFingerprint?: string) =>
+    request<MorphologyRegion>(`${base(project)}/patch-region?${params(datasetId, slideId, featureBundleId)}&patchIndex=${patchIndex}${sourceFingerprint ? `&${new URLSearchParams({ sourceFingerprint })}` : ''}`, { signal }),
+  patch: (project: string, datasetId: string, slideId: string, featureBundleId: string, patchIndex: number, signal?: AbortSignal, sourceFingerprint?: string) =>
+    fetchArtifactBlob(`${base(project)}/patch?${params(datasetId, slideId, featureBundleId)}&patchIndex=${patchIndex}${sourceFingerprint ? `&${new URLSearchParams({ sourceFingerprint })}` : ''}`, signal),
 };

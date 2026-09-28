@@ -1,5 +1,5 @@
 import { StageBackButton, StageContinueButton, StageCreateButton } from '../components/StageActions';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import { scientific } from '../api/scientific';
@@ -15,6 +15,9 @@ import {
 } from '../components/ScientificUI';
 import ServerFolderPicker from '../components/ServerFolderPicker';
 import TridentExtraction from '../components/TridentExtraction';
+import FeatureExtractionRuns from '../components/FeatureExtractionRuns';
+import { extractionActive, trident } from '../api/trident';
+import { useHashParameters } from '../lib/hashRoute';
 import SlideListField from '../components/SlideListField';
 import { slideListReady } from '../api/slideLists';
 import { editFeatureSource } from '../lib/featureSource';
@@ -26,36 +29,63 @@ import SetupContext from '../components/SetupContext';
 import { StagePage, StageSteps, useStageLibrary } from '../components/StageWorkflow';
 import { bundles } from '../api/bundles';
 import { configurationVersionLabel, datasetVersionLabel } from '../lib/versionLabels';
-import { preparationLink, usePreparationContext, type PreparationContext } from '../lib/preparationRoute';
+import { preparationLink, preparationContext, type PreparationContext } from '../lib/preparationRoute';
 import PreparationNotice from '../components/PreparationNotice';
 import './LocalFeatures.css';
 export default function LocalFeatures({ workspace: w }: { workspace: Workspace }) {
-  const context = usePreparationContext();
-  return <FeaturesWorkspace key={`${context.datasetId ?? ''}:${context.protocolId ?? ''}`} workspace={w} context={context} />;
+  const parameters = useHashParameters();
+  const context = preparationContext(parameters);
+  const extractionId = parameters.get('extraction') || undefined;
+  const [reopen, setReopen] = useState(0);
+  // Reopen progress even if the user has moved to settings within the same job URL.
+  useEffect(() => {
+    const openCurrent = (event: MouseEvent) => {
+      if (!extractionId || event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      const anchor = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href]');
+      if (anchor && anchor.target !== '_blank' && !anchor.hasAttribute('download') && anchor.href === window.location.href) setReopen((value) => value + 1);
+    };
+    document.addEventListener('click', openCurrent);
+    return () => document.removeEventListener('click', openCurrent);
+  }, [extractionId]);
+  const extractionRequest = useMemo(() => extractionId ? { id: extractionId } : undefined, [parameters, extractionId, reopen]);
+  return <FeaturesWorkspace key={`${context.datasetId ?? ''}:${context.protocolId ?? ''}`} workspace={w} context={context} extractionRequest={extractionRequest} />;
 }
-function FeaturesWorkspace({ workspace: w, context }: { workspace: Workspace; context: PreparationContext }) {
+function FeaturesWorkspace({ workspace: w, context, extractionRequest }: { workspace: Workspace; context: PreparationContext; extractionRequest?: { id: string } }) {
+  const extractionId = extractionRequest?.id;
   const project = w.project.id;
   const datasets = useDatasets(project);
   const configurations = useConfigurations(project, 'feature');
   const frozenBundles = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project) });
+  const extractionJobs = useQuery({
+    queryKey: ['extractions', project, 'jobs'],
+    queryFn: () => trident.jobs(project),
+    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 3000 : false,
+  });
+  const runs = extractionJobs.data?.jobs ?? [];
+  const activeExtractions = runs.filter(extractionActive);
   const refresh = useRefreshScientific(project);
   const [spec, setSpec] = useState<FeatureSpec>({
     datasetId: context.datasetId ?? null,
     path: w.sources.find((source) => source.role === 'features')?.path ?? '',
     encoderId: undefined, fileSuffix: '.h5', idSuffix: '', recursive: true, layout: 'auto',
   });
-  const [view, setView] = useState<'bundles' | 'detail' | 'source' | 'library' | 'add'>('bundles');
-  const [started, setStarted] = useState(false);
+  const [view, setView] = useState<'bundles' | 'detail' | 'source' | 'library' | 'add'>(extractionId ? 'add' : 'bundles');
+  const [started, setStarted] = useState(Boolean(extractionId));
   const [bundleStarted, setBundleStarted] = useState(false);
-  const [extractionStarted, setExtractionStarted] = useState(false);
+  const [extractionStarted, setExtractionStarted] = useState(Boolean(extractionId));
   const [sourceStep, setSourceStep] = useState<'settings' | 'coverage'>('settings');
   const [bundlePage, setBundlePage] = useState<'packing' | 'review'>('packing');
   const [bundleReviewReady, setBundleReviewReady] = useState(false);
-  const [mode, setMode] = useState<'extract' | 'attach'>('attach');
+  const [mode, setMode] = useState<'extract' | 'attach'>(extractionId ? 'extract' : 'attach');
+  useEffect(() => {
+    if (extractionRequest) {
+      setStarted(true); setExtractionStarted(true); setMode('extract'); setView('add'); setSourceStep('settings');
+    } else setView('bundles');
+  }, [extractionRequest]);
   const [preview, setPreview] = useState<FeaturePreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [bundleBusy, setBundleBusy] = useState(false);
-  useStageLibrary(() => { if (!busy && !bundleBusy) { setView('bundles'); setSelectedBundle(''); } });
+  useStageLibrary(() => { if (!busy && !bundleBusy) openLibrary(); });
   const [error, setError] = useState<Error | null>(null);
   const [message, setMessage] = useState('');
   const [selected, setSelected] = useState('');
@@ -68,6 +98,10 @@ function FeaturesWorkspace({ workspace: w, context }: { workspace: Workspace; co
   const configuration = versions.find((item) => item.id === selected) ?? versions[0];
   const selectedId = configuration?.id ?? '';
   const dataset = datasets.data?.datasets.find((item) => item.id === configuration?.manifest.datasetId);
+  function openLibrary() {
+    setView('bundles'); setSelectedBundle('');
+    if (extractionId) window.location.hash = preparationLink('features', context);
+  }
   function startPreparation() {
     setStarted(true); setView(versions.length ? 'source' : 'add'); setSourceStep('settings'); setMessage('');
   }
@@ -117,16 +151,16 @@ function FeaturesWorkspace({ workspace: w, context }: { workspace: Workspace; co
     <div className="clinical-workspace feature-workspace">
       <PageHeader
         eyebrow="01 PREPARE"
-        title={activeView === 'bundles' ? 'Slide features' : 'Prepare slide features'}
-        description={activeView === 'bundles' ? 'Open a feature bundle or create one for your experiments.' : 'Choose existing features or extract them, check slide coverage, then freeze a feature bundle.'}
-        actions={activeView === 'bundles' ? <StageCreateButton type="button" disabled={busy || bundleBusy} onClick={() => prepareBundle()}>Create feature bundle</StageCreateButton> : <StageBackButton disabled={busy || bundleBusy} onClick={() => { setView('bundles'); setSelectedBundle(''); }}>Back to feature bundles</StageBackButton>}
+        title={activeView === 'bundles' ? 'Slide features' : activeView === 'add' && mode === 'extract' ? 'Slide extraction' : 'Prepare slide features'}
+        description={activeView === 'bundles' ? 'Follow extraction runs, open a feature bundle, or create one for your experiments.' : 'Choose existing features or extract them, check slide coverage, then freeze a feature bundle.'}
+        actions={activeView === 'bundles' ? <StageCreateButton type="button" disabled={busy || bundleBusy} onClick={() => prepareBundle()}>Create feature bundle</StageCreateButton> : <StageBackButton disabled={busy || bundleBusy} onClick={openLibrary}>Back to feature bundles</StageBackButton>}
       />
       {activeView !== 'bundles' ? <SetupContext input="Slide images or extracted features; a dataset is optional" output="A verified feature bundle for model development">
-        A bundle saves verified features and optional packs for reuse. In Targets & splits, choose a dataset and bundle; their shared slides form the training cohort.
+        A bundle saves verified features and optional packs for reuse. In Experiments, select a development protocol and bundle to check feature coverage and compatibility before training.
       </SetupContext> : null}
       <PreparationNotice context={context} />
       {context.datasetId ? <p className="muted">All project bundles are available. The selected dataset is an optional slide filter when adding features.</p> : null}
-      <ErrorNotice error={error ?? datasets.error ?? configurations.error ?? frozenBundles.error} />
+      <ErrorNotice error={error ?? datasets.error ?? configurations.error ?? frozenBundles.error ?? extractionJobs.error} />
       <SavedNotice>{message}</SavedNotice>
       {activeView !== 'bundles' && activeView !== 'detail' && !(activeView === 'add' && mode === 'extract') ? <StageSteps label="Feature bundle steps" current={activeView === 'library' ? bundlePage : activeView === 'add' && sourceStep === 'coverage' ? 'coverage' : 'source'} disabled={busy || bundleBusy}
         steps={[
@@ -142,11 +176,12 @@ function FeaturesWorkspace({ workspace: w, context }: { workspace: Workspace; co
           else if (step === 'review' && bundleReviewReady) { setBundlePage('review'); setView('library'); }
         }} /> : null}
       <StagePage pageKey={`${activeView}:${sourceStep}:${bundlePage}:${selectedBundle}`} className="pfm-workspace">
+      {activeView === 'bundles' ? <FeatureExtractionRuns jobs={runs} context={context} isPending={extractionJobs.isPending} /> : null}
       {configurations.isPending || frozenBundles.isPending ? <p className="muted" role="status">Loading feature sources and bundles…</p> : <>
       {activeView === 'bundles' || activeView === 'detail' ? <section className="pfm-content" aria-label="Frozen feature bundles">
         <FeatureBundleLibrary project={project} items={bundleItems} features={versions} selectedId={activeView === 'detail' ? selectedBundle : ''} onSelect={(id) => { setSelectedBundle(id); setView('detail'); }} onPrepare={prepareBundle} context={context}
-          filters={libraryFilters} onFiltersChange={setLibraryFilters}
-          onRefresh={() => { void Promise.all([frozenBundles.refetch(), configurations.refetch()]); }} refreshBusy={frozenBundles.isFetching || configurations.isFetching} />
+          preparationInProgress={activeExtractions.length > 0} filters={libraryFilters} onFiltersChange={setLibraryFilters}
+          onRefresh={() => { void Promise.all([frozenBundles.refetch(), configurations.refetch(), extractionJobs.refetch()]); }} refreshBusy={frozenBundles.isFetching || configurations.isFetching || extractionJobs.isFetching} />
       </section> : null}
       {activeView === 'source' ? <Panel title="Choose a feature source" subtitle="Reuse an inspected source, or attach and inspect a new source for this bundle." actions={<StageCreateButton type="button" onClick={addSource}>Add feature source</StageCreateButton>}>
         {versions.length ? <div className="pfm-source-list">{versions.map((item) => <button type="button" className="pfm-version-card" key={item.id} onClick={() => prepareBundle(item.id)}>
@@ -166,7 +201,7 @@ function FeaturesWorkspace({ workspace: w, context }: { workspace: Workspace; co
             </button>
           </div>
           <div className="pfm-content" hidden={mode !== 'extract'}>
-            {extractionStarted ? <TridentExtraction workspace={w} initialDatasetId={context.datasetId} datasets={datasets.data?.datasets ?? []} onAttach={(input) => {
+            {extractionStarted ? <TridentExtraction workspace={w} requestedJob={extractionRequest} initialDatasetId={context.datasetId} datasets={datasets.data?.datasets ?? []} onAttach={(input) => {
               edit({ ...input, slideList: null, slideListPath: null, layout: 'auto', fileSuffix: '.h5', recursive: false, idSuffix: '', coordinatesPath: undefined });
               setMode('attach'); setView('add'); setSourceStep('settings');
             }} /> : null}
@@ -358,7 +393,7 @@ function FeaturesWorkspace({ workspace: w, context }: { workspace: Workspace; co
                   setSelectedBundle(bundle.id);
                   setView('detail');
                   setMessage(`Bundle “${bundle.versionLabel?.tag || 'Feature bundle'}” frozen.`);
-                  window.location.hash = preparationLink('cohort', { datasetId: context.datasetId, bundleId: bundle.id, protocolId: context.protocolId, saved: 'bundle' });
+                  window.location.hash = preparationLink('experiments', { datasetId: context.datasetId, bundleId: bundle.id, protocolId: context.protocolId, saved: 'bundle' });
                   window.scrollTo({ top: 0 });
                 }} />
             </Panel>

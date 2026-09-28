@@ -135,10 +135,11 @@ def test_frozen_features_worker_receipt_preflight_and_reopen(tmp_path, monkeypat
             operation_id="protocol",
         )
         preflight = client.get(base + f"/protocols/{protocol['id']}/preflight").json()
-        assert preflight["tensorValidationComplete"]
-        assert preflight["scope"] == "protocol-and-feature-contents"
+        assert "tensorValidationComplete" not in preflight
+        assert preflight["scope"] == "protocol"
+        assert preflight["protocolReady"]
         assert not preflight["executionReady"]
-        assert not preflight["fullFeatureValidationComplete"]
+        assert not preflight["scientificReady"]
         bundle_spec = {"featureSetId": feature_id}
         bundle_preview = post(client, base + "/feature-bundles/preview", bundle_spec)
         bundle = post(
@@ -161,10 +162,12 @@ def test_frozen_features_worker_receipt_preflight_and_reopen(tmp_path, monkeypat
             operation_id="bundle-protocol",
         )
         bundle_preflight = client.get(base + f"/protocols/{bundle_protocol['id']}/preflight").json()
-        assert bundle_preflight["featureBundleId"] == bundle["id"]
-        assert bundle_preflight["featureSource"]["featureSetId"] == feature_id
-        assert bundle_preflight["headerInputsReady"]
-        assert bundle_preflight["tensorValidationComplete"]
+        assert bundle_preflight["scope"] == "protocol"
+        assert bundle_preflight["protocolReady"]
+        assert "featureSource" not in bundle_preflight
+        assert store.get_configuration(bundle_protocol["id"])["manifest"]["spec"] == {
+            "featureBundleId": bundle["id"]
+        }
         if action == "pack":
             artifact = completed["artifact"]
             destination = Path(artifact["outputPath"])
@@ -189,14 +192,13 @@ def test_frozen_features_worker_receipt_preflight_and_reopen(tmp_path, monkeypat
             packed_preflight = client.get(
                 base + f"/protocols/{packed_protocol['id']}/preflight"
             ).json()
-            assert packed_preflight["featureSource"]["type"] == "pack"
-            assert packed_preflight["tensorValidationComplete"]
+            assert packed_preflight["scope"] == "protocol"
+            assert packed_preflight["protocolReady"]
+            assert "featureSource" not in packed_preflight
             assert client.put(selection_url, json={"artifactId": None}).status_code == 200
             # Editing the preference must not alter a representation pinned in a protocol.
             assert (
-                client.get(base + f"/protocols/{packed_protocol['id']}/preflight").json()[
-                    "featurePackId"
-                ]
+                store.get_configuration(packed_protocol["id"])["manifest"]["spec"]["featurePackId"]
                 == artifact["id"]
             )
             attach_spec = {
@@ -239,7 +241,8 @@ def test_frozen_features_worker_receipt_preflight_and_reopen(tmp_path, monkeypat
             assert validate_pack(destination)["id"] == artifact["id"]
             assert not client.get(selection_url).json()["current"]
             stale_pack = client.get(base + f"/protocols/{packed_protocol['id']}/preflight").json()
-            assert any(item["severity"] == "error" for item in stale_pack["findings"])
+            assert stale_pack["protocolReady"]
+            assert stale_pack["findings"] == []
     reopened_app = create_app(replace(settings, workspace=tmp_path / "another-registry"))
     with TestClient(reopened_app, base_url="http://127.0.0.1:8787") as client:
         auth(client)

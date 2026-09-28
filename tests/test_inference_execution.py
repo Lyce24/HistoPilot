@@ -313,3 +313,162 @@ def test_resume_recomputes_only_cache_without_valid_member_evidence(
     assert loaded == [checkpoints[1]["path"]]
     assert resumed["artifacts"] == expected["artifacts"]
     assert resumed["metrics"] == expected["metrics"]
+
+
+def test_inference_plan_writes_predictions_and_label_free_summary(plan, tmp_path):
+    unlabeled = copy.deepcopy(plan)
+    for row in unlabeled["data"]["memberships"]:
+        row["label"] = None
+    ensemble = {**unlabeled, "method": "ensemble", "checkpoints": plan["checkpoints"] * 2}
+    result = evaluate({**ensemble, "purpose": "inference"}, tmp_path / "inference")
+    folder = tmp_path / "inference"
+    assert result["purpose"] == "inference" and "metrics" not in result
+    assert set(result["artifacts"]) == {
+        "predictions.json", "summary.json", "slide-predictions.csv", "patient-predictions.csv",
+    }
+    assert not (folder / "metrics.json").exists()
+    predictions = json.loads((folder / "predictions.json").read_text())
+    for row in predictions["records"]:
+        assert row["label"] is None and len(row["memberProbabilities"]) == 2
+        assert row["memberProbabilities"][0] == pytest.approx(row["probabilities"])
+    summary = json.loads((folder / "summary.json").read_text())
+    assert summary == result["summary"] and summary["purpose"] == "inference"
+    assert summary["slide"]["count"] == len(predictions["records"]) == result["slideCount"]
+    assert summary["slide"]["ensemble"]["unanimous"] == summary["slide"]["count"]
+    assert summary["selected"] == summary[plan["target"]["unit"]]
+    header = (folder / "slide-predictions.csv").read_text().splitlines()[0].split(",")
+    assert header[:7] == [
+        "slideId", "patientId", "predictedLabel", "confidence", "margin",
+        "membersAgreeing", "memberCount",
+    ]
+    assert "label" not in header
+    # Inference and evaluation of the same inputs produce identical probabilities.
+    evaluate(ensemble, tmp_path / "evaluation")
+    scored = json.loads((tmp_path / "evaluation/predictions.json").read_text())
+    for left, right in zip(predictions["records"], scored["records"], strict=True):
+        assert left["probabilities"] == right["probabilities"]
+        assert "memberProbabilities" not in right
+    assert summary["memberProbabilities"] == "recorded"
+    refit = evaluate({**unlabeled, "purpose": "inference"}, tmp_path / "refit")
+    assert "ensemble" not in refit["summary"]["slide"]
+    assert refit["summary"]["memberProbabilities"] == "single_model"
+    rows = (tmp_path / "refit/slide-predictions.csv").read_text().splitlines()[1].split(",")
+    assert rows[5:7] == ["", ""]
+
+
+def test_large_inference_ensembles_omit_member_probabilities_explicitly(plan, tmp_path, monkeypatch):
+    monkeypatch.setattr("histopilot.training.inference.MAX_MEMBER_VALUES", 1)
+    unlabeled = copy.deepcopy(plan)
+    for row in unlabeled["data"]["memberships"]:
+        row["label"] = None
+    result = evaluate(
+        {**unlabeled, "purpose": "inference", "method": "ensemble",
+         "checkpoints": plan["checkpoints"] * 2},
+        tmp_path / "large",
+    )
+    records = json.loads((tmp_path / "large/predictions.json").read_text())["records"]
+    assert all("memberProbabilities" not in row for row in records)
+    assert result["summary"]["memberProbabilities"] == "omitted_for_size"
+    assert "ensemble" not in result["summary"]["slide"]
+
+
+def test_inference_plan_never_reads_labels_or_unknown_purposes(plan, tmp_path):
+    with pytest.raises(ValueError, match="unlabeled"):
+        evaluate({**plan, "purpose": "inference"}, tmp_path / "labeled")
+    with pytest.raises(ValueError, match="purpose"):
+        evaluate({**plan, "purpose": "review"}, tmp_path / "review")
+
+
+def test_pinned_worker_runs_inference_plans_through_record_verification(plan, tmp_path):
+    job_support = runpy.run_path(str(Path(__file__).with_name("test_compute_jobs.py")))
+    service, initial_id, _, executor = job_support["job"].__wrapped__(tmp_path)
+    store = service.store
+    dataset_id = store.get_configuration(initial_id)["manifest"]["datasetId"]
+    memberships = [{**row, "label": None} for row in plan["data"]["memberships"]]
+    checkpoints = plan["checkpoints"] * 2
+
+    def publish(kind, values):
+        return store.publish_configuration(
+            manifest={"kind": kind, "datasetId": dataset_id, **values}, operation_id=kind
+        )
+
+    feature = publish("feature", {"files": list(plan["data"]["featureFiles"].values())})
+    predictor = publish(
+        "frozen-predictor",
+        {"target": plan["target"], "method": "ensemble", "checkpoints": checkpoints},
+    )
+    cohort = publish("evaluation-cohort", {"memberships": memberships})
+    evaluation = publish("model-evaluation", {
+        "purpose": "inference",
+        "predictorId": predictor["id"],
+        "cohortId": cohort["id"],
+        "features": {"feature": {"id": feature["id"]}, "dimensions": plan["data"]["featureDim"]},
+        "target": plan["target"],
+        "inference": plan["inference"],
+    })
+    inference = {
+        **plan, "purpose": "inference", "method": "ensemble", "checkpoints": checkpoints,
+        "data": {**plan["data"], "memberships": memberships},
+    }
+    inference["resources"].update(gpuIds=[], ramGbPerRun=0.01, maxConcurrentRuns=1, runsPerGpu=1)
+    service.launch(evaluation["id"], inference, "launch")
+    _, _, plan_path, _, archive = executor.calls[0]
+    result = subprocess.run(
+        [sys.executable, "-m", "histopilot.workers.compute_job", str(plan_path)],
+        cwd=archive, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    executor.sessions.clear()
+    state = service.status(evaluation["id"])
+    assert state["status"] == "completed", state
+    outcome = state["result"]
+    assert outcome["purpose"] == "inference" and "metrics" not in outcome
+    assert outcome["summary"]["slide"]["count"] == len(memberships)
+    assert outcome["summary"]["memberCount"] == 2
+    assert set(outcome["artifacts"]) == {
+        "predictions.json", "summary.json", "slide-predictions.csv", "patient-predictions.csv",
+    }
+
+
+def test_mean_logit_inference_records_exact_member_log_evidence(plan, tmp_path):
+    unlabeled = copy.deepcopy(plan)
+    unlabeled["inference"]["patientAggregation"] = "mean_logits"
+    for row in unlabeled["data"]["memberships"]:
+        row["label"] = None
+    evaluate({**unlabeled, "purpose": "inference", "method": "ensemble",
+              "checkpoints": plan["checkpoints"] * 2}, tmp_path / "logit-inference")
+    content = json.loads((tmp_path / "logit-inference/predictions.json").read_text())
+    for row in content["records"]:
+        assert len(row["memberLogProbabilities"]) == 2
+        for logs in row["memberLogProbabilities"]:
+            assert logs == pytest.approx(row["logProbabilities"])
+
+
+@pytest.mark.parametrize("purpose", [None, "inference"])
+def test_evaluation_and_oversized_inference_do_not_materialize_all_member_vectors(
+    plan, tmp_path, monkeypatch, purpose
+):
+    import histopilot.training.inference as inference
+
+    candidate = copy.deepcopy(plan)
+    candidate.update(method="ensemble", checkpoints=plan["checkpoints"] * 2)
+    if purpose:
+        candidate["purpose"] = purpose
+        for row in candidate["data"]["memberships"]:
+            row["label"] = None
+    monkeypatch.setattr(inference, "MAX_MEMBER_VALUES", 1)
+    expected = evaluate(candidate, tmp_path / "bounded")
+    original = inference._cached_member
+
+    class NoMatrixLists(np.ndarray):
+        def tolist(self):
+            assert self.ndim < 2, "A discarded member matrix was materialized in Python memory"
+            return super().tolist()
+
+    def cached(*args, **kwargs):
+        probabilities, logs, uncertainty = original(*args, **kwargs)
+        return probabilities.view(NoMatrixLists), logs.view(NoMatrixLists), uncertainty
+
+    monkeypatch.setattr(inference, "_cached_member", cached)
+    result = evaluate(candidate, tmp_path / "bounded")
+    assert result["artifacts"] == expected["artifacts"]

@@ -32,6 +32,7 @@ classifiers = [
 histopilot = "histopilot.cli:app"
 
 [project.optional-dependencies]
+sdpc = ["opensdpc==2.0.0"]
 imaging = [
     "pillow>=11,<13",
     "openslide-python>=1.4,<2",
@@ -43,6 +44,9 @@ training = [
     "torchmetrics==1.8.2",
     "scikit-learn>=1.5,<2",
 ]
+
+[tool.uv.sources]
+opensdpc = { git = "https://github.com/WonderLandxD/opensdpc", rev = "a07579eedde1dffddf8fa712ef236b97ca8cfc55" }
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1"]

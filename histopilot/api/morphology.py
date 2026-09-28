@@ -56,6 +56,7 @@ def morphology_router(projects, filesystem):
         datasetId: DatasetId,
         slideId: str,
         max_size: int = Query(default=1024, ge=64, le=2048),
+        sourceFingerprint: str | None = Query(default=None, pattern=r"^[a-f0-9]{64}$"),
         x: float | None = Query(default=None, ge=0, allow_inf_nan=False),
         y: float | None = Query(default=None, ge=0, allow_inf_nan=False),
         width: float | None = Query(default=None, gt=0, allow_inf_nan=False),
@@ -68,7 +69,13 @@ def morphology_router(projects, filesystem):
             )
         region = values if x is not None else None
         return image_response(
-            service(identity).image(datasetId, slideId, max_size=max_size, region=region)
+            service(identity).image(
+                datasetId,
+                slideId,
+                max_size=max_size,
+                region=region,
+                source_fingerprint=sourceFingerprint,
+            )
         )
 
     @router.get("/patch-region")
@@ -78,8 +85,11 @@ def morphology_router(projects, filesystem):
         slideId: str,
         featureBundleId: ConfigurationId,
         patchIndex: int = Query(ge=0),
+        sourceFingerprint: str | None = Query(default=None, pattern=r"^[a-f0-9]{64}$"),
     ):
-        return service(identity).patch_region(datasetId, slideId, featureBundleId, patchIndex)
+        return service(identity).patch_region(
+            datasetId, slideId, featureBundleId, patchIndex, source_fingerprint=sourceFingerprint
+        )
 
     @router.get("/patch")
     def patch(
@@ -88,9 +98,16 @@ def morphology_router(projects, filesystem):
         slideId: str,
         featureBundleId: ConfigurationId,
         patchIndex: int = Query(ge=0),
+        sourceFingerprint: str | None = Query(default=None, pattern=r"^[a-f0-9]{64}$"),
     ):
         return image_response(
-            service(identity).patch_image(datasetId, slideId, featureBundleId, patchIndex)
+            service(identity).patch_image(
+                datasetId,
+                slideId,
+                featureBundleId,
+                patchIndex,
+                source_fingerprint=sourceFingerprint,
+            )
         )
 
     return router

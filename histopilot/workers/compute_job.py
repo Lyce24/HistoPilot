@@ -57,6 +57,9 @@ def verify_plan_inputs(plan):
             }
             if (
                 manifest.get("kind") != "model-evaluation"
+                # Inference plans skip label metrics; the saved record decides that.
+                or plan.get("purpose")
+                != ("inference" if manifest.get("purpose") == "inference" else None)
                 or plan["checkpoints"] != predictor["manifest"]["checkpoints"]
                 or plan["target"] != manifest["target"]
                 or plan["target"] != predictor["manifest"]["target"]

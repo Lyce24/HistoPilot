@@ -620,7 +620,7 @@ def test_artifact_and_job_reads_reject_inconsistent_completion_receipts(packing,
         ),
     ],
 )
-def test_preflight_reports_content_scope_and_only_unverified_provenance(
+def test_protocol_preflight_does_not_check_feature_validation(
     packing, monkeypatch, validation, complete, warning
 ):
     service, spec, executor, source = packing
@@ -634,7 +634,9 @@ def test_preflight_reports_content_scope_and_only_unverified_provenance(
         },
         operation_id="protocol",
     )
-    monkeypatch.setattr(FeaturePackService, "validation_for", lambda *args: validation)
+    monkeypatch.setattr(
+        FeaturePackService, "validation_for", lambda *args: pytest.fail("Protocol checked features")
+    )
     router = scientific_router(
         SimpleNamespace(scientific_store=lambda identity: service.store), service.filesystem
     )
@@ -644,17 +646,12 @@ def test_preflight_reports_content_scope_and_only_unverified_provenance(
         if route.path.endswith("/protocols/{configuration_id}/preflight")
     )
     report = endpoint("project", protocol["id"])
-    assert report["tensorValidationComplete"] is complete
-    assert report["scope"] == (
-        "protocol-and-feature-contents" if complete else "protocol-and-feature-headers"
-    )
-    assert report["scientificReady"] is (warning is None)
+    assert report["scope"] == "protocol"
+    assert report["protocolReady"]
+    assert "tensorValidationComplete" not in report
+    assert not report["scientificReady"]
     assert not report["executionReady"]
-    codes = {item["code"] for item in report["findings"]}
-    if warning:
-        assert warning in codes
-    else:
-        assert not codes
+    assert report["findings"] == []
 
 
 def test_reduced_precision_pack_verifies_against_the_cast_source(packing, tmp_path):

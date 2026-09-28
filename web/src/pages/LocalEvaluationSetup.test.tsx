@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import type { ProtocolExploration } from '../api/scientific';
 import type { EvaluationPreview } from '../api/evaluation';
-import LocalEvaluationSetup, { EvaluationEvidence, EvaluationInferenceFields, EvaluationTargetMapping, evaluationConditionValue, evaluationLabelProblem, newEvaluationSpec, TestCohortSummary, cohortDatasetIds, mergeTestDistributions, independentCohortSpec, cohortIdentityNote } from './LocalEvaluationSetup';
+import LocalEvaluationSetup, { EvaluationEvidence, EvaluationInferenceFields, EvaluationTargetMapping, evaluationConditionValue, evaluationLabelProblem, newEvaluationSpec, TestCohortSummary, cohortDatasetIds, mergeTestDistributions, independentCohortSpec, cohortIdentityNote, newInferenceSpec } from './LocalEvaluationSetup';
 
 const preview: EvaluationPreview = {
   spec: newEvaluationSpec(),
@@ -35,6 +35,29 @@ describe('later test cohort setup', () => {
     expect(legacy).toContain('Match the patient scoring rule saved with the predictor');
     expect(legacy).toContain('value="mean_logits"');
     expect(legacy).toContain('value="predictor"');
+  });
+
+  it('lists inference cohorts by type and offers to create one', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['scientific', 'project', 'datasets'], { datasets: [] });
+    client.setQueryData(['evaluation-drafts', 'project'], { drafts: [{ id: 'unlabeled', name: 'No-consensus slides', revision: 1, status: 'editable', payload: { type: 'evaluation-cohort', spec: newInferenceSpec() } }] });
+    client.setQueryData(['evaluation-cohorts', 'project'], { items: [] });
+    const workspace = { project: { id: 'project', name: 'BD' } } as Workspace;
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={workspace} /></QueryClientProvider>);
+      expect(html).toContain('No-consensus slides');
+      expect(html).toContain('Inference · unlabeled');
+      expect(html).toContain('Type · target');
+      expect(html).toContain('Create inference cohort');
+    } finally { client.clear(); }
+  });
+
+  it('summarizes inference cohorts without a labeled-slide count', () => {
+    const preview = { summary: { includedSlides: 383, includedPatients: 256, excludedSlides: 728, labeledSlides: 0, classCounts: {}, developmentSlideOverlap: 0, developmentPatientOverlap: 0 }, findings: [], coverage: { selectedSlideIds: [] } };
+    const inference = renderToStaticMarkup(<TestCohortSummary preview={preview} inference />);
+    expect(inference).toContain('Slides to predict');
+    expect(inference).not.toContain('Labeled slides');
+    expect(renderToStaticMarkup(<TestCohortSummary preview={preview} />)).toContain('Labeled slides');
   });
 
   it('starts with only a cohort registry and create action, without development prerequisites', () => {
@@ -175,4 +198,16 @@ describe('later test cohort setup', () => {
     expect(evaluationConditionValue('', 'gte', 'integer')).toBe('');
     expect(evaluationConditionValue('Infinity', 'gte', 'integer')).toBe('Infinity');
   });
+});
+
+it('continues earlier review cohorts and inference cohorts as unlabeled inference cohorts', () => {
+  const spec = independentCohortSpec({ ...newEvaluationSpec(), purpose: 'review', target: null });
+  expect(spec.purpose).toBe('inference');
+  expect(spec.patientIdentifiers).toBe('shared');
+  expect(spec.target).toBeNull();
+  expect(independentCohortSpec(newInferenceSpec())).toMatchObject({ purpose: 'inference', target: null });
+  // A labeled evaluation cohort stays an evaluation cohort with its target.
+  const labeled = independentCohortSpec(newEvaluationSpec());
+  expect(labeled.purpose).toBeUndefined();
+  expect(labeled.target).not.toBeNull();
 });
