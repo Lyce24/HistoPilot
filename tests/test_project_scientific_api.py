@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from histopilot.api import create_app
+from histopilot.application.blca_demo import DEMO_ID
 from histopilot.application.project_workspace import DESCRIPTOR
 from histopilot.config import Settings
 from histopilot.storage.scientific import SCHEMA_VERSION
@@ -329,14 +330,14 @@ def test_scientific_read_and_write_endpoints_require_session_token(client, setti
 
 
 @pytest.mark.parametrize("path", ["storage", "drafts", "datasets"])
-def test_synthetic_demo_has_no_real_project_scientific_store(client, settings, path):
-    assert_error(client.get(f"{API}/projects/synthetic-v1/{path}"), 409)
+def test_demo_has_no_real_project_scientific_store(client, settings, path):
+    assert_error(client.get(f"{API}/projects/{DEMO_ID}/{path}"), 409)
     assert not (settings.workspace / "histopilot-state.sqlite").exists()
 
 
-def test_synthetic_demo_rejects_scientific_draft_creation(client):
+def test_demo_rejects_scientific_draft_creation(client):
     response = client.post(
-        f"{API}/projects/synthetic-v1/drafts",
+        f"{API}/projects/{DEMO_ID}/drafts",
         json={"kind": "import", "name": "Demo promotion", "payload": {}},
     )
     assert_error(response, 409)

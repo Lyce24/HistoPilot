@@ -76,7 +76,6 @@ def test_create_optional_setup_is_folder_backed_and_survives_restart(settings):
         assert state["project"] == created
         assert state["mode"] == "local"
         assert state["executionEnabled"] is False
-        assert state["split"] == {"id": "", "seed": 7, "groupBy": "patient_id"}
         assert state["dataset"] == {
             "id": "",
             "patientCount": 0,
@@ -86,17 +85,6 @@ def test_create_optional_setup_is_folder_backed_and_survives_restart(settings):
             "specimenCount": 0,
             "slideCount": 0,
         }
-        for key in (
-            "patients",
-            "slides",
-            "featureSets",
-            "results",
-            "cohortSnapshots",
-            "drafts",
-            "exampleManifests",
-        ):
-            assert state[key] == []
-        assert state["encoders"] and state["milModels"]
         assert {item["role"] for item in state["sources"]} == {"data", "slides", "features"}
         assert all(
             item["readOnly"] and item["importStatus"] == "not-imported" for item in state["sources"]
@@ -217,9 +205,9 @@ def test_two_project_editors_cannot_both_replace_the_same_settings(client, setti
     assert client.get(path + "/workspace").json()["project"]["config"] == winner["config"]
 
 
-def test_project_paths_and_legacy_demo_remain_isolated(client, settings):
+def test_project_paths_remain_isolated(client, settings):
     first = create(client, settings)
-    second = create(client, settings, name="CRC KRAS")
+    second = create(client, settings, name="Second study")
     source = str(settings.data_roots[0])
     with ThreadPoolExecutor(max_workers=4) as executor:
         responses = list(
@@ -235,18 +223,6 @@ def test_project_paths_and_legacy_demo_remain_isolated(client, settings):
     first_state = client.get(f"{API}/projects/{first['id']}/workspace").json()
     assert first_state["sources"] == [responses[0].json()]
     assert client.get(f"{API}/projects/{second['id']}/workspace").json()["sources"] == []
-    demo = client.get(f"{API}/projects/synthetic-v1/workspace").json()
-    assert demo["mode"] == "synthetic-demo"
-    assert demo["project"]["id"] == "synthetic-v1"
-    assert demo["patients"]
-    assert demo["sources"] == []
-    assert client.get(f"{API}/workspace").json()["patients"] == demo["patients"]
-    legacy = client.post(f"{API}/sources", json={"path": source}).json()
-    assert client.get(f"{API}/workspace").json()["sources"] == [legacy]
-    assert (
-        client.get(f"{API}/projects/{first['id']}/workspace").json()["sources"]
-        == first_state["sources"]
-    )
 
 
 @pytest.mark.parametrize(
@@ -261,7 +237,6 @@ def test_project_paths_and_legacy_demo_remain_isolated(client, settings):
         {"config": {"folds": 11}},
         {"config": {"folds": True}},
         {"config": {"task": "anything"}},
-        {"config": {"encoderId": "unknown"}},
         {"config": {"milId": "unknown"}},
         {"config": {"targetColumn": ""}},
         {"config": {"command": "malicious"}},
@@ -298,7 +273,9 @@ def test_storage_picker_expands_storage_only_and_blocks_escape(client, settings,
         == 200
     )
     assert client.get(f"{API}/filesystem/list", params={"path": default}).status_code == 403
-    assert client.post(f"{API}/sources", json={"path": default}).status_code == 403
+    # Source folders come from the data roots only, never from project storage.
+    sources = f"{API}/projects/{create(client, settings)['id']}/sources"
+    assert client.post(sources, json={"path": default, "role": "slides"}).status_code == 403
     outside = tmp_path / "private"
     outside.mkdir()
     (settings.workspace / "escape").symlink_to(outside, target_is_directory=True)

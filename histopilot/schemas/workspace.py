@@ -9,27 +9,7 @@ class RequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class CohortRequest(RequestModel):
-    datasetId: str = Field(min_length=1, max_length=128)
-    specimenType: Literal["Any", "all", "Primary", "Metastatic"] = "Any"
-    msi: Literal["Any", "all", "MSS", "MSI-H"] = "Any"
-    braf: Literal["Any", "all", "WT", "Mutant"] = "Any"
-
-    @field_validator("specimenType", "msi", "braf", mode="before")
-    @classmethod
-    def normalize_all(cls, value: object) -> object:
-        return "Any" if value == "all" else value
-
-
 Seed = Annotated[StrictInt, Field(ge=0, le=2**32 - 1)]
-
-
-class ExperimentRequest(RequestModel):
-    cohortId: str = Field(min_length=1, max_length=128)
-    pairs: list[str] = Field(min_length=1, max_length=32)
-    seeds: list[Seed] = Field(min_length=1, max_length=20)
-    folds: Annotated[StrictInt, Field(ge=2, le=10)]
-    aggregation: Literal["mean", "max"] = "mean"
 
 
 class SourceRequest(RequestModel):

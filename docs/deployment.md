@@ -82,7 +82,7 @@ histopilot serve --no-browser
 
 Open `http://127.0.0.1:8787`. End users do not need Node.js, npm, or a running Vite server. This describes building/installing the repository artifact; it does not assume a public package release exists.
 
-The root URL opens the start page. Choose **Start a new project** to name it and select its exact server storage folder, or **Load an existing project** to open a recent entry or saved folder. Optional source paths can be supplied later. Creation/loading opens the project roadmap; each workflow begins with its record library and proceeds through separate review pages. `?project=<id>#overview` preserves project context on refresh, and the active-project button returns to the start page. Older `?experiment=<id>` project links remain supported. **Open BLCA demo** opens a separate read-only example; the earlier CRC demo remains compatible through its legacy `synthetic-v1` URL.
+The root URL opens the start page. Choose **Start a new project** to name it and select its exact server storage folder, or **Load an existing project** to open a recent entry or saved folder. Optional source paths can be supplied later. Creation/loading opens the project roadmap; each workflow begins with its record library and proceeds through separate review pages. `?project=<id>#overview` preserves project context on refresh, and the active-project button returns to the start page. Older `?experiment=<id>` project links remain supported. **Open BLCA demo** opens a separate read-only example.
 
 ## Configuration
 
@@ -127,20 +127,14 @@ Non-loopback hosts such as `0.0.0.0` are rejected because authenticated network 
 
 Start and manage the HistoPilot service in your own terminal. Long-running extraction, packing, training, evaluation and archive work runs through the machine-level [Task Center](TASK_CENTER_DESIGN.md): `histopilot serve` starts its runner in the `hp-runner-<uid>` tmux session (`--no-runner` skips this), and `histopilot runner status|stop` manages it. That is separate from server hosting. Tasks run in their own process groups and survive client disconnection and service or runner restarts; after a workstation reboot, interrupted tasks are queued again (auto-resume, on by default) and resume from their checkpoints when the service starts. Jobs launched before the Task Center keep their own tmux sessions; before manually launching any long-running compute job, check existing sessions to avoid duplicates, retain persistent logs, and use the job's checkpoint/resume support. Updating HistoPilot does not change the code of running workers; `histopilot serve` restarts the runner when its code changed, after the current step.
 
-## Diagnostics and experiment commands
+## Diagnostics
 
 ```bash
 histopilot doctor
 histopilot doctor --json
-histopilot jobs --url http://127.0.0.1:8787
-histopilot run examples/crc_kras/experiment-spec.json --validate-only
 ```
 
 `doctor` reports environment/package metadata without importing PyTorch or initializing CUDA. Package presence does not prove model access, working native libraries, or GPU availability. **System & storage** separately reports available CPU, RAM, GPU, VRAM and disk measurements; module runtime panels probe optional training/extraction dependencies in isolated processes. Missing measurements remain explicitly unavailable.
-
-`jobs` reads the legacy global job endpoint using its local session token; that endpoint still returns an empty list. For implemented workers, use the browser's compute tray and workflow panels or the specific CLI commands such as `feature-jobs` and `training-status`. The legacy endpoint does not reflect whether training, inference or extraction is running.
-
-`run` accepts JSON or YAML and validates the legacy `ExperimentSpec` used by the demo API. Without `--validate-only`, this command reports unavailable execution. Native ABMIL submission uses a frozen local development batch through the browser or `train-batch`; it is not launched by a demo specification. A valid schema does not establish accessible WSIs, available features, a trained model, or scientific readiness.
 
 For saved training runs, resource charts read bounded recorded history. New CPU measurements require a worker version that records CPU counters. Old or already-running worker versions cannot gain historical CPU samples from a UI update; their available GPU/RAM snapshots remain useful. Restart the service manually to load new endpoints, while leaving independent workers under their existing lifecycle controls.
 

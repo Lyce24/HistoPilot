@@ -9,17 +9,18 @@ import os
 import stat
 import tempfile
 from copy import deepcopy
-from datetime import datetime
+from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from threading import RLock
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import Field, ValidationError
 from sqlalchemy import select
 
 from histopilot.application.blca_demo import DEMO_ID, demo_summary, load_demo
-from histopilot.application.local_workspace import LocalWorkspace, WorkspaceError, _identity, _now
+from histopilot.models import catalog
 from histopilot.schemas.workspace import (
     ProjectConfig,
     ProjectRequest,
@@ -35,8 +36,20 @@ DESCRIPTOR = "histopilot-project.json"
 DESCRIPTOR_LIMIT = 1024 * 1024
 
 
+class WorkspaceError(ValueError):
+    def __init__(self, message: str, status_code: int = 422):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _identity(prefix: str, value: Any) -> str:
+    """Stable source identities; stored project descriptors keep these values."""
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return f"{prefix}-{sha256(canonical.encode()).hexdigest()[:20]}"
+
+
 def _timestamp() -> str:
-    return _now().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 class StoredSource(RequestModel):
@@ -66,27 +79,14 @@ class ProjectWorkspace:
     def __init__(
         self,
         database: Database,
-        legacy: LocalWorkspace,
+        filesystem: LocalFilesystem,
         storage: LocalFilesystem,
     ):
         self.database = database
-        self.legacy = legacy
+        # Data roots for source folders; storage also admits the project workspace.
+        self.filesystem = filesystem
         self.storage = storage
         self.lock = RLock()
-
-    def _demo(self) -> dict:
-        return {
-            "id": "synthetic-v1",
-            "name": "CRC KRAS · synthetic demo",
-            "description": "Synthetic example data for exploring the workflow.",
-            "storagePath": str(self.database.workspace),
-            "mode": "synthetic-demo",
-            "createdAt": "",
-            "updatedAt": "",
-            "config": {},
-            "sources": [],
-            "available": True,
-        }
 
     @staticmethod
     def _summary(document: dict, path: Path) -> dict:
@@ -208,15 +208,12 @@ class ProjectWorkspace:
         }
 
     def _validate_config(self, config: ProjectConfig) -> dict:
-        for value, kind in ((config.encoderId, "encoders"), (config.milId, "milModels")):
-            if value is not None and value not in {
-                model["id"] for model in self.legacy.models(kind)
-            }:
-                raise WorkspaceError("Select an encoder and MIL model from the service registry.")
+        if config.milId is not None and not catalog.is_supported(config.milId):
+            raise WorkspaceError(f"Choose a supported MIL model: {catalog.choices()}.")
         return config.model_dump(exclude_none=True)
 
     def _source(self, identity: str, value: str, role: str) -> dict:
-        path = self.legacy.filesystem.directory(value)
+        path = self.filesystem.directory(value)
         return {
             "id": _identity("source", [identity, str(path), role]),
             "path": str(path),
@@ -332,7 +329,7 @@ class ProjectWorkspace:
 
     def scientific_store(self, identity: str) -> ScientificStore:
         """Resolve storage from the folder; the central registry holds no scientific state."""
-        if identity in ("synthetic-v1", DEMO_ID):
+        if identity == DEMO_ID:
             raise StorageError(
                 "The synthetic demo has no local scientific store.", "DEMO_STORE_UNAVAILABLE"
             )
@@ -343,8 +340,6 @@ class ProjectWorkspace:
     def workspace(self, identity: str) -> dict:
         if identity == DEMO_ID:
             return load_demo()
-        if identity == "synthetic-v1":
-            return {**self.legacy.workspace(), "project": self._demo()}
         document, path = self._load(identity)
         scientific = ScientificStore(path, document["id"])
         datasets = [
@@ -383,21 +378,7 @@ class ProjectWorkspace:
                 "protocolCount": len(scientific.list_configurations("protocol")),
                 "featureCount": len(scientific.list_configurations("feature")),
             },
-            "patients": [],
-            "slides": [],
-            "featureSets": [],
-            "results": [],
-            "cohortSnapshots": [],
-            "drafts": [],
-            "exampleManifests": [],
             "sources": deepcopy(document["sources"]),
-            "encoders": self.legacy.models("encoders"),
-            "milModels": self.legacy.models("milModels"),
-            "split": {
-                "id": "",
-                "seed": document["config"].get("seed", 42),
-                "groupBy": "patient_id",
-            },
         }
 
     def update_config(

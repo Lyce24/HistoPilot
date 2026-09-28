@@ -296,7 +296,7 @@ def test_blca_demo_api_is_authenticated_portable_and_cannot_create_real_state(tm
             if item["mode"] == "synthetic-demo"
         ]
         assert [item["id"] for item in demos] == [DEMO_ID]
-        assert client.get(f"{API}/projects/synthetic-v1/workspace").status_code == 200
+        assert client.get(f"{API}/projects/synthetic-v1/workspace").status_code == 404
         operations = [
             ("GET", "/storage", None),
             ("GET", "/datasets", None),

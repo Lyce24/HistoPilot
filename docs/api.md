@@ -1,6 +1,6 @@
 # Local API foundation
 
-The implemented API serves **folder-backed experiment setup, project-local scientific storage, and an explicit synthetic demo**. CSV/XLSX import, identifier/attribute mapping, immutable publication, grouped target/split validation and existing-feature header attachment are implemented. React and the CLI share this service and its canonical model-run experiment schema. Feature validation and packing, extraction, training, evaluation and slide viewing are implemented by project routes; this page documents a subset of them, and compute runs through the machine-level [Task Center](#task-center) rather than the generic `/jobs` routes.
+The implemented API serves **folder-backed projects, project-local scientific storage, and a read-only BLCA demo**. CSV/XLSX import, identifier/attribute mapping, immutable publication, grouped target/split validation and existing-feature header attachment are implemented. React and the CLI share this service. Feature validation and packing, extraction, training, evaluation and slide viewing are implemented by project routes; this page documents a subset of them, and compute runs through the machine-level [Task Center](#task-center).
 
 All paths below are under `/api/v1`. The service validates Host/Origin and browser fetch context. Obtain a token from `GET /session`, then send it as `X-HistoPilot-Token` on protected requests. The health and session endpoints do not require that header. Tokens are local to the running service process; clients reacquire a token after a restart.
 
@@ -8,10 +8,10 @@ All paths below are under `/api/v1`. The service validates Host/Origin and brows
 | --- | --- |
 | `GET /health` | Minimal service/version status; `executionEnabled: false`. |
 | `GET /session` | Establish a local-session token. |
-| `GET /projects` | Recent experiment summaries plus `synthetic-v1`; returns `defaultStoragePath` and availability for each folder. |
+| `GET /projects` | Recent project summaries plus the BLCA demo; returns `defaultStoragePath` and availability for each folder. |
 | `POST /projects` | Create named experiment setup in an exact new or empty server folder; HTTP 201. |
 | `POST /projects/open` | Validate and register an existing folder's `histopilot-project.json`; return its summary. |
-| `GET /projects/{id}/workspace` | Selected experiment's latest dataset counts, scientific summary, saved setup/sources, and model registry; `synthetic-v1` returns the demo. |
+| `GET /projects/{id}/workspace` | The project's latest dataset counts, scientific summary and saved setup/sources; the BLCA demo ID returns the demo. |
 | `PATCH /projects/{id}` | Replace a local experiment's optional configuration and persist its descriptor. |
 | `POST /projects/{id}/sources` | Add a read-only `data`, `slides`, or `features` directory reference; HTTP 201. |
 | `GET /projects/{id}/storage` | Project-local schema/journal mode, draft/dataset counts, and publication operation states. |
@@ -21,27 +21,15 @@ All paths below are under `/api/v1`. The service validates Host/Origin and brows
 | `PATCH /projects/{id}/drafts/{draftId}` | Replace draft name/payload only if required `expectedRevision` matches; stale or frozen drafts return 409. |
 | `GET /projects/{id}/datasets` | Published internal snapshots under `datasets`; partial publication is never listed as a dataset. |
 | `GET /projects/{id}/datasets/{datasetId}` | Read a published snapshot's manifest and artifact fingerprints. |
-| `GET /workspace` | Legacy synthetic seed, saved demo cohorts/drafts, and source-directory references. |
-| `GET /workspace/export` | Downloadable JSON snapshot with schema version and synthetic/non-executable markers. |
-| `GET /models/encoders` | Server registry under `encoders`; entries describe planned encoder choices. |
-| `GET /models/mil` | Server registry under `milModels`; no availability guarantee. |
-| `POST /cohorts` | Validate filters and persist canonical synthetic membership. |
-| `POST /experiments` | Validate selections against a stored cohort and registry; persist one draft per unique model pair. |
-| `GET /experiments/{id}/manifest` | Return that draft's canonical `ExperimentSpec`. |
-| `DELETE /experiments/{id}` | Remove an unexecuted draft only. |
 | `GET /filesystem/roots?purpose=source` | Configured source roots by default; `purpose=storage` includes the application workspace and data roots. |
 | `GET /filesystem/list?path=...&purpose=source` | Bounded listing within the corresponding resolved roots; accepts `purpose=storage` for experiment folders. |
-| `POST /sources` | Validate and store a directory reference without importing/copying data. |
 | `GET /system` | Workspace/storage/control-service context and package metadata diagnostics. |
-| `GET /jobs` | Generic job stub: empty job list and `executionEnabled: false`. Real work is listed by the Task Center. |
-| `POST /jobs` | HTTP 501; generic job submission is not implemented and no job is submitted. Use the project feature, training, evaluation or interpretation workflows. |
-| `GET /jobs/events` | Reserved SSE progress endpoint; HTTP 501. |
 
 Unknown fields on command request schemas are rejected. This is a narrow command surface: there is no whole-workspace replacement endpoint and no arbitrary file-content or WSI upload route. Interactive OpenAPI/Swagger endpoints are not exposed by this local service.
 
 ## Create and reopen experiment setup
 
-The UI's top-level **experiment** uses `/projects`; `/experiments` continues to mean individual model-run drafts in the synthetic workflow. Creating setup opens the normal Overview/Dataset navigation without populating it with demo records.
+A project is created through `/projects` and opens the project roadmap.
 
 ```json
 {
@@ -96,42 +84,9 @@ Storage errors return `detail` plus a stable `code`. They distinguish busy proje
 
 Dataset publication uses an internal storage boundary reached through the validated import workflow. The browser sends saved draft revision and preview hash; the server rereads sources and derives records before publishing. It never accepts browser-authored frozen records. Unresolved patient identity can be retained at import. Patient-grouped assignment requires supplied patient identities or the explicit `patientIdFallback: "slide_id"` import choice described below (slide-unit target/splits do not); fallback is recorded separately and does not verify patient independence.
 
-## Save a synthetic cohort
-
-```json
-{
-  "datasetId": "crc-demo-v1",
-  "specimenType": "Primary",
-  "msi": "MSS",
-  "braf": "WT"
-}
-```
-
-The server validates the dataset and categorical values, computes patient/slide membership from stored records, and rejects an empty selection. `Any` is the no-filter value; `all` is normalized to `Any`. Repeating the same canonical request returns the same snapshot identity. It does not generate a new scientific split; the fixed demo split remains illustrative.
-
-The response contains a server-assigned `id`, filters, `patientIds`, `slideIds`, dataset/split references, and creation metadata. Use that returned ID when creating an experiment.
-
-## Save experiment drafts
-
-```json
-{
-  "cohortId": "<returned-cohort-id>",
-  "pairs": ["uni2:abmil"],
-  "seeds": [42, 43, 44],
-  "folds": 5,
-  "aggregation": "mean"
-}
-```
-
-The server verifies the stored cohort, encoder/MIL names, registered example feature set, seed values, fold bounds, and aggregation. It canonicalizes duplicate pair/seed selections and returns `{ "drafts": [...] }`. Each draft pins its cohort snapshot and contains a validated manifest. Neither model compatibility with real weights nor real feature coverage is established by these synthetic checks.
-
-The canonical schema is [`ExperimentSpec`](../histopilot/contracts/experiment.py), exported as [JSON Schema](../examples/experiment.schema.json). It represents one encoder/MIL pair and explicit dataset/cohort/split/feature IDs, binary target convention, seeds, folds, and aggregation. GUI draft creation and `histopilot run ... --validate-only` both use it. It is a first version with shape validation; real artifact resolution and execution planning remain future work.
-
 ## Register a server directory
 
-```json
-{"path": "/mnt/pathology/crc"}
-```
+`POST /projects/{id}/sources` with `{"path": "/mnt/pathology/crc", "role": "slides"}`.
 
 The absolute directory must exist and resolve within an explicitly configured root, including any symlinks. The result is a read-only directory reference marked `not-imported`. Listings are bounded and may report `truncated: true`; file content is never returned by this endpoint. With no data roots configured, the picker has no directories to browse.
 

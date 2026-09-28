@@ -4,12 +4,10 @@ import json
 import os
 
 import pytest
-from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from histopilot.cli import app
 from histopilot.config import Settings, load_settings
-from histopilot.contracts.experiment import ExperimentSpec
 from histopilot.service_lock import service_lock
 
 
@@ -77,31 +75,6 @@ def test_workspace_lock_rejects_duplicate_and_releases(tmp_path):
             pass
     with service_lock(tmp_path):
         pass
-
-
-def test_cli_and_api_share_manifest_shape_without_execution(tmp_path):
-    spec = ExperimentSpec(
-        dataset_id="crc-demo-v1",
-        cohort_id="cohort-demo-all",
-        split_id="split-demo-42",
-        feature_set_id="feature-uni2-demo",
-        encoder_id="uni2",
-        mil_model="abmil",
-        seeds=(84, 42, 42),
-    )
-    assert spec.seeds == (42, 84)
-    with pytest.raises(ValidationError):
-        ExperimentSpec.model_validate({**spec.model_dump(), "shell_command": "anything"})
-    with pytest.raises(ValidationError):
-        ExperimentSpec.model_validate({**spec.model_dump(), "seeds": [True]})
-    path = tmp_path / "manifest.json"
-    path.write_text(spec.model_dump_json())
-    runner = CliRunner()
-    checked = runner.invoke(app, ["run", str(path), "--validate-only"])
-    assert checked.exit_code == 0
-    executed = runner.invoke(app, ["run", str(path)])
-    assert executed.exit_code == 2
-    assert "no job was submitted" in executed.output
 
 
 def test_doctor_does_not_claim_compute_readiness():

@@ -5,26 +5,22 @@ from pathlib import Path
 from secrets import token_urlsafe
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from histopilot import __version__
 from histopilot.adapters.trident import discover_runtime
-from histopilot.application.local_workspace import LocalWorkspace, WorkspaceError
-from histopilot.application.project_workspace import ProjectWorkspace
+from histopilot.application.project_workspace import ProjectWorkspace, WorkspaceError
 from histopilot.application.system_compute import ComputeSampler
 from histopilot.config import Settings, load_settings
 from histopilot.doctor import system_report
 from histopilot.schemas.scientific import CreateDraftRequest, UpdateDraftRequest
 from histopilot.schemas.workspace import (
-    CohortRequest,
     CreateDirectoryRequest,
-    ExperimentRequest,
     OpenProjectRequest,
     ProjectRequest,
     ProjectSourceRequest,
     ProjectUpdateRequest,
-    SourceRequest,
 )
 from histopilot.storage.database import SCHEMA_VERSION, Database
 from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
@@ -41,9 +37,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     database = Database(settings.workspace)
     filesystem = LocalFilesystem(settings.data_roots)
-    workspace = LocalWorkspace(database, filesystem)
     storage = LocalFilesystem((settings.workspace, *settings.data_roots))
-    projects = ProjectWorkspace(database, workspace, storage)
+    projects = ProjectWorkspace(database, filesystem, storage)
     compute_sampler = ComputeSampler(settings.workspace, settings.data_roots)
     token = token_urlsafe(32)
 
@@ -51,7 +46,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         try:
             database.initialize()
-            workspace.initialize()
             yield
         finally:
             from histopilot.viewer.image_cache import SLIDE_IMAGES
@@ -100,10 +94,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "token": token,
             "scientificCapabilities": {"versionLabels": True, "taggedFreeze": True},
         }
-
-    @app.get("/api/v1/workspace")
-    def get_workspace():
-        return workspace.workspace()
 
     @app.get("/api/v1/projects")
     def list_projects():
@@ -220,43 +210,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def project_dataset(identity: str, dataset_id: str):
         return projects.scientific_store(identity).get_dataset(dataset_id)
 
-    @app.get("/api/v1/workspace/export")
-    def export_workspace():
-        return JSONResponse(
-            {
-                "schema_version": 1,
-                "mode": "synthetic-demo",
-                "executable": False,
-                **workspace.workspace(),
-            },
-            headers={"Content-Disposition": 'attachment; filename="histopilot-workspace.json"'},
-        )
-
-    @app.get("/api/v1/models/encoders")
-    def encoders():
-        return {"encoders": workspace.models("encoders")}
-
-    @app.get("/api/v1/models/mil")
-    def mil_models():
-        return {"milModels": workspace.models("milModels")}
-
-    @app.post("/api/v1/cohorts", status_code=201)
-    def save_cohort(payload: CohortRequest):
-        return workspace.save_cohort(payload)
-
-    @app.post("/api/v1/experiments", status_code=201)
-    def save_experiments(payload: ExperimentRequest):
-        return {"drafts": workspace.save_experiments(payload)}
-
-    @app.delete("/api/v1/experiments/{identity}", status_code=204)
-    def delete_experiment(identity: str):
-        workspace.delete_experiment(identity)
-        return Response(status_code=204)
-
-    @app.get("/api/v1/experiments/{identity}/manifest")
-    def experiment_manifest(identity: str):
-        return workspace.experiment_manifest(identity)
-
     @app.get("/api/v1/filesystem/roots")
     def roots(purpose: Literal["source", "storage"] = "source"):
         return (storage if purpose == "storage" else filesystem).root_listing()
@@ -272,10 +225,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_directory(payload: CreateDirectoryRequest):
         selected_filesystem = storage if payload.purpose == "storage" else filesystem
         return selected_filesystem.create_directory(payload.parentPath, payload.name)
-
-    @app.post("/api/v1/sources", status_code=201)
-    def register_source(payload: SourceRequest):
-        return workspace.add_source(payload.path)
 
     @app.get("/api/v1/system")
     def system():
@@ -308,22 +257,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/system/compute")
     def system_compute():
         return compute_sampler.snapshot()
-
-    @app.get("/api/v1/jobs")
-    def jobs():
-        return {"jobs": [], "executionEnabled": False}
-
-    @app.get("/api/v1/jobs/events")
-    def job_events():
-        raise HTTPException(501, "SSE worker progress is not implemented.")
-
-    @app.post("/api/v1/jobs")
-    def submit_job():
-        raise HTTPException(
-            501,
-            "Generic job submission is not implemented. Use the project feature, training, "
-            "evaluation or interpretation workflows. No job was submitted.",
-        )
 
     app.include_router(scientific_router(projects, filesystem))
     app.include_router(lifecycle_router(projects, filesystem))

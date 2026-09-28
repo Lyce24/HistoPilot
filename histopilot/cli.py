@@ -15,7 +15,6 @@ import typer
 
 from histopilot.archive_cli import register_archive_commands
 from histopilot.config import Settings, load_settings
-from histopilot.contracts.experiment import ExperimentSpec
 from histopilot.doctor import system_report
 from histopilot.runner_cli import register_runner_commands
 from histopilot.service_lock import service_lock
@@ -238,72 +237,6 @@ def doctor(
     for name, package in report["packages"].items():
         typer.echo(f"{name:18} {package['version'] or 'not installed'}")
     typer.echo(f"\n{report['note']}")
-
-
-@app.command("run")
-def run_manifest(
-    manifest: Path = typer.Argument(..., exists=True, dir_okay=False),
-    validate_only: bool = typer.Option(
-        False, help="Validate manifest shape without attempting execution."
-    ),
-) -> None:
-    """Read the same v1 experiment specification exported by the service."""
-    import yaml
-    from pydantic import ValidationError
-
-    try:
-        content = manifest.read_text(encoding="utf-8")
-        values = (
-            yaml.safe_load(content)
-            if manifest.suffix.lower() in {".yaml", ".yml"}
-            else json.loads(content)
-        )
-        spec = ExperimentSpec.model_validate(values)
-    except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
-        typer.echo(f"Invalid experiment manifest: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    if validate_only:
-        typer.echo(spec.model_dump_json(indent=2))
-        typer.echo(
-            "Manifest shape is valid. Dataset/artifact availability and execution readiness are not checked.",
-            err=True,
-        )
-        return
-    typer.echo(
-        "Execution is not connected in this skeleton. The manifest is valid, but no job was submitted.",
-        err=True,
-    )
-    raise typer.Exit(2)
-
-
-@app.command()
-def jobs(
-    url: str = typer.Option("http://127.0.0.1:8787", help="Running local control service URL."),
-) -> None:
-    """Read job status from the same API as the browser."""
-    parsed = urlsplit(url)
-    if (
-        parsed.scheme != "http"
-        or parsed.hostname not in {"localhost", "127.0.0.1"}
-        or parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-        or parsed.path not in {"", "/"}
-    ):
-        raise typer.BadParameter(
-            "Use an HTTP loopback service URL without a path, credentials, or query."
-        )
-    base = url.rstrip("/")
-    try:
-        with urlopen(f"{base}/api/v1/session", timeout=5) as response:
-            token = json.load(response)["token"]
-        request = Request(f"{base}/api/v1/jobs", headers={"X-HistoPilot-Token": token})
-        with urlopen(request, timeout=5) as response:
-            typer.echo(json.dumps(json.load(response), indent=2))
-    except (URLError, OSError, KeyError, ValueError) as exc:
-        typer.echo(f"Cannot read jobs from the local service: {exc}", err=True)
-        raise typer.Exit(1) from exc
 
 
 def _feature_api(url: str, path: str, payload: dict | None = None) -> dict | None:

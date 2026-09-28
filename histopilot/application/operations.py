@@ -590,7 +590,7 @@ def restore_archive(archive, destination, filesystem, *, progress=None, operatio
 
 def relink_source(projects, identity, payload):
     """Compare-and-swap a source registration, never editing immutable versions."""
-    replacement = projects.legacy.filesystem.directory(payload.replacementPath)
+    replacement = projects.filesystem.directory(payload.replacementPath)
     _reject_symlink_components(replacement)
     with projects.lock:
         _, folder = projects._load(identity)
