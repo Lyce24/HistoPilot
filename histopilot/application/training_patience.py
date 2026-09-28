@@ -11,13 +11,14 @@ from histopilot.storage.project_lock import StorageError
 
 def stopping_recipe(store, manifest, run, recipe):
     """Apply the same explicit/small-validation epoch budget as the frozen fold."""
-    target, rows = {}, []
+    target, rows, split_unit = {}, [], None
     if recipe.get("minValidationPositives") is not None:
         protocol_id = manifest["spec"]["inputs"]["protocolId"]
         protocol = store.get_configuration(protocol_id)["manifest"]
         if protocol.get("kind") != "protocol":
             raise ValueError("The stopping policy requires its frozen protocol.")
         target = protocol["spec"]["target"]
+        split_unit = protocol["spec"].get("splitUnit")
         rows = [
             row
             for row in protocol["memberships"]
@@ -25,7 +26,7 @@ def stopping_recipe(store, manifest, run, recipe):
         ]
         if not rows:
             raise ValueError("The stopping policy requires its frozen fold membership.")
-    effective, _ = resolve_stopping(recipe, target, rows)
+    effective, _ = resolve_stopping(recipe, target, rows, split_unit=split_unit)
     return effective
 
 

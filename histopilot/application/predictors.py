@@ -561,7 +561,10 @@ class PredictorService:
             except ValueError as error:
                 raise StorageError(str(error), "PREDICTOR_PROVENANCE_CHANGED", 409) from error
             resolved_recipe, stopping_decision = resolve_stopping(
-                effective_recipe, target, expected_memberships
+                effective_recipe,
+                target,
+                expected_memberships,
+                split_unit=run_plan.get("splitUnit"),
             )
             if nnmil_planning and (
                 run_plan.get("effectiveRecipe") != effective_recipe

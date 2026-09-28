@@ -387,7 +387,12 @@ class TrainingService:
             for item in manifest["configurations"]:
                 try:
                     selected_rows = sampling_memberships(rows, item["recipe"], cohort_values)
-                    validate_training_controls(item["recipe"], target, selected_rows)
+                    validate_training_controls(
+                        item["recipe"],
+                        target,
+                        selected_rows,
+                        split_unit=protocol["spec"].get("splitUnit"),
+                    )
                     if spec.candidateSelection == "best_validation":
                         validate_selection_metric(spec.selectionMetric, target, selected_rows)
                 except ValueError as error:
