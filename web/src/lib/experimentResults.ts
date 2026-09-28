@@ -39,6 +39,11 @@ export const range = (stats?: MetricStats | null, digits = 3) => stats ? `${fixe
 export const interval = (value?: ConfidenceInterval | null, digits = 3) => value ? `${fixed(value.lower, digits)}–${fixed(value.upper, digits)}` : '—';
 export const signedInterval = (value?: ConfidenceInterval | null, digits = 3) => value ? `${signed(value.lower, digits)} to ${signed(value.upper, digits)}` : '—';
 export const percent = (value: unknown, digits = 0) => finite(value) ? `${(value * 100).toFixed(digits)}%` : '—';
+/** A p-value to three significant figures, or "< 0.001" below that. */
+export function pValue(value: unknown) {
+  if (!finite(value)) return '—';
+  return value < 0.001 ? '< 0.001' : value.toPrecision(3);
+}
 
 /** The configuration a batch reports: chosen on validation, never on OOF results. */
 export function reportedConfiguration(batch: BatchResult): ConfigurationResult | undefined {

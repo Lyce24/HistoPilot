@@ -83,7 +83,7 @@ describe('model choices', () => {
   });
 
   it('keeps clinical-only settings usable with a slide-embedding cohort', () => {
-    const html = renderToStaticMarkup(<RecipeFields value={{ ...defaultRecipe(), inputMode: 'clinical', clinicalFields: [{ field: 'age', kind: 'numeric' }] }} onChange={() => {}} clinicalFields={['age']} featureKind="slide" />);
+    const html = renderToStaticMarkup(<RecipeFields value={{ ...defaultRecipe(), inputMode: 'clinical', clinicalFields: [{ field: 'age', kind: 'numeric' }] }} onChange={() => {}} clinicalChoices={{ fields: [{ field: 'age', owner: 'patient', type: 'integer', kind: 'numeric', excluded: null }] }} featureKind="slide" />);
     expect(html).toContain('Clinical-only logistic baseline. Image-model choices do not apply.');
     expect(html).not.toContain('(unavailable)');
     expect(html).not.toContain('Image model<select');

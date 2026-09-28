@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ExperimentResults from './ExperimentResults';
 import type { ExperimentResults as Results } from '../api/experimentResults';
 import type { ModelExperiment } from '../api/experiments';
-import { batch, configuration, experimentResults } from '../testFixtures/experimentResults';
+import { batch, comparisonResults, configuration, experimentResults } from '../testFixtures/experimentResults';
 
 const clients: QueryClient[] = [];
 afterEach(() => clients.splice(0).forEach((client) => client.clear()));
@@ -95,6 +95,35 @@ describe('experiment results', () => {
     expect(html).toContain('Configurations, ranked by validation');
     expect(html.indexOf('2 Selected')).toBeLessThan(html.indexOf(' 1 abmil'));
     expect(html).toContain('configuration 2 of 2, chosen on validation');
+  });
+
+  it('reports a controlled comparison: every arm, and reference minus each arm with paired intervals and Holm p', () => {
+    const html = text(render(comparisonResults()));
+    expect(html).toContain('Controlled comparison');
+    expect(html).toContain('Reference: configuration 1 (ABMIL · Image only). Primary metric: AUROC.');
+    // Arms, reference marked, with seed mean ± SD and the interval of that mean.
+    expect(html).toContain('Configuration 1 Reference ABMIL Image only 0.910 ± 0.010 0.880–0.940 2 of 2 seeds');
+    expect(html).toContain('Configuration 2 nnMIL Image only 0.870 ± 0.010 0.840–0.900');
+    expect(html).toContain('Configuration 3 — Clinical only 0.900 ± 0.010');
+    expect(html).toContain('Configuration 4 Mean pooling MIL Image only — — 0 of 2 seeds 1 of 4 test folds');
+    // Contrasts: reference − arm, the paired interval and a verdict, p, Holm p, and fold wins.
+    expect(html).toContain('Configuration 2 nnMIL · Image only +0.040 0.910 vs 0.870 +0.010 to +0.070 Reference better &lt; 0.001 &lt; 0.001 better in 2 of 2 folds');
+    expect(html).toContain('Configuration 3 Clinical only +0.010 0.910 vs 0.900 −0.020 to +0.040 No clear difference 0.250 0.500 better in 1 of 2 folds');
+    // An arm without complete results says why instead of showing numbers.
+    expect(html).toContain('Configuration 4 Mean pooling MIL · Image only The arm and the reference both need complete out-of-fold results.');
+    expect(html).toContain('Some arms have unfinished training seeds.');
+    expect(html).toContain('Differences use the same resampled slides for every arm; Holm adjusts p for the number of planned contrasts.');
+  });
+
+  it('presents a comparison batch as its reference arm, not a missing validation choice', () => {
+    const html = text(render(comparisonResults()));
+    expect(html).toContain('configuration 1 of 4, the comparison’s reference');
+    expect(html).toContain('or the reference of a controlled comparison');
+    expect(html).toContain('Comparison arms');
+    expect(html).not.toContain('Configurations, ranked by validation');
+    expect(html).not.toContain('no validation-based configuration choice');
+    // Batches without a declared comparison keep the batch-vs-batch view only.
+    expect(text(render(experimentResults()))).not.toContain('Controlled comparison');
   });
 
   it('explains an empty experiment and a loading one', () => {

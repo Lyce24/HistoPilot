@@ -74,3 +74,51 @@ export function experimentResults(changes: Partial<ExperimentResults> = {}): Exp
     ...changes,
   };
 }
+
+/**
+ * One batch that declared a controlled comparison, shaped like the service's output:
+ * ABMIL (reference) against nnMIL, a clinical-only arm, and a mean-pooling arm that has
+ * not finished. Contrasts are reference − arm on AUROC with Holm-adjusted p-values.
+ */
+export function comparisonResults(): ExperimentResults {
+  const arm = (candidateId: string, number: number, model: string, inputMode: string, auroc: number, changes: Partial<ConfigurationResult> = {}) => configuration({
+    candidateId, number, model, inputMode, selected: number === 1, validationScore: null,
+    seedAverage: block(stats(auroc, 0.01, auroc - 0.01, auroc + 0.01)),
+    intervals: { unit: 'slide', resamples: 2000, seed: 42, note: 'note', available: true, units: 40,
+      seedAverage: { available: true, validResamples: 2000, excludedResamples: 0, intervals: { auroc: { lower: auroc - 0.03, upper: auroc + 0.03 } } } },
+    ...changes,
+  });
+  const contrast = (armId: string, armNumber: number, model: string, inputMode: string, difference: number, pValue: number, pValueHolm: number) => ({
+    armId, armNumber, model, inputMode, difference: 'reference_minus_arm' as const, available: true,
+    oof: { auroc: { left: 0.91, right: 0.91 - difference, difference }, auprc: null, balancedAccuracy: null, macroF1: null, accuracy: null, loss: null },
+    oofInterval: { available: true, unit: 'slide' as const, units: 40, validResamples: 2000, excludedResamples: 0, intervals: { auroc: { lower: difference - 0.03, upper: difference + 0.03 } } },
+    folds: { auroc: { n: 2, mean: difference, sd: 0.01, min: difference - 0.01, max: difference + 0.01, better: difference > 0.03 ? 2 : 1, worse: difference > 0.03 ? 0 : 1, tied: 0, values: [difference - 0.01, difference + 0.01] },
+      auprc: { n: 0 }, balancedAccuracy: { n: 0 }, macroF1: { n: 0 }, accuracy: { n: 0 }, loss: { n: 0 } },
+    pValue, pValueHolm,
+  });
+  const ablation = batch('batch-ablation', 'Model ablation', {
+    selection: { source: 'reference', metric: 'validation_auroc', ready: true, scores: {} }, selectedCandidateId: 'cand-1',
+    configurations: [
+      arm('cand-1', 1, 'abmil', 'image', 0.91),
+      arm('cand-2', 2, 'nnmil', 'image', 0.87),
+      arm('cand-3', 3, 'abmil', 'clinical', 0.9),
+      arm('cand-4', 4, 'mean_pool', 'image', 0.8, { complete: false, seedCount: 0, plannedSeedCount: 2, foldCount: 1,
+        seedAverage: { auroc: null, auprc: null, balancedAccuracy: null, macroF1: null, accuracy: null, loss: null },
+        intervals: { unit: 'slide', resamples: 2000, seed: 42, note: 'note', available: false, reason: 'No complete seed yet.' } }),
+    ],
+    comparison: {
+      referenceId: 'cand-1', referenceNumber: 1, primaryMetric: 'auroc', adjustment: 'holm',
+      contrasts: [
+        contrast('cand-2', 2, 'nnmil', 'image', 0.04, 0.0004, 0.0008),
+        contrast('cand-3', 3, 'abmil', 'clinical', 0.01, 0.25, 0.5),
+        { armId: 'cand-4', armNumber: 4, model: 'mean_pool', inputMode: 'image', difference: 'reference_minus_arm', available: false,
+          reason: 'Both batches need complete OOF results.', pValue: null, pValueHolm: null },
+      ],
+    },
+  });
+  return experimentResults({
+    target: { task: 'binary_classification', unit: 'slide', classes: ['Negative', 'Positive'], positiveClass: 'Positive', field: 'status' },
+    batches: [ablation], comparisons: [],
+    findings: [{ severity: 'warning', code: 'SELECTION_UNAVAILABLE', message: 'Model ablation: no validation-based configuration choice is available; configuration 1 is shown.', batchId: 'batch-ablation' }],
+  });
+}

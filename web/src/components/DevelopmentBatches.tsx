@@ -26,7 +26,8 @@ import { NumericDraftProvider, NumericDraftScope, type NumericDrafts } from './N
 import { isBatchEditorDraft, type BatchEditorDraft } from '../lib/batchEditorDraft';
 import { readSessionDraft, sessionDraftKey, useSessionDraftBackup } from '../lib/sessionDraft';
 import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
-import { ClinicalInputFields, inputModeLabel, matchedInputRecipes } from './ClinicalInputFields';
+import { ClinicalInputFields, inputModeLabel, type ClinicalChoices } from './ClinicalInputFields';
+import { AblationArms, ComparisonReview, ComparisonSettings, armLabel, comparisonFromArms, comparisonMetricLabel, comparisonSummary, type ComparisonDraft } from './ControlledComparison';
 import { ObjectiveFields, SamplingFields, EvaluationBagFields, OptimizerFields, StoppingPolicyFields, ExperimentalRecipeSummary, lossLabels, samplingLabels, scheduleLabels } from './ExperimentalRecipeFields';
 import { applyNnMILPaperOptimizer, NnMILPlanning, NnMILRecipeFields } from './NnMILRecipeFields';
 
@@ -59,7 +60,7 @@ export function batchTemplate(id: string, inputs: MILExperimentSpec, experimentN
     configurations: [], trainingSeeds: [42], notes: '', predictorPolicy: defaultPredictorPolicy(), selectionMetric: 'validation_auroc', candidateSelection: 'best_validation' };
 }
 
-export function RecipeFields({ value, onChange, gridMode = false, classes, clinicalFields, featureKind, modelChoicePending = false }: { value: TrainingRecipe; onChange: (value: TrainingRecipe) => void; gridMode?: boolean; classes?: string[]; clinicalFields?: string[]; featureKind?: FeatureKind; modelChoicePending?: boolean }) {
+export function RecipeFields({ value, onChange, gridMode = false, classes, clinicalChoices, featureKind, modelChoicePending = false }: { value: TrainingRecipe; onChange: (value: TrainingRecipe) => void; gridMode?: boolean; classes?: string[]; clinicalChoices?: ClinicalChoices; featureKind?: FeatureKind; modelChoicePending?: boolean }) {
   // Only architectures that read this bundle's extraction output are offered.
   const availableModels = modelsForFeatureKind(featureKind);
   const incompatibleModel = value.inputMode !== 'clinical' && Boolean(featureKind) && !availableModels.some((item) => item.name === value.model);
@@ -70,11 +71,11 @@ export function RecipeFields({ value, onChange, gridMode = false, classes, clini
   const patchFeatures = usesPatchFeatures(value.model, value.inputMode);
   const slideFeatures = value.inputMode !== 'clinical' && featureKindOf(value.model) === 'slide';
   return <div className="batch-recipe-settings">
-    <ClinicalInputFields value={value} onChange={onChange} availableFields={clinicalFields} />
+    <ClinicalInputFields value={value} onChange={onChange} choices={clinicalChoices} />
     <section className="batch-editor-section" aria-label={gridMode ? 'Shared training settings' : 'Training settings'}>
       <div className="batch-section-heading"><h3>{gridMode ? 'Shared training settings' : 'Training settings'}</h3><p>{gridMode ? 'Applied to every combination in the parameter grid.' : 'The model and settings used for each fold.'}</p></div>
       <div className="development-fields batch-primary-fields">
-        {value.inputMode !== 'clinical' ? <label className="label">Image model<select disabled={modelChoicePending} className="field" value={value.model} onChange={(e) => onChange({ ...value, model: e.target.value, ...(e.target.value === 'nnmil' ? { attentionDim: 256, gatedAttention: true } : { bagSizeMode: 'fixed', nnmilBatchSampler: 'patient_weighted', nnmilCheckpointSelection: 'best_validation' }), ...(featureKindOf(e.target.value) === 'slide' ? { bagSize: 1, bagCurriculum: false, instanceDropout: 0, evalBagSize: null, gradientCheckpointing: false } : {}) })}>{availableModels.map((item) => <option key={item.name} value={item.name}>{item.label}</option>)}{!availableModels.some((item) => item.name === value.model) ? <option value={value.model} disabled>{modelLabel(value.model) || value.model} (unavailable)</option> : null}</select>{featureKind === 'slide' ? <span className="field-hint">This bundle holds one embedding per slide, so patch architectures cannot read it.</span> : null}{modelChoicePending ? <span role="status">Resolving this bundle’s feature contents…</span> : null}</label> : <p>Clinical-only logistic baseline. Image-model choices do not apply.</p>}
+        {value.inputMode !== 'clinical' ? <label className="label">Image model<select disabled={modelChoicePending} className="field" value={value.model} onChange={(e) => onChange({ ...value, model: e.target.value, ...(e.target.value === 'nnmil' ? { attentionDim: 256, gatedAttention: true, nnmilWindowSeedFromTraining: true } : { bagSizeMode: 'fixed', nnmilBatchSampler: 'patient_weighted', nnmilCheckpointSelection: 'best_validation', nnmilWindowSeedFromTraining: false }), ...(featureKindOf(e.target.value) === 'slide' ? { bagSize: 1, bagCurriculum: false, instanceDropout: 0, evalBagSize: null, gradientCheckpointing: false } : {}) })}>{availableModels.map((item) => <option key={item.name} value={item.name}>{item.label}</option>)}{!availableModels.some((item) => item.name === value.model) ? <option value={value.model} disabled>{modelLabel(value.model) || value.model} (unavailable)</option> : null}</select>{featureKind === 'slide' ? <span className="field-hint">This bundle holds one embedding per slide, so patch architectures cannot read it.</span> : null}{modelChoicePending ? <span role="status">Resolving this bundle’s feature contents…</span> : null}</label> : <p>Clinical-only logistic baseline. Image-model choices do not apply.</p>}
         {!gridMode ? <>
           <NumericField label="Learning rate" value={value.learningRate} integer={false} min={0} minExclusive onChange={(learningRate) => onChange({ ...value, learningRate })} />
           <NumericField label="Weight decay" value={value.weightDecay} integer={false} min={0} onChange={(weightDecay) => onChange({ ...value, weightDecay })} />
@@ -86,7 +87,7 @@ export function RecipeFields({ value, onChange, gridMode = false, classes, clini
       {value.model === 'nnmil' && !gridMode ? <div className="inline-actions"><button type="button" className="btn btn-secondary" disabled={value.maxEpochs <= 5} onClick={() => onChange(applyNnMILPaperOptimizer(value))}>Apply paper optimizer and schedule</button><small>AdamW · LR 0.0003 · WD 0.0001 on weights · Cosine per update · Five warmup epochs · Final LR 0.{value.maxEpochs <= 5 ? ' Set maximum epochs above five to apply.' : ''} Other settings stay editable.</small></div> : null}
       {patchFeatures ? <fieldset className="development-bag-mode"><legend>Training bag</legend>
         <div className="batch-bag-options">
-          {value.model === 'nnmil' ? <label className="development-check"><input type="radio" name={bagModeId} checked={automaticBag} onChange={() => { if (value.bagSize !== null) setSampledBagSize(value.bagSize); onChange({ ...value, bagSizeMode: 'training_median', bagSize: null, bagCurriculum: false }); }} /> Calculate from fitting-fold median</label> : null}
+          {value.model === 'nnmil' || automaticBag ? <label className="development-check"><input type="radio" name={bagModeId} checked={automaticBag} onChange={() => { if (value.bagSize !== null) setSampledBagSize(value.bagSize); onChange({ ...value, bagSizeMode: 'training_median', bagSize: null, bagCurriculum: false }); }} /> Calculate from fitting-fold median</label> : null}
           <label className="development-check"><input type="radio" name={bagModeId} checked={!automaticBag && value.bagSize !== null} onChange={() => onChange({ ...value, bagSizeMode: 'fixed', bagSize: sampledBagSize })} /> Sample patches per bag</label>
           <label className="development-check"><input type="radio" name={bagModeId} checked={!automaticBag && value.bagSize === null} onChange={() => { if (value.bagSize !== null) setSampledBagSize(value.bagSize); onChange({ ...value, bagSizeMode: 'fixed', bagSize: null }); }} /> Use whole bag for training</label>
         </div>
@@ -144,7 +145,7 @@ export function RecipeFields({ value, onChange, gridMode = false, classes, clini
  * recipe update as an edit so review invalidation and recovery stay reliable. */
 export function EditingRecipeFields({ onEdit, onChange, ...props }: {
   value: TrainingRecipe; onChange: (value: TrainingRecipe) => void; onEdit: () => void;
-  gridMode?: boolean; classes?: string[]; clinicalFields?: string[]; featureKind?: FeatureKind; modelChoicePending?: boolean;
+  gridMode?: boolean; classes?: string[]; clinicalChoices?: ClinicalChoices; featureKind?: FeatureKind; modelChoicePending?: boolean;
 }) {
   return <RecipeFields {...props} onChange={(value) => { onEdit(); onChange(value); }} />;
 }
@@ -185,6 +186,7 @@ export function BatchPredictorSummary({ spec, protocol, fallbackPredictorPolicy,
   return <div className="batch-predictor-summary">
     <Badge>{policy ? `Predictors: ${batchPredictorLabel(policy)}` : 'Predictors not configured'}</Badge>
     {count !== undefined ? <span>{count.toLocaleString()} predictor{count === 1 ? '' : 's'} planned</span> : null}
+    {spec.mode === 'explicit' && spec.comparison ? <span className="batch-comparison-summary">{comparisonSummary(spec)}</span> : null}
   </div>;
 }
 
@@ -197,18 +199,20 @@ export function BatchPlanSettings({ spec, fallbackPredictorPolicy }: { spec: Dev
   const policy = spec.predictorPolicy ?? fallbackPredictorPolicy;
   const count = batchConfigurationCount(spec);
   const recipes = spec.mode === 'explicit' ? spec.configurations : [spec.recipe];
+  const comparison = spec.mode === 'explicit' ? spec.comparison : null;
   return <div className="batch-plan-settings">
     <dl className="batch-settings-summary">
       <div><dt>Parameter search</dt><dd>{configurationModes.find((mode) => mode.id === spec.mode)?.name} · {count} configuration{count === 1 ? '' : 's'}</dd></div>
       <div><dt>Predictors</dt><dd>{policy ? batchPredictorLabel(policy) : 'Not configured (historical batch)'}</dd></div>
       <div><dt>Training seeds</dt><dd>{spec.trainingSeeds.join(', ')}</dd></div>
+      {comparison ? <div><dt>Controlled comparison</dt><dd>Reference: configuration {comparison.reference}{recipes[comparison.reference - 1] ? ` (${armLabel(recipes[comparison.reference - 1])})` : ''} · Primary metric {comparisonMetricLabel(comparison.primaryMetric)}<small>Every configuration is built and compared with the reference on the same folds and seeds.</small></dd></div> : null}
       {spec.mode === 'grid' ? <><div><dt>Learning rates</dt><dd>{spec.grid.learningRates.join(', ')}</dd></div><div><dt>Weight decays</dt><dd>{spec.grid.weightDecays.join(', ')}</dd></div><div><dt>Maximum epochs</dt><dd>{spec.grid.maxEpochs.join(', ')}</dd></div></> : null}
       {spec.resources ? <div className="batch-legacy-resources"><dt>Saved compute settings</dt><dd>{legacyResourceSummary(spec.resources)}<small>Legacy; the Task Center now decides parallelism.</small></dd></div> : null}
     </dl>
     {spec.mode === 'grid' ? <p className="muted">The parameter grid supplies learning rate, weight decay and maximum epochs. Other training settings are shared.</p> : null}
     {recipes.map((recipe, index) => {
       const resolved = withRecipeDefaults(recipe);
-      return <details key={index} className="batch-saved-recipe"><summary>{spec.mode === 'grid' ? <strong>{recipe.inputMode === 'clinical' ? 'Clinical-only logistic baseline' : modelLabel(recipe.model)} · Shared training settings</strong> : <><strong>Configuration {index + 1}</strong><RecipeSummary recipe={recipe} /></>}</summary>
+      return <details key={index} className="batch-saved-recipe"><summary>{spec.mode === 'grid' ? <strong>{recipe.inputMode === 'clinical' ? 'Clinical-only logistic baseline' : modelLabel(recipe.model)} · Shared training settings</strong> : <><strong>Configuration {index + 1}{comparison?.reference === index + 1 ? ' (reference)' : ''}</strong><RecipeSummary recipe={recipe} /></>}</summary>
         <dl className="batch-settings-summary">
           <div><dt>{usesPatchFeatures(recipe.model, recipe.inputMode) ? 'Training bag' : 'Training inputs'}</dt><dd>{recipeInputSummary(recipe, true)} · Batch size {recipe.batchSize}</dd></div>
           <div><dt>{recipe.model === 'nnmil' && resolved.nnmilCheckpointSelection === 'latest' ? 'Early-stopping validation monitor' : 'Checkpoint selection'}</dt><dd>{recipe.checkpointMetric === 'validation_loss' ? 'Lowest validation loss' : recipe.checkpointMetric === 'validation_auroc' ? 'Highest validation AUROC' : 'Highest validation accuracy'}</dd></div>
@@ -223,10 +227,36 @@ export function BatchPlanSettings({ spec, fallbackPredictorPolicy }: { spec: Dev
         </dl>
       </details>;
     })}
-    <p>Configuration selection: {spec.selectionMetric?.replaceAll('_', ' ') ?? 'Historical manual selection'} · {spec.candidateSelection === 'best_validation' ? 'Build predictors for the best validation configuration' : 'Build predictors for all configurations'}.</p>
+    <p>{comparison ? 'Configuration selection: none. Results report every configuration against the reference, and predictors are built for all configurations.'
+      : <>Configuration selection: {spec.selectionMetric?.replaceAll('_', ' ') ?? 'Historical manual selection'} · {spec.candidateSelection === 'best_validation' ? 'Build predictors for the best validation configuration' : 'Build predictors for all configurations'}.</>}</p>
     {spec.notes ? <p className="batch-plan-notes">{spec.notes}</p> : null}
     <details className="batch-exact-settings"><summary>All saved settings</summary><pre className="experiment-snapshot">{JSON.stringify(spec, null, 2)}</pre></details>
   </div>;
+}
+
+/** Everything the batch editor holds that goes into a saved batch plan. */
+export interface BatchEditorValues {
+  experimentId: string; experimentRevision: number; experimentName: string; name: string; inputs: MILExperimentSpec;
+  recipe: TrainingRecipe; mode: DevelopmentBatchSpec['mode']; lrs: string; wds: string; epochs: string;
+  rows: { id: number; recipe: TrainingRecipe }[]; seeds: string; notes: string; predictorPolicy: ExperimentPredictorPolicy;
+  selectionMetric: DevelopmentBatchSpec['selectionMetric']; candidateSelection: DevelopmentBatchSpec['candidateSelection'];
+  comparison: ComparisonDraft | null;
+}
+
+/** The batch plan the editor saves and checks. A comparison exists only for custom configurations,
+ * names its reference by position and always builds every configuration. Throws on unfinished lists. */
+export function batchSpecification(values: BatchEditorValues): DevelopmentBatchSpec {
+  const { recipe, mode, rows, lrs, wds, epochs } = values;
+  const comparison = mode === 'explicit' && values.comparison ? {
+    reference: Math.max(1, rows.findIndex((row) => row.id === values.comparison!.referenceRow) + 1),
+    primaryMetric: values.comparison.primaryMetric,
+  } : null;
+  return { version: 1, experimentId: values.experimentId, experimentRevision: values.experimentRevision, experimentName: values.experimentName,
+    batchName: values.name.trim(), inputs: values.inputs, recipe, mode,
+    grid: mode === 'grid' ? { learningRates: parseNumberList(lrs, 'Learning rates', false, Number.MIN_VALUE), weightDecays: parseNumberList(wds, 'Weight decay'), maxEpochs: parseNumberList(epochs, 'Maximum epochs', true, 1) } : { learningRates: [recipe.learningRate], weightDecays: [recipe.weightDecay], maxEpochs: [recipe.maxEpochs] },
+    configurations: mode === 'explicit' ? rows.map((row) => row.recipe) : [], trainingSeeds: parseNumberList(values.seeds, 'Training seeds', true),
+    notes: values.notes, predictorPolicy: values.predictorPolicy, selectionMetric: values.selectionMetric,
+    candidateSelection: comparison ? 'all' : values.candidateSelection, ...(comparison ? { comparison } : {}) };
 }
 
 export default function DevelopmentBatches({ project, inputs, experimentName, experimentId, experimentRevision, ownedBatches, ownedDrafts, executionImplemented = false, readOnly = false, record, experimentStage, protocol, onPlanDirtyChange, onPlanBusyChange, onEditorOpenChange, tab, onOpenSetup }: {
@@ -248,6 +278,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   const [predictorPolicy, setPredictorPolicy] = useState(recovered?.predictorPolicy ?? defaultPredictorPolicy);
   const [selectionMetric, setSelectionMetric] = useState<DevelopmentBatchSpec['selectionMetric']>(recovered ? recovered.selectionMetric ?? null : 'validation_auroc');
   const [candidateSelection, setCandidateSelection] = useState<DevelopmentBatchSpec['candidateSelection']>(recovered ? recovered.candidateSelection ?? null : 'best_validation');
+  const [comparison, setComparison] = useState<ComparisonDraft | null>(recovered?.comparison ?? null);
   const [recipe, setRecipe] = useState(() => recovered ? withRecipeDefaults(recovered.recipe) : defaultRecipe());
   const [legacyResources, setLegacyResources] = useState<ResourcePolicy | null>(recovered?.resources ?? null);
   const [mode, setMode] = useState<DevelopmentBatchSpec['mode']>(recovered?.mode ?? 'single');
@@ -285,6 +316,12 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   const plans = record?.batchPlans ?? [];
   const locked = readOnly || (experimentStage !== undefined && experimentStage !== 'planning');
   const stale = !locked && (dirty || editorOpen && Boolean(workingPlan)) && (editorRevision !== experimentRevision || !sameJSON(editorInputs, inputs));
+  // Clinical inputs are offered from the frozen dataset of the experiment's split, never typed in.
+  const clinicalFieldQuery = useQuery({ queryKey: ['mil-clinical-fields', project, inputs.protocolId], queryFn: () => development.clinicalFields(project, inputs.protocolId),
+    enabled: tab === 'batches' && !locked && editorOpen && Boolean(inputs.protocolId), staleTime: 60000 });
+  const clinicalChoices: ClinicalChoices | undefined = inputs.protocolId ? { fields: clinicalFieldQuery.data?.fields, loading: clinicalFieldQuery.isLoading,
+    error: clinicalFieldQuery.isError ? clinicalFieldQuery.error : null, onRetry: () => void clinicalFieldQuery.refetch() } : undefined;
+  const comparing = mode === 'explicit' && Boolean(comparison);
   useEffect(() => { onPlanDirtyChange?.(!locked && (dirty || stale)); }, [dirty, stale, locked, onPlanDirtyChange]);
   useEffect(() => () => onPlanDirtyChange?.(false), [onPlanDirtyChange]);
   useEffect(() => { onPlanBusyChange?.(busy); }, [busy, onPlanBusyChange]);
@@ -293,7 +330,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   useEffect(() => () => onEditorOpenChange?.(false), [onEditorOpenChange]);
   const recovery: BatchEditorDraft | null = dirty ? {
     version: 1, editorRevision, inputs: editorInputs, workingPlan, name, editorOpen, batchPage, templateId,
-    predictorPolicy, selectionMetric, candidateSelection, recipe, ...(legacyResources ? { resources: legacyResources } : {}), mode, rows, explicitInitialized: explicitInitialized.current,
+    predictorPolicy, selectionMetric, candidateSelection, comparison, recipe, ...(legacyResources ? { resources: legacyResources } : {}), mode, rows, explicitInitialized: explicitInitialized.current,
     seeds, lrs, wds, epochs, notes, numericDrafts,
   } : null;
   const backup = useSessionDraftBackup(recoveryKey, recovery, isBatchEditorDraft);
@@ -341,12 +378,23 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
     }
     setMode(next);
   }
+  function createComparison(arms: TrainingRecipe[]) {
+    const plan = comparisonFromArms(arms, () => nextRowId.current++);
+    explicitInitialized.current = true;
+    setRows(plan.rows); setMode(plan.mode); setCandidateSelection(plan.candidateSelection); setComparison(plan.comparison);
+    if (!selectionMetric) setSelectionMetric('validation_auroc');
+    edit();
+    setMessage(`Created ${arms.length} configurations for a controlled comparison. Configuration 1 is the reference.`);
+    window.requestAnimationFrame(() => editor.current?.querySelector('[aria-label="Controlled comparison"]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  }
+  function changeComparison(next: ComparisonDraft | null) {
+    setComparison(next);
+    if (next) { setCandidateSelection('all'); if (!selectionMetric) setSelectionMetric('validation_auroc'); }
+  }
   function edit() { if (!dirty && !workingPlan) { setEditorRevision(experimentRevision); setEditorInputs(inputs); } setDirty(true); setPreview(null); setMessage(''); setError(null); }
   function specification(): DevelopmentBatchSpec {
-    return { version: 1, experimentId, experimentRevision, experimentName, batchName: name.trim(), inputs, recipe, mode,
-      grid: mode === 'grid' ? { learningRates: parseNumberList(lrs, 'Learning rates', false, Number.MIN_VALUE), weightDecays: parseNumberList(wds, 'Weight decay'), maxEpochs: parseNumberList(epochs, 'Maximum epochs', true, 1) } : { learningRates: [recipe.learningRate], weightDecays: [recipe.weightDecay], maxEpochs: [recipe.maxEpochs] },
-      configurations: mode === 'explicit' ? rows.map((row) => row.recipe) : [], trainingSeeds: parseNumberList(seeds, 'Training seeds', true),
-      notes, predictorPolicy, selectionMetric, candidateSelection };
+    return batchSpecification({ experimentId, experimentRevision, experimentName, name, inputs, recipe, mode, lrs, wds, epochs, rows, seeds, notes,
+      predictorPolicy, selectionMetric, candidateSelection, comparison });
   }
   async function savePlans(next: ExperimentBatchPlan[], expectedRevision = editorRevision) {
     if (!record) throw new Error('Reload this experiment before saving its batch plans.');
@@ -388,7 +436,9 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
     const inputsChanged = !sameJSON(inputs, spec.inputs);
     setWorkingPlan(planId ?? null); setEditorRevision(experimentRevision);
     setName(copy ? `${spec.batchName.slice(0, 70)} copy` : spec.batchName); setRecipe(withRecipeDefaults(spec.recipe)); setLegacyResources(spec.resources ?? null); setMode(spec.mode);
-    setRows((spec.configurations.length ? spec.configurations : [spec.recipe]).map((value) => ({ id: nextRowId.current++, recipe: withRecipeDefaults(value) }))); setSeeds(spec.trainingSeeds.join(', '));
+    const loadedRows = (spec.configurations.length ? spec.configurations : [spec.recipe]).map((value) => ({ id: nextRowId.current++, recipe: withRecipeDefaults(value) }));
+    setRows(loadedRows); setSeeds(spec.trainingSeeds.join(', '));
+    setComparison(spec.mode === 'explicit' && spec.comparison ? { referenceRow: loadedRows[spec.comparison.reference - 1]?.id ?? loadedRows[0].id, primaryMetric: spec.comparison.primaryMetric } : null);
     setLrs(spec.grid.learningRates.join(', ')); setWds(spec.grid.weightDecays.join(', ')); setEpochs(spec.grid.maxEpochs.join(', '));
     setNotes(spec.notes); setDirty(!planId); setPreview(null); setMessage(inputsChanged ? 'Batch settings copied. This batch will use this experiment’s verified inputs.' : ''); setError(null);
     return true;
@@ -444,27 +494,24 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
             <div className="batch-size-summary" role="status" aria-live="polite">{plannedConfigurations !== null && plannedSeeds !== null ? <><strong>{plannedConfigurations} configuration{plannedConfigurations === 1 ? '' : 's'} × {plannedSeeds} training seed{plannedSeeds === 1 ? '' : 's'} = {plannedConfigurations * plannedSeeds} training group{plannedConfigurations * plannedSeeds === 1 ? '' : 's'}</strong><span>Each group runs all frozen folds. Check batch to confirm the total fold runs.</span></> : <span>Enter valid parameter values and training seeds to see the planned size.</span>}</div>
           </section>
           </div><div data-batch-step="2" hidden={batchPage !== 2}><section className="batch-editor-section batch-all-settings" aria-label="Settings">
-          {mode !== 'explicit' ? <NumericDraftScope name="shared"><EditingRecipeFields value={recipe} onChange={setRecipe} onEdit={edit} gridMode={mode === 'grid'} classes={protocol?.target.classes} clinicalFields={protocol?.predictors} featureKind={resolvedFeatureKind} modelChoicePending={!resolvedFeatureKind} /></NumericDraftScope> : <section className="batch-custom-configurations" aria-label="Custom configurations"><div className="batch-section-heading"><h3>Configurations</h3><p>Open a configuration to adjust its settings. Added configurations copy the last one; identical rows train only once.</p></div>{rows.map((row, index) => <details className="batch-configuration-card" key={row.id} open={index === 0 ? true : undefined}>
-            <summary><strong>Configuration {index + 1}</strong><RecipeSummary recipe={row.recipe} /></summary>
-            <div className="batch-configuration-body"><NumericDraftScope name={`configuration:${row.id}`}><EditingRecipeFields value={row.recipe} classes={protocol?.target.classes} clinicalFields={protocol?.predictors} featureKind={resolvedFeatureKind} modelChoicePending={!resolvedFeatureKind} onEdit={edit} onChange={(value) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, recipe: value } : item))} /></NumericDraftScope><button type="button" className="text-button" disabled={rows.length === 1} onClick={() => { setRows((current) => current.filter((item) => item.id !== row.id)); edit(); }}>Remove configuration {index + 1}</button></div>
+          {mode !== 'explicit' ? <NumericDraftScope name="shared"><EditingRecipeFields value={recipe} onChange={setRecipe} onEdit={edit} gridMode={mode === 'grid'} classes={protocol?.target.classes} clinicalChoices={clinicalChoices} featureKind={resolvedFeatureKind} modelChoicePending={!resolvedFeatureKind} /></NumericDraftScope> : <section className="batch-custom-configurations" aria-label="Custom configurations"><div className="batch-section-heading"><h3>Configurations</h3><p>Open a configuration to adjust its settings. Added configurations copy the last one; identical rows train only once.</p></div><ComparisonSettings rows={rows} value={comparison} onChange={changeComparison} />{rows.map((row, index) => <details className="batch-configuration-card" key={row.id} open={index === 0 ? true : undefined}>
+            <summary><strong>Configuration {index + 1}</strong>{comparing && (rows.find((item) => item.id === comparison?.referenceRow) ?? rows[0]).id === row.id ? <Badge>Reference</Badge> : null}<RecipeSummary recipe={row.recipe} /></summary>
+            <div className="batch-configuration-body"><NumericDraftScope name={`configuration:${row.id}`}><EditingRecipeFields value={row.recipe} classes={protocol?.target.classes} clinicalChoices={clinicalChoices} featureKind={resolvedFeatureKind} modelChoicePending={!resolvedFeatureKind} onEdit={edit} onChange={(value) => setRows((current) => current.map((item) => item.id === row.id ? { ...item, recipe: value } : item))} /></NumericDraftScope><button type="button" className="text-button" disabled={rows.length === 1} onClick={() => { setRows((current) => current.filter((item) => item.id !== row.id)); edit(); }}>Remove configuration {index + 1}</button></div>
           </details>)}<StageCreateButton type="button" tone="secondary" disabled={rows.length >= 512} onClick={() => { const id = nextRowId.current++; setRows((current) => [...current, { id, recipe: { ...current[current.length - 1].recipe } }]); edit(); }}>Add configuration</StageCreateButton></section>}
-          {mode !== 'explicit' && recipe.clinicalFields?.length ? <div className="inline-actions"><button type="button" className="btn btn-secondary" onClick={() => {
-            setRows(matchedInputRecipes(recipe).map((entry) => ({ id: nextRowId.current++, recipe: entry })));
-            setMode('explicit'); setCandidateSelection('all'); edit();
-          }}>Create matched image / clinical / combined comparison</button><p className="muted">Creates three configurations with the same selected fields, frozen patients, folds and seeds. All three are retained for paired external comparison.</p></div> : null}
+          {mode === 'single' ? <AblationArms recipe={recipe} featureKind={resolvedFeatureKind} onCreate={createComparison} /> : null}
           <details className="setup-details batch-settings-details"><summary>Batch notes (optional)</summary><label className="label">Notes<textarea className="field" value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} /></label></details></section>
           </div><div data-batch-step="3" hidden={batchPage !== 3}>
           {legacyResources ? <p className="callout batch-legacy-resources-note" role="note">This batch was saved with compute settings ({legacyResourceSummary(legacyResources)}). They are no longer used: saving it again removes them, and the Task Center decides parallelism.</p> : null}
           <section className="batch-editor-section"><h3>Model selection</h3><p>Rank configurations using the mean validation score across folds and seeds. Validation uses the protocol’s prediction unit and the recipe’s patient aggregation. Assessment and external outcomes do not enter this selection.</p><div className="development-fields">
             <label className="label">Configuration selection metric<select className="field" value={selectionMetric ?? ''} onChange={(event) => setSelectionMetric(event.target.value as NonNullable<DevelopmentBatchSpec['selectionMetric']>)}>{!selectionMetric ? <option value="">Historical manual selection</option> : null}<option value="validation_auroc">Highest validation AUROC (default)</option><option value="validation_loss">Lowest validation loss</option><option value="validation_accuracy">Highest validation accuracy</option></select></label>
-            <label className="label">Configurations to build<select className="field" value={candidateSelection ?? 'all'} onChange={(event) => { setCandidateSelection(event.target.value as NonNullable<DevelopmentBatchSpec['candidateSelection']>); if (!selectionMetric) setSelectionMetric('validation_auroc'); }}><option value="best_validation">Best validation configuration (default)</option><option value="all">All configurations for a predefined comparison</option></select></label>
+            <label className="label">Configurations to build<select className="field" disabled={comparing} value={comparing ? 'all' : candidateSelection ?? 'all'} onChange={(event) => { setCandidateSelection(event.target.value as NonNullable<DevelopmentBatchSpec['candidateSelection']>); if (!selectionMetric) setSelectionMetric('validation_auroc'); }}><option value="best_validation">Best validation configuration (default)</option><option value="all">All configurations for a predefined comparison</option></select>{comparing ? <small>A controlled comparison builds every configuration and reports each one against the reference.</small> : null}</label>
           </div></section>
-          <BatchPredictorFields value={predictorPolicy} onChange={setPredictorPolicy} configurationCount={candidateSelection === 'best_validation' ? 1 : plannedConfigurations} trainingSeedCount={plannedSeeds} splitSeedCount={protocol?.split.mode === 'kfold' ? new Set(protocol.split.seeds).size : undefined} foldCount={protocol?.split.mode === 'kfold' ? protocol.split.folds : undefined} />
+          <BatchPredictorFields value={predictorPolicy} onChange={setPredictorPolicy} configurationCount={candidateSelection === 'best_validation' && !comparing ? 1 : plannedConfigurations} trainingSeedCount={plannedSeeds} splitSeedCount={protocol?.split.mode === 'kfold' ? new Set(protocol.split.seeds).size : undefined} foldCount={protocol?.split.mode === 'kfold' ? protocol.split.folds : undefined} />
           </div>
         </fieldset>
         </NumericDraftProvider>
         {batchPage === 4 && reviewSpec ? <div className="batch-page-review"><h3>Review {name || 'this batch'}</h3><p>{plannedConfigurations ?? '—'} configurations × {plannedSeeds ?? '—'} training seeds. All batches use the experiment’s verified inputs and frozen splits.</p><BatchPredictorSummary spec={reviewSpec} protocol={protocol} /><details className="setup-details"><summary>Review all batch settings</summary><BatchPlanSettings spec={reviewSpec} /></details>
-          {preview ? <section className="batch-review-checks" aria-label="Resolved batch"><h4>Resolved batch</h4><Findings findings={preview.findings} /><NnMILPlanning rows={preview.nnmilPlanning} /><p className="development-count" aria-live="polite"><strong>{preview.summary.configurationCount}</strong> configurations × <strong>{preview.summary.trainingSeedCount}</strong> training seeds × <strong>{preview.summary.splitPlanCount}</strong> frozen split plans = <strong>{preview.summary.runCount}</strong> planned runs</p>{!preview.canFreeze ? <p className="callout">This batch needs attention before training. You can save its settings and resolve the findings before submitting the experiment.</p> : null}<details><summary>Resolved configurations</summary><ConfigurationTable batch={preview} /></details></section> : <p className="callout">These recovered settings have not been checked in this session. Check the batch to confirm compatibility and the planned runs.</p>}
+          {preview ? <section className="batch-review-checks" aria-label="Resolved batch"><h4>Resolved batch</h4>{reviewSpec.comparison ? <ComparisonReview findings={preview.findings} /> : null}<Findings findings={reviewSpec.comparison ? preview.findings.filter((item) => !item.code.startsWith('COMPARISON_')) : preview.findings} /><NnMILPlanning rows={preview.nnmilPlanning} /><p className="development-count" aria-live="polite"><strong>{preview.summary.configurationCount}</strong> configurations × <strong>{preview.summary.trainingSeedCount}</strong> training seeds × <strong>{preview.summary.splitPlanCount}</strong> frozen split plans = <strong>{preview.summary.runCount}</strong> planned runs</p>{!preview.canFreeze ? <p className="callout">This batch needs attention before training. You can save its settings and resolve the findings before submitting the experiment.</p> : null}<details><summary>Resolved configurations</summary><ConfigurationTable batch={preview} reference={reviewSpec.comparison?.reference} /></details></section> : <p className="callout">These recovered settings have not been checked in this session. Check the batch to confirm compatibility and the planned runs.</p>}
         </div> : null}
         {batchPage === 4 && !reviewSpec ? <p role="alert" className="callout">Some recovered parameter values are unfinished. Return to Configuration to complete them before saving.</p> : null}
         <div hidden={batchPage !== 4}><div className="inline-actions batch-editor-actions"><button type="button" className="btn btn-primary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim() || (!!workingPlan && !dirty)} onClick={() => void action('save')}>{!workingPlan ? <Icon name="plus" size={16} /> : null}{busy ? 'Working…' : workingPlan ? 'Save batch changes' : 'Add batch to plan'}</button><button type="button" className="btn btn-secondary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim()} onClick={() => void action('preview')}>Check batch</button>{workingPlan || dirty ? <button className="text-button" disabled={busy} onClick={() => { if (load(batchTemplate('blank', inputs, experimentName), undefined, false, 'blank')) setDirty(false); }}>{dirty ? 'Discard batch edits' : 'New batch'}</button> : null}{dirty ? <span className="muted" role="status">Unsaved batch edits</span> : null}</div></div>
@@ -477,7 +524,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
         <div className="development-batch-selector"><label className="label">Batch<select className="field" value={selectedBatch?.id ?? ''} onChange={(e) => setSelected(e.target.value)}><option value="">Choose a batch in this experiment</option>{items.map((item) => <option key={item.id} value={item.id}>{item.manifest.spec.batchName} · {item.status} · {item.state}</option>)}</select></label>
         {selectedBatch ? <div className="inline-actions"><Badge>{selectedBatch.manifest.summary.runCount} runs in plan</Badge><button type="button" className="btn btn-secondary btn-small" onClick={() => downloadJSON(`${selectedBatch.manifest.spec.batchName}.json`, selectedBatch)}>Export batch</button>{tab === 'batches' && !locked ? <button type="button" className="btn btn-secondary btn-small" onClick={() => load(selectedBatch.manifest.spec, undefined, true)}>Use as editable batch</button> : null}</div> : null}</div>
         {selectedBatch ? <>
-          {tab === 'batches' ? <><BatchPredictorSummary spec={selectedBatch.manifest.spec} protocol={protocol} fallbackPredictorPolicy={record?.predictorPolicies?.[selectedBatch.id] ?? record?.predictorPolicy ?? undefined} /><ConfigurationTable batch={selectedBatch.manifest} /><NnMILPlanning rows={selectedBatch.manifest.nnmilPlanning} /></> : null}
+          {tab === 'batches' ? <><BatchPredictorSummary spec={selectedBatch.manifest.spec} protocol={protocol} fallbackPredictorPolicy={record?.predictorPolicies?.[selectedBatch.id] ?? record?.predictorPolicy ?? undefined} /><ConfigurationTable batch={selectedBatch.manifest} reference={selectedBatch.manifest.spec.comparison?.reference} /><NnMILPlanning rows={selectedBatch.manifest.nnmilPlanning} /></> : null}
           {tab === 'batches' && !locked ? <ExperimentLifecycle key={`lifecycle:${selectedBatch.id}`} project={project} recordKey={selectedBatch.key} state={selectedBatch.state} name={selectedBatch.manifest.spec.batchName} /> : null}
           {tab !== 'batches' || experimentStage === undefined ? <DevelopmentExecution key={selectedBatch.id} project={project} batch={selectedBatch} implemented={selectedBatch.state !== 'trashed' && executionImplemented} stage={experimentStage} readOnly={experimentStage === 'finished' || !!record?.legacy || (!!record && record.state !== 'active')} allowChanges={(experimentStage === 'running' || !readOnly) && selectedBatch.state === 'active'} knownExecution={selectedBatch.execution ?? undefined} view={tab} /> : null}
         </> : null}
@@ -486,8 +533,8 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   </StagePage>;
 }
 
-export function ConfigurationTable({ batch }: { batch: Pick<BatchPreview, 'configurations'> }) {
-  return <div className="development-table"><table><thead><tr><th>Configuration</th><th>Model</th><th>LR</th><th>WD</th><th>Max epochs</th><th>Training bag</th></tr></thead><tbody>{batch.configurations.map((item) => <tr key={item.id}><td>{item.number}</td><td>{item.recipe.model === 'nnmil' ? 'nnMIL' : item.recipe.model}</td><td>{item.recipe.learningRate}</td><td>{item.recipe.weightDecay}</td><td>{item.recipe.maxEpochs}</td><td>{item.recipe.bagSizeMode === 'training_median' ? `${item.recipe.bagSizeFraction ?? 0.5} × fitting-fold median` : item.recipe.bagSize === null ? 'Whole bag (all patches)' : `${item.recipe.bagSize} patches maximum`}</td></tr>)}</tbody></table></div>;
+export function ConfigurationTable({ batch, reference }: { batch: Pick<BatchPreview, 'configurations'>; reference?: number }) {
+  return <div className="development-table"><table><thead><tr><th>Configuration</th><th>Model</th><th>Inputs</th><th>LR</th><th>WD</th><th>Max epochs</th><th>Training bag</th></tr></thead><tbody>{batch.configurations.map((item) => <tr key={item.id}><td>{item.number}{item.number === reference ? <> <Badge>Reference</Badge></> : null}</td><td>{item.recipe.inputMode === 'clinical' ? '—' : modelLabel(item.recipe.model) || item.recipe.model}</td><td>{inputModeLabel(item.recipe.inputMode)}</td><td>{item.recipe.learningRate}</td><td>{item.recipe.weightDecay}</td><td>{item.recipe.maxEpochs}</td><td>{item.recipe.inputMode === 'clinical' ? 'Clinical variables only' : item.recipe.bagSizeMode === 'training_median' ? `${item.recipe.bagSizeFraction ?? 0.5} × fitting-fold median` : item.recipe.bagSize === null ? 'Whole bag (all patches)' : `${item.recipe.bagSize} patches maximum`}</td></tr>)}</tbody></table></div>;
 }
 
 export function ExperimentBatchOverview({ batches, view, onSelect }: { batches: ExperimentBatch[]; view: 'runs' | 'results'; onSelect: (id: string) => void }) {

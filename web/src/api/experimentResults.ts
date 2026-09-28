@@ -55,8 +55,25 @@ export interface ConfigurationResult {
 export interface BatchResult {
   batchId: string; name: string; state: string; status: string;
   progress: { completedRuns: number; totalRuns: number };
-  selection: { source: 'validation' | 'single' | 'first'; metric: string | null; ready: boolean; scores: Record<string, number | null> } | null;
+  /** A declared comparison reports its reference arm (`reference`), not a validation choice. */
+  selection: { source: 'validation' | 'single' | 'first' | 'reference'; metric: string | null; ready: boolean; scores: Record<string, number | null> } | null;
   selectedCandidateId: string | null; configurations: ConfigurationResult[]; findings: (Finding & { batchId?: string })[];
+  /** Present when the batch declared a controlled comparison and its reference arm has results. */
+  comparison?: BatchComparison;
+}
+/** One arm against the reference: reference − arm on shared draws and folds, with bootstrap p-values. */
+export interface ArmContrast {
+  armId: string; armNumber: number; model: string | null; inputMode: string; difference: 'reference_minus_arm';
+  available: boolean; reason?: string;
+  oof?: PairedComparison['oof']; oofInterval?: PairedComparison['oofInterval']; folds?: PairedComparison['folds'];
+  /** Two-sided bootstrap p-value on the primary metric; null without paired draws. */
+  pValue: number | null;
+  /** Holm-adjusted across the batch's planned contrasts; null when pValue is null. */
+  pValueHolm: number | null;
+}
+export interface BatchComparison {
+  referenceId: string; referenceNumber: number; primaryMetric: Exclude<ResultMetric, 'loss'>; adjustment: 'holm';
+  contrasts: ArmContrast[];
 }
 export interface FoldDifference { n: number; mean?: number; sd?: number | null; min?: number; max?: number; better?: number; worse?: number; tied?: number; values?: number[] }
 export interface PairedComparison {

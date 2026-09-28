@@ -34,6 +34,8 @@ export interface TrainingRecipe {
   bagSizeMode?: 'fixed' | 'training_median'; bagSizeFraction?: number;
   nnmilFeatureSampling?: boolean; nnmilWindowStrideDivisor?: number;
   nnmilWindowShuffle?: boolean; nnmilWindowSeed?: number;
+  /** When on, each training seed draws its own feature-window order; the fixed seed is then unused. */
+  nnmilWindowSeedFromTraining?: boolean;
   nnmilWindowAggregation?: 'mean_logits' | 'mean_probabilities';
   nnmilBatchSampler?: 'patient_weighted' | 'class_balanced' | 'auc_stratified';
   nnmilCheckpointSelection?: 'best_validation' | 'latest';
@@ -42,6 +44,13 @@ export interface TrainingRecipe {
 export interface ResourcePolicy {
   maxConcurrentRuns: number; gpuIds: number[]; runsPerGpu: number;
   cpuThreadsPerRun: number; dataLoaderWorkers: number; ramGbPerRun: number;
+}
+/** Metrics a controlled comparison can name as primary; loss is never used to compare. */
+export type ComparisonMetric = 'auroc' | 'auprc' | 'balancedAccuracy' | 'macroF1' | 'accuracy';
+/** Every configuration of the batch against one reference configuration, on shared folds and seeds. */
+export interface ComparisonSpec {
+  /** One-based configuration number of the reference arm. */
+  reference: number; primaryMetric: ComparisonMetric;
 }
 export interface DevelopmentBatchSpec {
   version: 1; experimentId?: string; experimentRevision?: number; experimentName: string; batchName: string; inputs: MILExperimentSpec;
@@ -54,6 +63,12 @@ export interface DevelopmentBatchSpec {
   predictorPolicy?: ExperimentPredictorPolicy;
   selectionMetric?: TrainingRecipe['checkpointMetric'] | null;
   candidateSelection?: 'best_validation' | 'all' | null;
+  /** Omitted unless the batch declares a controlled comparison (explicit mode, 2–8 configurations, all built). */
+  comparison?: ComparisonSpec | null;
+}
+/** A frozen dataset column offered as a clinical input, with the reason it is refused, if any. */
+export interface ClinicalFieldChoice {
+  field: string; owner: 'slide' | 'patient'; type: string; kind: 'numeric' | 'categorical'; excluded: string | null;
 }
 export interface PlannedRun {
   id: string; candidateId: string; trainingSeed: number; splitPlanId: string; status: 'planned';
@@ -177,6 +192,8 @@ export const development = {
     `oof-${candidate}-${trainingSeed}-${splitSeed}-${unit}.csv`,
   ),
   preview: (project: string, spec: DevelopmentBatchSpec) => request<BatchPreview>(`${prefix(project)}/preview`, body(spec)),
+  clinicalFields: (project: string, protocolId: string) => request<{ fields: ClinicalFieldChoice[] }>(
+    `/projects/${encodeURIComponent(project)}/mil-experiments/clinical-fields?protocolId=${encodeURIComponent(protocolId)}`),
 };
 
 export const defaultRecipe = (): TrainingRecipe => ({ model: 'abmil', learningRate: 0.0003, weightDecay: 0.0001, maxEpochs: 40, optimizer: 'adamw', batchSize: 1, bagSize: 4096, earlyStopping: true, patience: 8, checkpointMetric: 'validation_auroc', analysis: defaultPatientAnalysis(), decisionThreshold: 0.5, embedDim: 512, attentionDim: 384, numFcLayers: 1, gatedAttention: true, dropout: 0.25, inputDropout: 0, gradientCheckpointing: false, precision: '32-true', gradientClipNorm: 0, accumulateGradBatches: 1, lrScheduler: 'none', warmupEpochs: 0, finalLrFraction: 0.01, earlyStoppingMinDelta: 0, minEpochs: 1 });
@@ -189,7 +206,7 @@ export const experimentalRecipeDefaults = {
   bagCurriculumStart: 512, bagCurriculumEnd: 8000, bagCurriculumWarmupEpochs: 5,
   evalBagSize: null, evalBatchSize: null, minValidationPositives: null, fixedEpochBudget: null,
   bagSizeMode: 'fixed', bagSizeFraction: 0.5,
-  nnmilFeatureSampling: true, nnmilWindowStrideDivisor: 4, nnmilWindowShuffle: true, nnmilWindowSeed: 42,
+  nnmilFeatureSampling: true, nnmilWindowStrideDivisor: 4, nnmilWindowShuffle: true, nnmilWindowSeed: 42, nnmilWindowSeedFromTraining: false,
   nnmilWindowAggregation: 'mean_logits', nnmilBatchSampler: 'patient_weighted', nnmilCheckpointSelection: 'best_validation',
   weightDecayPolicy: 'all', lrScheduleInterval: 'epoch',
 } satisfies Partial<TrainingRecipe>;
@@ -206,9 +223,11 @@ export const oceanPathRecipe = (preset: 'standard' | 'kras'): TrainingRecipe => 
   bagSize: preset === 'standard' ? null : 4096,
   ...(preset === 'kras' ? { lossType: 'bce', classWeighting: 'none' } : {}),
 });
-/** Editable nnMIL method template with HistoPilot's patient protocol and optimizer defaults. */
+/** Editable nnMIL method template with HistoPilot's patient protocol and optimizer defaults.
+ * New recipes give each training seed its own feature-window order, so the seed spread
+ * includes that variation; saved recipes keep their own setting. */
 export const nnmilRecipe = (): TrainingRecipe => ({
-  ...defaultRecipe(), ...experimentalRecipeDefaults, model: 'nnmil', attentionDim: 256,
+  ...defaultRecipe(), ...experimentalRecipeDefaults, model: 'nnmil', attentionDim: 256, nnmilWindowSeedFromTraining: true,
   dropout: 0.25, batchSize: 32, bagSize: null, bagSizeMode: 'training_median', bagSizeFraction: 0.5,
   optimizer: 'adamw', lrScheduler: 'cosine', warmupEpochs: 5, maxEpochs: 100, patience: 10, minEpochs: 1,
   evalBagSize: null, evalBatchSize: 1, checkpointMetric: 'validation_auroc',

@@ -159,3 +159,7 @@
   .exp-table th, .exp-table td { padding: .5rem .55rem; }
   .exp-overview tbody th { min-width: 9rem; }
 }
+
+/* Controlled comparison: arms against their reference */
+.exp-contrasts .exp-verdict { display: block; width: max-content; }
+.exp-contrasts tbody th small { white-space: normal; }

@@ -1,10 +1,12 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { experimentResults, lowerIsBetter, type BatchResult, type ConfigurationResult, type ExperimentResults as Results, type MetricStats, type ResultMetric, type SeedResult } from '../api/experimentResults';
+import { experimentResults, lowerIsBetter, type ArmContrast, type BatchResult, type ConfigurationResult, type ExperimentResults as Results, type MetricStats, type ResultMetric, type SeedResult } from '../api/experimentResults';
+import type { TrainingRecipe } from '../api/development';
 import { experimentStage, type ModelExperiment } from '../api/experiments';
 import type { Finding } from '../api/scientific';
 import { download, downloadJSON } from '../lib/download';
-import { batchModel, csv, fixed, hasResults, interval, leadingBatch, meanSd, metricLabel, metricPhrase, metricShortLabel, niceTicks, orient, orientedPairs, tickDigits, percent, range, reportedConfiguration, resultRows, shade, signed, signedInterval, verdict, verdictLabel, type OrientedComparison } from '../lib/experimentResults';
+import { batchModel, csv, fixed, hasResults, interval, leadingBatch, meanSd, metricLabel, metricPhrase, metricShortLabel, niceTicks, orient, orientedPairs, pValue, tickDigits, percent, range, reportedConfiguration, resultRows, shade, signed, signedInterval, verdict, verdictLabel, type OrientedComparison } from '../lib/experimentResults';
+import { inputModeLabel } from './ClinicalInputFields';
 import { modelLabel } from '../lib/modelCapabilities';
 import DevelopmentExecution, { OOFPredictionDownloads } from './DevelopmentExecution';
 import { EmptyState, ErrorNotice, Icon } from './ui';
@@ -56,12 +58,13 @@ export default function ExperimentResults({ project, record }: { project: string
     <Notes findings={data.findings} batches={data.batches} />
     <section className="exp-section" aria-labelledby="exp-overview-title">
       <header><h2 id="exp-overview-title">{shown.length > 1 ? 'Model comparison' : 'Headline results'}</h2>
-        <p>{shown.length > 1 ? 'The validation-selected configuration of each batch.' : 'The validation-selected configuration.'} Out-of-fold (OOF) values are the mean ± SD across training seeds, with the 95% interval of that mean.</p></header>
+        <p>{shown.length > 1 ? 'The validation-selected configuration of each batch' : 'The validation-selected configuration'}{shown.some((item) => item.comparison) ? ', or the reference of a controlled comparison' : ''}. Out-of-fold (OOF) values are the mean ± SD across training seeds, with the 95% interval of that mean.</p></header>
       <Takeaway results={data} shown={shown} metric={metric} task={task} />
       <OverviewTable batches={shown} metric={metric} task={task} colors={colors} onSelect={setSelected} />
       <SpreadChart batches={shown} metric={metric} task={task} colors={colors} unit={data.target?.unit ?? 'slide'} />
       {shown.length > 1 ? <PairedTable results={data} shown={shown} metric={metric} task={task} /> : null}
     </section>
+    {shown.filter((item) => item.comparison).map((item) => <ArmComparison key={item.batchId} results={data} batch={item} task={task} multiple={shown.length > 1} />)}
     <section className="exp-section" aria-labelledby="exp-detail-title">
       <header className="exp-detail-header">
         <div><h2 id="exp-detail-title">Seeds, folds and classes</h2><p>Every training seed and every test fold of one batch, so you can see how much a single run can move.</p></div>
@@ -140,8 +143,11 @@ function MetricPicker({ value, onChange, task }: { value: ResultMetric; onChange
 }
 
 function Notes({ findings, batches }: { findings: (Finding & { batchId?: string })[]; batches: BatchResult[] }) {
-  if (!findings.length) return null;
-  const ordered = [...findings].sort((a, b) => (a.severity === 'warning' ? 0 : 1) - (b.severity === 'warning' ? 0 : 1));
+  const referenced = new Set(batches.filter((batch) => batch.selection?.source === 'reference').map((batch) => batch.batchId));
+  // A declared comparison reports its reference arm by design, not for want of a validation choice.
+  const relevant = findings.filter((item) => !(item.code === 'SELECTION_UNAVAILABLE' && item.batchId && referenced.has(item.batchId)));
+  if (!relevant.length) return null;
+  const ordered = [...relevant].sort((a, b) => (a.severity === 'warning' ? 0 : 1) - (b.severity === 'warning' ? 0 : 1));
   const known = new Set(batches.map((batch) => batch.batchId));
   return <section className="exp-notes" aria-label="Things to know about these results">
     <h3>Things to know</h3>
@@ -156,7 +162,7 @@ function BatchName({ batch, color, detail = true }: { batch: BatchResult; color?
   const configurations = batch.configurations.length;
   return <span className="exp-batch-name">
     <span className="exp-swatch" style={{ background: color }} aria-hidden="true" />
-    <span><strong>{batch.name}</strong>{detail ? <small>{batchModel(batch)}{configurations > 1 && configuration ? ` · configuration ${configuration.number} of ${configurations}${batch.selection?.source === 'validation' ? ', chosen on validation' : ''}` : ''}</small> : null}</span>
+    <span><strong>{batch.name}</strong>{detail ? <small>{batchModel(batch)}{configurations > 1 && configuration ? ` · configuration ${configuration.number} of ${configurations}${batch.selection?.source === 'validation' ? ', chosen on validation' : batch.selection?.source === 'reference' ? ', the comparison’s reference' : ''}` : ''}</small> : null}</span>
   </span>;
 }
 
@@ -308,6 +314,79 @@ function PairedTable({ results, shown, metric, task }: { results: Results; shown
   </div>;
 }
 
+const armModel = (row: Pick<ConfigurationResult, 'model' | 'inputMode'>) => row.inputMode === 'clinical' ? '—' : modelLabel(row.model ?? undefined) || row.model || '—';
+const armInputs = (row: Pick<ConfigurationResult, 'inputMode'>) => inputModeLabel(row.inputMode as TrainingRecipe['inputMode']) ?? row.inputMode;
+const armName = (row: Pick<ConfigurationResult, 'model' | 'inputMode'>) => row.inputMode === 'clinical' ? 'Clinical only' : `${armModel(row)} · ${armInputs(row)}`;
+/** The service words a missing pairing for batches; say it for arms. */
+const armReason = (reason?: string) => reason === 'Both batches need complete OOF results.' ? 'The arm and the reference both need complete out-of-fold results.' : reason ?? 'Not available yet.';
+
+/**
+ * A declared controlled comparison: every arm of one batch against its reference arm on
+ * the primary metric, with paired intervals on shared draws, bootstrap p-values adjusted
+ * by Holm for the planned contrasts, and fold-by-fold agreement.
+ */
+function ArmComparison({ results, batch, task, multiple }: { results: Results; batch: BatchResult; task?: string; multiple: boolean }) {
+  const id = useId();
+  const comparison = batch.comparison!;
+  const metric = comparison.primaryMetric;
+  const label = metricLabel(metric, task);
+  const arms = [...batch.configurations].sort((a, b) => a.number - b.number);
+  const reference = arms.find((row) => row.candidateId === comparison.referenceId);
+  const unit = comparison.contrasts.find((row) => row.oofInterval?.unit)?.oofInterval?.unit ?? results.design?.resamplingUnit ?? results.target?.unit ?? 'slide';
+  const partial = arms.some((row) => !row.complete);
+  const noInterval = comparison.contrasts.find((row) => row.available && row.oofInterval && !row.oofInterval.available)?.oofInterval?.reason;
+  return <section className="exp-section exp-comparison" aria-labelledby={`${id}-title`}>
+    <header><h2 id={`${id}-title`}>Controlled comparison{multiple ? `: ${batch.name}` : ''}</h2>
+      <p>Every arm trained on the same folds and training seeds and differs from the reference only in its model or inputs. Reference: configuration {comparison.referenceNumber}{reference ? ` (${armName(reference)})` : ''}. Primary metric: {label}.</p></header>
+    {partial ? <p className="callout exp-partial" role="status"><Icon name="info" size={16} />Some arms have unfinished training seeds. Their values cover completed seeds only and will change as training finishes.</p> : null}
+    <figure className="exp-figure">
+      <figcaption>Arms · {label}</figcaption>
+      <div className="exp-table-wrap"><table className="exp-table">
+        <caption className="sr-only">Each arm’s out-of-fold {label}: mean ± SD across training seeds and the 95% interval of the mean.</caption>
+        <thead><tr><th scope="col">Arm</th><th scope="col">Model</th><th scope="col">Inputs</th><th scope="col">{label}<small>seed mean ± SD</small></th><th scope="col">95% interval</th><th scope="col">Evidence</th></tr></thead>
+        <tbody>{arms.map((row) => {
+          const ci = row.intervals.seedAverage?.available ? row.intervals.seedAverage.intervals?.[metric] : undefined;
+          return <tr key={row.candidateId} className={row.candidateId === comparison.referenceId ? 'is-current' : undefined}>
+            <th scope="row">Configuration {row.number}{row.candidateId === comparison.referenceId ? <span className="exp-chip">Reference</span> : null}</th>
+            <td>{armModel(row)}</td><td>{armInputs(row)}</td>
+            <td><span className="exp-value"><strong>{meanSd(row.seedAverage[metric])}</strong></span></td>
+            <td>{ci ? interval(ci) : '—'}</td>
+            <td className="exp-evidence">{row.seedCount} of {row.plannedSeedCount} seed{row.plannedSeedCount === 1 ? '' : 's'}<small>{row.foldCount} of {row.plannedFoldCount} test folds</small></td>
+          </tr>;
+        })}</tbody>
+      </table></div>
+    </figure>
+    {comparison.contrasts.length ? <figure className="exp-figure">
+      <figcaption>Each arm against the reference · {label}</figcaption>
+      <p className="muted">Reference − arm: a positive difference means the reference scored higher. The interval and p-values come from the same resamples for both, so they compare the arms directly.</p>
+      <div className="exp-table-wrap"><table className="exp-table exp-contrasts">
+        <caption className="sr-only">Reference minus each arm on {label}, with paired 95% intervals, p-values, Holm-adjusted p-values and test-fold agreement.</caption>
+        <thead><tr><th scope="col">Arm</th><th scope="col">Reference − arm</th><th scope="col">Paired 95% interval</th><th scope="col">p</th><th scope="col">Holm-adjusted p</th><th scope="col">Test folds<small>reference better</small></th></tr></thead>
+        <tbody>{comparison.contrasts.map((row) => <ContrastRow key={row.armId} row={row} metric={metric} />)}</tbody>
+      </table></div>
+      <p className="exp-footnote">Differences use the same resampled {unit}s for every arm; Holm adjusts p for the number of planned contrasts.{noInterval ? ` ${noInterval}` : ''}</p>
+      <p className="exp-footnote">Like every interval here, these hold the trained models fixed. A clear difference is a lead to confirm on an independent test cohort.</p>
+    </figure> : null}
+  </section>;
+}
+
+function ContrastRow({ row, metric }: { row: ArmContrast; metric: Exclude<ResultMetric, 'loss'> }) {
+  const name = <th scope="row">Configuration {row.armNumber}<small>{armName(row)}</small></th>;
+  if (!row.available) return <tr>{name}<td colSpan={5} className="exp-empty exp-wrap">{armReason(row.reason)}</td></tr>;
+  const point = row.oof?.[metric];
+  const ci = row.oofInterval?.available ? row.oofInterval.intervals?.[metric] ?? null : null;
+  const result = verdict(ci);
+  const folds = row.folds?.[metric];
+  return <tr>
+    {name}
+    <td><span className="exp-value"><strong>{signed(point?.difference)}</strong></span>{point ? <small>{fixed(point.left)} vs {fixed(point.right)}</small> : null}</td>
+    <td>{ci ? signedInterval(ci) : 'no interval'}{result !== 'unavailable' ? <span className={`exp-verdict exp-verdict-${result}`}>{result === 'higher' ? 'Reference better' : result === 'lower' ? 'Arm better' : 'No clear difference'}</span> : null}</td>
+    <td>{pValue(row.pValue)}</td>
+    <td><strong>{pValue(row.pValueHolm)}</strong></td>
+    <td>{folds?.n ? `better in ${folds.better ?? 0} of ${folds.n} folds` : '—'}</td>
+  </tr>;
+}
+
 function PairRow({ pair, names, metric }: { pair: OrientedComparison; names: Map<string, string>; metric: ResultMetric }) {
   return <tr>
     <th scope="row"><span className="exp-pair"><strong>{names.get(pair.otherId)}</strong><span className="muted"> vs </span><span>{names.get(pair.referenceId)}</span></span></th>
@@ -351,18 +430,20 @@ function ConfigurationTable({ batch, record, metric, task, value, onChange }: { 
   const manifest = record.batches.find((item) => item.id === batch.batchId)?.manifest;
   const recipes = new Map(manifest?.configurations.map((item) => [item.id, item.recipe]) ?? []);
   const selectionMetric = batch.selection?.metric?.replace('validation_', '') ?? null;
-  // Best validation first (lowest for loss); configurations without a score go last.
-  const rank = (row: ConfigurationResult) => typeof row.validationScore === 'number' ? (selectionMetric === 'loss' ? row.validationScore : -row.validationScore) : Infinity;
+  const arms = Boolean(batch.comparison);
+  // Best validation first (lowest for loss); configurations without a score go last. Comparison arms keep their order.
+  const rank = (row: ConfigurationResult) => arms ? 0 : typeof row.validationScore === 'number' ? (selectionMetric === 'loss' ? row.validationScore : -row.validationScore) : Infinity;
   const ordered = [...batch.configurations].sort((a, b) => rank(a) - rank(b) || a.number - b.number);
   return <figure className="exp-figure">
-    <figcaption>Configurations, ranked by validation</figcaption>
-    <p className="muted">The batch reports the configuration with the best mean validation {selectionMetric ? selectionMetric.replace('auroc', 'AUROC') : 'score'} across folds and seeds. OOF values are shown for context only: choosing a configuration by OOF would overstate its performance.</p>
+    <figcaption>{arms ? 'Comparison arms' : 'Configurations, ranked by validation'}</figcaption>
+    <p className="muted">{arms ? 'Choose an arm to see its seeds, folds and classes below. Validation does not choose between arms; each is compared with the reference above.'
+      : <>The batch reports the configuration with the best mean validation {selectionMetric ? selectionMetric.replace('auroc', 'AUROC') : 'score'} across folds and seeds. OOF values are shown for context only: choosing a configuration by OOF would overstate its performance.</>}</p>
     <div className="exp-table-wrap"><table className="exp-table"><thead><tr><th scope="col">Configuration</th><th scope="col">Settings</th><th scope="col">Validation {selectionMetric ?? 'score'}</th><th scope="col">OOF {metricShortLabel(metric)} (seed mean)</th><th scope="col"><span className="sr-only">Show</span></th></tr></thead>
       <tbody>{ordered.map((row) => {
         const recipe = recipes.get(row.candidateId);
         return <tr key={row.candidateId} className={row.candidateId === value ? 'is-current' : undefined}>
-          <th scope="row">{row.number}{row.selected ? <span className="exp-chip">Selected</span> : null}</th>
-          <td>{recipe ? `${modelLabel(recipe.model)} · LR ${recipe.learningRate} · WD ${recipe.weightDecay} · ${recipe.maxEpochs} epochs` : row.model ?? '—'}</td>
+          <th scope="row">{row.number}{row.selected ? <span className="exp-chip">{arms ? 'Reference' : 'Selected'}</span> : null}</th>
+          <td>{arms ? armName(row) : recipe ? `${modelLabel(recipe.model)} · LR ${recipe.learningRate} · WD ${recipe.weightDecay} · ${recipe.maxEpochs} epochs` : row.model ?? '—'}</td>
           <td>{fixed(row.validationScore)}</td>
           <td>{meanSd(row.seedAverage[metric])}</td>
           <td><button type="button" className="text-button" aria-pressed={row.candidateId === value} onClick={() => onChange(row.candidateId)}>{row.candidateId === value ? 'Shown below' : 'Show'}</button></td>

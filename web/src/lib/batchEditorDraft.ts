@@ -2,6 +2,7 @@ import { defaultRecipe, defaultResources, experimentalRecipeDefaults, type Devel
 import type { ExperimentPredictorPolicy } from '../api/experiments';
 import type { MILExperimentSpec } from '../api/mil';
 import type { NumericDrafts } from '../components/NumericFieldDrafts';
+import type { ComparisonDraft } from '../components/ControlledComparison';
 
 /** An editing recovery copy, never a reviewed or submitted scientific record. */
 export interface BatchEditorDraft {
@@ -16,6 +17,8 @@ export interface BatchEditorDraft {
   predictorPolicy: ExperimentPredictorPolicy;
   selectionMetric?: DevelopmentBatchSpec['selectionMetric'];
   candidateSelection?: DevelopmentBatchSpec['candidateSelection'];
+  /** Absent from recovery copies saved before controlled comparisons. */
+  comparison?: ComparisonDraft | null;
   recipe: TrainingRecipe;
   /** Present only in recovery copies saved before compute settings left the batch editor. */
   resources?: ResourcePolicy;
@@ -89,6 +92,8 @@ export function isBatchEditorDraft(value: unknown): value is BatchEditorDraft {
     || !recipe(value.recipe) || (value.resources !== undefined && !resources(value.resources)) || !object(value.predictorPolicy)
     || (value.selectionMetric != null && !['validation_auroc', 'validation_loss', 'validation_accuracy'].includes(String(value.selectionMetric)))
     || (value.candidateSelection != null && !['best_validation', 'all'].includes(String(value.candidateSelection)))
+    || (value.comparison != null && !(object(value.comparison) && integer(value.comparison.referenceRow)
+      && ['auroc', 'auprc', 'balancedAccuracy', 'macroF1', 'accuracy'].includes(String(value.comparison.primaryMetric))))
     || !['skip', 'ensemble', 'refit', 'both'].includes(String(value.predictorPolicy.method))
     || !(value.predictorPolicy.refitPercentile === null || number(value.predictorPolicy.refitPercentile))
     || !Array.isArray(value.rows) || value.rows.length < 1 || value.rows.length > 512

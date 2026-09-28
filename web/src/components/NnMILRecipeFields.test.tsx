@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { defaultRecipe, nnmilRecipe, type NnMILPlanningRow } from '../api/development';
+import { defaultRecipe, nnmilRecipe, withRecipeDefaults, type NnMILPlanningRow } from '../api/development';
 import { BatchPlanSettings, ConfigurationTable, RecipeFields, RecipeSummary, batchTemplate, batchTemplates } from './DevelopmentBatches';
-import { applyNnMILPaperOptimizer, NnMILPlanning } from './NnMILRecipeFields';
+import { applyNnMILPaperOptimizer, NnMILPlanning, NnMILRecipeFields } from './NnMILRecipeFields';
 
 const inputs = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native' as const, packArtifactId: null };
 
@@ -65,6 +65,25 @@ describe('editable nnMIL template', () => {
     for (const text of ['floor(0.75 × fitting-fold median)', 'Full-dimensional pooling', 'Average window probabilities', 'Original coordinate order', 'Latest completed epoch', 'AUC-stratified batches']) expect(html).toContain(text);
     expect(renderToStaticMarkup(<RecipeSummary recipe={spec.recipe} />)).toContain('0.75 × fitting-fold median patches');
     expect(renderToStaticMarkup(<ConfigurationTable batch={{ configurations: [{ id: 'c1', number: 1, recipe: spec.recipe }] }} />)).toContain('0.75 × fitting-fold median');
+  });
+
+  it('gives each training seed its own feature-window order in new nnMIL recipes, and says so in the summary', () => {
+    expect(nnmilRecipe().nnmilWindowSeedFromTraining).toBe(true);
+    // Saved recipes without the option keep the fixed order they were trained with.
+    const { nnmilWindowSeedFromTraining: _omitted, ...saved } = nnmilRecipe();
+    expect(withRecipeDefaults(saved).nnmilWindowSeedFromTraining).toBe(false);
+    const html = renderToStaticMarkup(<NnMILRecipeFields value={nnmilRecipe()} onChange={() => {}} />);
+    expect(html).toMatch(/<input type="checkbox" checked=""\/>New feature-window order for each training seed/);
+    expect(html).toMatch(/Feature-window shuffle seed<input[^>]*disabled=""/);
+    expect(html).toContain('the spread across seeds includes this source of variation');
+    const fixed = renderToStaticMarkup(<NnMILRecipeFields value={{ ...nnmilRecipe(), nnmilWindowSeedFromTraining: false }} onChange={() => {}} />);
+    expect(fixed).toMatch(/<input type="checkbox"\/>New feature-window order for each training seed/);
+    expect(fixed).not.toMatch(/Feature-window shuffle seed<input[^>]*disabled=""/);
+    // Without shuffling there is no order to vary.
+    expect(renderToStaticMarkup(<NnMILRecipeFields value={{ ...nnmilRecipe(), nnmilWindowShuffle: false }} onChange={() => {}} />)).toMatch(/<input type="checkbox" disabled="" checked=""\/>New feature-window order/);
+    const spec = batchTemplate('nnmil', inputs, 'Study');
+    expect(renderToStaticMarkup(<BatchPlanSettings spec={spec} />)).toContain('Shuffled coordinates, a new order for each training seed');
+    expect(renderToStaticMarkup(<BatchPlanSettings spec={{ ...spec, recipe: { ...spec.recipe, nnmilWindowSeedFromTraining: false } }} />)).toContain('Shuffled coordinates, seed 42 for every training seed');
   });
 
   it('shows fitting-fold counts and resolved limits from the backend preview', () => {
