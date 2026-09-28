@@ -1,4 +1,10 @@
-"""Masked mean/max MIL baselines using the same patch encoder as ABMIL."""
+"""Masked mean/max MIL baselines using the same patch encoder as ABMIL.
+
+The shared patch encoder applies dropout only between its layers, so with the default
+single layer a pooling model would ignore the recipe's dropout entirely while ABMIL
+applies it in its attention branches. Pooling models therefore apply it to the pooled
+slide embedding, so the same recipe regularizes both arms of an attention ablation.
+"""
 
 import torch
 from torch import nn
@@ -32,6 +38,7 @@ class PoolingMIL(nn.Module):
         self.gradient_checkpointing = gradient_checkpointing
         self.input_dropout = nn.Dropout(input_dropout)
         self.patch_embed = patch_projection(in_dim, embed_dim, num_fc_layers, dropout)
+        self.pooled_dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(embed_dim, num_classes)
         for module in self.modules():
             if isinstance(module, nn.Linear):
@@ -55,4 +62,4 @@ class PoolingMIL(nn.Module):
                 pooled = pooled / mask.sum(dim=1, keepdim=True)
             else:
                 pooled = embeddings.masked_fill(~mask.unsqueeze(-1), float("-inf")).amax(dim=1)
-        return self.classifier(pooled)
+        return self.classifier(self.pooled_dropout(pooled))
