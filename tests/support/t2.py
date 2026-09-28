@@ -97,7 +97,6 @@ def training_service(store, filesystem, center, monkeypatch, runtime=None):
         store,
         filesystem,
         runtime=runtime or Runtime(),
-        execution_mode="task-center",
         task_center=center.client,
     )
     service.prepared = []
@@ -205,9 +204,7 @@ def bundle(
         datasetId=data["id"], path=str(source), encoderId=encoder, featureKind=feature_kind
     )
     frozen = features.freeze(spec, features.preview(spec)["previewHash"], name)
-    packs = FeaturePackService(
-        store, filesystem, execution_mode="task-center", task_center=center.client
-    )
+    packs = FeaturePackService(store, filesystem, task_center=center.client)
     packing = FeaturePackSpec(featureSetId=frozen["id"], action="pack" if pack else "validate")
     job = packs.submit(packing, packs.preview(packing)["previewHash"], name + "-validation")
     assert center.state(job["taskId"]) == "queued"

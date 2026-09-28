@@ -1735,12 +1735,6 @@ def test_operations_inventory_reads_leases_without_pruning(api, registry):
     assert dead.exists() and live.exists()
 
 
-def _task_center_training():
-    from histopilot.application.training import TrainingService
-
-    return "execution_mode" in inspect.signature(TrainingService.__init__).parameters
-
-
 def _launched_batch(api, tmp_path, monkeypatch):
     """A real task-center batch of five folds, launched in a project of this workspace."""
     from histopilot.application.development import DevelopmentService
@@ -1813,12 +1807,11 @@ def _launched_batch(api, tmp_path, monkeypatch):
             "findings": [],
         }
 
-    training = TrainingService(store, filesystem, runtime=runtime, execution_mode="task-center")
+    training = TrainingService(store, filesystem, runtime=runtime)
     training.launch(frozen["id"], "launch-1")
     return store, filesystem, frozen, runtime
 
 
-@pytest.mark.skipif(not _task_center_training(), reason="TrainingService has no Task Center mode")
 def test_real_training_batch_cancel_goes_through_training_service(
     api, tmp_path, monkeypatch, task_center
 ):
@@ -1853,12 +1846,12 @@ def test_real_training_batch_cancel_goes_through_training_service(
         return not any(item["state"] in LIVE for item in tasks)
 
     task_center.tick_until(runner, settled, timeout=600)
-    training = TrainingService(store, filesystem, runtime=runtime, execution_mode="task-center")
+    training = TrainingService(store, filesystem, runtime=runtime)
     assert training.execution(frozen["id"])["status"] == "cancelled"
     # The features of this fixture live outside the app's data roots.
     api.app.state.task_center.services = {
         "training": lambda project_store, _files: TrainingService(
-            project_store, filesystem, runtime=runtime, execution_mode="task-center"
+            project_store, filesystem, runtime=runtime
         )
     }
     retried = action(api, f"/owners/{owner_row['key']}/retry", "retry-real")
@@ -1897,11 +1890,10 @@ def test_real_single_fold_cancel_is_recorded_as_cancelled_by_its_batch(api, tmp_
     assert not (folder / "cancel.json").exists()
     others = [item for item in tasks if item["id"] != target["id"]]
     assert all(default_client().store.get(item["id"])["state"] == "queued" for item in others)
-    training = TrainingService(store, filesystem, runtime=runtime, execution_mode="task-center")
+    training = TrainingService(store, filesystem, runtime=runtime)
     assert training.execution(frozen["id"])["runCounts"]["cancelled"] == 1
 
 
-@pytest.mark.skipif(not _task_center_training(), reason="TrainingService has no Task Center mode")
 def test_real_retry_is_offered_exactly_when_the_training_service_resumes(
     api, tmp_path, monkeypatch
 ):
@@ -1910,7 +1902,7 @@ def test_real_retry_is_offered_exactly_when_the_training_service_resumes(
     store, filesystem, frozen, runtime = _launched_batch(api, tmp_path, monkeypatch)
     api.app.state.task_center.services = {
         "training": lambda project_store, _files: TrainingService(
-            project_store, filesystem, runtime=runtime, execution_mode="task-center"
+            project_store, filesystem, runtime=runtime
         )
     }
     [owner_row] = api.get(f"{API}/owners").json()["owners"]
@@ -1929,7 +1921,7 @@ def test_real_retry_is_offered_exactly_when_the_training_service_resumes(
     assert busy.status_code == 409 and busy.json()["code"] == "TASK_RETRY_BUSY"
     # The training service agrees: the batch still runs until that collection records it.
     with pytest.raises(StorageError) as refused:
-        TrainingService(store, filesystem, runtime=runtime, execution_mode="task-center").launch(
+        TrainingService(store, filesystem, runtime=runtime).launch(
             frozen["id"], "resume-now", resume=True
         )
     assert refused.value.code == "TRAINING_ACTIVE"
@@ -1944,14 +1936,13 @@ def test_real_retry_is_offered_exactly_when_the_training_service_resumes(
     assert tasks.get(folds[0]["id"])["state"] == "queued"
 
 
-@pytest.mark.skipif(not _task_center_training(), reason="TrainingService has no Task Center mode")
 def test_real_cancelled_batch_resumes_while_its_final_collection_waits(api, tmp_path, monkeypatch):
     from histopilot.application.training import TrainingService
 
     store, filesystem, frozen, runtime = _launched_batch(api, tmp_path, monkeypatch)
     api.app.state.task_center.services = {
         "training": lambda project_store, _files: TrainingService(
-            project_store, filesystem, runtime=runtime, execution_mode="task-center"
+            project_store, filesystem, runtime=runtime
         )
     }
     [owner_row] = api.get(f"{API}/owners").json()["owners"]
@@ -1979,7 +1970,7 @@ def test_real_cancel_of_a_fold_awaiting_its_auto_resume(api, tmp_path, monkeypat
     store, filesystem, frozen, runtime = _launched_batch(api, tmp_path, monkeypatch)
     api.app.state.task_center.services = {
         "training": lambda project_store, _files: TrainingService(
-            project_store, filesystem, runtime=runtime, execution_mode="task-center"
+            project_store, filesystem, runtime=runtime
         )
     }
     [target, *_others] = default_client().store.list(kinds=("mil-fold",), limit=None)

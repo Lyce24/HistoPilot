@@ -96,7 +96,7 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
     # The Task Center's per-run defaults match the frozen request: one thread, no loaders.
     task_center.store.update_settings({"defaults": {"cpuThreadsPerRun": 1, "dataLoaderWorkers": 0}})
     training = TrainingService(
-        store, filesystem, runtime=runtime, execution_mode="task-center",
+        store, filesystem, runtime=runtime,
         task_center=task_center.client,
     )
     plan, _ = training._prepare(frozen)

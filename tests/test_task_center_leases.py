@@ -8,7 +8,6 @@ import pytest
 
 from histopilot.storage.project_lock import StorageError, writer_lock
 from histopilot.taskcenter import leases
-from histopilot.workers import train_batch
 from histopilot.workers.training_process import process_identity
 
 
@@ -142,28 +141,6 @@ def test_the_registry_lock_is_the_legacy_writers_lock(registry):
         assert leases.read_leases() == []
     with writer_lock(registry, timeout=0.05):
         pass
-
-
-# -- This checkout's legacy batch scheduler, removed with the tmux path ---------------------
-
-
-@pytest.mark.legacy_tmux
-def test_task_lease_is_readable_by_legacy_schedulers_and_removed(registry):
-    me = process_identity()
-    name = leases.write_task_lease(task(), me, 0, cpus=3, ram_gb=6.0, runs_per_gpu=5, supervisor=me)
-    with train_batch._leases() as (_, active):
-        assert [item["taskId"] for item in active] == ["task-1"]
-        resources = {
-            "cpuThreadsPerRun": 1,
-            "dataLoaderWorkers": 0,
-            "ramGbPerRun": 1.0,
-            "gpuIds": [0],
-            "runsPerGpu": 8,
-        }
-        assert train_batch.available_device(resources, active, (64, 64.0)) == (True, 0)
-    leases.remove_task_lease(name)
-    with train_batch._leases() as (_, active):
-        assert active == []
 
 
 def test_pruning_removes_only_leases_whose_owner_is_confirmed_dead(registry):

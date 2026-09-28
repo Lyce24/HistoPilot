@@ -113,7 +113,6 @@ def test_pinned_refit_worker_runs_created_plan_and_publishes_verified_predictor(
             "cudaAvailable": False,
             "gpuCount": 0,
         },
-        execution_mode="task-center",
         task_center=task_center.client,
     )
     refits, record, _ = refit_support["create"](service, selection, jobs)

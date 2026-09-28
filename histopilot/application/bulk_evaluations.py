@@ -13,6 +13,7 @@ from histopilot.application.compute_jobs import host_gpu_argv, wake_runner
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import finding, lifecycle_document, reference
+from histopilot.application.task_records import LEGACY_CODE
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
 from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.storage.lifecycle import lifecycle_guard
@@ -23,7 +24,7 @@ from histopilot.storage.project_lock import (
     writer_lock,
 )
 from histopilot.storage.scientific import MAX_CONFIGURATION_BYTES, _json
-from histopilot.taskcenter import ids, paths
+from histopilot.taskcenter import ids
 from histopilot.taskcenter.model import LIVE, TERMINAL
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import now, read_json
@@ -35,7 +36,7 @@ class BulkEvaluationService:
     def __init__(self, store, filesystem, evaluations=None, *, background=False, task_center=None):
         self.store, self.filesystem = store, filesystem
         self.evaluations = evaluations or EvaluationRunService(store, filesystem)
-        # Background submission needs the Task Center runner; tmux mode keeps it inline.
+        # Background submission is a Task Center task; otherwise members are submitted inline.
         self.background = background
         self._task_center = task_center
         self._default_task_center = task_center is None
@@ -241,7 +242,7 @@ class BulkEvaluationService:
                     },
                     operation_id=request.operationId,
                 )
-        if self.background and paths.execution_mode() == "task-center":
+        if self.background:
             self._enqueue_submission(batch)
         else:
             self._submit(batch)
@@ -513,7 +514,8 @@ class BulkEvaluationService:
                             member["evaluationId"], f"bulk-cancel-{_hash(operation_id)}"
                         )
                     except StorageError as error:
-                        if error.code != "CONFIGURATION_NOT_FOUND":
+                        # Members from before the Task Center have nothing left to cancel.
+                        if error.code not in {"CONFIGURATION_NOT_FOUND", LEGACY_CODE}:
                             state["items"][member["predictorId"]] = {"error": str(error)}
                             write_json(path, state)
             # A queued submission never needs to start; a running one stops at its next

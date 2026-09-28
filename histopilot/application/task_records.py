@@ -1,27 +1,47 @@
 """Task Center plumbing shared by extraction, feature-pack and archive records.
 
 A record created as a Task Center task stores ``executionMode: "task-center"`` and its
-task ids. Its execution state is read from the task store; records without the field
-keep their legacy tmux executor for status, cancel and retry. The service's own mode only
-decides how *new* records launch.
+task ids; its execution state is read from the task store. Records created before the
+Task Center ran in tmux sessions. They stay readable, but they can never run again:
+``legacy_state`` gives an unfinished one its final reading and ``refuse_legacy`` rejects
+launching, resuming, retrying or cancelling it.
 """
 
 from __future__ import annotations
 
 from histopilot.storage.project_lock import StorageError
-from histopilot.taskcenter import ids, paths
+from histopilot.taskcenter import ids
 from histopilot.taskcenter.model import LIVE, awaiting_requeue
 
 TASK_CENTER = "task-center"
-
-
-def default_execution_mode() -> str:
-    """How new records launch; tests may replace this to keep the tmux path."""
-    return paths.execution_mode()
+LEGACY_CODE = "CREATED_BEFORE_TASK_CENTER"
+LEGACY_MESSAGE = (
+    "Created before the Task Center, so it can no longer run. "
+    "Clone it, or preview it again, to run it in the Task Center."
+)
 
 
 def managed_record(record: dict) -> bool:
     return record.get("executionMode") == TASK_CENTER
+
+
+def legacy_error() -> StorageError:
+    """The refusal for any action that would run, stop or retry a pre-Task Center record."""
+    return StorageError(LEGACY_MESSAGE, LEGACY_CODE, 409)
+
+
+def refuse_legacy() -> None:
+    raise legacy_error()
+
+
+def legacy_state(record: dict, active, *, status_key: str = "state") -> dict:
+    """A pre-Task Center record as it now reads: an unfinished one is ``interrupted``.
+
+    Nothing runs it any more, so its tmux session and processes are never inspected.
+    """
+    if record.get(status_key) not in active:
+        return record
+    return {**record, status_key: "interrupted", "error": LEGACY_MESSAGE}
 
 
 class TaskCenterAccess:

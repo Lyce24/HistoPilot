@@ -1,22 +1,21 @@
 """Durable, isolated predictor build and test evaluation jobs.
 
-The API never imports Torch. New jobs run as Task Center tasks: the runner admits them
-and holds their resource lease. Jobs whose pinned archive predates the Task Center keep
-their tmux worker, which leases itself in the shared training registry. Every job keeps
-a verified source archive so an interrupted job can resume safely.
+The API never imports Torch. Jobs run as Task Center tasks: the runner admits them and
+holds their resource lease. Every job keeps a verified source archive so an interrupted
+job can resume safely. Jobs recorded before the Task Center, and archives pinned before
+it (their worker declares no ``TASK_CENTER_PROTOCOL``), can no longer run.
 """
 
 import hashlib
 import os
 import re
-import shlex
 import shutil
 import signal
-import subprocess
 from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.feature_bundles import _hash
+from histopilot.application.task_records import LEGACY_MESSAGE, refuse_legacy
 from histopilot.schemas.development import ResourcePolicy
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
@@ -25,12 +24,11 @@ from histopilot.storage.project_lock import (
     ensure_managed_directory,
     writer_lock,
 )
-from histopilot.taskcenter import ids, paths
+from histopilot.taskcenter import ids
 from histopilot.taskcenter.model import LIVE, awaiting_requeue, normalize_command
 from histopilot.workers.compute_archive import prepare_compute_archive
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import (
-    TmuxTrainingExecutor,
     compute_snapshot,
     confirmed_process_alive,
     cpu_slots_per_run,
@@ -137,8 +135,7 @@ def wake_runner(default_client: bool) -> None:
 def submit_task(client, owner, spec, *, reason, active_message, active_code):
     """Enqueue a task, or requeue its finished predecessor with a refreshed command.
 
-    A live task means another launch owns the record; the caller reconciles it like a
-    tmux session that already exists.
+    A live task means another launch owns the record; the caller reconciles it.
     """
     existing = client.task(spec["id"])
     if existing is None:
@@ -206,37 +203,8 @@ def host_gpu_argv(argv) -> list[str]:
     return [shutil.which("env") or "/usr/bin/env", "-u", "CUDA_VISIBLE_DEVICES", *argv]
 
 
-class TmuxComputeExecutor(TmuxTrainingExecutor):
-    def launch(self, session, python, plan, log, *, package_root):
-        subprocess.run(["tmux", "ls"], capture_output=True, timeout=10)
-        if self.running(session):
-            raise StorageError("This compute session already exists.", "COMPUTE_ACTIVE")
-        _reject_symlink_components(log)
-        command = "cd " + shlex.quote(str(package_root)) + " && "
-        command += shlex.join(
-            [
-                "env",
-                "PYTHONDONTWRITEBYTECODE=1",
-                python,
-                "-u",
-                "-m",
-                "histopilot.workers.compute_job",
-                str(plan),
-            ]
-        )
-        command += " >> " + shlex.quote(str(log)) + " 2>&1"
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session, command],
-            capture_output=True,
-            check=True,
-            timeout=15,
-        )
-
-
 class TaskCenterComputeExecutor:
-    """Queue compute workers in the machine-wide Task Center instead of tmux."""
-
-    managed = True
+    """Queue compute workers in the machine-wide Task Center."""
 
     def __init__(self, client=None):
         self._client = client
@@ -249,9 +217,6 @@ class TaskCenterComputeExecutor:
 
             self._client = default_client()
         return self._client
-
-    def available(self):
-        return True
 
     def running(self, session):
         task = self.client.by_session(session)
@@ -306,45 +271,14 @@ class TaskCenterComputeExecutor:
 
 
 class ComputeJobService:
-    def __init__(
-        self,
-        store,
-        filesystem=None,
-        executor=None,
-        runtime=None,
-        *,
-        execution_mode=None,
-        task_center=None,
-    ):
+    def __init__(self, store, filesystem=None, *, runtime=None, task_center=None):
         self.store, self.filesystem = store, filesystem
-        # An injected executor keeps its caller on the legacy path unless a mode is named.
-        self.mode = execution_mode or ("tmux" if executor is not None else paths.execution_mode())
-        if executor is None:
-            executor = (
-                TaskCenterComputeExecutor(task_center)
-                if self.mode == "task-center"
-                else TmuxComputeExecutor()
-            )
-        self.executor = executor
-        # Records launched before the Task Center, and archives without its protocol.
-        self.legacy_executor = TmuxComputeExecutor() if self._managed_executor else executor
-        self._task_center = task_center
+        self.executor = TaskCenterComputeExecutor(task_center)
         self.runtime = runtime or training_runtime
 
     @property
-    def _managed_executor(self):
-        return bool(getattr(self.executor, "managed", False))
-
-    @property
     def task_center(self):
-        if self._task_center is None:
-            if self._managed_executor:
-                self._task_center = self.executor.client
-            else:
-                from histopilot.taskcenter.client import default_client
-
-                self._task_center = default_client()
-        return self._task_center
+        return self.executor.client
 
     def _task_owner(self, record, owner):
         manifest = record["manifest"]
@@ -373,7 +307,7 @@ class ComputeJobService:
         return f"{kind} · {manifest.get('name') or record['id']}"[:200]
 
     def _task(self, state):
-        """The Task Center view of a managed job (None for tmux jobs and missing tasks)."""
+        """The Task Center view of a job (None for pre-Task Center jobs and missing tasks)."""
         if state.get("executor") != "task-center":
             return None
         try:
@@ -428,9 +362,10 @@ class ComputeJobService:
         if _hash(plan) != state.get("planHash"):
             raise StorageError("The saved execution plan changed.", "COMPUTE_PLAN_CHANGED")
         cancellation_requested = (folder / "cancel.requested").exists()
-        live_processes = job_processes(state)
-        live = bool(live_processes)
         managed = state.get("executor") == "task-center"
+        # A job from before the Task Center is never probed: nothing runs it any more.
+        live_processes = job_processes(state) if managed else []
+        live = bool(live_processes)
         task = self._task(state)
         stopped = {
             "status": "cancelled" if cancellation_requested else "interrupted",
@@ -438,25 +373,25 @@ class ComputeJobService:
             if cancellation_requested
             else "The compute worker stopped. Resume to continue from saved work.",
         }
-        if state["status"] in ACTIVE_STATUSES and not live:
-            if managed:
-                if not task_pending(task):
-                    # The worker may have recorded its outcome and exited since the first read.
-                    latest = read_json(folder / "state.json")
-                    if (
-                        latest.get("recordId") == identity
-                        and latest.get("planHash") == state["planHash"]
-                        and latest.get("status") in FINISHED_STATUSES
-                    ):
-                        state = latest
-                        live_processes = job_processes(state)
-                        live = bool(live_processes)
-                        if live:
-                            state = {**state, "status": "running"}
-                    else:
-                        state = {**state, **stopped}
-            elif not self.legacy_executor.running(state["sessionName"]):
-                state = {**state, **stopped}
+        if not managed:
+            if state["status"] in ACTIVE_STATUSES:
+                state = {**state, "status": "interrupted", "error": LEGACY_MESSAGE}
+        elif state["status"] in ACTIVE_STATUSES and not live:
+            if not task_pending(task):
+                # The worker may have recorded its outcome and exited since the first read.
+                latest = read_json(folder / "state.json")
+                if (
+                    latest.get("recordId") == identity
+                    and latest.get("planHash") == state["planHash"]
+                    and latest.get("status") in FINISHED_STATUSES
+                ):
+                    state = latest
+                    live_processes = job_processes(state)
+                    live = bool(live_processes)
+                    if live:
+                        state = {**state, "status": "running"}
+                else:
+                    state = {**state, **stopped}
         elif live and state["status"] not in ACTIVE_STATUSES:
             # A receipt does not prove its writer has exited.
             state = {**state, "status": "running"}
@@ -618,6 +553,8 @@ class ComputeJobService:
                             "OPERATION_CONFLICT",
                         )
                     return self.status(identity)
+                if prior and prior.get("executor") != "task-center":
+                    refuse_legacy()
                 state = self.status(identity)
                 if state["status"] in {"queued", "running", "completed"}:
                     raise StorageError("This job is active or already completed.", "COMPUTE_ACTIVE")
@@ -680,31 +617,19 @@ class ComputeJobService:
                 archive = prepare_compute_archive(
                     folder, frozen["code"], source_root=pinned[1] if pinned else None
                 )
-                # Archives frozen before the Task Center keep their self-leasing tmux worker.
-                managed = (
-                    self._managed_executor
-                    and archive_protocol(archive / "histopilot" / "workers" / "compute_job.py")
-                    is not None
-                )
-                executor = self.executor if managed else self.legacy_executor
-                launch_options = {}
-                if managed:
-                    task_id = ids.compute_task_id(str(folder))
-                    existing = self.task_center.task(task_id)
-                    if existing is not None and existing["state"] in LIVE:
-                        # The previous worker exited but the runner has not recorded it
-                        # yet. Rewriting state.json now would hand this launch's state to
-                        # that attempt's exit bookkeeping.
-                        raise StorageError(
-                            "The previous attempt is still stopping. Try again in a moment.",
-                            "COMPUTE_ACTIVE",
-                        )
-                    launch_options = {
-                        "task_id": task_id,
-                        "owner": self._task_owner(record, task_owner),
-                        "title": task_title or self._task_title(record, frozen),
-                        "frozen": frozen,
-                    }
+                if archive_protocol(archive / "histopilot" / "workers" / "compute_job.py") is None:
+                    # Code pinned before the Task Center has a worker that leases itself.
+                    refuse_legacy()
+                task_id = ids.compute_task_id(str(folder))
+                existing = self.task_center.task(task_id)
+                if existing is not None and existing["state"] in LIVE:
+                    # The previous worker exited but the runner has not recorded it yet.
+                    # Rewriting state.json now would hand this launch's state to that
+                    # attempt's exit bookkeeping.
+                    raise StorageError(
+                        "The previous attempt is still stopping. Try again in a moment.",
+                        "COMPUTE_ACTIVE",
+                    )
                 if not prior:
                     write_json(folder / "plan.json", frozen)
                 operations[operation_id] = request_hash
@@ -714,8 +639,6 @@ class ComputeJobService:
                 }
                 session = (
                     f"tc-{plan['kind']}-{hashlib.sha256(str(folder).encode()).hexdigest()[:16]}"
-                    if managed
-                    else f"hp-{plan['kind']}-{identity.removeprefix('configuration-')[:16]}"
                 )
                 state = {
                     "status": "queued",
@@ -731,29 +654,29 @@ class ComputeJobService:
                     "result": None,
                     "error": None,
                     "attempt": prior.get("attempt", 1) + 1 if prior else 1,
+                    "executor": "task-center",
+                    "taskId": task_id,
+                    "taskAttempt": existing["attempt"] + 1 if existing else 1,
                 }
-                if managed:
-                    state.update(
-                        executor="task-center",
-                        taskId=task_id,
-                        taskAttempt=existing["attempt"] + 1 if existing else 1,
-                    )
                 (folder / "cancel.requested").unlink(missing_ok=True)
                 write_json(folder / "state.json", state)
                 try:
-                    executor.launch(
+                    self.executor.launch(
                         session,
                         runtime["python"],
                         folder / "plan.json",
                         folder / "worker.log",
                         package_root=archive,
-                        **launch_options,
+                        task_id=task_id,
+                        owner=self._task_owner(record, task_owner),
+                        title=task_title or self._task_title(record, frozen),
+                        frozen=frozen,
                     )
                 except Exception as error:
-                    # A tmux timeout can lose the acknowledgement after creating
-                    # the session. Do not overwrite a worker that already began.
+                    # A lost acknowledgement can follow a committed enqueue. Do not
+                    # overwrite a worker that already began.
                     try:
-                        session_running = executor.running(session)
+                        session_running = self.executor.running(session)
                         # A fast worker may publish and exit during this probe.
                         # Its recorded identity/outcome proves launch occurred
                         # even when no process is alive by the time we read it.
@@ -793,6 +716,8 @@ class ComputeJobService:
             receipt = folder / f"cancel-{_hash(operation_id)}.json" if operation_id else None
             if receipt and receipt.exists():
                 return state
+            if state["status"] != "not_started" and state.get("executor") != "task-center":
+                refuse_legacy()
             if state["status"] not in {"queued", "running"} and not self._awaiting_requeue(state):
                 return state
             write_json(folder / "cancel.requested", {"at": now(), "operationId": operation_id})
@@ -800,16 +725,14 @@ class ComputeJobService:
                 write_json(
                     receipt, {"at": now(), "operationId": operation_id, "attempt": state["attempt"]}
                 )
-            signalled = False
-            if state.get("executor") == "task-center":
-                # The runner drops a pending task, or stops a started worker's leader
-                # (SIGTERM, then SIGKILL to its group after the grace period).
-                try:
-                    task = self.task_center.cancel_task(state["taskId"])
-                except (StorageError, OSError):
-                    task = None
-                # A task that already finished cannot stop a worker that is still alive.
-                signalled = bool(task) and task["state"] in {"stopping", "cancelled"}
+            # The runner drops a pending task, or stops a started worker's leader
+            # (SIGTERM, then SIGKILL to its group after the grace period).
+            try:
+                task = self.task_center.cancel_task(state["taskId"])
+            except (StorageError, OSError):
+                task = None
+            # A task that already finished cannot stop a worker that is still alive.
+            signalled = bool(task) and task["state"] in {"stopping", "cancelled"}
             if not signalled:
                 for process in state.get("liveProcesses", []):
                     if confirmed_process_alive(process):

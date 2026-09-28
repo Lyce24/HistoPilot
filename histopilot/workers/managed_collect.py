@@ -16,7 +16,7 @@ from histopilot.workers.packing_process import output_lock, write_json
 from histopilot.workers.train_batch import collect_results
 from histopilot.workers.training_process import ACTIVE, now, read_json
 
-BUSY_EXIT = 75  # another collector or a legacy scheduler owns this batch output
+BUSY_EXIT = 75  # another collector owns this batch output
 
 
 def final_status(state: dict, *, cancel_requested: bool) -> str:

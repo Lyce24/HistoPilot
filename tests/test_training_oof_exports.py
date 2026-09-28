@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from test_training_execution import execution, synthetic_results
+from test_training_execution import synthetic_results, tc_execution
 
 from histopilot.api import create_app
 from histopilot.application.feature_bundles import _hash
@@ -19,7 +19,7 @@ from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import _run_plan
 from histopilot.workers.training_process import read_json
 
-__all__ = ["execution"]
+__all__ = ["tc_execution"]
 
 
 def _write_exports(service, frozen, split_unit=None):
@@ -58,8 +58,8 @@ def _write_exports(service, frozen, split_unit=None):
 
 
 @pytest.fixture
-def exports(execution):
-    service, frozen, _, _ = execution
+def exports(tc_execution):
+    service, frozen, _ = tc_execution
     return _write_exports(service, frozen)
 
 
@@ -75,9 +75,9 @@ def test_oof_csv_uses_frozen_labels_folds_and_class_order_without_torch(exports,
     assert ("slideIds" in rows[0]) == (unit == "patient")
 
 
-def test_slide_level_design_exports_each_slides_own_fold(execution, monkeypatch):
+def test_slide_level_design_exports_each_slides_own_fold(tc_execution, monkeypatch):
     """Slide-level designs record no patient folds, so the fold must come from the slide."""
-    service, frozen, _, _ = execution
+    service, frozen, _ = tc_execution
     original = service.store.get_configuration
     protocol_id = frozen["manifest"]["spec"]["inputs"]["protocolId"]
 

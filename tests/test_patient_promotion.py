@@ -113,7 +113,9 @@ def test_competing_configuration_receipts_are_verified(selected_batch):
     assert preview["findings"][0]["code"] == "PREDICTOR_SELECTION_CHANGED"
 
 
-def test_automatic_construction_skips_losers_and_finishes_without_extra_refits(selected_batch):
+def test_automatic_construction_skips_losers_and_finishes_without_extra_refits(
+    selected_batch, task_center
+):
     predictors, winner, loser, _folder, plan, _state = selected_batch
     store = predictors.store
     record = store.get_draft(winner.experimentId)
@@ -138,14 +140,13 @@ def test_automatic_construction_skips_losers_and_finishes_without_extra_refits(s
     )
     runtime = plan["runtime"]
     jobs = coordinator_support["Jobs"](store, runtime)
-    executor = coordinator_support["Executor"]()
     current = ExperimentPredictorService(
         store,
         predictors.filesystem,
-        executor=executor,
         training=coordinator_support["Training"](store.folder),
         refits=RefitService(store, predictors.filesystem, jobs=jobs),
         runtime=lambda: runtime,
+        task_center=task_center.client,
     )
     current.launch(record["id"], "start-selected")
     result = current.advance(record["id"])

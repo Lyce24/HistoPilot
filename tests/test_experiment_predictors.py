@@ -23,22 +23,6 @@ registry = support["registry"]
 FakeJobs = support["support"]["FakeJobs"]
 
 
-class Executor:
-    def __init__(self):
-        self.live, self.launches, self.fail, self.lost = False, [], False, False
-
-    def running(self, _session):
-        return self.live
-
-    def launch(self, *args, **kwargs):
-        self.launches.append((args, kwargs))
-        if self.fail:
-            raise OSError("Synthetic launch failed")
-        self.live = True
-        if self.lost:
-            raise OSError("Synthetic lost acknowledgement")
-
-
 class Training:
     def __init__(self, folder):
         self.folder = folder
@@ -105,24 +89,6 @@ def submitted(registry):
 
 
 @pytest.fixture
-def integrated(registry):
-    """The coordinator on the legacy tmux executor, for modules that still build on it."""
-    predictors, identity, runtime, selections = submitted(registry)
-    store = predictors.store
-    executor = Executor()
-    jobs = Jobs(store, runtime)
-    service = ExperimentPredictorService(
-        store,
-        predictors.filesystem,
-        executor=executor,
-        training=Training(store.folder),
-        refits=RefitService(store, predictors.filesystem, jobs=jobs),
-        runtime=lambda: runtime,
-    )
-    return service, identity, jobs, executor, selections
-
-
-@pytest.fixture
 def managed(registry, task_center):
     """The coordinator queued in this test's Task Center, as in production.
 
@@ -137,10 +103,8 @@ def managed(registry, task_center):
         training=Training(store.folder),
         refits=RefitService(store, predictors.filesystem, jobs=jobs),
         runtime=lambda: runtime,
-        execution_mode="task-center",
         task_center=task_center.client,
     )
-    service.legacy_executor = service.executor.legacy = Executor()  # never probe real tmux
     return service, identity, jobs, selections
 
 
@@ -280,7 +244,7 @@ def test_worker_launch_failure_is_recoverable_without_replaying_cv(
     # The refused submission left no task behind; the retry queues the coordinator.
     assert recovered["status"] == "queued"
     assert [task["attempt"] for task in coordinators(task_center)] == [1]
-    assert jobs.launches == [] and service.legacy_executor.launches == []
+    assert jobs.launches == []
 
 
 def test_lost_coordinator_acknowledgement_keeps_worker_ownership(

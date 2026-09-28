@@ -7,9 +7,6 @@ from histopilot.storage.project_lock import StorageError, ensure_managed_directo
 
 STATE_ENV = "HISTOPILOT_STATE_DIR"
 AUTOSTART_ENV = "HISTOPILOT_TASK_CENTER_AUTOSTART"  # "0" disables ensure_runner()
-# No longer read: new work always runs in the Task Center. Records launched before it (no
-# ``executionMode``) keep their tmux path for status, cancel and resume.
-MODE_ENV = "HISTOPILOT_EXECUTION_MODE"
 
 
 def state_dir() -> Path:
@@ -44,11 +41,6 @@ def store_path() -> Path:
 
 def runner_lock_path() -> Path:
     return state_dir() / "runner.lock"
-
-
-def execution_mode() -> str:
-    """How new work launches: always as Task Center tasks."""
-    return "task-center"
 
 
 def autostart_enabled() -> bool:

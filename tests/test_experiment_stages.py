@@ -97,7 +97,6 @@ def managed_experiment(tmp_path, task_center, monkeypatch):
         filesystem,
         training=training,
         runtime=t2.Runtime(),
-        execution_mode="task-center",
         task_center=task_center.client,
     )
     service = ModelExperimentService(

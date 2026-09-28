@@ -1,10 +1,9 @@
 """Optional feature validation and materialization jobs, bound to frozen inventories.
 
-New jobs are Task Center tasks (kind ``packing``, CPU lane, owner kind ``feature-pack``).
-Jobs of one feature source share an exclusive key, and a pack's output is guarded by the
-worker's output lock plus the live packing tasks of every project, which replaces the
-legacy claim files. Jobs recorded before, or launched with an injected tmux executor,
-keep their tmux session and claim.
+Jobs are Task Center tasks (kind ``packing``, CPU lane, owner kind ``feature-pack``). Jobs
+of one feature source share an exclusive key, and a pack's output is guarded by the
+worker's output lock plus the live packing tasks of every project. Jobs recorded before
+the Task Center stay readable but can no longer run or be cancelled.
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ import json
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import threading
 import time
@@ -41,12 +39,8 @@ from histopilot.storage.project_lock import (
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter import ids
 from histopilot.workers.packing_process import (
-    TmuxPackingExecutor,
-    live_process,
     maybe_sweep_registry,
-    output_key,
     output_lock,
-    registry_lock,
     write_json,
 )
 
@@ -122,32 +116,12 @@ def _compact(value: dict | None) -> dict | None:
 
 
 class FeaturePackService:
-    def __init__(
-        self,
-        store: ScientificStore,
-        filesystem: LocalFilesystem,
-        executor=None,
-        *,
-        execution_mode=None,
-        task_center=None,
-    ):
+    def __init__(self, store: ScientificStore, filesystem: LocalFilesystem, *, task_center=None):
         self.store = store
         self.filesystem = filesystem
         self.outputs = LocalFilesystem((store.folder, *filesystem.roots))
-        # An injected executor keeps its caller on the tmux path unless a mode is named.
-        self._mode = execution_mode or ("tmux" if executor is not None else None)
-        self.executor = executor or TmuxPackingExecutor()
         self.tasks = task_records.TaskCenterAccess(task_center)
         self.folder = store.folder / "packing"
-
-    @property
-    def mode(self) -> str:
-        """How new records launch (resolved per call, so a long-lived service follows it)."""
-        return self._mode or task_records.default_execution_mode()
-
-    @property
-    def managed(self) -> bool:
-        return self.mode == task_records.TASK_CENTER
 
     @staticmethod
     def format_available() -> bool:
@@ -216,60 +190,9 @@ class FeaturePackService:
             path = base.with_name(f"{base.name}-{number}")
         return str(path)
 
-    def _claim_busy(self, claim: dict) -> bool:
-        folder = Path(claim["jobPath"]).parent
-        # Check the actual process even when a service wrote a failed launch status.
-        if live_process(folder) or self.executor.running(claim["sessionName"]):
-            return True
-        if (folder / "result.json").exists() or (folder / "cancelled").exists():
-            return False
-        if not (folder / "job.json").exists():
-            return False
-        job = _read(folder / "job.json")
-        age = (datetime.now(UTC) - datetime.fromisoformat(job["createdAt"])).total_seconds()
-        return job.get("state") == "starting" and age < 30
-
-    def _claims(self, output: Path, folder: Path) -> list[dict]:
-        """Legacy (tmux) jobs' live claims on ``output``; new jobs write none.
-
-        A malformed claim is skipped (the registry sweep removes it once old) rather than
-        blocking packing machine-wide.
-        """
-        claims = []
-        for path in folder.glob("*.claim.json"):
-            try:
-                claim = _read(path)
-                if not isinstance(claim.get("outputPath"), str) or not isinstance(
-                    claim.get("jobPath"), str
-                ):
-                    continue
-            except (OSError, StorageError):
-                continue
-            if _overlaps(output, claim["outputPath"]):
-                result_path = Path(claim["jobPath"]).parent / "result.json"
-                try:
-                    result = _read_receipt(result_path) if result_path.exists() else {}
-                except (OSError, StorageError):
-                    result = {}
-                published = (
-                    result.get("state") == "succeeded"
-                    and result.get("artifact")
-                    and Path(claim["outputPath"]).exists()
-                )
-                try:
-                    busy = published or self._claim_busy(claim)
-                except (OSError, StorageError, KeyError, ValueError):
-                    busy = True  # unreadable evidence never frees an output
-                if busy:
-                    claims.append(claim)
-        return claims
-
     def _output_busy(self, output: Path) -> bool:
-        """Whether a legacy claim or a live packing task of any project uses ``output``."""
-        maybe_sweep_registry()
-        with registry_lock() as registry:
-            if self._claims(output, registry):
-                return True
+        """Whether a live packing task of any project uses ``output``."""
+        maybe_sweep_registry()  # old, idle output locks and finished legacy claims
         return self._tasks_busy(output)
 
     def _tasks_busy(self, output: Path) -> bool:
@@ -356,9 +279,7 @@ class FeaturePackService:
                 "Only slides in this saved feature version will be included; missing dataset slides remain missing.",
                 "warning",
             )
-        tmux_available, format_available = self.executor.available(), self.format_available()
-        if not tmux_available:
-            finding("TMUX_UNAVAILABLE", "Install tmux to run persistent feature jobs.")
+        format_available = self.format_available()
         if not format_available:
             finding(
                 "PACK_FORMAT_UNAVAILABLE",
@@ -470,7 +391,6 @@ class FeaturePackService:
             "estimatedBytes": estimated,
             "availableBytes": available,
             "outputPath": str(output) if output else None,
-            "tmuxAvailable": tmux_available,
             "formatAvailable": format_available,
             "existingPath": str(existing_path) if existing_path else None,
             "packInspection": inspection,
@@ -543,118 +463,63 @@ class FeaturePackService:
                     "This feature version already has an active job for this action.",
                     "FEATURE_JOB_BUSY",
                 )
-            with registry_lock() as registry:
-                output = Path(preview["outputPath"]) if preview["outputPath"] else None
-                if output:
-                    self._path(str(output), configuration)
-                    if self._claims(output, registry) or self._tasks_busy(output):
-                        raise StorageError("Another job owns this output.", "OUTPUT_BUSY")
-                    with output_lock(output):
-                        if output.exists() and (not output.is_dir() or any(output.iterdir())):
-                            raise StorageError(
-                                "Output contents changed. Preview again.", "PREVIEW_STALE"
-                            )
-                identity = f"packing-{uuid4().hex}"
-                folder = self.folder / identity
-                ensure_managed_directory(folder)
-                job = {
-                    "id": identity,
-                    "projectId": self.store.project_id,
-                    "state": "starting",
-                    "operationId": operation_id,
-                    "requestHash": _hash(spec.model_dump(mode="json")),
-                    "previewHash": preview_hash,
-                    "spec": preview["spec"],
-                    "featureSetId": spec.featureSetId,
-                    "outputPath": preview["outputPath"],
-                    "sessionName": f"histopilot-pack-{identity.removeprefix('packing-')}",
-                    "logPath": str(folder / "worker.log"),
-                    "createdAt": _now(),
-                    "updatedAt": _now(),
-                }
-                if self.managed:
-                    job.update(
-                        state="queued",
-                        sessionName=None,
-                        executionMode=task_records.TASK_CENTER,
-                        taskId=ids.task_id("packing", str(folder)),
-                        ownerKey=task_records.owner_key("feature-pack", identity, self.store),
-                    )
-                write_json(folder / "job.json", job)
-                # Task Center jobs need no claim: the runner and the output lock guard them.
-                claim_path = (
-                    registry / f"{output_key(output)}.claim.json"
-                    if output and not self.managed
-                    else None
-                )
-                if claim_path:
-                    write_json(
-                        claim_path,
-                        {
-                            "jobId": identity,
-                            "projectId": self.store.project_id,
-                            "jobPath": str(folder / "job.json"),
-                            "sessionName": job["sessionName"],
-                            "outputPath": str(output),
-                        },
-                    )
-                write_json(
-                    folder / "plan.json",
-                    {
-                        "jobId": identity,
-                        "configuration": configuration,
-                        "spec": preview["spec"],
-                        "resultPath": str(folder / "result.json"),
-                        "progressPath": str(folder / "progress.json"),
-                        "processPath": str(folder / "process.json"),
-                        "logPath": job["logPath"],
-                        "cancelPath": str(folder / "cancelled"),
-                        "claimPath": str(claim_path) if claim_path else None,
-                        "sourceRoots": [str(root) for root in self.outputs.roots],
-                        "existingPackStamps": pack_stamps,
-                    },
-                )
-            if self.managed:
-                try:
-                    self._enqueue(job, folder, preview)
-                except (StorageError, OSError) as error:
-                    job["state"], job["error"] = (
-                        "failed",
-                        f"Could not queue the feature job in the Task Center: {error}",
-                    )
-                    job["updatedAt"] = _now()
-                    write_json(folder / "job.json", job)
-                return self.get(identity)
-            try:
-                self.executor.launch(
-                    job["sessionName"],
-                    WORKER,
-                    folder / "plan.json",
-                )
-                # Persist the process launch even for fast workers that have already completed.
-                job["state"] = "running"
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                try:
-                    started = (
-                        self.executor.running(job["sessionName"])
-                        or live_process(folder)
-                        or (folder / "result.json").exists()
-                    )
-                except (OSError, RuntimeError, subprocess.SubprocessError):
-                    job["state"] = "starting"
-                    job["error"] = (
-                        "Launch acknowledgement was lost. Check worker status before retrying."
-                    )
-                else:
-                    if started:
-                        job["state"] = "running"
-                    else:
-                        job["state"], job["error"] = (
-                            "failed",
-                            f"Could not start feature worker: {error}",
+            output = Path(preview["outputPath"]) if preview["outputPath"] else None
+            if output:
+                self._path(str(output), configuration)
+                if self._tasks_busy(output):
+                    raise StorageError("Another job owns this output.", "OUTPUT_BUSY")
+                with output_lock(output):
+                    if output.exists() and (not output.is_dir() or any(output.iterdir())):
+                        raise StorageError(
+                            "Output contents changed. Preview again.", "PREVIEW_STALE"
                         )
-            job["updatedAt"] = _now()
+            identity = f"packing-{uuid4().hex}"
+            folder = self.folder / identity
+            ensure_managed_directory(folder)
+            job = {
+                "id": identity,
+                "projectId": self.store.project_id,
+                "state": "queued",
+                "operationId": operation_id,
+                "requestHash": _hash(spec.model_dump(mode="json")),
+                "previewHash": preview_hash,
+                "spec": preview["spec"],
+                "featureSetId": spec.featureSetId,
+                "outputPath": preview["outputPath"],
+                "sessionName": None,
+                "logPath": str(folder / "worker.log"),
+                "createdAt": _now(),
+                "updatedAt": _now(),
+                "executionMode": task_records.TASK_CENTER,
+                "taskId": ids.task_id("packing", str(folder)),
+                "ownerKey": task_records.owner_key("feature-pack", identity, self.store),
+            }
             write_json(folder / "job.json", job)
+            # The runner and the worker's output lock guard the output.
+            write_json(
+                folder / "plan.json",
+                {
+                    "jobId": identity,
+                    "configuration": configuration,
+                    "spec": preview["spec"],
+                    "resultPath": str(folder / "result.json"),
+                    "progressPath": str(folder / "progress.json"),
+                    "processPath": str(folder / "process.json"),
+                    "logPath": job["logPath"],
+                    "cancelPath": str(folder / "cancelled"),
+                    "sourceRoots": [str(root) for root in self.outputs.roots],
+                    "existingPackStamps": pack_stamps,
+                },
+            )
+            try:
+                self._enqueue(job, folder, preview)
+            except (StorageError, OSError) as error:
+                job["state"], job["error"] = (
+                    "failed",
+                    f"Could not queue the feature job in the Task Center: {error}",
+                )
+                job["updatedAt"] = _now()
+                write_json(folder / "job.json", job)
         return self.get(identity)
 
     def _enqueue(self, job: dict, folder: Path, preview: dict) -> None:
@@ -805,34 +670,10 @@ class FeaturePackService:
         if managed:
             if not (result is not None and view and view.get("unknown")):
                 self._task_state(job, view)
-        elif result is None and (job["state"] in ACTIVE or (folder / "cancelled").exists()):
-            try:
-                running = bool(live_process(folder)) or self.executor.running(job["sessionName"])
-                if (folder / "cancelled").exists():
-                    job["state"] = "cancelling" if running else "cancelled"
-                elif not running:
-                    age = (
-                        datetime.now(UTC) - datetime.fromisoformat(job["createdAt"])
-                    ).total_seconds()
-                    if job["state"] != "starting" or age >= 30:
-                        job["state"], job["error"] = (
-                            "interrupted",
-                            "The worker ended without a completion report. Preview a new job to retry.",
-                        )
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                job["error"] = f"Cannot inspect worker status: {error}"
+        elif result is None:
+            # A job from before the Task Center: nothing runs it any more.
+            job = task_records.legacy_state(job, ACTIVE)
         from histopilot.workers.training_process import read_progress
-
-        if (
-            not managed
-            and job["state"] in {"starting", "running"}
-            and (folder / "resources.json").exists()
-        ):
-            reservation = json.loads(ScientificStore._read_file(folder / "resources.json", 65536))
-            job["resourceReservation"] = reservation
-            if reservation.get("status") == "queued":
-                job["state"] = "queued"
-                job["waitingReason"] = reservation.get("waitingReason")
 
         job["progress"], warning = read_progress(folder / "progress.json")
         if warning:
@@ -926,7 +767,6 @@ class FeaturePackService:
             "jobs": jobs,
             "artifacts": fresh_artifacts,
             "selections": selections,
-            "tmuxAvailable": self.executor.available(),
             "formatAvailable": self.format_available(),
             "defaultOutputRoot": str(self.store.folder / "feature-packs"),
         }
@@ -938,29 +778,23 @@ class FeaturePackService:
     def _cancel(self, identity: str) -> dict:
         with writer_lock(self.store.folder):
             job = self.get(identity, include_inactive=True)
-            if task_records.managed_record(job):
-                task = job.get("task") or {}
-                if job["state"] in ACTIVE:
-                    write_json(
-                        self.folder / identity / "cancelled",
-                        {
-                            "requestedAt": _now(),
-                            "attempts": {task["id"]: task["attempt"]}
-                            if task.get("id") and task.get("attempt")
-                            else {},
-                        },
-                    )
-                    try:
-                        self.tasks.client.cancel_task(job["taskId"])
-                    except (StorageError, OSError):
-                        pass  # the worker still stops on the marker at its next chunk
-                return self.get(identity, include_inactive=True)
-            if (
-                job["state"] in ACTIVE
-                or live_process(self.folder / identity)
-                or self.executor.running(job["sessionName"])
-            ):
-                write_json(self.folder / identity / "cancelled", {"requestedAt": _now()})
+            if not task_records.managed_record(job):
+                task_records.refuse_legacy()
+            task = job.get("task") or {}
+            if job["state"] in ACTIVE:
+                write_json(
+                    self.folder / identity / "cancelled",
+                    {
+                        "requestedAt": _now(),
+                        "attempts": {task["id"]: task["attempt"]}
+                        if task.get("id") and task.get("attempt")
+                        else {},
+                    },
+                )
+                try:
+                    self.tasks.client.cancel_task(job["taskId"])
+                except (StorageError, OSError):
+                    pass  # the worker still stops on the marker at its next chunk
         # Cancellation is cooperative at each bounded read/copy chunk, preserving atomic publication.
         return self.get(identity, include_inactive=True)
 

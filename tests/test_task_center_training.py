@@ -99,7 +99,6 @@ def managed(tmp_path, monkeypatch, task_center):
         development.store,
         development.filesystem,
         runtime=runtime,
-        execution_mode="task-center",
         task_center=task_center.client,
     )
     folder = development.store.folder / "training" / frozen["id"]
@@ -1594,77 +1593,3 @@ def test_cancelled_managed_batch_keeps_its_experiment_running_and_resumable(mana
     resumed = context.service.launch(batch_id, "resume", resume=True)
     assert resumed["status"] == "queued"
     assert experiments.get(record["id"])["stage"] == "running"
-
-
-# -- Batches on the legacy tmux scheduler -------------------------------------------------
-
-
-@pytest.mark.legacy_tmux
-def test_tmux_launches_still_honor_a_frozen_setups_legacy_resources(managed):
-    context = managed
-    frozen = context.frozen
-    legacy = {**LEGACY_RESOURCES, "gpuIds": [1]}  # a GPU this machine does not have
-    batch = {
-        **frozen,
-        "manifest": {
-            **frozen["manifest"],
-            "spec": {**frozen["manifest"]["spec"], "resources": legacy},
-        },
-    }
-    tmux = TrainingService(
-        context.development.store,
-        context.development.filesystem,
-        runtime=runtime,
-        execution_mode="tmux",
-        task_center=context.client,
-    )
-    with pytest.raises(StorageError) as refused:
-        tmux._prepare(batch)
-    assert refused.value.code == "TRAINING_GPU_UNAVAILABLE"
-
-
-@pytest.mark.legacy_tmux
-def test_legacy_plans_keep_the_tmux_scheduler_in_task_center_mode(managed):
-    context = managed
-
-    class Executor:
-        def __init__(self):
-            self.sessions, self.launches = set(), []
-
-        def available(self):
-            return True
-
-        def running(self, session):
-            return session in self.sessions
-
-        def launch(self, session, python, plan, log, *, package_root):
-            self.sessions.add(session)
-            self.launches.append(session)
-
-    executor = Executor()
-    development = context.development
-    legacy = TrainingService(
-        development.store, development.filesystem, executor=executor, runtime=runtime
-    )
-    assert legacy.mode == "tmux"
-    state = legacy.launch(context.identity, "legacy-launch")
-    plan = read_json(context.folder / "plan.json")
-    assert "executionMode" not in plan and state["sessionName"].startswith("hp-train-")
-    executor.sessions.clear()  # the scheduler was lost, for example by a reboot
-    managed_mode = TrainingService(
-        development.store,
-        development.filesystem,
-        executor=executor,
-        runtime=runtime,
-        execution_mode="task-center",
-        task_center=context.client,
-    )
-    assert managed_mode.execution(context.identity)["status"] == "interrupted"
-    resumed = managed_mode.launch(context.identity, "legacy-resume", resume=True)
-    assert executor.launches == [state["sessionName"]] * 2
-    assert "executor" not in resumed and "resourcePlan" in resumed
-    assert read_json(context.folder / "plan.json") == plan
-    cancelled = managed_mode.cancel(context.identity, "legacy-cancel")
-    assert cancelled["cancelRequested"] and "taskCenter" not in cancelled
-    assert group_tasks(context) == []
-    assert all(row["id"] != context.identity for row in context.store.owners(live_only=False))

@@ -257,6 +257,31 @@ def test_terminal_training_with_live_orphan_accepts_cancellation(
     assert signalled == [child["pid"]]
 
 
+def test_a_live_worker_of_a_batch_from_before_the_task_center_blocks_cleanup_but_not_cancel(
+    training, task_center, monkeypatch
+):
+    from histopilot.application.lifecycle import CleanupService
+
+    service, batch, _ = training
+    state = service.launch(batch["id"], "launch")
+    child = {"pid": 77777, "startTicks": 1234, "bootId": "test"}
+    # A batch launched in tmux: no executor, and one fold's worker still runs.
+    for key in ("executor", "taskGroup"):
+        state.pop(key)
+    state["runs"][0]["process"] = child
+    save_state(Path(state["outputPath"]), state)
+    monkeypatch.setattr(
+        "histopilot.application.training.process_alive", lambda value: value == child
+    )
+    cleanup = CleanupService(service.store, service.filesystem, training=service)
+    [item] = [row for row in cleanup.catalog()["items"] if row["id"] == batch["id"]]
+    # Its files stay protected, but the Task Center cannot stop a worker it never ran.
+    assert item["job"] == {"status": "running", "cancellable": False, "busy": True}
+    with pytest.raises(StorageError) as refused:
+        service.cancel(batch["id"], "cancel")
+    assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
+
+
 def test_artifact_can_use_an_older_retained_receipt_with_the_same_identity(
     packing, task_center, monkeypatch
 ):

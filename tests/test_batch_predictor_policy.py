@@ -68,7 +68,6 @@ def managed_integrated(registry, task_center):
         training=support["Training"](store.folder),
         refits=RefitService(store, predictors.filesystem, jobs=jobs),
         runtime=lambda: runtime,
-        execution_mode="task-center",
         task_center=task_center.client,
     )
     return service, identity, jobs, selections

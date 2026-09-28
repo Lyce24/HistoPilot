@@ -10,7 +10,6 @@ from PIL import Image
 from support.interpretation import managed_packing, run_pack
 
 from histopilot.application.feature_bundles import FeatureBundleService
-from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.features import FeatureService
 from histopilot.application.morphology import MorphologyService, normalized, projection, sample_rows
 from histopilot.schemas.feature_bundles import FeatureBundleSpec
@@ -21,25 +20,12 @@ from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.packed import _stamp
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.pack_features import run_job
 
 
-class FakeExecutor:
-    def available(self):
-        return True
-
-    def running(self, session):
-        return False
-
-    def launch(self, session, runner, plan):
-        pass
-
-
-def make_study(tmp_path, request, center=None):
+def make_study(tmp_path, request, center):
     """Three slides with fully validated features, frozen in a bundle.
 
-    With ``center`` the validation job queues in that Task Center and its worker runs as the
-    task; without it, the job runs on a fake tmux executor.
+    The validation job queues in ``center`` and its worker runs as the task.
     """
     feature_kind = getattr(request, "param", "patch")
     root = tmp_path / "project"
@@ -93,19 +79,11 @@ def make_study(tmp_path, request, center=None):
     feature = features.freeze(
         spec, features.preview(spec)["previewHash"], "feature", version_label={"tag": "test"}
     )
-    packs = (
-        FeaturePackService(store, filesystem, FakeExecutor())
-        if center is None
-        else managed_packing(store, filesystem, center)
-    )
+    packs = managed_packing(store, filesystem, center)
     pack_spec = FeaturePackSpec(featureSetId=feature["id"], action="validate")
     preview = packs.preview(pack_spec)
     job = packs.submit(pack_spec, preview["previewHash"], "validate")
-    result = (
-        run_job(packs.folder / job["id"] / "plan.json")
-        if center is None
-        else run_pack(packs, job, center)
-    )
+    result = run_pack(packs, job, center)
     assert result["state"] == "succeeded", result
     bundles = FeatureBundleService(store, filesystem)
     bundle_spec = FeatureBundleSpec(featureSetId=feature["id"])
@@ -120,9 +98,9 @@ def make_study(tmp_path, request, center=None):
 
 
 @pytest.fixture
-def study(tmp_path, request):
-    """The study validated on a fake tmux executor; ``managed_study`` is its Task Center twin."""
-    return make_study(tmp_path, request)
+def study(tmp_path, request, task_center):
+    """The study, its validation job run as a task of this test's Task Center."""
+    return make_study(tmp_path, request, task_center)
 
 
 @pytest.fixture

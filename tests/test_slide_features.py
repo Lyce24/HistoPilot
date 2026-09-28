@@ -306,7 +306,6 @@ def pack_service(service, task_center):
     return FeaturePackService(
         service.store,
         service.filesystem,
-        execution_mode="task-center",
         task_center=task_center.client,
     )
 

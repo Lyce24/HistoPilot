@@ -8,6 +8,7 @@ ever used. Registries touched here are the per-session temp ones, never /tmp's.
 import importlib.util
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -38,7 +39,6 @@ from histopilot.taskcenter.adapters.extraction import (
 from histopilot.taskcenter.adapters.packing import PackingAdapter, reap_staging
 from histopilot.taskcenter.model import TERMINAL, utc_now_iso
 from histopilot.workers import packing_process
-from histopilot.workers.resource_reservation import SHARED_RUNS_PER_GPU, preparation_resources
 
 RUNNER = Path(trident.__file__).with_name("runner.py")
 
@@ -81,16 +81,6 @@ def center(_task_center_state):
 # -- 1.15: GPU sharing -------------------------------------------------------------------
 
 
-@pytest.mark.legacy_tmux
-def test_extraction_leases_share_the_gpu_with_a_vram_estimate():
-    # The self-lease of a tmux worker; a task asks the runner for VRAM instead:
-    # test_gpu_extraction_requests_vram_and_runs_on_the_admitted_device.
-    resources = preparation_resources("extraction", {"gpu": 0, "segmenter": "hest"})
-    assert resources["runsPerGpu"] == SHARED_RUNS_PER_GPU > 1
-    assert resources["vramGb"] == performance.estimate_vram_gb({"gpu": 0, "segmenter": "hest"})
-    assert preparation_resources("extraction", {"gpu": -1})["vramGb"] == 0.0
-
-
 def test_vram_estimate_scales_with_stages_and_batches():
     hest = performance.estimate_vram_gb({"task": "seg", "segmenter": "hest"})
     assert 9.0 <= hest <= 10.0
@@ -102,21 +92,6 @@ def test_vram_estimate_scales_with_stages_and_batches():
     assert small < large
     assert performance.estimate_vram_gb({"gpu": -1}) == 0.0
     assert performance.workload_key({"task": "all"}) != performance.workload_key({"task": "seg"})
-
-
-@pytest.mark.legacy_tmux
-def test_managed_preparation_takes_no_lease(monkeypatch, tmp_path):
-    # Self-leases exist only for tmux workers; the runner admits tasks instead:
-    # test_pack_and_validate_run_one_at_a_time_through_the_runner.
-    from histopilot.workers.resource_reservation import reserve_preparation
-
-    monkeypatch.setenv("HISTOPILOT_TASK_MANAGED", "1")
-    registry = Path(os.environ["TMPDIR"]) / f"histopilot-training-{os.getuid()}"
-    before = set(registry.glob("lease-*.json")) if registry.exists() else set()
-    with reserve_preparation(tmp_path, "extraction", preparation_resources("extraction"), bool):
-        after = set(registry.glob("lease-*.json")) if registry.exists() else set()
-    assert after == before
-    assert not (tmp_path / "resources.json").exists()
 
 
 # -- 1.15: dead TRIDENT locks --------------------------------------------------------------
@@ -344,7 +319,6 @@ def extraction(tmp_path, monkeypatch, center):
     service = ExtractionService(
         store,
         LocalFilesystem(tuple(roots)),
-        execution_mode="task-center",
         task_center=center.client,
     )
     spec = ExtractionSpec(
@@ -669,30 +643,29 @@ def test_preview_blocks_missing_slide_readers(extraction, monkeypatch):
 
 
 def _without_tmux(monkeypatch):
-    which = packing_process.shutil.which
+    """Only the Task Center runner needs tmux; previews run in the service."""
+    which = shutil.which
     monkeypatch.setattr(
-        packing_process.shutil,
+        shutil,
         "which",
         lambda name, *args, **kwargs: None if name == "tmux" else which(name, *args, **kwargs),
     )
 
 
-@pytest.mark.xfail(
-    strict=True, reason="A Task Center extraction preview still reports TMUX_UNAVAILABLE"
-)
 def test_extraction_preview_does_not_need_tmux(extraction, monkeypatch):
     service, spec, _commands = extraction
     _without_tmux(monkeypatch)
     preview = service.preview(spec)
     assert preview["canRun"], preview["findings"]
+    assert "tmuxAvailable" not in service.catalog()
 
 
-@pytest.mark.xfail(strict=True, reason="A Task Center packing preview still reports TMUX_UNAVAILABLE")
 def test_packing_preview_does_not_need_tmux(packing, monkeypatch):
     service, feature = packing
     _without_tmux(monkeypatch)
     preview = service.preview(FeaturePackSpec(featureSetId=feature, action="validate"))
     assert preview["canRun"], preview["findings"]
+    assert "tmuxAvailable" not in preview and "tmuxAvailable" not in service.list()
 
 
 def test_slide_reader_map_follows_trident():
@@ -766,7 +739,7 @@ def packing(tmp_path, center):
     feature_spec = FeatureSpec(datasetId=dataset["id"], path=str(source))
     feature = features.freeze(feature_spec, features.preview(feature_spec)["previewHash"], "f")
     service = FeaturePackService(
-        store, filesystem, execution_mode="task-center", task_center=center.client
+        store, filesystem, task_center=center.client
     )
     return service, feature["id"]
 
@@ -792,7 +765,7 @@ def test_pack_job_is_a_packing_task_without_a_claim(packing, center):
     claim = registry / f"{packing_process.output_key(Path(job['outputPath']))}.claim.json"
     assert not claim.exists()
     plan = json.loads((service.folder / job["id"] / "plan.json").read_text())
-    assert plan["claimPath"] is None
+    assert "claimPath" not in plan
     # The same output is busy for any other job while the task lives.
     again = service.preview(
         FeaturePackSpec(featureSetId=feature, action="pack", outputPath=job["outputPath"])
@@ -993,17 +966,6 @@ def test_registry_sweep_drops_dead_and_malformed_claims_and_idle_locks(tmp_path)
     assert writer.exists()
 
 
-@pytest.mark.legacy_tmux
-def test_malformed_claim_no_longer_blocks_packing(packing, monkeypatch):
-    # Claim files are written by tmux jobs only; Task Center jobs write none:
-    # test_pack_job_is_a_packing_task_without_a_claim.
-    service, feature = packing
-    registry = packing_process.registry_directory()
-    (registry / f"{'d' * 64}.claim.json").write_text("{")
-    preview = service.preview(FeaturePackSpec(featureSetId=feature, action="pack"))
-    assert preview["canRun"], preview["findings"]
-
-
 def test_output_lock_refuses_a_lock_file_swept_away(tmp_path, monkeypatch):
     monkeypatch.setattr(packing_process, "registry_directory", lambda: tmp_path)
     path = tmp_path / f"{packing_process.output_key('/out')}.lock"
@@ -1061,7 +1023,7 @@ def archives(tmp_path, center):
         projects = client.app.state.projects
         store = projects.scientific_store(response.json()["id"])
         jobs = PortabilityJobs(
-            projects, projects.storage, execution_mode="task-center", task_center=center.client
+            projects, projects.storage, task_center=center.client
         )
         yield store, projects, jobs
 
@@ -1086,7 +1048,7 @@ def _busy_feature_job(store, center):
     spec = FeatureSpec(datasetId=dataset["id"], path=str(source))
     feature = features.freeze(spec, features.preview(spec)["previewHash"], "busy-features")
     service = FeaturePackService(
-        store, filesystem, execution_mode="task-center", task_center=center.client
+        store, filesystem, task_center=center.client
     )
     job = submit_pack(service, FeaturePackSpec(featureSetId=feature["id"], action="validate"))
     center.store.hold_owner(job["ownerKey"], True)

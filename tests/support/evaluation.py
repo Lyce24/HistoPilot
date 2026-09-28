@@ -12,9 +12,7 @@ from support.task_center import Center
 
 def packing_service(store, filesystem):
     """A feature job service that queues into this test's private Task Center."""
-    return FeaturePackService(
-        store, filesystem, execution_mode="task-center", task_center=Center().client
-    )
+    return FeaturePackService(store, filesystem, task_center=Center().client)
 
 
 def run_packing(service, job):

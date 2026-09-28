@@ -266,7 +266,7 @@ def test_resource_api_is_authenticated_scoped_and_never_probes_hardware(
     monkeypatch.setattr(
         "histopilot.application.project_workspace.ProjectWorkspace.scientific_store", scoped_store
     )
-    for name in ("host_snapshot", "gpu_snapshot", "cpu_times"):
+    for name in ("host_snapshot", "gpu_snapshot"):
         monkeypatch.setattr(
             f"histopilot.workers.training_process.{name}",
             lambda: pytest.fail("Resource history must not probe hardware"),

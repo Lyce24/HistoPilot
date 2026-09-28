@@ -3,7 +3,6 @@
 import hashlib
 import os
 import signal
-import subprocess
 from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
@@ -12,6 +11,7 @@ from histopilot.application.feature_bundles import FeatureBundleService, _hash
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.mil_inputs import MILInputService
 from histopilot.application.protocols import FilterEvaluator, ProtocolService
+from histopilot.application.task_records import LEGACY_CODE, LEGACY_MESSAGE, refuse_legacy
 from histopilot.domain.features import representation_kind
 from histopilot.models import catalog
 from histopilot.schemas.development import DevelopmentBatchSpec
@@ -23,14 +23,12 @@ from histopilot.schemas.training_controls import (
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError, ensure_managed_directory, writer_lock
 from histopilot.taskcenter import ids as task_ids
-from histopilot.taskcenter import paths as task_paths
 from histopilot.taskcenter.model import ACTIVE as TASK_ACTIVE
 from histopilot.taskcenter.model import LIVE as TASK_LIVE
 from histopilot.workers.compute_archive import prepare_compute_archive
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import (
     ACTIVE,
-    TmuxTrainingExecutor,
     append_event,
     compute_snapshot,
     cpu_slots_per_run,
@@ -40,7 +38,6 @@ from histopilot.workers.training_process import (
     owned_processes,
     read_json,
     read_progress,
-    resource_plan,
     save_state,
     stop_owned_processes,
 )
@@ -72,9 +69,8 @@ MANAGED = "task-center"
 TASK_GROUP = "mil-batch"
 
 
-def session_name(folder, *, managed: bool) -> str:
-    prefix = "tc-" if managed else "hp-train-"
-    return prefix + hashlib.sha256(str(folder).encode()).hexdigest()[:16]
+def session_name(folder) -> str:
+    return "tc-" + hashlib.sha256(str(folder).encode()).hexdigest()[:16]
 
 
 def task_folder(folder) -> str:
@@ -83,22 +79,8 @@ def task_folder(folder) -> str:
 
 
 class TrainingService:
-    def __init__(
-        self,
-        store,
-        filesystem,
-        executor=None,
-        runtime=None,
-        *,
-        execution_mode=None,
-        task_center=None,
-    ):
+    def __init__(self, store, filesystem, *, runtime=None, task_center=None):
         self.store, self.filesystem = store, filesystem
-        # An injected legacy executor keeps the tmux scheduler unless a mode is explicit.
-        self.mode = execution_mode or (
-            "tmux" if executor is not None else task_paths.execution_mode()
-        )
-        self.executor = executor or TmuxTrainingExecutor()
         self.runtime = runtime or training_runtime
         self._task_center = task_center
         self._default_task_center = task_center is None
@@ -156,19 +138,19 @@ class TrainingService:
         if not (folder / "state.json").exists():
             return None
         state = read_json(folder / "state.json")
-        managed = state.get("executor") == MANAGED
-        # Task Center batches have no scheduler process or session: the task store says
-        # whether work is still queued or running. Unknown task state never reads as idle.
-        group = self._task_group(identity, state) if managed else None
-        known = group is not None and "error" not in group
-        scheduler_alive = process_alive(state.get("process"))
+        if state.get("executor") != MANAGED:
+            return self._legacy_execution(folder, state, include_progress=include_progress)
+        # The task store says whether work is still queued or running. Unknown task state
+        # never reads as idle.
+        group = self._task_group(identity, state)
+        known = "error" not in group
         children = [run for run in state["runs"] if run_processes(run)]
-        if scheduler_alive or children:
-            # A terminal receipt can precede cleanup, or a scheduler can die
-            # after writing failure while isolated loader descendants survive.
+        if children:
+            # A terminal receipt can precede cleanup, or a fold's loader descendants can
+            # survive it.
             if state["status"] not in ACTIVE:
                 state["status"] = "running"
-            if children and not scheduler_alive and (not managed or (known and not group["live"])):
+            if known and not group["live"]:
                 state["findings"] = [
                     *[
                         item
@@ -181,34 +163,47 @@ class TrainingService:
                         "message": "Training workers are still running without their scheduler. Cancel this batch and wait for its workers to stop before resuming.",
                     },
                 ]
-        elif state["status"] in ACTIVE and (
-            self._managed_idle(group, folder)
-            if managed
-            else not self.executor.running(state["sessionName"])
-        ):
-            if not scheduler_alive and not children:
-                # Return a reconciled view. Only the scheduler writes active state.
-                state["status"] = (
-                    "cancelled" if (folder / "cancel.json").exists() else "interrupted"
-                )
-                for run in state["runs"]:
-                    if run["status"] in ACTIVE:
-                        run["status"] = state["status"]
-                from histopilot.workers.training_process import counts
+        elif state["status"] in ACTIVE and self._managed_idle(group, folder):
+            # Return a reconciled view. Only the Task Center writes active state.
+            self._settle(state, "cancelled" if (folder / "cancel.json").exists() else "interrupted")
+        state["taskCenter"] = self._task_summary(group)
+        if not known:
+            state["findings"] = [
+                *state.get("findings", []),
+                {
+                    "severity": "warning",
+                    "code": "TASK_CENTER_UNAVAILABLE",
+                    "message": "The Task Center cannot be read, so this batch shows its last "
+                    f"saved status. {group.get('error', '')}".strip(),
+                },
+            ]
+        return self._with_progress(folder, state, include_progress)
 
-                state["runCounts"] = counts(state["runs"])
-        if managed:
-            state["taskCenter"] = self._task_summary(group)
-            if not known:
-                state["findings"] = [
-                    *state.get("findings", []),
-                    {
-                        "severity": "warning",
-                        "code": "TASK_CENTER_UNAVAILABLE",
-                        "message": "The Task Center cannot be read, so this batch shows its last "
-                        f"saved status. {(group or {}).get('error', '')}".strip(),
-                    },
-                ]
+    def _legacy_execution(self, folder, state, *, include_progress):
+        """A batch launched before the Task Center: its saved state, never probed.
+
+        Nothing can run it any more, so an unfinished one reads as interrupted.
+        """
+        if state["status"] in ACTIVE:
+            self._settle(state, "interrupted")
+            state["findings"] = [
+                *state.get("findings", []),
+                {"severity": "warning", "code": LEGACY_CODE, "message": LEGACY_MESSAGE},
+            ]
+        return self._with_progress(folder, state, include_progress)
+
+    @staticmethod
+    def _settle(state, status):
+        from histopilot.workers.training_process import counts
+
+        state["status"] = status
+        for run in state["runs"]:
+            if run["status"] in ACTIVE:
+                run["status"] = status
+        state["runCounts"] = counts(state["runs"])
+
+    @staticmethod
+    def _with_progress(folder, state, include_progress):
         state["cancelRequested"] = (folder / "cancel.json").exists()
         if include_progress:
             for run in state["runs"]:
@@ -222,7 +217,7 @@ class TrainingService:
     @staticmethod
     def _managed_idle(group, folder) -> bool:
         """No task can still move this batch: nothing is live, or a cancel left no fold."""
-        if group is None or "error" in group:
+        if "error" in group:
             return False
         if not group["live"]:
             return True
@@ -253,54 +248,27 @@ class TrainingService:
             return {**read_json(path), "status": state["status"] if state else "planned"}
         return {"status": state["status"] if state else "planned", "candidates": [], "oof": []}
 
-    def _managed_launch(self, batch) -> bool:
-        """Whether this launch runs under the Task Center; a saved plan keeps its mode."""
-        path = self.store.folder / "training" / batch["id"] / "plan.json"
-        if path.exists():
-            return read_json(path).get("executionMode") == MANAGED
-        return self.mode == MANAGED
-
     def _prepare(self, batch):
         manifest = batch["manifest"]
         spec = DevelopmentBatchSpec.model_validate(manifest["spec"], context={"legacy": True})
         runtime = self.runtime()
         if not runtime["available"]:
             raise StorageError(runtime["findings"][0]["message"], "TRAINING_RUNTIME_UNAVAILABLE")
-        if self._managed_launch(batch):
-            # Design section 4.7: a frozen setup's legacy resources are read but ignored under
-            # the Task Center. The device kind follows this machine and threads and loader
-            # workers the Task Center defaults; the Task Center places and paces every run.
-            # The loader worker count does not change augmentation random streams.
-            resources = self._default_resources(runtime)
-        else:
-            resources = (
-                spec.resources.model_dump()
-                if spec.resources is not None
-                else self._default_resources(runtime)
-            )
-            if resources["gpuIds"] and (
-                not runtime["cudaAvailable"] or max(resources["gpuIds"]) >= runtime["gpuCount"]
-            ):
-                raise StorageError(
-                    "The requested GPU is unavailable. Choose available GPU IDs or CPU execution (an empty GPU list).",
-                    "TRAINING_GPU_UNAVAILABLE",
-                )
+        # Design section 4.7: a frozen setup's legacy resources are read but ignored. The
+        # device kind follows this machine and threads and loader workers the Task Center
+        # defaults; the Task Center places and paces every run. The loader worker count
+        # does not change augmentation random streams.
+        resources = self._default_resources(runtime)
         host = host_snapshot()
         if cpu_slots_per_run(resources) > host["cpuCount"]:
             raise StorageError(
                 "CPU threads plus overlapping training and validation data workers exceed the available CPU capacity per run.",
                 "TRAINING_RESOURCES_UNAVAILABLE",
             )
-        if self._managed_launch(batch):
-            # The Task Center waits for free memory; refuse only a run that can never fit.
-            if resources["ramGbPerRun"] > host["totalRamGb"]:
-                raise StorageError(
-                    "Requested RAM per run exceeds this workstation's memory.",
-                    "TRAINING_RESOURCES_UNAVAILABLE",
-                )
-        elif resources["ramGbPerRun"] > host["availableRamGb"]:
+        # The Task Center waits for free memory; refuse only a run that can never fit.
+        if resources["ramGbPerRun"] > host["totalRamGb"]:
             raise StorageError(
-                "Requested RAM per run exceeds currently available memory.",
+                "Requested RAM per run exceeds this workstation's memory.",
                 "TRAINING_RESOURCES_UNAVAILABLE",
             )
         binding = MILInputService(self.store, self.filesystem).preview(spec.inputs)
@@ -786,6 +754,8 @@ class TrainingService:
             previous = self.execution(identity)
             if replay:
                 return previous
+            if previous and previous.get("executor") != MANAGED:
+                refuse_legacy()
             owner = batch["manifest"]["spec"].get("experimentId")
             experiment_record = None
             if owner:
@@ -809,8 +779,8 @@ class TrainingService:
                 raise StorageError(
                     "This batch already has active training workers.", "TRAINING_ACTIVE"
                 )
-            # A failed tmux start has durable plan/state but no accepted launch
-            # receipt. Retrying the same launch safely resumes that exact plan.
+            # A failed enqueue has durable plan/state but no accepted launch receipt.
+            # Retrying the same launch safely resumes that exact plan.
             if (
                 previous
                 and not resume
@@ -835,12 +805,10 @@ class TrainingService:
             prepared_runtime = plan["runtime"]
             provenance = {"at": now(), "host": host_snapshot(), **gpu_snapshot()}
             original_plan = read_json(folder / "plan.json") if resume else None
-            # A saved plan keeps the execution mode it was launched with.
-            managed = (
-                original_plan.get("executionMode") == MANAGED if resume else self.mode == MANAGED
-            )
-            session = session_name(folder, managed=managed)
+            session = session_name(folder)
             if resume:
+                if original_plan.get("executionMode") != MANAGED:
+                    refuse_legacy()
                 if _hash(original_plan) != previous.get("planHash"):
                     raise StorageError(
                         "The saved execution plan changed after launch; it cannot be resumed.",
@@ -863,9 +831,7 @@ class TrainingService:
                 # retain the exact scientific execution plan and record the new attempt.
                 plan = original_plan
             else:
-                if managed:
-                    plan["executionMode"] = MANAGED
-                plan.update(outputPath=str(folder), sessionName=session)
+                plan.update(executionMode=MANAGED, outputPath=str(folder), sessionName=session)
             submission = (experiment_record or {}).get("payload", {}).get("submission")
             pinned = None
             if submission:
@@ -889,11 +855,11 @@ class TrainingService:
             package_root = prepare_compute_archive(
                 folder, plan.get("code", {}), source_root=pinned[1] if pinned else None
             )
+            if not (package_root / "histopilot" / "workers" / "managed_fold.py").is_file():
+                # Code pinned before the Task Center has no fold entry point to run.
+                refuse_legacy()
             freshness()
-            if managed:
-                self._require_idle_tasks(identity)
-            elif self.executor.running(session):
-                raise StorageError("A worker for this batch is still running.", "TRAINING_ACTIVE")
+            self._require_idle_tasks(identity)
             prior_runs = {row["id"]: row for row in previous["runs"]} if previous else {}
             runs = []
             for row in plan["runs"]:
@@ -924,19 +890,14 @@ class TrainingService:
                 "provenancePath": str(folder / "attempts.jsonl"),
                 "computePath": str(package_root),
                 "computeVersion": plan["code"]["sha256"],
-            }
-            if managed:
                 # Parallelism belongs to the Task Center, so there is no per-batch plan.
-                state["executor"] = MANAGED
-                state["taskGroup"] = {
+                "executor": MANAGED,
+                "taskGroup": {
                     "kind": TASK_GROUP,
                     "id": identity,
                     "projectFolder": str(self.store.folder),
-                }
-            else:
-                state["resourcePlan"] = resource_plan(
-                    plan["resources"], provenance["host"], len(runs)
-                )
+                },
+            }
             if previous and previous.get("telemetry"):
                 state["telemetry"] = previous["telemetry"]
             if plan["code"] != compute_snapshot():
@@ -979,81 +940,32 @@ class TrainingService:
                 },
             )
             save_state(folder, state)
-            if managed:
-                try:
-                    self._submit_tasks(identity, batch, folder, plan, state, resume=resume)
-                except (OSError, ValueError, KeyError, TypeError) as error:
-                    # A committed enqueue owns this batch; never overwrite worker evidence.
-                    if not self._task_accepted(identity, folder, state, resume=resume):
-                        state.update(
-                            status="failed",
-                            findings=[
-                                {
-                                    "severity": "error",
-                                    "code": "TRAINING_LAUNCH_FAILED",
-                                    "message": str(error),
-                                }
-                            ],
-                        )
-                        save_state(folder, state)
-                        raise StorageError(
-                            f"Training tasks could not be queued: {error}",
-                            "TRAINING_LAUNCH_FAILED",
-                        ) from error
-                    operations[operation_id] = action
-                    write_json(path, operations)
-                    return self.execution(identity)
+            try:
+                self._submit_tasks(identity, batch, folder, plan, state, resume=resume)
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                # A committed enqueue owns this batch; never overwrite worker evidence.
+                if not self._task_accepted(identity, folder, state, resume=resume):
+                    state.update(
+                        status="failed",
+                        findings=[
+                            {
+                                "severity": "error",
+                                "code": "TRAINING_LAUNCH_FAILED",
+                                "message": str(error),
+                            }
+                        ],
+                    )
+                    save_state(folder, state)
+                    raise StorageError(
+                        f"Training tasks could not be queued: {error}",
+                        "TRAINING_LAUNCH_FAILED",
+                    ) from error
                 operations[operation_id] = action
                 write_json(path, operations)
-                self._wake_runner()
-                return state
-            try:
-                self.executor.launch(
-                    session,
-                    plan["runtime"]["python"],
-                    folder / "plan.json",
-                    folder / "batch.log",
-                    package_root=package_root,
-                )
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                # tmux can create its session before a timeout loses the reply.
-                # The worker owns active state; never overwrite evidence it wrote.
-                try:
-                    session_running = self.executor.running(session)
-                    # Session inspection may block while the worker finishes.
-                    # Read its evidence afterwards, not before the tmux probe.
-                    current = read_json(folder / "state.json")
-                    started = (
-                        session_running
-                        or current.get("process") is not None
-                        or any(run_processes(run) for run in current["runs"])
-                        or current["status"] not in ACTIVE
-                    )
-                except (OSError, RuntimeError, subprocess.SubprocessError) as inspection_error:
-                    raise StorageError(
-                        "Launch acknowledgement was lost. Check execution status before retrying.",
-                        "TRAINING_LAUNCH_UNCERTAIN",
-                    ) from inspection_error
-                if started:
-                    operations[operation_id] = action
-                    write_json(path, operations)
-                    return self.execution(identity)
-                state.update(
-                    status="failed",
-                    findings=[
-                        {
-                            "severity": "error",
-                            "code": "TRAINING_LAUNCH_FAILED",
-                            "message": str(error),
-                        }
-                    ],
-                )
-                save_state(folder, state)
-                raise StorageError(
-                    f"Training worker could not start: {error}", "TRAINING_LAUNCH_FAILED"
-                ) from error
+                return self.execution(identity)
             operations[operation_id] = action
             write_json(path, operations)
+            self._wake_runner()
             return state
 
     def cancel(self, identity, operation_id):
@@ -1068,26 +980,10 @@ class TrainingService:
         with writer_lock(folder, timeout=5):
             path, operations, replay = self._operation(folder, operation_id, "cancel")
             state = self.execution(identity, include_inactive=True)
-            if state and state.get("executor") == MANAGED:
-                if not replay:
-                    self._cancel_managed(identity, folder, state, operation_id)
-            else:
-                busy = state and (
-                    state["status"] in ACTIVE
-                    or process_alive(state.get("process"))
-                    or any(run_processes(run) for run in state["runs"])
-                )
-                if not replay and busy:
-                    write_json(
-                        folder / "cancel.json", {"requestedAt": now(), "operationId": operation_id}
-                    )
-                    if not process_alive(state.get("process")):
-                        # A scheduler can disappear while its independently isolated children
-                        # survive. Signal only the recorded process groups whose identity still
-                        # matches; a cancel marker alone cannot reach an orphaned child.
-                        self._stop_orphans(
-                            [run["process"] for run in state["runs"] if run_processes(run)]
-                        )
+            if state and not replay:
+                if state.get("executor") != MANAGED:
+                    refuse_legacy()
+                self._cancel_managed(identity, folder, state, operation_id)
             operations[operation_id] = "cancel"
             write_json(path, operations)
         return self.execution(identity, include_inactive=True)
@@ -1169,12 +1065,7 @@ class TrainingService:
         with writer_lock(folder, timeout=5):
             state = read_json(folder / "state.json")
             if state.get("executor") != MANAGED:
-                raise StorageError(
-                    "Single runs can be cancelled only in batches run by the Task Center. "
-                    "Cancel the whole batch instead.",
-                    "TRAINING_ACTION_UNSUPPORTED",
-                    409,
-                )
+                refuse_legacy()
             path, operations, replay = self._operation(folder, operation_id, action)
             if not replay:
                 known = {run["id"] for run in state["runs"]}

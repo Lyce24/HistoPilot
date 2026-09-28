@@ -78,9 +78,6 @@ def test_default_store_lives_in_the_private_state_directory(tmp_path, monkeypatc
     monkeypatch.delenv(paths.STATE_ENV)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg"))
     assert paths.state_dir() == (tmp_path / "xdg" / "histopilot").resolve()
-    # New work always runs in the Task Center; the old tmux switch is ignored.
-    monkeypatch.setenv(paths.MODE_ENV, "tmux")
-    assert paths.execution_mode() == "task-center"
 
 
 def test_normalization_fills_defaults_and_rejects_bad_values(tmp_path):

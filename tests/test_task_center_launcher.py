@@ -230,7 +230,6 @@ def env_assignments(script: str) -> tuple[dict, list[str]]:
 def test_ensure_runner_forwards_the_starting_environment(tmux, monkeypatch):
     monkeypatch.setenv(paths.AUTOSTART_ENV, "1")
     monkeypatch.setenv("HISTOPILOT_TRAINING_PYTHON", "/opt/train env/bin/python")
-    monkeypatch.setenv("HISTOPILOT_EXECUTION_MODE", "tmux")
     monkeypatch.setenv("HISTOPILOT_TRIDENT_ROOT", "it's here; $(rm -rf ~)")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/usr/lib/wsl/lib:/opt/cuda/lib64")
     monkeypatch.setenv("PATH", "/opt/tools/bin:/usr/bin")
@@ -241,7 +240,6 @@ def test_ensure_runner_forwards_the_starting_environment(tmux, monkeypatch):
     [(command, _)] = tmux.calls
     pairs, rest = env_assignments(command[5])
     assert pairs["HISTOPILOT_TRAINING_PYTHON"] == "/opt/train env/bin/python"
-    assert pairs["HISTOPILOT_EXECUTION_MODE"] == "tmux"
     assert pairs["HISTOPILOT_TRIDENT_ROOT"] == "it's here; $(rm -rf ~)"
     assert pairs["LD_LIBRARY_PATH"] == "/usr/lib/wsl/lib:/opt/cuda/lib64"
     assert pairs["PATH"] == "/opt/tools/bin:/usr/bin"

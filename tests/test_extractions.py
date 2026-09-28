@@ -24,27 +24,6 @@ from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 
 
-class FakeExecutor:
-    sessions: set[str]
-
-    def __init__(self):
-        self.sessions = set()
-        self.launches = []
-
-    def available(self):
-        return True
-
-    def launch(self, session, runner, plan):
-        self.sessions.add(session)
-        self.launches.append(json.loads(plan.read_text()))
-
-    def running(self, session):
-        return session in self.sessions
-
-    def cancel(self, session):
-        self.sessions.discard(session)
-
-
 def extraction_setup(tmp_path, monkeypatch):
     """A dataset of two slides on two data roots, with TRIDENT's runtime faked."""
     folder = tmp_path / "experiment"
@@ -97,19 +76,8 @@ def extraction_setup(tmp_path, monkeypatch):
 @pytest.fixture
 def extractions(tmp_path, monkeypatch, task_center):
     store, filesystem, spec, slides = extraction_setup(tmp_path, monkeypatch)
-    service = ExtractionService(
-        store, filesystem, execution_mode="task-center", task_center=task_center.client
-    )
+    service = ExtractionService(store, filesystem, task_center=task_center.client)
     return service, spec, slides
-
-
-@pytest.fixture
-def extraction(tmp_path, monkeypatch):
-    """The same service on the legacy tmux launch path, with a fake executor."""
-    store, filesystem, spec, slides = extraction_setup(tmp_path, monkeypatch)
-    executor = FakeExecutor()
-    service = ExtractionService(store, filesystem, executor)
-    return service, spec, executor, slides
 
 
 def submit(service, spec, operation="run"):
@@ -118,25 +86,52 @@ def submit(service, spec, operation="run"):
     return service.submit(spec, preview["previewHash"], operation)
 
 
-@pytest.mark.legacy_tmux
-def test_lost_launch_acknowledgement_keeps_extraction_job_active(extraction, monkeypatch):
-    # Queueing Task Center tasks has no launch acknowledgement to lose, so no Task Center
-    # test covers this. Idempotent queueing:
-    # test_exact_multiple_roots_manifest_idempotency_logs_and_reopen.
-    service, spec, executor, _slides = extraction
-    original = executor.launch
+def legacy_extraction(service, spec, *, result=None):
+    """Model an extraction started in tmux: its record names no Task Center task."""
+    job = submit(service, spec)
+    folder = service.folder / job["id"]
+    record = json.loads((folder / "job.json").read_text())
+    for key in ("executionMode", "taskId", "validationTaskId", "ownerKey"):
+        record.pop(key)
+    record.update(state="running", sessionName="histopilot-pfm-0123456789abcdef")
+    _write(folder / "job.json", record)
+    if result is not None:
+        _write(folder / "result.json", result)
+    return job["id"], folder, record
 
-    def launch_then_timeout(*args, **kwargs):
-        original(*args, **kwargs)
-        raise TimeoutError("Lost acknowledgement")
 
-    monkeypatch.setattr(executor, "launch", launch_then_timeout)
-    preview = service.preview(spec)
-    job = service.submit(spec, preview["previewHash"], "launch")
-    assert job["state"] == "running"
-    assert service.submit(spec, preview["previewHash"], "launch")["id"] == job["id"]
-    assert service.cancel(job["id"])["state"] == "cancelling"
-    assert len(executor.launches) == 1
+def test_an_extraction_from_before_the_task_center_is_read_only(extractions, task_center):
+    service, spec, _slides = extractions
+    identity, folder, record = legacy_extraction(service, spec)
+    job = service.get(identity)
+    # Nothing runs it any more, and its tmux session is never looked for.
+    assert job["state"] == "interrupted" and "executor" not in job
+    assert "Created before the Task Center" in job["error"]
+    for action in (service.cancel, service.resume):
+        with pytest.raises(StorageError) as refused:
+            action(identity)
+        assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
+    assert json.loads((folder / "job.json").read_text()) == record
+    assert not (folder / "cancelled").exists()
+
+
+def test_a_finished_extraction_from_before_the_task_center_keeps_its_outcome(
+    extractions, task_center
+):
+    service, spec, _slides = extractions
+    receipt = {
+        "state": "failed",
+        "error": "TRIDENT stopped.",
+        "finishedAt": "2026-09-01T00:00:00+00:00",
+    }
+    identity, _folder, _record = legacy_extraction(service, spec, result=receipt)
+    job = service.get(identity)
+    assert (job["state"], job["error"], job["updatedAt"]) == (
+        "failed",
+        "TRIDENT stopped.",
+        receipt["finishedAt"],
+    )
+    assert job["result"] == receipt
 
 
 def test_exact_multiple_roots_manifest_idempotency_logs_and_reopen(extractions, task_center):
@@ -160,7 +155,6 @@ def test_exact_multiple_roots_manifest_idempotency_logs_and_reopen(extractions, 
     reopened = ExtractionService(
         service.store,
         service.filesystem,
-        execution_mode="task-center",
         task_center=task_center.client,
     )
     assert reopened.get(job["id"], logs=True)["logs"] == "segmenting slide 1\n"
@@ -416,7 +410,6 @@ def cohort_extraction(tmp_path, monkeypatch, task_center):
     service = ExtractionService(
         store,
         LocalFilesystem((tmp_path / "drive-d",)),
-        execution_mode="task-center",
         task_center=task_center.client,
     )
     monkeypatch.setattr(

@@ -7,9 +7,7 @@ import json
 import os
 import re
 import shutil
-import signal
 import stat
-import subprocess
 import sys
 import tempfile
 from datetime import UTC, datetime
@@ -50,8 +48,6 @@ from histopilot.storage.project_lock import (
 )
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter import ids
-from histopilot.workers.extraction_process import TmuxExtractionExecutor
-from histopilot.workers.packing_process import live_process
 
 ACTIVE = {"queued", "starting", "running", "cancelling"}
 JOB_ID = re.compile(r"^extraction-[a-f0-9]{32}$")
@@ -121,44 +117,22 @@ def _log_tail(path: Path) -> tuple[str, str | None]:
 class ExtractionService:
     """TRIDENT extraction records.
 
-    New jobs are two Task Center tasks: ``extraction`` (TRIDENT, GPU lane) and
+    Jobs are two Task Center tasks: ``extraction`` (TRIDENT, GPU lane) and
     ``extraction-validation`` (artifact validation, CPU lane, after it). Jobs recorded
-    before the Task Center, or launched with an injected tmux executor, keep their tmux
-    session for status and cancel.
+    before the Task Center stay readable but can no longer run, resume or be cancelled.
     """
 
-    def __init__(
-        self,
-        store: ScientificStore,
-        filesystem: LocalFilesystem,
-        executor=None,
-        *,
-        execution_mode=None,
-        task_center=None,
-    ):
+    def __init__(self, store: ScientificStore, filesystem: LocalFilesystem, *, task_center=None):
         self.store = store
         self.filesystem = filesystem
         self.outputs = LocalFilesystem((store.folder, *filesystem.roots))
-        # An injected executor keeps its caller on the tmux path unless a mode is named.
-        self._mode = execution_mode or ("tmux" if executor is not None else None)
-        self.executor = executor or TmuxExtractionExecutor()
         self.tasks = task_records.TaskCenterAccess(task_center)
         self.folder = store.folder / "extractions"
-
-    @property
-    def mode(self) -> str:
-        """How new records launch (resolved per call, so a long-lived service follows it)."""
-        return self._mode or task_records.default_execution_mode()
-
-    @property
-    def managed(self) -> bool:
-        return self.mode == task_records.TASK_CENTER
 
     def catalog(self) -> dict:
         return {
             **trident.option_catalog(),
             "runtime": trident.discover_runtime(),
-            "tmuxAvailable": self.executor.available(),
             "defaultOutputPath": str(self.store.folder / "trident"),
         }
 
@@ -498,15 +472,13 @@ class ExtractionService:
                 or runtime.get("message")
                 or "Configure a working TRIDENT Python environment and checkout.",
             )
-        if not self.executor.available():
-            finding("TMUX_UNAVAILABLE", "Install tmux to run persistent extraction jobs.")
         if options.max_workers == 0:
             finding(
                 "TRIDENT_WORKERS_ZERO",
                 "This TRIDENT CSV loader requires max_workers of at least 1. Leave it automatic or choose a positive count.",
             )
         devices = values.get("gpus") or [values.get("gpu", 0)]
-        if self.managed and len({device for device in devices if device >= 0}) > 1:
+        if len({device for device in devices if device >= 0}) > 1:
             finding(
                 "SINGLE_GPU_TASK",
                 "The Task Center runs an extraction on one GPU; the other selected GPUs stay "
@@ -743,7 +715,7 @@ class ExtractionService:
             values = options.model_dump(mode="json")
             lane = "gpu" if uses_gpu(values) else "cpu"
             command_options = options
-            if self.managed and lane == "gpu":
+            if lane == "gpu":
                 # The runner exposes the GPU it admits the task on as CUDA device 0.
                 command_options = options.model_copy(update={"gpu": 0, "gpus": None})
             command = trident.build_command(
@@ -757,7 +729,7 @@ class ExtractionService:
             job = {
                 "id": identity,
                 "projectId": self.store.project_id,
-                "state": "starting",
+                "state": "queued",
                 "operationId": operation_id,
                 "requestHash": _hash(spec.model_dump(mode="json")),
                 "previewHash": preview_hash,
@@ -769,20 +741,15 @@ class ExtractionService:
                 "command": command,
                 "runtime": runtime,
                 "inputFiles": preview["inputFiles"],
-                "sessionName": f"histopilot-pfm-{identity.removeprefix('extraction-')}",
+                "sessionName": None,
                 "logPath": str(folder / "worker.log"),
                 "createdAt": _now(),
                 "updatedAt": _now(),
+                "executionMode": task_records.TASK_CENTER,
+                "taskId": ids.task_id("extraction", str(folder)),
+                "validationTaskId": ids.task_id("extraction-validation", str(folder)),
+                "ownerKey": task_records.owner_key("extraction", identity, self.store),
             }
-            if self.managed:
-                job.update(
-                    state="queued",
-                    sessionName=None,
-                    executionMode=task_records.TASK_CENTER,
-                    taskId=ids.task_id("extraction", str(folder)),
-                    validationTaskId=ids.task_id("extraction-validation", str(folder)),
-                    ownerKey=task_records.owner_key("extraction", identity, self.store),
-                )
             _write(folder / "job.json", job)
             plan = {
                 "command": command,
@@ -797,63 +764,20 @@ class ExtractionService:
                     "root": str(output),
                     "maxAgeHours": options.dead_lock_max_age_hours,
                 },
+                "managed": True,
+                "jobPath": str(folder / "job.json"),
+                "progressPath": str(folder / "progress.json"),
+                "peakPath": str(folder / "trident-peak.json"),
             }
-            if self.managed:
-                plan.update(
-                    managed=True,
-                    jobPath=str(folder / "job.json"),
-                    progressPath=str(folder / "progress.json"),
-                    peakPath=str(folder / "trident-peak.json"),
-                )
-            else:
-                from histopilot.workers.resource_reservation import preparation_resources
-
-                plan.update(
-                    resources=preparation_resources("extraction", options.model_dump()),
-                    validationCommand=[
-                        sys.executable,
-                        "-m",
-                        "histopilot.workers.verify_extraction",
-                        str(folder / "job.json"),
-                        str(folder / "validation.json"),
-                    ],
-                )
             _write(folder / "plan.json", plan)
-            if self.managed:
-                try:
-                    self._enqueue(job, folder, values, lane, preview["estimatedBytes"])
-                except (StorageError, OSError) as error:
-                    job["state"], job["error"] = (
-                        "failed",
-                        f"Could not queue the extraction in the Task Center: {error}",
-                    )
-                    _write(folder / "job.json", job)
-                return self.get(identity)
             try:
-                self.executor.launch(
-                    job["sessionName"],
-                    Path(trident.__file__).with_name("runner.py"),
-                    folder / "plan.json",
+                self._enqueue(job, folder, values, lane, preview["estimatedBytes"])
+            except (StorageError, OSError) as error:
+                job["state"], job["error"] = (
+                    "failed",
+                    f"Could not queue the extraction in the Task Center: {error}",
                 )
-                job["state"] = "running"
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                try:
-                    started = (
-                        self.executor.running(job["sessionName"])
-                        or live_process(folder)
-                        or (folder / "result.json").exists()
-                    )
-                except (OSError, RuntimeError, subprocess.SubprocessError):
-                    job["state"] = "starting"
-                    job["error"] = (
-                        "Launch acknowledgement was lost. Check worker status before retrying."
-                    )
-                else:
-                    if started:
-                        job["state"] = "running"
-                    else:
-                        job["state"], job["error"] = "failed", f"Could not start TRIDENT: {error}"
-            _write(folder / "job.json", job)
+                _write(folder / "job.json", job)
         return self.get(identity)
 
     def _enqueue(self, job: dict, folder: Path, values: dict, lane: str, estimated: int) -> None:
@@ -969,6 +893,7 @@ class ExtractionService:
         if task_records.managed_record(job):
             self._task_state(job, folder)
         elif (folder / "result.json").exists():
+            # A job from before the Task Center: its saved outcome, never its tmux session.
             result = _read(folder / "result.json")
             job["result"] = result
             job["state"] = result.get("state", "failed")
@@ -977,31 +902,8 @@ class ExtractionService:
                 job["error"] = result["error"]
             if job["state"] == "succeeded" or (folder / "validation.json").exists():
                 self._coverage(job)
-        elif (folder / "cancelled").exists():
-            job["state"] = (
-                "cancelling"
-                if self.executor.running(job["sessionName"]) or live_process(folder)
-                else "cancelled"
-            )
-        elif job["state"] in ACTIVE:
-            try:
-                if not self.executor.running(job["sessionName"]) and not live_process(folder):
-                    job["state"] = "interrupted"
-                    job["error"] = (
-                        "The tmux session ended without a completion record. Inspect the log, then preview a resume run."
-                    )
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                job["error"] = f"Cannot inspect worker status: {error}"
-        if (
-            not task_records.managed_record(job)
-            and job["state"] in {"starting", "running", "queued"}
-            and (folder / "resources.json").exists()
-        ):
-            reservation = _read(folder / "resources.json")
-            job["resourceReservation"] = reservation
-            if reservation.get("status") == "queued":
-                job["state"] = "queued"
-                job["waitingReason"] = reservation.get("waitingReason")
+        else:
+            job = task_records.legacy_state(job, ACTIVE)
         # Old workers need no restart: derive progress from their existing log.
         # Polling never opens slide tensors or rescans the output directory.
         log_warning = None
@@ -1131,36 +1033,17 @@ class ExtractionService:
     def _cancel(self, identity: str) -> dict:
         with writer_lock(self.store.folder):
             job = self.get(identity, include_inactive=True)
-            if task_records.managed_record(job):
-                return self._cancel_tasks(identity, job)
-            if (
-                job["state"] not in ACTIVE
-                and not self.executor.running(job["sessionName"])
-                and not live_process(self.folder / identity)
-            ):
-                return job
-            marker = self.folder / identity / "cancelled"
-            if not marker.exists():
-                ScientificStore._write_file(marker, b"cancelled\n")
-                fsync_directory(marker.parent)
-            # The standalone runner observes this durable marker and terminates its process group.
-            if not self.executor.running(job["sessionName"]):
-                process = live_process(marker.parent)
-                if process:
-                    # The original runner may have died. Reconcile the exact child identity
-                    # before signaling its group; PID reuse and reboots cannot target another job.
-                    try:
-                        os.killpg(process["pid"], signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-        return self.get(identity, logs=True, include_inactive=True)
+            if not task_records.managed_record(job):
+                task_records.refuse_legacy()
+            return self._cancel_tasks(identity, job)
 
     def resume(self, identity: str) -> dict:
         """Run a stopped Task Center extraction again: TRIDENT, then a fresh validation.
 
         TRIDENT skips slides whose outputs are complete, and every attempt first clears
-        the locks of dead writers, so this resumes where the last attempt stopped. Jobs
-        recorded before the Task Center resume through a new preview on the same output.
+        the locks of dead writers, so this resumes where the last attempt stopped. A job
+        recorded before the Task Center cannot resume; a new preview on its output folder
+        continues its work.
         """
         with lifecycle_guard(self.store.folder, timeout=5):
             LifecycleStore(self.store.folder, self.store.project_id).assert_usable(
@@ -1169,11 +1052,7 @@ class ExtractionService:
             with writer_lock(self.store.folder):
                 job = self.get(identity)
                 if not task_records.managed_record(job):
-                    raise StorageError(
-                        "Preview a resume run on the same output folder to continue this job.",
-                        "EXTRACTION_RESUME_UNSUPPORTED",
-                        409,
-                    )
+                    task_records.refuse_legacy()
                 if job["state"] in ACTIVE or job["state"] == "succeeded":
                     return job
                 # As at submit: the task's exclusive key serializes only identical folders,

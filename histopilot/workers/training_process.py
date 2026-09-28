@@ -1,4 +1,4 @@
-"""Durable batch metadata and a tmux boundary shared by API and training workers."""
+"""Durable batch metadata, host probes and worker process ownership for training."""
 
 import csv
 import hashlib
@@ -6,7 +6,6 @@ import json
 import math
 import os
 import platform
-import shlex
 import shutil
 import signal
 import subprocess
@@ -38,21 +37,6 @@ def host_snapshot() -> dict:
         "bootId": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
         "kernel": platform.release(),
     }
-
-
-def cpu_times() -> tuple[int, int] | None:
-    """Read aggregate Linux CPU ticks; guest time is already included in user/nice."""
-    try:
-        with Path("/proc/stat").open() as stream:
-            fields = stream.readline().split()
-        if not fields or fields[0] != "cpu":
-            return None
-        values = [int(value) for value in fields[1:9]]
-        if len(values) < 4 or any(value < 0 for value in values):
-            return None
-        return sum(values), values[3] + (values[4] if len(values) > 4 else 0)
-    except (OSError, ValueError, UnicodeError):
-        return None
 
 
 def gpu_snapshot() -> dict:
@@ -111,24 +95,6 @@ def cpu_slots_per_run(resources: dict) -> int:
     return resources["cpuThreadsPerRun"] + 2 * resources["dataLoaderWorkers"]
 
 
-def resource_plan(resources: dict, host: dict, run_count: int) -> dict:
-    cpu_slots = cpu_slots_per_run(resources)
-    cpu_limit = host["cpuCount"] // cpu_slots
-    ram_limit = int(host["availableRamGb"] // resources["ramGbPerRun"])
-    gpu_limit = len(resources["gpuIds"]) * resources["runsPerGpu"] or None
-    return {
-        "requestedConcurrency": resources["maxConcurrentRuns"],
-        "effectiveConcurrency": min(
-            resources["maxConcurrentRuns"], cpu_limit, ram_limit, gpu_limit or run_count, run_count
-        ),
-        "cpuSlotsPerRun": cpu_slots,
-        "cpuLimit": cpu_limit,
-        "ramLimit": ram_limit,
-        "gpuSlotLimit": gpu_limit,
-        "note": "Capacity ceiling before other HistoPilot leases. RAM is a requested reservation; GPU slots do not guarantee that bags fit in VRAM.",
-    }
-
-
 def append_event(path: Path, event: dict) -> None:
     """Flush each observation so an abrupt host loss leaves useful evidence."""
     _reject_symlink_components(path)
@@ -163,111 +129,6 @@ def classify_training_failure(message: str) -> str:
     ):
         return "cuda_device_failure"
     return "training_error"
-
-
-def process_tree_rss(pid: int) -> float:
-    """Observed RSS sum including loader children; shared pages can be counted twice."""
-    pending, visited, resident = [pid], set(), 0
-    while pending:
-        current = pending.pop()
-        if current in visited:
-            continue
-        visited.add(current)
-        try:
-            folder = Path(f"/proc/{current}")
-            for line in (folder / "status").read_text().splitlines():
-                if line.startswith("VmRSS:"):
-                    resident += int(line.split()[1]) * 1024
-            for children in (folder / "task").glob("*/children"):
-                pending.extend(int(value) for value in children.read_text().split())
-        except (OSError, ValueError):
-            continue  # Processes may finish during an observation.
-    return resident / 1024**3
-
-
-class ResourceTelemetry:
-    """Bounded-rate host/driver observations, independent of model and CUDA imports."""
-
-    interval_seconds = 15
-
-    def __init__(self, folder: Path):
-        self.folder = folder
-        self.last_observed = -float("inf")
-        self.previous_cpu = None
-
-    def cpu_utilization(self) -> float | None:
-        current, previous = cpu_times(), self.previous_cpu
-        self.previous_cpu = current
-        if current is None or previous is None:
-            return None
-        total, idle = current[0] - previous[0], current[1] - previous[1]
-        if total <= 0 or idle < 0 or idle > total:
-            return None  # Counters can reset; a new baseline is needed.
-        return round(100 * (total - idle) / total, 1)
-
-    def record(self, state: dict, *, force=False) -> dict | None:
-        current = time.monotonic()
-        if not force and current - self.last_observed < self.interval_seconds:
-            return None
-        self.last_observed = current
-        observation = {"at": now(), "host": host_snapshot(), **gpu_snapshot(), "runs": []}
-        observation["host"]["cpuUtilizationPercent"] = self.cpu_utilization()
-        for run in state["runs"]:
-            identity = run.get("process")
-            if run["status"] == "running" and process_alive(identity):
-                observation["runs"].append(
-                    {
-                        "runId": run["id"],
-                        "pid": identity["pid"],
-                        "rssGb": process_tree_rss(identity["pid"]),
-                    }
-                )
-        telemetry = state.setdefault("telemetry", {})
-        peak = telemetry.setdefault(
-            "peak",
-            {
-                "hostUsedRamGb": 0,
-                "runRssGb": {},
-                "gpuUsedMemoryGb": {},
-            },
-        )
-        host = observation["host"]
-        peak["hostUsedRamGb"] = max(
-            peak["hostUsedRamGb"], host["totalRamGb"] - host["availableRamGb"]
-        )
-        for run in observation["runs"]:
-            peak["runRssGb"][run["runId"]] = max(
-                peak["runRssGb"].get(run["runId"], 0), run["rssGb"]
-            )
-        for gpu in observation["gpus"]:
-            if gpu["usedMemoryGb"] is not None:
-                key = str(gpu["index"])
-                peak["gpuUsedMemoryGb"][key] = max(
-                    peak["gpuUsedMemoryGb"].get(key, 0), gpu["usedMemoryGb"]
-                )
-        path = self.folder / "telemetry.jsonl"
-        telemetry.update(path=str(path), intervalSeconds=self.interval_seconds, latest=observation)
-        append_event(path, observation)
-        return observation
-
-
-def device_health_failure(provenance: dict, observation: dict, gpu_ids: list[int]) -> str | None:
-    if not gpu_ids:
-        return None
-    if classify_training_failure(observation.get("gpuProbeError", "")) == "cuda_device_failure":
-        return "The GPU driver probe reported a device/driver failure."
-    if observation.get("gpuProbeError"):
-        return None  # Missing telemetry alone does not prove GPU loss.
-    prior = {gpu["index"]: gpu for gpu in provenance.get("gpus", [])}
-    current = {gpu["index"]: gpu for gpu in observation.get("gpus", [])}
-    for gpu_id in gpu_ids:
-        if gpu_id not in prior:
-            continue
-        if gpu_id not in current:
-            return f"GPU {gpu_id} disappeared from the driver inventory."
-        if any(prior[gpu_id][key] != current[gpu_id][key] for key in ("uuid", "driverVersion")):
-            return f"GPU {gpu_id} or its driver changed while the batch was running."
-    return None
 
 
 def compute_snapshot() -> dict:
@@ -448,16 +309,6 @@ def process_identity(pid: int | None = None) -> dict:
     }
 
 
-def process_alive(value: dict | None) -> bool:
-    if not value or type(value.get("pid")) is not int or value["pid"] <= 1:
-        return False
-    try:
-        fields = Path(f"/proc/{value['pid']}/stat").read_text().rsplit(")", 1)[1].split()
-        return fields[0] != "Z" and process_identity(value["pid"]) == value
-    except (OSError, ValueError, IndexError):
-        return False
-
-
 def confirmed_process_alive(value: dict | None) -> bool:
     """Distinguish a stopped worker from unreadable process ownership evidence."""
     if value is None:
@@ -589,43 +440,3 @@ def save_state(folder: Path, state: dict) -> None:
     state["updatedAt"] = now()
     state["runCounts"] = counts(state["runs"])
     write_json(folder / "state.json", state)
-
-
-class TmuxTrainingExecutor:
-    def available(self):
-        return shutil.which("tmux") is not None
-
-    def running(self, session: str) -> bool:
-        if not self.available():
-            return False
-        result = subprocess.run(
-            ["tmux", "has-session", "-t", f"={session}"], capture_output=True, timeout=10
-        )
-        if result.returncode and b"Operation not permitted" in result.stderr:
-            raise RuntimeError("Cannot inspect training tmux sessions: permission denied.")
-        return result.returncode == 0
-
-    def launch(self, session: str, python: str, plan: Path, log: Path, *, package_root: Path):
-        subprocess.run(["tmux", "ls"], capture_output=True, timeout=10)
-        if self.running(session):
-            raise StorageError("This training session already exists.", "TRAINING_ACTIVE")
-        _reject_symlink_components(log)
-        command = "cd " + shlex.quote(str(package_root)) + " && "
-        command += shlex.join(
-            [
-                "env",
-                "PYTHONDONTWRITEBYTECODE=1",
-                python,
-                "-u",
-                "-m",
-                "histopilot.workers.train_batch",
-                str(plan),
-            ]
-        )
-        command += " >> " + shlex.quote(str(log)) + " 2>&1"
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session, command],
-            capture_output=True,
-            check=True,
-            timeout=15,
-        )

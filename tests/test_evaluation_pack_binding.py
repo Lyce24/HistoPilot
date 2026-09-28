@@ -5,9 +5,9 @@ import runpy
 from pathlib import Path
 
 import pytest
+from support.evaluation import packing_service, run_packing
 
 from histopilot.application.feature_bundles import FeatureBundleService
-from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.predictors import feature_contract, reference
 from histopilot.schemas.feature_bundles import FeatureBundleSpec
 from histopilot.schemas.feature_packs import FeaturePackSpec
@@ -15,7 +15,6 @@ from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.pack_import import _layout
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.compute_job import verify_plan_inputs
-from histopilot.workers.pack_features import run_job
 
 support = runpy.run_path(str(Path(__file__).with_name("test_evaluations.py")))
 
@@ -30,11 +29,11 @@ def packed_evaluation(tmp_path):
     )
     feature = store.get_configuration(initial["manifest"]["feature"]["id"])
     filesystem = LocalFilesystem((tmp_path,))
-    packing = FeaturePackService(store, filesystem, support["FakeExecutor"]())
+    packing = packing_service(store, filesystem)
     spec = FeaturePackSpec(featureSetId=feature["id"], action="pack", dtype="float16",
                            outputPath=str(tmp_path / "second-pack"))
     job = packing.submit(spec, packing.preview(spec)["previewHash"], "second-pack")
-    result = run_job(packing.folder / job["id"] / "plan.json")
+    result = run_packing(packing, job)
     assert result["state"] == "succeeded"
     selected = result["artifact"]
     assert selected["id"] != first_id

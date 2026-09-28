@@ -501,7 +501,7 @@ class MilFoldAdapter(Adapter):
         try:
             probed = runtime(python=python, refresh=refresh)
             # Versions are known once the interpreter answered, even if a later
-            # requirement (tmux for legacy batches) marked the runtime unavailable.
+            # requirement marked the runtime unavailable.
             if probed.get("available") or probed.get("versions"):
                 versions = probed.get("versions") or {}
             else:

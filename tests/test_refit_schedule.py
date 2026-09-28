@@ -1,7 +1,7 @@
 """A refit trains for its epoch budget along the fold models' own learning-rate schedule."""
 
 import pytest
-from test_experiment_predictors import integrated as integrated
+from test_experiment_predictors import managed as managed
 from test_experiment_predictors import registry as registry
 
 from histopilot.schemas.development import TrainingRecipe
@@ -10,11 +10,11 @@ torch = pytest.importorskip("torch")
 
 from histopilot.training import refit as refit_module  # noqa: E402
 
-__all__ = ["integrated", "registry"]
+__all__ = ["managed", "registry"]
 
 
-def test_refit_budget_records_the_fold_schedule(integrated):
-    service, identity, _jobs, _executor, _selections = integrated
+def test_refit_budget_records_the_fold_schedule(managed):
+    service, identity, _jobs, _selections = managed
     service.launch(identity, "start")
     items = [row for row in service.advance(identity)["items"] if row["method"] == "refit"]
     assert items

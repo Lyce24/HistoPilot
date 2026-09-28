@@ -3,10 +3,10 @@
 Run as ``python -m histopilot.workers.pack_features /absolute/job/plan.json``.
 The absolute script entry point also works from an unrelated working directory.
 
-As a Task Center task (``HISTOPILOT_TASK_MANAGED=1``) the worker takes no resource lease
-and no legacy output claim: the output lock alone guards the destination. A busy output
-exits 75 (EX_TEMPFAIL) without a receipt so the task is requeued, and the receipt names
-the task attempt that wrote it.
+It runs as a Task Center task (``HISTOPILOT_TASK_MANAGED=1``): the runner holds its
+resource lease and the output lock alone guards the destination. A busy output exits 75
+(EX_TEMPFAIL) without a receipt so the task is requeued, and the receipt names the task
+attempt that wrote it.
 """
 
 import json
@@ -27,13 +27,7 @@ from histopilot.application.features import FeatureService
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError, _reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.packing_process import (
-    output_lock,
-    process_metadata,
-    registry_lock,
-    write_json,
-)
-from histopilot.workers.resource_reservation import preparation_resources, reserve_preparation
+from histopilot.workers.packing_process import output_lock, process_metadata, write_json
 
 BUSY_EXIT = 75  # EX_TEMPFAIL: the output is in use; the Task Center retries later
 
@@ -144,11 +138,7 @@ def _run_job(plan_path: Path) -> dict:
             redirect_stdout(log),
             redirect_stderr(log),
         ):
-            reservation_stack = ExitStack()
             try:
-                reservation_stack.enter_context(reserve_preparation(
-                    folder, "packing", preparation_resources("packing"), cancelled,
-                ))
                 from histopilot.storage.pack_import import pack_file_stamps, verify_existing_pack
                 from histopilot.storage.packed import (
                     PackingCancelled,
@@ -173,17 +163,8 @@ def _run_job(plan_path: Path) -> dict:
                     if plan["spec"]["action"] == "pack":
                         output = Path(plan["spec"]["outputPath"])
                         _reject_symlink_components(output)
-                        if plan.get("claimPath"):
-                            with registry_lock():
-                                claim = json.loads(
-                                    ScientificStore._read_file(Path(plan["claimPath"]), 65536)
-                                )
-                                if claim.get("jobId") != plan["jobId"]:
-                                    raise ValueError("Output reservation belongs to another job.")
-                                stack.enter_context(output_lock(output))
-                        else:
-                            # Task Center jobs: the process-held lock alone guards the output.
-                            stack.enter_context(output_lock(output))
+                        # The process-held lock alone guards the output.
+                        stack.enter_context(output_lock(output))
                         artifact = build_pack(
                             configuration,
                             output,
@@ -234,7 +215,6 @@ def _run_job(plan_path: Path) -> dict:
                     result["error"] = str(error)
                     traceback.print_exc()
             finally:
-                reservation_stack.close()
                 if busy is None:
                     result["finishedAt"] = _now()
                     write_json(result_path, result)

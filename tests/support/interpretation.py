@@ -33,9 +33,7 @@ def runtime():
 
 def managed_jobs(store, center):
     """Compute jobs that queue in ``center``, as production launches them."""
-    return ComputeJobService(
-        store, runtime=runtime, execution_mode="task-center", task_center=center.client
-    )
+    return ComputeJobService(store, runtime=runtime, task_center=center.client)
 
 
 def compute_tasks(center, **filters):
@@ -94,9 +92,7 @@ def managed_packing(store, filesystem, center):
     """Feature validation and packing jobs that queue in ``center``."""
     from histopilot.application.feature_packs import FeaturePackService
 
-    return FeaturePackService(
-        store, filesystem, execution_mode="task-center", task_center=center.client
-    )
+    return FeaturePackService(store, filesystem, task_center=center.client)
 
 
 def run_pack(packing, job, center):

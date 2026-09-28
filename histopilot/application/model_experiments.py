@@ -1152,11 +1152,7 @@ class ModelExperimentService:
                         for batch in batches
                     },
                     "error": None,
-                    **(
-                        {"executionMode": "task-center"}
-                        if getattr(self.training, "mode", None) == "task-center"
-                        else {}
-                    ),
+                    "executionMode": "task-center",
                     "experiment": {
                         "id": identity,
                         "revision": experiment_record["revision"],

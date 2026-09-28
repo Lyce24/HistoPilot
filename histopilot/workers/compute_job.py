@@ -1,7 +1,8 @@
-"""One persistent refit/evaluation worker, sharing training resource reservations.
+"""One persistent refit, evaluation or interpretation worker, run as a Task Center task.
 
-Under the Task Center (``HISTOPILOT_TASK_MANAGED=1``) the runner owns admission and the
-resource lease; the worker only checks that the record is still assigned to its task.
+The runner owns admission and the resource lease and chooses the GPU
+(``HISTOPILOT_TASK_GPU``). Under the Task Center (``HISTOPILOT_TASK_MANAGED=1``) the worker
+also checks that the record is still assigned to its task and follows the busy contract.
 """
 
 import os
@@ -17,9 +18,8 @@ from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.compute_archive import prepare_compute_archive
 from histopilot.workers.packing_process import output_lock, write_json
-from histopilot.workers.train_batch import _capacity, _check_inputs, _leases, available_device
+from histopilot.workers.train_batch import _check_inputs
 from histopilot.workers.training_process import (
-    cpu_slots_per_run,
     now,
     process_identity,
     read_json,
@@ -186,7 +186,6 @@ def verify_plan_inputs(plan):
 def execute(path):
     path = Path(path).absolute()
     folder = path.parent
-    lease_path = None
     managed = _managed()
     state = read_json(folder / "state.json")
     plan = read_json(path)
@@ -230,40 +229,11 @@ def execute(path):
             )
             write_json(folder / "state.json", state)
             resources = plan["resources"]
-            if managed:
-                # The runner admitted this task and holds its lease; it chose the device.
-                if (folder / "cancel.requested").exists():
-                    raise KeyboardInterrupt("Compute cancellation requested.")
-                assigned = os.environ.get("HISTOPILOT_TASK_GPU", "")
-                gpu = int(assigned) if assigned else None
-            else:
-                while True:
-                    if (folder / "cancel.requested").exists():
-                        raise KeyboardInterrupt("Compute cancellation requested.")
-                    with _leases() as (registry, active):
-                        available, gpu = available_device(resources, active, _capacity())
-                        if available:
-                            lease_path = registry / f"lease-{os.getpid()}.json"
-                            write_json(
-                                lease_path,
-                                {
-                                    "process": state["process"],
-                                    "processGroupId": os.getpid(),
-                                    "gpu": gpu,
-                                    "cpus": cpu_slots_per_run(resources),
-                                    "ramGb": resources["ramGbPerRun"],
-                                    "runsPerGpu": resources["runsPerGpu"],
-                                    "batchId": plan["recordId"],
-                                    "runId": plan["recordId"],
-                                },
-                            )
-                            break
-                    state.update(
-                        waitingReason="Waiting for requested CPU, RAM, or GPU capacity.",
-                        updatedAt=now(),
-                    )
-                    write_json(folder / "state.json", state)
-                    time.sleep(1)
+            # The runner admitted this task and holds its lease; it chose the device.
+            if (folder / "cancel.requested").exists():
+                raise KeyboardInterrupt("Compute cancellation requested.")
+            assigned = os.environ.get("HISTOPILOT_TASK_GPU", "")
+            gpu = int(assigned) if assigned else None
             os.environ.update(
                 CUDA_VISIBLE_DEVICES="" if gpu is None else str(gpu),
                 OMP_NUM_THREADS=str(resources["cpuThreadsPerRun"]),
@@ -277,7 +247,6 @@ def execute(path):
                 state.update(status="queued", updatedAt=now())
                 write_json(folder / "state.json", state)
                 raise
-            state.pop("waitingReason", None)
             state.update(status="running", gpu=gpu, updatedAt=now())
             write_json(folder / "state.json", state)
             execution = {**plan, "device": "cpu" if gpu is None else "cuda"}
@@ -320,20 +289,15 @@ def execute(path):
                 result=None,
             )
         finally:
-            cleaned = False
             try:
                 if state.get("process"):
                     stop_owned_processes(state["process"], exclude_pid=os.getpid())
-                cleaned = True
             except Exception as error:
                 traceback.print_exc()
                 state.update(status="failed", error=str(error), result=None)
             if not busy:
                 state.update(updatedAt=now())
                 write_json(folder / "state.json", state)
-            if lease_path and cleaned:
-                with _leases():
-                    lease_path.unlink(missing_ok=True)
     return state
 
 

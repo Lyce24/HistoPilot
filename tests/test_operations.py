@@ -2,12 +2,8 @@
 
 import hashlib
 import json
-import os
 import stat
-import subprocess
-import sys
 import zipfile
-from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -31,7 +27,7 @@ from histopilot.schemas.operations import PortabilityRequest, RelinkSource
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter.adapters.archive import ArchiveAdapter
-from histopilot.workers import resource_reservation as reservations
+from histopilot.workers.packing_process import write_json
 from histopilot.workers.portability import run
 
 
@@ -228,21 +224,8 @@ def test_authenticated_operations_api_executes_archive_worker(project, task_cent
     ).status_code in {401, 403}
 
 
-class InlineExecutor:
-    def available(self):
-        return True
-
-    def running(self, _session):
-        return False
-
-    def launch(self, _session, _runner, plan):
-        run(plan)
-
-
 def archive_jobs(projects, task_center):
-    return PortabilityJobs(
-        projects, projects.storage, execution_mode="task-center", task_center=task_center.client
-    )
+    return PortabilityJobs(projects, projects.storage, task_center=task_center.client)
 
 
 def test_durable_archive_submission_is_idempotent_and_isolated(project, task_center):
@@ -292,29 +275,6 @@ def test_a_retry_after_a_lost_conclusion_keeps_the_completed_receipt(project, ta
     assert result["error"] is None
 
 
-@pytest.mark.legacy_tmux
-def test_lost_launch_acknowledgement_does_not_clobber_completed_receipt(project):
-    # Queueing a task has no launch acknowledgement to lose; a completed receipt whose
-    # conclusion was lost is test_a_retry_after_a_lost_conclusion_keeps_the_completed_receipt.
-    store, projects, _, _ = project
-
-    class LostAcknowledgement(InlineExecutor):
-        def launch(self, _session, _runner, plan):
-            run(plan)
-            raise RuntimeError("Response lost after worker completed")
-
-    jobs = PortabilityJobs(projects, projects.storage, executor=LostAcknowledgement())
-    request = PortabilityRequest(
-        action="export",
-        archivePath=str(projects.database.workspace / "study.zip"),
-        operationId="lost-ack",
-    )
-    result = jobs.submit(store.project_id, request)
-    assert result["status"] == "completed"
-    assert result["result"]["verified"]
-    assert result["error"] is None
-
-
 def test_archive_cancel_retry_and_active_request_coalescing_survive_reconnect(
     project, task_center
 ):
@@ -350,6 +310,36 @@ def test_archive_cancel_retry_and_active_request_coalescing_survive_reconnect(
     assert retried["task"]["attempt"] == 2
 
 
+def test_an_archive_operation_from_before_the_task_center_is_read_only(project, task_center):
+    store, projects, _, _ = project
+    jobs = archive_jobs(projects, task_center)
+    request = PortabilityRequest(
+        action="export",
+        archivePath=str(projects.database.workspace / "study.zip"),
+        operationId="legacy-archive",
+    )
+    job = jobs.submit(store.project_id, request)
+    folder = jobs._folder(job["id"])
+    # Model an operation started in tmux: its record names no Task Center task.
+    saved = json.loads((folder / "state.json").read_text())
+    for key in ("executionMode", "taskId", "ownerKey"):
+        saved.pop(key)
+    saved.update(status="running", sessionName="histopilot-archive-0123456789abcdef0123")
+    write_json(folder / "state.json", saved)
+    view = jobs.get(store.project_id, job["id"])
+    assert view["status"] == "interrupted" and "executor" not in view
+    assert "Created before the Task Center" in view["error"]
+    for action in (jobs.cancel, jobs.retry):
+        with pytest.raises(StorageError) as refused:
+            action(store.project_id, job["id"])
+        assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
+    assert json.loads((folder / "state.json").read_text()) == saved
+    assert not (folder / "cancel.requested").exists()
+    # A finished one shows exactly its saved record.
+    write_json(folder / "state.json", {**saved, "status": "completed"})
+    assert jobs.get(store.project_id, job["id"]) == {**saved, "status": "completed"}
+
+
 def test_export_recovers_publication_after_worker_receipt_was_lost(project):
     store, projects, _, _ = project
     archive = projects.database.workspace / "study.zip"
@@ -377,20 +367,48 @@ def test_export_destination_race_preserves_other_file(project):
     assert archive.read_bytes() == b"another operation owns this file"
 
 
-@pytest.mark.legacy_tmux
-def test_standalone_restore_works_when_original_project_is_gone(project):
-    # archive_cli.launch_archive_recovery launches through tmux only; no Task Center test
-    # covers it. Restoring itself is test_archive_roundtrip_preserves_scientific_data_and_reviews.
+def test_standalone_restore_works_when_original_project_is_gone(project, task_center):
     store, projects, _, _ = project
     archive = projects.database.workspace / "study.zip"
     StudyPortability(store, projects.storage).export(str(archive))
     store.folder.rename(store.folder.with_name("unregistered-original"))
     destination = projects.database.workspace / "restored"
     settings = Settings(workspace=projects.database.workspace, data_roots=projects.storage.roots)
-    submitted = launch_archive_recovery(settings, archive, destination, executor=InlineExecutor())
-    state = json.loads(Path(submitted["statePath"]).read_text())
+    submitted = launch_archive_recovery(
+        settings, archive, destination, task_center=task_center.client
+    )
+    # Queued in the Task Center like any archive operation, without a registered project.
+    assert submitted["status"] == "queued" and submitted["executionMode"] == "task-center"
+    task = task_center.task(submitted["taskId"])
+    assert (task["kind"], task["labels"]["action"]) == ("archive", "restore")
+    assert task_center.store.owner(task["ownerKey"])["kind"] == "archive"
+    state = run_archive(task_center.store, submitted)
     assert state["status"] == "completed", state
+    assert json.loads(Path(submitted["statePath"]).read_text())["status"] == "completed"
     assert projects.open(str(destination))["id"] == store.project_id
+
+
+def test_recovery_commands_queue_in_the_task_center_and_wake_the_runner(project, monkeypatch):
+    from typer.testing import CliRunner
+
+    from histopilot.cli import app
+    from histopilot.taskcenter import launcher
+    from histopilot.taskcenter.client import default_client
+
+    store, projects, _, data = project
+    archive = data / "study.zip"
+    StudyPortability(store, projects.storage).export(str(archive))
+    woken = []
+    monkeypatch.setattr(launcher, "ensure_runner", lambda: woken.append(1) or {"started": True})
+    arguments = ["--workspace", str(projects.database.workspace), "--data-root", str(data)]
+    result = CliRunner().invoke(app, ["verify-study", str(archive), *arguments])
+    assert result.exit_code == 0, result.output
+    assert "histopilot runner status" in result.output and "tmux attach" not in result.output
+    assert woken == [1]
+    [task] = default_client().store.list(kinds=("archive",), limit=None)
+    assert task["state"] == "queued" and task["labels"]["action"] == "verify"
+    missing = CliRunner().invoke(app, ["verify-study", str(data / "absent.zip"), *arguments])
+    assert missing.exit_code != 0
 
 
 def test_unified_inventory_includes_host_capacity(project):
@@ -399,102 +417,3 @@ def test_unified_inventory_includes_host_capacity(project):
     assert result["projectId"] == store.project_id
     assert result["capacity"]["cpus"] > 0
     assert result["jobs"] == []
-
-
-@pytest.mark.legacy_tmux
-def test_preparation_reservations_hold_all_requested_gpus_atomically(tmp_path, monkeypatch):
-    # The self-lease of a tmux worker; the runner admits a task on one GPU instead:
-    # test_gpu_extraction_requests_vram_and_runs_on_the_admitted_device.
-    registry = tmp_path / "leases"
-    registry.mkdir()
-    job = tmp_path / "job"
-    job.mkdir()
-    observations = []
-    attempts = 0
-
-    @contextmanager
-    def leases():
-        nonlocal attempts
-        attempts += 1
-        active = [{"gpu": 1, "cpus": 2, "ramGb": 1, "runsPerGpu": 1}] if attempts == 1 else []
-        yield registry, active
-
-    def sleep(_seconds):
-        observations.append(list(registry.glob("lease-*.json")))
-
-    monkeypatch.setattr(reservations, "_leases", leases)
-    monkeypatch.setattr(reservations, "_capacity", lambda: (32, 64))
-    monkeypatch.setattr(reservations.time, "sleep", sleep)
-    resources = reservations.preparation_resources("extraction", {"gpus": [0, 1], "max_workers": 0})
-    with reservations.reserve_preparation(job, "extraction", resources, lambda: False):
-        saved = [json.loads(path.read_text()) for path in registry.glob("lease-*.json")]
-        assert sorted(row["gpu"] for row in saved) == [0, 1]
-        assert sum(row["cpus"] for row in saved) == 2
-        assert sum(row["ramGb"] for row in saved) == 8
-        assert all(row["supervisor"]["pid"] == os.getpid() for row in saved)
-    assert observations == [[]]
-    assert not list(registry.glob("lease-*.json"))
-    assert json.loads((job / "resources.json").read_text())["status"] == "released"
-
-
-@pytest.mark.legacy_tmux
-def test_preparation_wait_honors_cancellation_without_leaking_lease(tmp_path, monkeypatch):
-    # A tmux worker waiting for its self-lease; a task waiting for capacity is cancelled
-    # before it starts: test_packing_cancel_from_the_stage_records_cancelled.
-    registry = tmp_path / "leases"
-    registry.mkdir()
-    job = tmp_path / "job"
-    job.mkdir()
-    cancelled = False
-
-    @contextmanager
-    def leases():
-        yield registry, [{"gpu": None, "cpus": 8, "ramGb": 1, "runsPerGpu": 1}]
-
-    def sleep(_seconds):
-        nonlocal cancelled
-        cancelled = True
-
-    monkeypatch.setattr(reservations, "_leases", leases)
-    monkeypatch.setattr(reservations, "_capacity", lambda: (8, 64))
-    monkeypatch.setattr(reservations.time, "sleep", sleep)
-    with pytest.raises(ValueError, match="Cancelled"):
-        with reservations.reserve_preparation(
-            job, "packing", reservations.preparation_resources("packing"), lambda: cancelled
-        ):
-            pytest.fail("A blocked job must not execute")
-    assert not list(registry.glob("lease-*.json"))
-
-
-@pytest.mark.legacy_tmux
-def test_managed_extraction_supervisor_runs_both_phases_and_releases_resources(tmp_path):
-    # The tmux plan: TRIDENT then validation in one supervisor under a self-lease. Tasks
-    # run them as two: test_extraction_and_validation_run_through_the_runner.
-    from histopilot.adapters.trident import runner
-
-    plan = {
-        "command": [sys.executable, "-c", "print('extraction complete')"],
-        "validationCommand": [sys.executable, "-c", "print('validation complete')"],
-        "resultPath": str(tmp_path / "result.json"),
-        "processPath": str(tmp_path / "process.json"),
-        "logPath": str(tmp_path / "worker.log"),
-        "cancelPath": str(tmp_path / "cancelled"),
-        "resources": {
-            "gpuIds": [],
-            "cpuThreadsPerRun": 1,
-            "dataLoaderWorkers": 0,
-            "ramGbPerRun": 0.01,
-            "runsPerGpu": 1,
-            "maxConcurrentRuns": 1,
-        },
-    }
-    path = tmp_path / "plan.json"
-    path.write_text(json.dumps(plan))
-    result = subprocess.run(
-        [sys.executable, runner.__file__, str(path)], capture_output=True, text=True, timeout=30
-    )
-    assert result.returncode == 0, result.stderr
-    assert json.loads((tmp_path / "result.json").read_text())["state"] == "succeeded"
-    assert json.loads((tmp_path / "resources.json").read_text())["status"] == "released"
-    log = (tmp_path / "worker.log").read_text()
-    assert "extraction complete" in log and "validation complete" in log

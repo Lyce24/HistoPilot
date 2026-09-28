@@ -23,20 +23,6 @@ from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 
-
-class FakeExecutor:
-    """A tmux stand-in, still imported by modules on the legacy path."""
-
-    def available(self):
-        return True
-
-    def running(self, session):
-        return False
-
-    def launch(self, session, runner, plan):
-        pass
-
-
 TARGET = {
     "field": "label",
     "task": "binary_classification",

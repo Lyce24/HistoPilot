@@ -1,15 +1,11 @@
-"""Durable CPU worker execution and cross-project output ownership."""
+"""Durable worker metadata, cross-project output locks and their registry housekeeping."""
 
 import fcntl
 import hashlib
 import json
 import os
 import re
-import shlex
-import shutil
 import stat
-import subprocess
-import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -128,13 +124,13 @@ def _older_than(path: Path, seconds: float, now: float) -> bool:
 
 
 def _claim_finished(claim: dict, now: float, max_age: float, claim_path: Path) -> bool:
-    """Whether a legacy output claim no longer protects a running job.
+    """Whether an output claim of a pre-Task Center packing job no longer protects it.
 
-    A claim protects its job while the job's worker process lives, or while the job has
-    neither a receipt nor a cancel marker and the claim is younger than ``max_age``
-    (a launch whose worker has not recorded itself yet, or whose tmux session this sweep
-    does not inspect). Published packs need no claim: their folders are non-empty and
-    new outputs inside or around them are refused.
+    Older checkouts wrote a claim per tmux job. A claim protects its job while the job's
+    worker process lives, or while the job has neither a receipt nor a cancel marker and
+    the claim is younger than ``max_age`` (a launch whose worker has not recorded itself
+    yet). Published packs need no claim: their folders are non-empty and new outputs
+    inside or around them are refused.
     """
     job_path = claim.get("jobPath")
     if not isinstance(job_path, str) or not job_path.startswith("/"):
@@ -185,8 +181,8 @@ def sweep_registry(
 ) -> dict:
     """Remove finished or dead output claims and idle, old lock files from the registry.
 
-    New packing jobs are Task Center tasks and write no claims; this only drains what
-    legacy jobs and old test runs left behind. Malformed claims are tolerated (removed
+    Packing jobs are Task Center tasks and write no claims; this only drains what jobs
+    of older checkouts and old test runs left behind. Malformed claims are tolerated (removed
     once old) instead of blocking packing machine-wide. Claims are checked in small
     batches under the registry lock, so submissions are never held up for long. Stops
     after ``budget_seconds``; the next sweep continues.
@@ -271,56 +267,3 @@ def write_json(path: Path, value: dict) -> None:
         fsync_directory(path.parent)
     finally:
         Path(temporary).unlink(missing_ok=True)
-
-
-class TmuxScriptExecutor:
-    """Legacy launch path: ``python -u SCRIPT PLAN`` in a detached tmux session.
-
-    Records created before the Task Center keep this executor for status and cancel;
-    new extraction, packing and archive jobs are Task Center tasks.
-    """
-
-    label = "worker"
-    append_output = False  # redirect output to ``worker.log`` beside the plan
-
-    def available(self) -> bool:
-        return shutil.which("tmux") is not None
-
-    def running(self, session: str) -> bool:
-        if not self.available():
-            return False
-        result = subprocess.run(
-            ["tmux", "has-session", "-t", f"={session}"], capture_output=True, timeout=10
-        )
-        if result.returncode and b"Operation not permitted" in result.stderr:
-            raise RuntimeError("Cannot inspect tmux sessions: permission denied.")
-        return result.returncode == 0
-
-    def launch(self, session: str, runner: Path, plan: Path) -> None:
-        # Inspect existing sessions first, including after an interrupted submission.
-        subprocess.run(["tmux", "ls"], capture_output=True, timeout=10)
-        if self.running(session):
-            raise RuntimeError(f"This {self.label} session already exists.")
-        # Execute the script by absolute path; it establishes the checkout import root.
-        command = shlex.join([sys.executable, "-u", str(runner), str(plan)])
-        if self.append_output:
-            command += " >> " + shlex.quote(str(Path(plan).parent / "worker.log")) + " 2>&1"
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session, command],
-            capture_output=True,
-            check=True,
-            timeout=15,
-        )
-
-    def cancel(self, session: str) -> None:
-        if self.running(session):
-            subprocess.run(
-                ["tmux", "kill-session", "-t", f"={session}"],
-                capture_output=True,
-                check=True,
-                timeout=10,
-            )
-
-
-class TmuxPackingExecutor(TmuxScriptExecutor):
-    label = "packing"

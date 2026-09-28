@@ -46,20 +46,6 @@ def runtime():
     }
 
 
-class LegacyExecutor:
-    """Stands in for tmux: records launches, reports sessions it started as running."""
-
-    def __init__(self):
-        self.sessions, self.calls = set(), []
-
-    def running(self, session):
-        return session in self.sessions
-
-    def launch(self, session, python, plan, log, *, package_root):
-        self.sessions.add(session)
-        self.calls.append((session, python, plan, log, package_root))
-
-
 class Center(TaskCenter):
     """This test's Task Center; its runners see a host without GPUs."""
 
@@ -91,9 +77,7 @@ def job(tmp_path, center):
         manifest={"kind": "model-evaluation", "name": "Test", "datasetId": dataset["id"]},
         operation_id="record",
     )
-    service = ComputeJobService(
-        store, runtime=runtime, execution_mode="task-center", task_center=center.client
-    )
+    service = ComputeJobService(store, runtime=runtime, task_center=center.client)
     plan = {
         "kind": "evaluation",
         "resources": {
@@ -281,7 +265,7 @@ def test_compute_submissions_wake_a_stopped_runner_and_report_it(job, center, mo
     state = service.launch(identity, plan, "launch")
     assert calls == []
     task_id = state["taskId"]
-    served = ComputeJobService(service.store, runtime=runtime, execution_mode="task-center")
+    served = ComputeJobService(service.store, runtime=runtime)
     center.store.transition(task_id, from_states="queued", to_state="interrupted")
     served.launch(identity, plan, "resume", resume=True)
     assert calls == [1]
@@ -884,7 +868,6 @@ def refit(tmp_path, center, monkeypatch):
     jobs = ComputeJobService(
         predictors.store,
         runtime=lambda: {**runtime(), "host": None},
-        execution_mode="task-center",
         task_center=center.client,
     )
     refits, record, _ = support["create"](predictors, selection, jobs)
@@ -1020,9 +1003,9 @@ def coordinator(tmp_path, center):
     from histopilot.application.experiment_predictors import ExperimentPredictorService
 
     support = runpy.run_path(str(HERE / "test_experiment_predictors.py"))
-    # The integrated fixture's project and collaborators, without its executor.
-    base, identity, *_ = support["integrated"].__wrapped__(
-        support["registry"].__wrapped__(tmp_path)
+    # The managed fixture's project and collaborators, queued in this test's Task Center.
+    base, identity, *_ = support["managed"].__wrapped__(
+        support["registry"].__wrapped__(tmp_path), center
     )
     service = ExperimentPredictorService(
         base.store,
@@ -1030,7 +1013,6 @@ def coordinator(tmp_path, center):
         training=base.training,
         refits=base.refits,
         runtime=base.runtime,
-        execution_mode="task-center",
         task_center=center.client,
     )
     return service, identity, tmp_path
@@ -1177,7 +1159,6 @@ def test_a_coordinator_submission_wakes_the_runner_and_reports_it(coordinator, c
     calls = []
     monkeypatch.setattr(launcher, "ensure_runner", lambda: calls.append(1) or {"started": True})
     service.executor = TaskCenterExperimentExecutor()
-    service._task_center = None
     service.launch(identity, "start")
     assert calls == [1]
     status = service.status(identity)
@@ -1216,7 +1197,7 @@ def bulk(tmp_path, monkeypatch, center):
     monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", runtime)
     evaluations = EvaluationRunService(predictors.store, predictors.filesystem)
     evaluations.jobs = ComputeJobService(
-        evaluations.store, runtime=runtime, execution_mode="task-center", task_center=center.client
+        evaluations.store, runtime=runtime, task_center=center.client
     )
     service = BulkEvaluationService(evaluations.store, evaluations.filesystem, evaluations)
     service.background = True
@@ -1396,41 +1377,70 @@ def test_orchestration_tasks_see_the_hosts_gpus_on_the_cpu_lane(tmp_path):
     assert spawned(compute_module.host_gpu_argv(probe), "restored") == "None"
 
 
-# -- Records launched before the Task Center, on their tmux executor ---------------------------
+# -- Records and archives from before the Task Center ------------------------------------------
 
 
-@pytest.mark.legacy_tmux
-def test_legacy_records_and_archives_keep_the_tmux_worker(job, center, monkeypatch):
+def legacy_compute_record(service, identity, plan, status):
+    """A job launched before the Task Center: its state names no executor or task."""
+    service.launch(identity, plan, "launch")
+    folder = service.folder(identity)
+    saved = read_json(folder / "state.json")
+    for key in ("executor", "taskId", "taskAttempt"):
+        saved.pop(key)
+    saved.update(status=status, sessionName="hp-evaluation-0123456789abcdef")
+    if status == "completed":
+        saved["result"] = {"runId": identity, "state": "succeeded"}
+        write_json(folder / "result.json", saved["result"])
+    write_json(folder / "state.json", saved)
+    return folder, saved
+
+
+@pytest.mark.parametrize("status", ["running", "completed"])
+def test_a_compute_job_from_before_the_task_center_is_read_only(job, center, status):
     service, identity, plan = job
-    # A record first launched before the Task Center ...
-    legacy = LegacyExecutor()
-    ComputeJobService(service.store, executor=legacy, runtime=runtime).launch(
-        identity, plan, "legacy-launch"
-    )
-    state = read_json(service.folder(identity) / "state.json")
-    assert "executor" not in state and state["sessionName"].startswith("hp-evaluation-")
-    service.legacy_executor = legacy
-    assert service.status(identity)["executor"] == "tmux"
-    assert service.status(identity)["status"] == "queued"
-    legacy.sessions.clear()
-    assert service.status(identity)["status"] == "interrupted"
-    # ... resumes from its pinned archive, which predates the Task Center protocol.
+    folder, saved = legacy_compute_record(service, identity, plan, status)
+    view = service.status(identity)
+    assert view["executor"] == "tmux" and view["liveProcesses"] == []
+    assert "task" not in view
+    if status == "completed":
+        assert view["status"] == "completed" and view["result"] == saved["result"]
+    else:
+        # Nothing runs it any more, and its tmux session is never looked for.
+        assert view["status"] == "interrupted"
+        assert "Created before the Task Center" in view["error"]
+    for action in (
+        lambda: service.launch(identity, plan, "resume", resume=True),
+        lambda: service.launch(identity, plan, "again"),
+        lambda: service.cancel(identity, "cancel"),
+    ):
+        with pytest.raises(StorageError) as refused:
+            action()
+        assert (refused.value.code, refused.value.status_code) == (
+            "CREATED_BEFORE_TASK_CENTER",
+            409,
+        )
+    assert read_json(folder / "state.json") == saved
+    assert not (folder / "cancel.requested").exists()
+    assert [task["attempt"] for task in center.tasks(kind="compute-job")] == [1]
+
+
+def test_a_compute_archive_pinned_before_the_task_center_is_refused(job, center, monkeypatch):
+    service, identity, plan = job
+    # The pinned worker declares no Task Center protocol: it would lease itself in tmux.
     monkeypatch.setattr(compute_module, "archive_protocol", lambda _path: None)
-    resumed = service.launch(identity, plan, "legacy-resume", resume=True)
-    assert "executor" not in resumed and "taskId" not in resumed
-    assert len(legacy.calls) == 2 and center.tasks(kind="compute-job") == []
-    assert service.status(identity)["status"] == "queued"
+    with pytest.raises(StorageError) as refused:
+        service.launch(identity, plan, "launch")
+    assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
+    assert service.status(identity)["status"] == "not_started"
+    assert center.tasks(kind="compute-job") == []
 
 
-@pytest.mark.legacy_tmux
-def test_a_coordinator_archive_pinned_before_the_task_center_resumes_in_tmux(
+def test_a_coordinator_archive_pinned_before_the_task_center_is_refused(
     coordinator, center, monkeypatch
 ):
     from histopilot.application import experiment_predictors
 
     service, identity, _tmp_path = coordinator
-    tmux = LegacyExecutor()
-    service.legacy_executor = service.executor.legacy = tmux  # never probe real tmux
     service.launch(identity, "start")
     task_id = ids.coordinator_task_id(str(service.folder(identity)))
     center.store.cancel_pending([task_id])
@@ -1438,8 +1448,38 @@ def test_a_coordinator_archive_pinned_before_the_task_center_resumes_in_tmux(
     state = read_json(state_path)
     write_json(state_path, {**state, "status": "attention"})
     monkeypatch.setattr(experiment_predictors, "archive_protocol", lambda _path: None)
-    resumed = service.launch(identity, "resume", resume=True)
-    assert resumed["status"] == "queued" and "executor" not in resumed
-    assert len(tmux.calls) == 1
-    assert "executor" not in read_json(state_path)
+    with pytest.raises(StorageError) as refused:
+        service.launch(identity, "resume", resume=True)
+    assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
+    assert read_json(state_path) == {**state, "status": "attention"}
     assert center.state(task_id) == "cancelled"
+
+
+@pytest.mark.parametrize("status", ["running", "attention"])
+def test_a_coordinator_from_before_the_task_center_is_read_only(coordinator, center, status):
+    service, identity, _tmp_path = coordinator
+    service.launch(identity, "start")
+    task_id = ids.coordinator_task_id(str(service.folder(identity)))
+    center.store.cancel_pending([task_id])
+    state_path = service.folder(identity) / "state.json"
+    saved = read_json(state_path)
+    for key in ("executor", "taskId"):
+        saved.pop(key)
+    saved["status"] = status
+    write_json(state_path, saved)
+    view = service.status(identity)
+    assert "executor" not in view
+    assert not view["retryable"] and not view["cancellable"]
+    if status == "running":
+        assert view["status"] == "interrupted"
+        assert view["error"]["code"] == "CREATED_BEFORE_TASK_CENTER"
+    else:
+        assert view["status"] == "attention"
+    for action in (
+        lambda: service.launch(identity, "resume", resume=True),
+        lambda: service.cancel(identity, "cancel"),
+    ):
+        with pytest.raises(StorageError) as refused:
+            action()
+        assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
+    assert read_json(state_path) == saved

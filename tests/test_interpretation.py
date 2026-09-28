@@ -10,9 +10,8 @@ import h5py
 import numpy as np
 import pytest
 from pydantic import ValidationError
-from support.interpretation import complete, compute_tasks, managed_jobs, runtime
+from support.interpretation import complete, compute_tasks, managed_jobs
 
-from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.application.interpretation import InterpretationService
 from histopilot.application.predictors import checkpoint_snapshot
 from histopilot.schemas.interpretation import InterpretationSelection, SaveInterpretation
@@ -25,18 +24,6 @@ from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json
 
 Image = pytest.importorskip("PIL.Image")
-
-
-class Executor:
-    def __init__(self):
-        self.sessions, self.calls = set(), []
-
-    def running(self, session):
-        return session in self.sessions
-
-    def launch(self, session, python, plan, log, *, package_root):
-        self.sessions.add(session)
-        self.calls.append((session, python, plan, log, package_root))
 
 
 def make_study(tmp_path, jobs):
@@ -109,18 +96,15 @@ def make_study(tmp_path, jobs):
 
 
 @pytest.fixture
-def study(tmp_path):
-    """The study on a fake tmux executor; ``managed_study`` is its Task Center twin."""
-    executor = Executor()
-    service, selection = make_study(
-        tmp_path, lambda store: ComputeJobService(store, executor=executor, runtime=runtime)
-    )
-    return service, selection, executor
+def managed_study(tmp_path, task_center):
+    """The study with launches queued in this test's Task Center; the third item is it."""
+    service, selection = make_study(tmp_path, lambda store: managed_jobs(store, task_center))
+    return service, selection, task_center
 
 
 @pytest.fixture
-def managed_study(tmp_path, task_center):
-    """The study with launches queued in this test's Task Center; the third item is it."""
+def study(tmp_path, task_center):
+    """The same study as ``managed_study``, for modules that name it ``study``."""
     service, selection = make_study(tmp_path, lambda store: managed_jobs(store, task_center))
     return service, selection, task_center
 

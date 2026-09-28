@@ -52,20 +52,6 @@ def test_automatic_budget_and_explicit_overrides(
         assert request["dataWorkers"] == requested
 
 
-@pytest.mark.legacy_tmux
-@pytest.mark.parametrize("cpus, options, expected", [row[:3] for row in BUDGETS])
-def test_legacy_lease_reserves_the_resolved_budget_per_device(
-    monkeypatch, cpus, options, expected
-):
-    # The self-lease of a tmux worker; a task's request is
-    # test_automatic_budget_and_explicit_overrides.
-    from histopilot.workers.resource_reservation import preparation_resources
-
-    monkeypatch.setattr(performance, "usable_cpu_count", lambda: cpus)
-    resources = preparation_resources("extraction", options)
-    assert resources["dataLoaderWorkers"] == expected * performance.execution_device_count(options)
-
-
 def test_usable_cpu_count_honors_affinity(monkeypatch):
     monkeypatch.setattr(performance.os, "sched_getaffinity", lambda _pid: {1, 3, 5}, raising=False)
     monkeypatch.setattr(performance.os, "cpu_count", lambda: 48)

@@ -393,7 +393,7 @@ def test_compute_jobs_protect_dependencies_and_cancel_through_cleanup(context, k
 
     class Compute:
         def __init__(self):
-            self.current = {"status": "running", "process": None}
+            self.current = {"status": "running", "process": None, "executor": "task-center"}
             self.cancelled = []
 
         def status(self, identity, **kwargs):

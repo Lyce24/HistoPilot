@@ -36,7 +36,7 @@ def evaluation(tmp_path, monkeypatch, task_center):
 
     monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", runtime)
     service.jobs = ComputeJobService(
-        service.store, runtime=runtime, execution_mode="task-center", task_center=task_center.client
+        service.store, runtime=runtime, task_center=task_center.client
     )
     selected = EvaluationRunSelection(
         predictorId=predictor["id"], cohortId=cohort["id"], name="External evaluation"

@@ -4,14 +4,14 @@ Invoke this file by absolute path with a private JSON plan, never with `-m`:
 TRIDENT's interpreter need not have HistoPilot or Pydantic installed. The parent
 service owns plan validation, process persistence and artifact coverage checking.
 
-Two launch modes share this file:
+Two modes share this file:
 
-- tmux (legacy): the runner leases CPU/RAM/GPU itself, runs TRIDENT in its own session
-  and then the artifact validation command.
-- Task Center (``"managed": true`` in the plan, or ``HISTOPILOT_TASK_MANAGED=1``): the
-  runner holds no lease, keeps TRIDENT in the task's process group so a cancel or a
-  runner restart reaches it, runs no validation (that is a separate CPU task) and writes
-  progress JSON for stall detection.
+- Task Center (``"managed": true`` in the plan, or ``HISTOPILOT_TASK_MANAGED=1``): how
+  HistoPilot runs extractions. The runner holds the task's resource lease; this file keeps
+  TRIDENT in the task's process group so a cancel or a runner restart reaches it, runs no
+  validation (that is a separate CPU task) and writes progress JSON for stall detection.
+- Standalone (a plan without ``managed``, run by hand): TRIDENT runs in its own session,
+  then the plan's artifact validation command. It takes no resource lease.
 """
 
 import importlib.util
@@ -23,7 +23,6 @@ import subprocess
 import sys
 import time
 import traceback
-from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -356,8 +355,8 @@ class _Progress:
 
 
 def _signal_child(process, signum, *, own_group):
-    """TRIDENT has its own session in tmux mode; under the Task Center it shares the task's
-    process group, whose members the Task Center drains after this runner exits."""
+    """TRIDENT has its own session when run standalone; under the Task Center it shares the
+    task's process group, whose members the Task Center drains after this runner exits."""
     try:
         if own_group:
             os.kill(process.pid, signum)
@@ -430,19 +429,8 @@ def run_plan(path):
         if cancel_requested():
             result["state"] = "cancelled"
             return 0
-        with ExitStack() as resource_stack, Path(plan["logPath"]).open("a", encoding="utf-8", buffering=1) as log:
-            reservation = None
-            if plan.get("resources") and not managed:
-                # New plans use the service interpreter; historical standalone
-                # plans still run without importing the HistoPilot package.
-                sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-                from histopilot.workers.resource_reservation import reserve_preparation
-
-                _write_result(Path(plan["processPath"]), _process_identity(os.getpid()))
-                reservation = resource_stack.enter_context(reserve_preparation(
-                    Path(path).parent, "extraction", plan["resources"], stopping,
-                ))
-            elif plan.get("processPath"):
+        with Path(plan["logPath"]).open("a", encoding="utf-8", buffering=1) as log:
+            if plan.get("processPath"):
                 _write_result(Path(plan["processPath"]), _process_identity(os.getpid()))
             locks = plan.get("clearDeadLocks")
             if isinstance(locks, dict) and locks.get("root") and not stopping():
@@ -486,8 +474,6 @@ def run_plan(path):
                     cwd=plan.get("cwd"),
                     env=worker_env,
                 )
-                if reservation is not None:
-                    reservation.attach(process.pid)
                 if plan.get("processPath"):
                     _write_result(
                         Path(plan["processPath"]),
@@ -504,8 +490,6 @@ def run_plan(path):
                     if stopping():
                         _stop_child(process, own_group=managed)
                         break
-                if reservation is not None:
-                    reservation.finish_child()
                 if progress is not None:
                     progress.update(force=True)  # where TRIDENT ended, before its exit line
                 result["exitCode"] = process.returncode

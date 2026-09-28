@@ -29,22 +29,6 @@ from histopilot.workers.pack_features import run_job
 from histopilot.workers.packing_process import output_lock, write_json
 
 
-class FakeExecutor:
-    def __init__(self):
-        self.sessions = set()
-        self.launches = []
-
-    def available(self):
-        return True
-
-    def running(self, session):
-        return session in self.sessions
-
-    def launch(self, session, runner, plan):
-        self.sessions.add(session)
-        self.launches.append((runner, plan))
-
-
 def feature_source(tmp_path):
     """A saved feature version of two slides with three float32 patches each."""
     project = tmp_path / "project"
@@ -79,19 +63,8 @@ def feature_source(tmp_path):
 @pytest.fixture
 def packs(tmp_path, task_center):
     store, filesystem, feature, source = feature_source(tmp_path)
-    service = FeaturePackService(
-        store, filesystem, execution_mode="task-center", task_center=task_center.client
-    )
+    service = FeaturePackService(store, filesystem, task_center=task_center.client)
     return service, FeaturePackSpec(featureSetId=feature["id"]), source
-
-
-@pytest.fixture
-def packing(tmp_path):
-    """The same service on the legacy tmux launch path, with a fake executor."""
-    store, filesystem, feature, source = feature_source(tmp_path)
-    executor = FakeExecutor()
-    service = FeaturePackService(store, filesystem, executor)
-    return service, FeaturePackSpec(featureSetId=feature["id"]), executor, source
 
 
 def submit(service, spec, operation="operation"):
@@ -100,11 +73,25 @@ def submit(service, spec, operation="operation"):
     return service.submit(spec, preview["previewHash"], operation)
 
 
-def complete(service, executor, job):
-    """Run a legacy job's worker inline, as its tmux session would."""
-    result = run_job(service.folder / job["id"] / "plan.json")
-    executor.sessions.discard(job["sessionName"])
-    return result
+def test_a_feature_job_from_before_the_task_center_is_read_only(packs, task_center):
+    service, spec, _source = packs
+    job = submit(service, spec)
+    folder = service.folder / job["id"]
+    # Model a job started in tmux: its record names no Task Center task.
+    record = json.loads((folder / "job.json").read_text())
+    for key in ("executionMode", "taskId", "ownerKey"):
+        record.pop(key)
+    record.update(state="running", sessionName="histopilot-pack-0123456789abcdef")
+    write_json(folder / "job.json", record)
+    view = service.get(job["id"])
+    assert view["state"] == "interrupted" and "executor" not in view
+    assert "Created before the Task Center" in view["error"]
+    assert [row["state"] for row in service.list()["jobs"]] == ["interrupted"]
+    with pytest.raises(StorageError) as refused:
+        service.cancel(job["id"])
+    assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
+    assert json.loads((folder / "job.json").read_text()) == record
+    assert not (folder / "cancelled").exists()
 
 
 @pytest.mark.parametrize("content", ["{", "[]"])
@@ -117,26 +104,6 @@ def test_optional_progress_cannot_block_packing_cancellation(packs, task_center,
     assert shown["state"] == "running"
     assert shown["progress"] is None and shown["progressWarning"]
     assert service.cancel(job["id"])["state"] == "cancelling"
-
-
-@pytest.mark.legacy_tmux
-def test_lost_launch_acknowledgement_keeps_packing_job_active(packing, monkeypatch):
-    # Queueing a Task Center task has no launch acknowledgement to lose; a failed enqueue
-    # is test_queue_failure_is_durable_and_retry_can_use_unchanged_empty_output.
-    service, spec, executor, _source = packing
-    original = executor.launch
-
-    def launch_then_timeout(*args, **kwargs):
-        original(*args, **kwargs)
-        raise TimeoutError("Lost acknowledgement")
-
-    monkeypatch.setattr(executor, "launch", launch_then_timeout)
-    preview = service.preview(spec)
-    job = service.submit(spec, preview["previewHash"], "operation")
-    assert job["state"] == "running"
-    assert service.cancel(job["id"])["state"] == "cancelling"
-    assert service.submit(spec, preview["previewHash"], "operation")["id"] == job["id"]
-    assert len(executor.launches) == 1
 
 
 def test_preview_is_stable_and_submission_is_idempotent(packs, task_center):
@@ -262,7 +229,6 @@ def test_existing_pack_attach_verifies_then_persists_selection(packs, task_cente
     reopened = FeaturePackService(
         service.store,
         service.filesystem,
-        execution_mode="task-center",
         task_center=task_center.client,
     )
     assert reopened.selection_for(spec.featureSetId)["artifactId"] == artifact["id"]
@@ -502,7 +468,6 @@ def test_another_project_cannot_claim_an_active_nested_output(packs, task_center
     other_service = FeaturePackService(
         other_store,
         service.filesystem,
-        execution_mode="task-center",
         task_center=task_center.client,
     )
     preview = other_service.preview(

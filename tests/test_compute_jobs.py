@@ -1,31 +1,16 @@
-"""No real tmux jobs: durable generic execution, cancellation and retry boundaries."""
+"""Durable generic execution, cancellation and retry boundaries of Task Center compute jobs."""
 
 import copy
 import hashlib
 import sys
 
 import pytest
-from test_worker_process_ownership import isolated_worker_tree as _worker_tree
 
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json
-
-isolated_worker_tree = _worker_tree
-
-
-class Executor:
-    def __init__(self):
-        self.sessions, self.calls = set(), []
-
-    def running(self, session):
-        return session in self.sessions
-
-    def launch(self, session, python, plan, log, *, package_root):
-        self.sessions.add(session)
-        self.calls.append((session, python, plan, log, package_root))
 
 
 def runtime():
@@ -74,18 +59,8 @@ def evaluation_record(tmp_path):
 @pytest.fixture
 def job(tmp_path, task_center):
     store, record = evaluation_record(tmp_path)
-    service = ComputeJobService(
-        store, runtime=runtime, execution_mode="task-center", task_center=task_center.client
-    )
+    service = ComputeJobService(store, runtime=runtime, task_center=task_center.client)
     return service, record["id"], copy.deepcopy(PLAN)
-
-
-@pytest.fixture
-def legacy_job(tmp_path):
-    store, record = evaluation_record(tmp_path)
-    executor = Executor()
-    service = ComputeJobService(store, executor=executor, runtime=runtime)
-    return service, record["id"], copy.deepcopy(PLAN), executor
 
 
 def test_compute_launch_pins_code_and_retry_does_not_relaunch(job, task_center):
@@ -296,94 +271,3 @@ def test_corrupt_authoritative_state_remains_a_structured_error(job):
 
 
 # -- Records launched before the Task Center, on their tmux executor ---------------------------
-
-
-@pytest.mark.legacy_tmux
-def test_orphan_compute_loader_blocks_resume_until_cancelled(legacy_job, isolated_worker_tree):
-    from histopilot.workers.training_process import confirmed_process_alive
-
-    service, identity, plan, executor = legacy_job
-    state = service.launch(identity, plan, "launch")
-    leader, process, child = isolated_worker_tree()
-    leader.kill()
-    leader.wait(timeout=5)
-    state.update(status="failed", process=process, processGroupId=process["pid"])
-    write_json(service.folder(identity) / "state.json", state)
-    executor.sessions.clear()
-    assert service.status(identity)["status"] == "running"
-    with pytest.raises(StorageError, match="active"):
-        service.launch(identity, plan, "resume-orphan", resume=True)
-    assert service.cancel(identity, "cancel")["status"] == "failed"
-    assert not confirmed_process_alive(child)
-    assert len(executor.calls) == 1
-
-
-@pytest.mark.legacy_tmux
-def test_lost_launch_acknowledgement_preserves_running_session(legacy_job, monkeypatch):
-    service, identity, plan, executor = legacy_job
-    launch = executor.launch
-
-    def launch_then_timeout(*args, **kwargs):
-        launch(*args, **kwargs)
-        raise TimeoutError("Lost acknowledgement")
-
-    monkeypatch.setattr(executor, "launch", launch_then_timeout)
-    assert service.launch(identity, plan, "launch")["status"] == "queued"
-    assert service.launch(identity, plan, "launch")["status"] == "queued"
-    assert len(executor.calls) == 1
-
-
-@pytest.mark.legacy_tmux
-def test_lost_acknowledgement_preserves_fast_worker_completion(legacy_job, monkeypatch):
-    service, identity, plan, executor = legacy_job
-
-    def finish_then_timeout(*_args, **_kwargs):
-        folder = service.folder(identity)
-        state = read_json(folder / "state.json")
-        result = {"state": "succeeded", "runId": identity}
-        state.update(
-            status="completed",
-            result=result,
-            process={"pid": 2147483000, "startTicks": 1, "bootId": "old-boot"},
-        )
-        write_json(folder / "result.json", result)
-        write_json(folder / "state.json", state)
-        raise TimeoutError("Lost acknowledgement")
-
-    monkeypatch.setattr(executor, "launch", finish_then_timeout)
-    assert service.launch(identity, plan, "launch")["status"] == "completed"
-    assert service.status(identity)["status"] == "completed"
-
-
-@pytest.mark.legacy_tmux
-def test_worker_completion_during_session_probe_is_not_overwritten(legacy_job, monkeypatch):
-    service, identity, plan, executor = legacy_job
-    pending_probe = False
-
-    def launch_then_timeout(*_args, **_kwargs):
-        nonlocal pending_probe
-        pending_probe = True
-        raise TimeoutError("Lost acknowledgement")
-
-    def inspect(_session):
-        nonlocal pending_probe
-        if pending_probe:
-            pending_probe = False
-            folder = service.folder(identity)
-            state = read_json(folder / "state.json")
-            result = {"state": "succeeded", "runId": identity}
-            state.update(
-                status="completed",
-                result=result,
-                process={"pid": 2147483000, "startTicks": 1, "bootId": "old-boot"},
-            )
-            write_json(folder / "result.json", result)
-            write_json(folder / "state.json", state)
-        return False
-
-    monkeypatch.setattr(executor, "launch", launch_then_timeout)
-    monkeypatch.setattr(executor, "running", inspect)
-    shown = service.launch(identity, plan, "launch")
-    assert shown["status"] == "completed"
-    assert service.launch(identity, plan, "launch")["status"] == "completed"
-    assert read_json(service.folder(identity) / "state.json") == shown

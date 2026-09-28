@@ -11,33 +11,14 @@ from support.t1 import attempts, batch_tasks, lose_batch, task_ids
 from test_worker_process_ownership import isolated_worker_tree as _worker_tree
 
 from histopilot.application.training import TrainingService, membership_plan_id
-from histopilot.schemas.development import DevelopmentBatchSpec, ResourcePolicy
+from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _run_plan, available_device, collect_results, run_batch
+from histopilot.workers.train_batch import _run_plan, collect_results
 from histopilot.workers.training_process import process_identity, read_json, save_state
 
 support = runpy.run_path(str(Path(__file__).with_name("test_development_batches.py")))
 isolated_worker_tree = _worker_tree
-
-
-class FakeExecutor:
-    def __init__(self):
-        self.sessions = set()
-        self.launches = []
-        self.failure = None
-
-    def available(self):
-        return True
-
-    def running(self, session):
-        return session in self.sessions
-
-    def launch(self, session, python, plan, log, *, package_root):
-        if self.failure:
-            raise self.failure
-        self.sessions.add(session)
-        self.launches.append((session, python, plan, log))
 
 
 def runtime():
@@ -49,34 +30,6 @@ def runtime():
         "gpuCount": 0,
         "findings": [],
     }
-
-
-@pytest.fixture
-def execution(tmp_path, monkeypatch):
-    monkeypatch.setattr("histopilot.application.training.gpu_snapshot", lambda: {"gpus": []})
-    monkeypatch.setattr("histopilot.workers.training_process.gpu_snapshot", lambda: {"gpus": []})
-    development, spec, source = support["batch"].__wrapped__(tmp_path)
-    values = spec.model_dump()
-    values.update(mode="single", trainingSeeds=[11])
-    values["recipe"].update(maxEpochs=1, bagSize=2, batchSize=2)
-    # New specs omit resources; these legacy-path tests pin explicit tiny CPU settings.
-    values["resources"] = {
-        **ResourcePolicy().model_dump(),
-        "gpuIds": [],
-        "cpuThreadsPerRun": 1,
-        "dataLoaderWorkers": 0,
-        "ramGbPerRun": 0.01,
-    }
-    spec = DevelopmentBatchSpec.model_validate(values)
-    preview = development.preview(spec)
-    frozen = development.freeze(
-        spec, preview["previewHash"], "execution-batch", {"tag": "Executable batch"}
-    )
-    executor = FakeExecutor()
-    service = TrainingService(
-        development.store, development.filesystem, executor=executor, runtime=runtime
-    )
-    return service, frozen, executor, source
 
 
 @pytest.fixture
@@ -99,7 +52,6 @@ def tc_execution(tmp_path, monkeypatch, task_center):
         development.store,
         development.filesystem,
         runtime=runtime,
-        execution_mode="task-center",
         task_center=task_center.client,
     )
     return service, frozen, source
@@ -340,22 +292,72 @@ def test_cancel_is_durable_and_idempotent(tc_execution, task_center):
     assert {attempt for _task, attempt in queued} == {1}
 
 
-def test_single_run_cancel_is_unsupported_for_legacy_batches(tc_execution):
-    service, frozen, _source = tc_execution
+def legacy_batch(service, frozen, status):
+    """Model a batch launched before the Task Center: its state names no executor."""
     state = service.launch(frozen["id"], "first")
-    # Model a batch saved before the Task Center: its state names no executor.
-    saved = read_json(Path(state["outputPath"]) / "state.json")
+    folder = Path(state["outputPath"])
+    saved = read_json(folder / "state.json")
     for key in ("executor", "taskGroup"):
         saved.pop(key)
-    save_state(Path(state["outputPath"]), saved)
-    with pytest.raises(StorageError) as unsupported:
-        service.cancel_runs(frozen["id"], [state["runs"][0]["id"]], "cancel-run")
-    assert (unsupported.value.code, unsupported.value.status_code) == (
-        "TRAINING_ACTION_UNSUPPORTED",
-        409,
+    saved.update(status=status, sessionName="hp-train-0123456789abcdef")
+    for run in saved["runs"]:
+        run["status"] = "completed" if status == "completed" else "running"
+    save_state(folder, saved)
+    plan = read_json(folder / "plan.json")
+    plan.pop("executionMode")
+    write_json(folder / "plan.json", plan)
+    return folder, read_json(folder / "state.json")
+
+
+@pytest.mark.parametrize("status", ["running", "completed"])
+def test_a_batch_from_before_the_task_center_is_read_only(tc_execution, status):
+    service, frozen, _source = tc_execution
+    folder, saved = legacy_batch(service, frozen, status)
+    execution = service.execution(frozen["id"])
+    if status == "completed":
+        # A finished batch shows exactly its saved record.
+        assert execution["status"] == "completed" and execution["findings"] == []
+        assert execution["runs"] == saved["runs"]
+    else:
+        # Nothing runs it any more: an unfinished one has stopped for good.
+        assert execution["status"] == "interrupted"
+        assert {run["status"] for run in execution["runs"]} == {"interrupted"}
+        assert execution["runCounts"]["interrupted"] == len(execution["runs"])
+        assert [item["code"] for item in execution["findings"]] == ["CREATED_BEFORE_TASK_CENTER"]
+    assert "taskCenter" not in execution
+    actions = (
+        lambda: service.launch(frozen["id"], "again"),
+        lambda: service.launch(frozen["id"], "resume", resume=True),
+        lambda: service.cancel(frozen["id"], "cancel"),
+        lambda: service.cancel_runs(frozen["id"], [saved["runs"][0]["id"]], "cancel-run"),
     )
-    assert not (Path(state["outputPath"]) / "cancel.json").exists()
-    assert read_json(Path(state["outputPath"]) / "state.json")["runs"] == state["runs"]
+    for action in actions:
+        with pytest.raises(StorageError) as refused:
+            action()
+        assert (refused.value.code, refused.value.status_code) == (
+            "CREATED_BEFORE_TASK_CENTER",
+            409,
+        )
+        assert "Created before the Task Center" in str(refused.value)
+    assert not (folder / "cancel.json").exists()
+    assert read_json(folder / "state.json") == saved
+
+
+def test_code_pinned_before_the_task_center_cannot_run_as_fold_tasks(
+    tc_execution, task_center, monkeypatch, tmp_path
+):
+    service, frozen, _source = tc_execution
+    # An archive of pre-Task Center code has no managed_fold entry point.
+    archive = tmp_path / "pinned-before-the-task-center"
+    (archive / "histopilot" / "workers").mkdir(parents=True)
+    monkeypatch.setattr(
+        "histopilot.application.training.prepare_compute_archive", lambda *_a, **_k: archive
+    )
+    with pytest.raises(StorageError) as refused:
+        service.launch(frozen["id"], "launch")
+    assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
+    assert service.execution(frozen["id"]) is None
+    assert batch_tasks(task_center, frozen["id"]) == []
 
 
 def test_orphan_cancellation_signals_only_verified_child_identity(
@@ -519,19 +521,6 @@ def test_preflight_rejects_unsupported_or_changed_intent(
     assert task_ids(task_center) == before
 
 
-@pytest.mark.legacy_tmux
-def test_preflight_rejects_unavailable_gpu_of_a_legacy_launch(execution):
-    # The Task Center ignores a frozen setup's GPU ids; the device follows the machine.
-    service, frozen, executor, _source = execution
-    frozen = rewrite_batch(
-        service, frozen, lambda manifest: manifest["spec"]["resources"].update(gpuIds=[0])
-    )
-    with pytest.raises(StorageError) as error:
-        service.launch(frozen["id"], "blocked")
-    assert error.value.code == "TRAINING_GPU_UNAVAILABLE"
-    assert not executor.launches
-
-
 def test_changed_source_blocks_launch_and_existing_operation_still_replays(
     tc_execution, task_center
 ):
@@ -598,36 +587,6 @@ def test_failed_launch_is_recorded_without_claiming_live_workers(
     assert attempts(task_center, frozen["id"]) == queued
 
 
-@pytest.mark.legacy_tmux
-@pytest.mark.parametrize("finished", [False, True])
-def test_lost_launch_acknowledgement_preserves_training_worker_state(
-    execution, monkeypatch, finished
-):
-    service, frozen, executor, _source = execution
-    original = executor.launch
-
-    def launch_then_timeout(*args, **kwargs):
-        original(*args, **kwargs)
-        state_path = args[2].parent / "state.json"
-        state = read_json(state_path)
-        state.update(
-            status="failed" if finished else "running",
-            process={"pid": 2147483000, "startTicks": 1, "bootId": "old-boot"},
-            findings=[{"severity": "error", "code": "WORKER_EVIDENCE", "message": "Retain me"}],
-        )
-        write_json(state_path, state)
-        if finished:
-            executor.sessions.clear()
-        raise TimeoutError("Lost acknowledgement")
-
-    monkeypatch.setattr(executor, "launch", launch_then_timeout)
-    shown = service.launch(frozen["id"], "launch")
-    assert shown["status"] == ("failed" if finished else "running")
-    assert shown["findings"][0]["code"] == "WORKER_EVIDENCE"
-    assert service.launch(frozen["id"], "launch")["status"] == shown["status"]
-    assert len(executor.launches) == 1
-
-
 @pytest.mark.parametrize("finished", [False, True])
 def test_lost_enqueue_acknowledgement_preserves_training_worker_state(
     tc_execution, task_center, monkeypatch, finished
@@ -661,44 +620,6 @@ def test_lost_enqueue_acknowledgement_preserves_training_worker_state(
     assert attempts(task_center, frozen["id"]) == queued
 
 
-@pytest.mark.legacy_tmux
-@pytest.mark.parametrize("record_identity", [False, True])
-def test_worker_outcome_during_session_probe_is_not_overwritten(
-    execution, monkeypatch, record_identity
-):
-    service, frozen, executor, _source = execution
-    pending_probe = False
-
-    def launch_then_timeout(*_args, **_kwargs):
-        nonlocal pending_probe
-        pending_probe = True
-        raise TimeoutError("Lost acknowledgement")
-
-    def inspect(_session):
-        nonlocal pending_probe
-        if pending_probe:
-            pending_probe = False
-            path = service._folder(frozen["id"]) / "state.json"
-            state = read_json(path)
-            state.update(
-                status="failed",
-                process={"pid": 2147483000, "startTicks": 1, "bootId": "old-boot"}
-                if record_identity
-                else None,
-                findings=[{"severity": "error", "code": "WORKER_EVIDENCE", "message": "Retain me"}],
-            )
-            write_json(path, state)
-        return False
-
-    monkeypatch.setattr(executor, "launch", launch_then_timeout)
-    monkeypatch.setattr(executor, "running", inspect)
-    shown = service.launch(frozen["id"], "launch")
-    assert shown["status"] == "failed"
-    assert shown["findings"][0]["code"] == "WORKER_EVIDENCE"
-    assert service.launch(frozen["id"], "launch")["findings"] == shown["findings"]
-    assert read_json(service._folder(frozen["id"]) / "state.json") == shown
-
-
 @pytest.mark.parametrize("content", ["{", "[]"])
 def test_optional_progress_cannot_block_training_cancellation(tc_execution, content):
     service, frozen, _source = tc_execution
@@ -713,152 +634,6 @@ def test_optional_progress_cannot_block_training_cancellation(tc_execution, cont
     cancelled = service.cancel(frozen["id"], "cancel")
     # Task Center: the queued folds are cancelled at once.
     assert cancelled["cancelRequested"] and cancelled["status"] == "cancelled"
-
-
-@pytest.mark.legacy_tmux
-@pytest.mark.parametrize("failure", ["spawn", "identity", "lease"])
-def test_scheduler_cleans_up_every_child_if_startup_registration_fails(
-    execution, monkeypatch, failure
-):
-    from contextlib import contextmanager
-
-    from histopilot.workers import train_batch as worker
-
-    service, frozen, _executor, _source = execution
-    frozen = rewrite_batch(
-        service,
-        frozen,
-        lambda manifest: manifest["spec"]["resources"].update(maxConcurrentRuns=2),
-    )
-    state = service.launch(frozen["id"], "launch")
-    folder = Path(state["outputPath"])
-    registry = folder / "test-leases"
-    registry.mkdir()
-    children, streams, signals = [], [], []
-
-    @contextmanager
-    def leases():
-        yield registry, []
-
-    class Child:
-        def __init__(self, pid):
-            self.pid, self.code = pid, None
-
-        def poll(self):
-            return self.code
-
-        def wait(self, timeout):
-            self.code = -15
-            return self.code
-
-    def spawn(*_args, **kwargs):
-        streams.append(kwargs["stdout"])
-        if failure == "spawn":
-            raise OSError("Injected spawn failure")
-        child = Child(2147483000 + len(children))
-        children.append(child)
-        return child
-
-    def identity(pid=None):
-        if failure == "identity" and pid is not None and len(children) == 2:
-            raise ProcessLookupError("Injected PID inspection failure")
-        return {"pid": pid or 2147482999, "startTicks": 1, "bootId": "test"}
-
-    def write(path, document):
-        if failure == "lease" and path.parent == registry and len(children) == 2:
-            raise OSError("Injected lease publication failure")
-        write_json(path, document)
-
-    def stop(pid, signum):
-        signals.append((pid, signum))
-        if pid == 2147483000:
-            # The first child exits between poll and signal. Its disappearing
-            # process group must not prevent cleanup of the second child.
-            raise ProcessLookupError("Exited during cleanup")
-
-    monkeypatch.setattr(worker, "_leases", leases)
-    monkeypatch.setattr(worker, "_capacity", lambda: (256, 1000))
-    monkeypatch.setattr(worker.subprocess, "Popen", spawn)
-    monkeypatch.setattr(worker, "process_identity", identity)
-    monkeypatch.setattr(worker, "write_json", write)
-    monkeypatch.setattr(worker.signal, "signal", lambda *_args: None)
-    monkeypatch.setattr(worker.os, "killpg", stop)
-    monkeypatch.setattr(worker.ResourceTelemetry, "record", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(worker.time, "sleep", lambda *_args: None)
-    run_batch(folder / "plan.json")
-    saved = read_json(folder / "state.json")
-    assert saved["status"] == "failed"
-    assert saved["runCounts"]["failed"] == saved["runCounts"]["total"]
-    assert all(stream.closed for stream in streams)
-    assert all(child.poll() is not None for child in children)
-    assert {pid for pid, _signum in signals} == {child.pid for child in children}
-    assert not list(registry.glob("lease-*.json"))
-
-
-@pytest.mark.parametrize(
-    "resources,active,capacity,expected",
-    [
-        ({"gpuIds": []}, [], (8, 16), (True, None)),
-        (
-            {"gpuIds": [0, 1]},
-            [{"gpu": 0, "cpus": 2, "ramGb": 2, "runsPerGpu": 1}],
-            (8, 16),
-            (True, 1),
-        ),
-        (
-            {"gpuIds": [0], "runsPerGpu": 2},
-            [{"gpu": 0, "cpus": 2, "ramGb": 2, "runsPerGpu": 1}],
-            (8, 16),
-            (False, None),
-        ),
-        (
-            {"gpuIds": [0], "runsPerGpu": 2},
-            [{"gpu": 0, "cpus": 2, "ramGb": 2, "runsPerGpu": 2}],
-            (8, 16),
-            (True, 0),
-        ),
-        (
-            {"gpuIds": []},
-            [{"gpu": None, "cpus": 7, "ramGb": 1, "runsPerGpu": 1}],
-            (8, 16),
-            (False, None),
-        ),
-        (
-            {"gpuIds": []},
-            [{"gpu": None, "cpus": 1, "ramGb": 15, "runsPerGpu": 1}],
-            (8, 16),
-            (False, None),
-        ),
-    ],
-)
-@pytest.mark.legacy_tmux
-def test_resource_leases_enforce_cross_batch_cpu_ram_and_gpu_limits(
-    resources, active, capacity, expected
-):
-    requested = {
-        "cpuThreadsPerRun": 2,
-        "dataLoaderWorkers": 0,
-        "ramGbPerRun": 2,
-        "runsPerGpu": 1,
-        **resources,
-    }
-    assert available_device(requested, active, capacity) == expected
-
-
-@pytest.mark.legacy_tmux
-def test_ram_reservations_do_not_double_count_already_resident_training_memory():
-    requested = {
-        "gpuIds": [],
-        "cpuThreadsPerRun": 2,
-        "dataLoaderWorkers": 0,
-        "ramGbPerRun": 8,
-        "runsPerGpu": 1,
-    }
-    resident = [{"gpu": None, "cpus": 2, "ramGb": 8, "rssGb": 8, "runsPerGpu": 1}]
-    assert available_device(requested, resident, (8, 8)) == (True, None)
-    # A newly started worker has reserved RAM that has not yet appeared in RSS.
-    pending = [{**resident[0], "rssGb": 1}]
-    assert available_device(requested, pending, (8, 8)) == (False, None)
 
 
 def synthetic_results(service, frozen):
@@ -963,59 +738,6 @@ def test_incomplete_oof_results_are_not_reported_as_complete(tc_execution):
     assert result["candidates"][0]["metrics"] is None
 
 
-@pytest.mark.legacy_tmux
-def test_scheduler_adopts_exact_completed_child_results_after_lost_parent(execution, monkeypatch):
-    pytest.importorskip("torch")
-    pytest.importorskip("lightning")
-    service, frozen, _executor, _source = execution
-    launched = service.launch(frozen["id"], "first")
-    folder = Path(launched["outputPath"])
-    _batch, completed = synthetic_results(service, frozen)
-    assert all(run["status"] == "queued" for run in read_json(folder / "state.json")["runs"])
-    monkeypatch.setattr("histopilot.workers.train_batch.signal.signal", lambda *_args: None)
-    run_batch(folder / "plan.json")
-    state = read_json(folder / "state.json")
-    assert state["status"] == "completed"
-    assert state["runCounts"]["completed"] == 5
-    assert len(read_json(folder / "results.json")["oof"]) == 1
-
-
-@pytest.mark.legacy_tmux
-def test_scheduler_cancels_queued_runs_without_starting_children(execution, monkeypatch):
-    service, frozen, _executor, _source = execution
-    state = service.launch(frozen["id"], "first")
-    folder = Path(state["outputPath"])
-    service.cancel(frozen["id"], "cancel-before-start")
-    monkeypatch.setattr("histopilot.workers.train_batch.signal.signal", lambda *_args: None)
-    monkeypatch.setattr(
-        "histopilot.workers.train_batch.subprocess.Popen",
-        lambda *_args, **_kwargs: pytest.fail("Cancelled batch must not start a child."),
-    )
-    run_batch(folder / "plan.json")
-    state = read_json(folder / "state.json")
-    assert state["status"] == "cancelled"
-    assert state["runCounts"]["cancelled"] == 5
-
-
-@pytest.mark.legacy_tmux
-def test_scheduler_rechecks_features_after_launch_before_starting_any_fold(execution, monkeypatch):
-    service, frozen, _executor, source = execution
-    state = service.launch(frozen["id"], "first")
-    folder = Path(state["outputPath"])
-    with h5py.File(source / "s00.h5", "r+") as handle:
-        handle["features"][0, 0] = 999
-    monkeypatch.setattr("histopilot.workers.train_batch.signal.signal", lambda *_args: None)
-    monkeypatch.setattr(
-        "histopilot.workers.train_batch.subprocess.Popen",
-        lambda *_args, **_kwargs: pytest.fail("Stale inputs must not start a training child."),
-    )
-    run_batch(folder / "plan.json")
-    state = read_json(folder / "state.json")
-    assert state["status"] == "failed"
-    assert state["runCounts"]["failed"] == 5
-    assert any(item["code"] == "TRAINING_WORKER_FAILED" for item in state["findings"])
-
-
 def test_fold_tasks_recheck_features_after_launch_before_fitting(
     tc_execution, task_center, monkeypatch
 ):
@@ -1107,74 +829,6 @@ def test_resume_records_host_reboot_without_changing_the_plan(
     assert plan_path.read_bytes() == original
     assert any(row["code"] == "TRAINING_HOST_CHANGED" for row in resumed["findings"])
     assert resumed["provenance"]["host"]["bootId"] == "after-reboot"
-
-
-@pytest.mark.parametrize(
-    "message,expected_dispatches,expected_status",
-    [
-        ("CUDA unknown error", 1, "interrupted"),
-        ("CUDA out of memory", 5, "failed"),
-    ],
-)
-@pytest.mark.legacy_tmux
-def test_scheduler_halts_dispatch_on_device_failure_and_preserves_checkpoint(
-    execution, monkeypatch, message, expected_dispatches, expected_status
-):
-    from contextlib import contextmanager
-
-    from histopilot.workers.training_process import now
-
-    service, frozen, executor, _source = execution
-    service.runtime = lambda: {**runtime(), "cudaAvailable": True, "gpuCount": 1}
-    frozen = rewrite_batch(
-        service,
-        frozen,
-        lambda manifest: manifest["spec"]["resources"].update(gpuIds=[0], maxConcurrentRuns=1),
-    )
-    launched = service.launch(frozen["id"], "first")
-    folder = Path(launched["outputPath"])
-    checkpoint = Path(launched["runs"][0]["outputPath"]) / "last.ckpt"
-    checkpoint.parent.mkdir(parents=True)
-    checkpoint.write_bytes(b"existing checkpoint must survive")
-    registry = folder / "fake-leases"
-    registry.mkdir()
-    calls = []
-
-    @contextmanager
-    def leases():
-        yield registry, []
-
-    class FailedChild:
-        pid = 2147483000
-
-        def poll(self):
-            return 1
-
-    def spawn(command, **kwargs):
-        calls.append(command)
-        plan_path = Path(command[-1])
-        write_json(plan_path.parent / "failure.json", {"error": message, "at": now()})
-        return FailedChild()
-
-    monkeypatch.setattr("histopilot.workers.train_batch._leases", leases)
-    monkeypatch.setattr("histopilot.workers.train_batch.subprocess.Popen", spawn)
-    monkeypatch.setattr("histopilot.workers.train_batch.signal.signal", lambda *_args: None)
-    monkeypatch.setattr("histopilot.workers.train_batch.time.sleep", lambda *_args: None)
-    monkeypatch.setattr(
-        "histopilot.workers.train_batch.process_identity",
-        lambda pid=None: {"pid": pid or 2147483001, "startTicks": 1, "bootId": "fake"},
-    )
-    run_batch(folder / "plan.json")
-    state = read_json(folder / "state.json")
-    assert len(calls) == expected_dispatches
-    assert state["status"] == expected_status
-    assert checkpoint.read_bytes() == b"existing checkpoint must survive"
-    if expected_status == "interrupted":
-        assert state["runCounts"]["interrupted"] == 4
-        assert state["runCounts"]["failed"] == 1
-        assert state["dispatchHalted"]["code"] == "TRAINING_GPU_DISPATCH_HALTED"
-    else:
-        assert "dispatchHalted" not in state
 
 
 def test_resume_rejects_changed_execution_plan_before_reusing_archive(tc_execution, task_center):

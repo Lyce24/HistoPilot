@@ -26,9 +26,7 @@ from histopilot.storage.scientific import ScientificStore
 
 
 def pack_service(store, filesystem, task_center):
-    return FeaturePackService(
-        store, filesystem, execution_mode="task-center", task_center=task_center.client
-    )
+    return FeaturePackService(store, filesystem, task_center=task_center.client)
 
 
 def feature_fixture(store, root, task_center):

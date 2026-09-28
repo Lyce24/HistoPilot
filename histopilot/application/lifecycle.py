@@ -183,10 +183,9 @@ class CleanupService:
                     execution = coordinator.status(record["id"], summary=True)
                     if execution:
                         _plan, coordinator_state = coordinator._read(record["id"])
-                        session = coordinator_state.get("sessionName")
-                        alive = _confirmed_live(coordinator_state.get("process")) or bool(
-                            session and coordinator.executor.running(session)
-                        )
+                        alive = _confirmed_live(
+                            coordinator_state.get("process")
+                        ) or coordinator._coordinator_running(coordinator_state)
                         status = {
                             "waiting": "queued",
                             "cancelling": "running",
@@ -235,6 +234,7 @@ class CleanupService:
                         execution["status"],
                         alive,
                         execution.get("cancelRequested", False),
+                        legacy=execution.get("executor") != "task-center",
                     )
                     if graph:
                         documents[key] = [record, _read_optional(folder / "plan.json")]
@@ -251,6 +251,7 @@ class CleanupService:
                         bool(execution.get("liveProcesses"))
                         or _confirmed_live(execution.get("process")),
                         execution.get("cancellationRequested", False),
+                        legacy=execution.get("executor") != "task-center",
                     )
                 if graph:
                     folder = self.store.folder / "compute-jobs" / record["id"]
@@ -290,7 +291,13 @@ class CleanupService:
                         aliases.setdefault(artifact["id"], set()).add(key)
                 # Probe live identity even after a terminal result was written.
                 alive = _confirmed_live(_read_optional(folder / "process.json"))
-                self._job(items[key], presented["state"], alive, (folder / "cancelled").exists())
+                self._job(
+                    items[key],
+                    presented["state"],
+                    alive,
+                    (folder / "cancelled").exists(),
+                    legacy=presented.get("executor") != "task-center",
+                )
 
         if len(items) > 20000:
             raise StorageError("Too many records to review cleanup safely.", "CLEANUP_LIMIT", 413)
@@ -336,7 +343,8 @@ class CleanupService:
         }
 
     @staticmethod
-    def _job(item, status, alive, cancel_requested):
+    def _job(item, status, alive, cancel_requested, *, legacy=False):
+        """A record's job summary; ``legacy`` jobs (from before the Task Center) never cancel."""
         unknown = status not in ACTIVE | TERMINAL
         busy = status in ACTIVE or alive
         item["job"] = {
@@ -345,7 +353,7 @@ class CleanupService:
             else "running"
             if alive and status not in ACTIVE
             else status,
-            "cancellable": busy and not cancel_requested and not unknown,
+            "cancellable": busy and not cancel_requested and not unknown and not legacy,
             "busy": busy or unknown,
         }
 

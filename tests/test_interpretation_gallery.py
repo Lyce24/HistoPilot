@@ -11,10 +11,8 @@ import pytest
 from pydantic import ValidationError
 from support.interpretation import compute_task, compute_tasks, launches, managed_packing, run_pack
 from test_interpretation import managed_study as managed_study
-from test_interpretation import study as study
 
 from histopilot.application.feature_bundles import FeatureBundleService
-from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.features import FeatureService
 from histopilot.schemas.feature_bundles import FeatureBundleSpec
 from histopilot.schemas.feature_packs import FeaturePackSpec
@@ -25,27 +23,14 @@ from histopilot.schemas.interpretation import (
     VisualizeInterpretation,
 )
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.pack_features import run_job
 
 Image = pytest.importorskip("PIL.Image")
 
 
-class PackingExecutor:
-    def available(self):
-        return True
-
-    def running(self, session):
-        return False
-
-    def launch(self, *args):
-        pass
-
-
-def make_gallery(study, tmp_path, center=None):
+def make_gallery(study, tmp_path, center):
     """Three slides with frozen features, a verified pack and a bundle over them.
 
-    With ``center`` the packing job queues in that Task Center and its worker runs as the
-    task; without it, the job runs on a fake tmux executor.
+    The packing job queues in ``center`` and its worker runs as the task.
     """
     service, manual, _ = study
     store = service.store
@@ -88,20 +73,12 @@ def make_gallery(study, tmp_path, center=None):
     preview = inventories.preview(spec)
     assert preview["canFreeze"], preview
     inventory = inventories.freeze(spec, preview["previewHash"], "gallery-features")
-    packing = (
-        FeaturePackService(store, service.filesystem, PackingExecutor())
-        if center is None
-        else managed_packing(store, service.filesystem, center)
-    )
+    packing = managed_packing(store, service.filesystem, center)
     pack_spec = FeaturePackSpec(featureSetId=inventory["id"], action="pack", dtype="preserve")
     pack_preview = packing.preview(pack_spec)
     assert pack_preview["canRun"], pack_preview
     job = packing.submit(pack_spec, pack_preview["previewHash"], "gallery-pack")
-    packed = (
-        run_job(packing.folder / job["id"] / "plan.json")
-        if center is None
-        else run_pack(packing, job, center)
-    )
+    packed = run_pack(packing, job, center)
     assert packed["state"] == "succeeded", packed
     bundles = FeatureBundleService(store, service.filesystem)
     bundle_spec = FeatureBundleSpec(
@@ -121,13 +98,6 @@ def make_gallery(study, tmp_path, center=None):
         "predictorId": manual.predictorId,
     }
     return service, source, packed["artifact"]
-
-
-@pytest.fixture
-def gallery(study, tmp_path):
-    """The gallery on fake tmux executors; ``managed_gallery`` is its Task Center twin."""
-    service, source, artifact = make_gallery(study, tmp_path)
-    return service, source, study[2], artifact
 
 
 @pytest.fixture

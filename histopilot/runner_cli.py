@@ -17,7 +17,7 @@ def _use_state_dir(state_dir: Path | None) -> None:
 def runner_status() -> dict:
     """Read the task store and probe the runner lock directly (no HTTP)."""
     from histopilot.taskcenter.launcher import runner_alive
-    from histopilot.taskcenter.paths import autostart_enabled, execution_mode, state_dir
+    from histopilot.taskcenter.paths import autostart_enabled, state_dir
     from histopilot.taskcenter.runner import code_current, foreign_checkout
     from histopilot.taskcenter.store import TaskStore
 
@@ -31,7 +31,6 @@ def runner_status() -> dict:
         "codeCurrent": code_current(runner),
         "otherCheckout": foreign_checkout(runner),
         "autostart": autostart_enabled(),
-        "executionMode": execution_mode(),
         "paused": store.settings()["paused"],
         "counts": store.counts(),
     }

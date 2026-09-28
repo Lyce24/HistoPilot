@@ -193,7 +193,7 @@ def test_accepted_refit_retry_skips_evidence_scan_but_rejects_changed_resources(
         "available": True, "python": sys.executable, "versions": {},
         "cudaAvailable": False, "gpuCount": 0,
         "host": {"cpuCount": 8, "totalRamGb": 16}},
-        execution_mode="task-center", task_center=task_center.client)
+        task_center=task_center.client)
     refits, record, _ = create(service, selection, jobs)
     request = LaunchRefit(operationId="launch-refit", resources=ResourcePolicy(gpuIds=[]))
     first = refits.launch(record["id"], request)
