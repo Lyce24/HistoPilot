@@ -61,7 +61,7 @@ Experimental Setup runs **k-fold** cross-validation inside the frozen training s
 
 **Assessment.** Only after fitting is the assessment fold loaded and predicted by the selected checkpoint. Assessment outcomes never influence checkpoints, stopping or configuration choice.
 
-**Configuration selection.** When a batch has several configurations, the reported one is chosen by validation, never by out-of-fold results. Each configuration's score is the mean, over all of its runs (folds × training seeds × split seeds), of the selection metric at each run's selected checkpoint. The **selection metric** is validation AUROC by default, or validation loss or accuracy. Loss is minimized and the others maximized; ties go to the lower configuration number. The choice is made only once every configuration has complete validation scores. Until then, Results show the lowest-numbered configuration with a warning.
+**Configuration selection.** When a batch has several configurations, the reported one is chosen by validation, never by out-of-fold results. Each configuration's score is the mean, over all of its runs (folds × training seeds × split seeds), of the selection metric at each run's selected checkpoint. The **selection metric** is validation AUROC by default, or validation loss or accuracy. Loss is minimized and the others maximized; ties go to the lower configuration number. The choice is made only once every configuration has complete validation scores. Until then, Results show the lowest-numbered configuration with a warning. A batch that declares a [controlled comparison](#controlled-comparisons) makes no choice: Results report its reference configuration and every other configuration against it.
 
 Validation data drives both checkpointing and configuration choice, and out-of-fold results of the chosen configuration are still development evidence. Their intervals do not account for configuration selection. An independent test cohort is needed for an estimate that is free of these choices.
 
@@ -119,6 +119,20 @@ All intervals are 95% percentile bootstrap intervals with a fixed seed (42 by de
 - **Fold-paired differences.** For each fold both batches completed, the difference of their seed means. Reported as mean ± SD, range, and counts of folds where each side is better. No interval or p-value is computed.
 
 With `groupByPatient` in a slide-unit design, the bootstrap still resamples slides, so the interval ignores the clustering of slides within patients.
+
+### Controlled comparisons
+
+`histopilot/application/comparisons.py`, `histopilot/application/experiment_results.py`, `histopilot/cv_summary.py`
+
+A batch can declare a controlled comparison: 2–8 custom configurations (arms), all of them built, one of them the reference, and a primary metric (AUROC by default; AUPRC, balanced accuracy, macro-F1 or accuracy). Every arm trains on the same frozen folds and training seeds.
+
+- **What may differ.** Arms may differ only in the model, the architecture options that model owns (attention width and gating for ABMIL and nnMIL, and nnMIL's own `nnmil*` settings), and the inputs: image, clinical or both, and the clinical fields. When either arm of a pair is clinical only, image settings such as the training bag, dropout and patch augmentation are not compared, because a clinical-only model does not read them. Defaults are filled in before comparing, so an omitted setting equals its default. Any other difference, such as learning rate, batch size, epochs or schedule, blocks the batch at review because it would mix the ablated factor with optimisation choices. Identical arms are blocked too.
+- **Reported configuration.** Results report the reference arm, not a validation choice, and summarise every arm with intervals.
+- **Differences.** Each other arm is reported as reference − arm on the seed means; a positive value means the reference scored higher. The 95% interval comes from the per-draw differences on shared draws: each bootstrap draw resamples the same units for both arms, as for paired batch comparisons. Fold-paired differences count the folds in which the reference did better, worse or tied.
+- **p-value.** A two-sided bootstrap p-value on the primary metric for no difference: twice the smaller of the shares of draws with a difference ≤ 0 and ≥ 0, each share computed as (count + 1) / (draws + 1) so it is never exactly zero, capped at 1. Draws invalid for either arm are excluded. The p-value requires both arms to have scored the same units.
+- **Holm adjustment.** The planned contrasts of one batch, one per non-reference arm with a p-value, form one family. Their p-values are sorted ascending, the i-th smallest of m is multiplied by m − i + 1, a running maximum keeps the order, and values are capped at 1.
+
+Like the intervals, the p-values hold the trained models fixed; they do not include the variability of retraining.
 
 ### Intervals for evaluations
 
