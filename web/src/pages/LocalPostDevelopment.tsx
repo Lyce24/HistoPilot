@@ -16,6 +16,7 @@ import { shortRecordId } from '../lib/recordLabels';
 import { downloadJSON } from '../lib/download';
 import './ModelChains.css';
 import '../components/RunWorkspace.css';
+import { stageEyebrow } from '../lib/roadmap';
 
 const experimentLink = (id: string) => `#experiments?experiment=${encodeURIComponent(id)}`;
 
@@ -54,7 +55,7 @@ function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, sour
   const builds = (refits.data?.items ?? []).filter((item) => !sourceExperiment || item.manifest.experimentId === sourceExperiment);
   const build = builds.find((item) => item.id === buildId);
   return <div className="clinical-workspace model-chains run-workspace">
-    <PageHeader eyebrow="02 DEVELOP" title={historical ? 'Historical predictors' : 'Build predictors'} description={historical ? 'Inspect existing predictors and recover older refit jobs. New predictor settings and automatic builds are managed inside each experiment.' : 'Build separate ensembles and refits for every experiment, configuration and seed. Review inputs, manage jobs, and compare results in one workspace.'} actions={<a className="btn btn-secondary" href="#evaluation">Run predictors on a test cohort</a>} />
+    <PageHeader eyebrow={stageEyebrow('experiments')} title={historical ? 'Historical predictors' : 'Build predictors'} description={historical ? 'Inspect existing predictors and recover older refit jobs. New predictor settings and automatic builds are managed inside each experiment.' : 'Build separate ensembles and refits for every experiment, configuration and seed. Review inputs, manage jobs, and compare results in one workspace.'} actions={<a className="btn btn-secondary" href="#evaluation">Run predictors on a test cohort</a>} />
     {historical ? <p className="callout">Create and configure new predictor work in <a href="#experiments">Experiments</a>. This page retains historical predictors and unfinished refit jobs.</p> : null}
     <EvidenceChain current="post-development" experimentId={sourceExperiment} predictorId={sourcePredictor} />
     {sourcePredictor || sourceExperiment ? <p className="callout">{sourcePredictor ? 'Showing the linked predictor.' : 'Showing one experiment.'} <a href="#post-development?tab=library">Show all experiments and predictors</a></p> : null}

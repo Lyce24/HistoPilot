@@ -19,6 +19,7 @@ import { versionLabelText } from '../lib/versionLabels';
 import './ModelChains.css';
 import '../components/RunWorkspace.css';
 import '../components/InferenceResults.css';
+import { stageEyebrow } from '../lib/roadmap';
 
 export default function LocalInference({ workspace }: { workspace: Workspace }) {
   const parameters = useHashParameters();
@@ -71,7 +72,7 @@ function InferenceWorkspace({ workspace, linked }: { workspace: Workspace; linke
   function create() { if (locked) return; setSelectedRecord(''); setSetupKey((key) => key + 1); setView('setup'); }
   const title = view === 'library' ? 'Run inference' : view === 'detail' ? detail?.manifest.name ?? 'Inference results' : view === 'batch' ? 'Inference batch' : 'Run inference';
   return <div className="clinical-workspace model-chains inference-workspace">
-    <PageHeader eyebrow="05 EVALUATE · INFERENCE" title={title}
+    <PageHeader eyebrow={stageEyebrow('inference')} title={title}
       description={view === 'library' ? 'Predict unlabeled slides with ready predictors. Results show what each model predicts, how confident it is and where it attends: no labels and no performance metrics.' : view === 'detail' ? 'Review saved predictions, compare model outputs and inspect attention on the original slides.' : view === 'batch' ? 'Monitor prediction jobs and open each predictor’s results.' : 'Select development models and an unlabeled inference cohort, review compatibility, then run predictions.'}
       actions={<div className="inline-actions">{view === 'library' ? <StageCreateButton onClick={create}>Run inference</StageCreateButton> : <StageBackButton disabled={locked} onClick={openLibrary}>Back to inference runs</StageBackButton>}<a className="btn btn-secondary" href="#test-data?purpose=inference">Create inference cohort</a></div>} />
     {view !== 'library' ? <EvidenceChain current="inference" experimentId={detail?.manifest.experimentId ?? (experimentIds.length === 1 ? experimentIds[0] : undefined)} predictorId={detail?.manifest.predictorId ?? (linked.predictor || undefined)} evaluationId={selectedRecord || undefined} /> : null}

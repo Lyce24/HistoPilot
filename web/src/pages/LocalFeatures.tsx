@@ -32,6 +32,7 @@ import { configurationVersionLabel, datasetVersionLabel } from '../lib/versionLa
 import { preparationLink, preparationContext, type PreparationContext } from '../lib/preparationRoute';
 import PreparationNotice from '../components/PreparationNotice';
 import './LocalFeatures.css';
+import { stageEyebrow } from '../lib/roadmap';
 export default function LocalFeatures({ workspace: w }: { workspace: Workspace }) {
   const parameters = useHashParameters();
   const context = preparationContext(parameters);
@@ -163,7 +164,7 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest, packReque
   return (
     <div className="clinical-workspace feature-workspace">
       <PageHeader
-        eyebrow="02 PREPARE"
+        eyebrow={stageEyebrow('features')}
         title={activeView === 'bundles' ? 'Slide features' : activeView === 'add' && mode === 'extract' ? 'Slide extraction' : 'Prepare slide features'}
         description={activeView === 'bundles' ? 'Follow extraction runs, open a feature bundle, or create one for your experiments.' : 'Choose existing features or extract them, check slide coverage, then freeze a feature bundle.'}
         actions={activeView === 'bundles' ? <StageCreateButton type="button" disabled={busy || bundleBusy} onClick={() => prepareBundle()}>Create feature bundle</StageCreateButton> : <StageBackButton disabled={busy || bundleBusy} onClick={openLibrary}>Back to feature bundles</StageBackButton>}

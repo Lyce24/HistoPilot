@@ -18,6 +18,7 @@ import './ExperimentRegistry.css';
 import { readSessionDraft, sessionDraftKey, useSessionDraftBackup, writeSessionDraft } from '../lib/sessionDraft';
 import { confirmWorkspaceNavigation, useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import { isCreateExperimentDraft, isExperimentMetadataDraft, type CreateExperimentDraft, type ExperimentMetadataBaseline, type ExperimentMetadataDraft } from '../lib/experimentEditorDraft';
+import { stageEyebrow } from '../lib/roadmap';
 
 export function filterExperiments<T extends Pick<ModelExperiment, 'id' | 'name' | 'notes' | 'tags' | 'state' | 'status' | 'createdAt' | 'updatedAt' | 'stage' | 'configurationLocked'>>(items: T[], state: LifecycleState | 'all', status: string, search: string, sort: string) {
   const query = search.trim().toLocaleLowerCase();
@@ -151,7 +152,7 @@ export function CreateExperiment({ project, copy, templates = [], onCreated, onC
     }
     finally { creating.current = false; setBusy(false); }
   }
-  return <><PageHeader eyebrow={setup ? '03 EXPERIMENTAL SETUP' : '04 EXPERIMENTS'} title={setup ? 'Create experimental setup' : 'Create experiment'} description={setup ? 'Name the setup, then select its data, training design and hyperparameters.' : 'Name your experiment or reuse a saved template, then continue to its inputs.'} actions={<StageBackButton disabled={busy} onClick={close}>Back to {setup ? 'setups' : 'experiments'}</StageBackButton>} />
+  return <><PageHeader eyebrow={stageEyebrow(setup ? 'experimental-setup' : 'experiments')} title={setup ? 'Create experimental setup' : 'Create experiment'} description={setup ? 'Name the setup, then select its data, training design and hyperparameters.' : 'Name your experiment or reuse a saved template, then continue to its inputs.'} actions={<StageBackButton disabled={busy} onClick={close}>Back to {setup ? 'setups' : 'experiments'}</StageBackButton>} />
     <StageSteps label="New experiment steps" current="details" steps={[{ id: 'details', title: 'Experiment details', description: 'Name and optional template' }, { id: 'inputs', title: 'Inputs', description: 'Continue after creating the record', disabled: true }]} onChange={() => {}} />
     <Panel title={setup ? 'Setup details' : 'Experiment details'} subtitle={setup ? 'Prepare inputs and training batches, then freeze the design. Training starts later in Experiments.' : 'Name your experiment, then adjust its inputs and batches. Everything stays editable until you submit it.'}>
     {recovered ? <p className="callout" role="status">Recovered this tab’s unfinished experiment details. {pending ? 'Retry creation to recover the original request.' : 'Review them before creating the experiment.'}</p> : null}
@@ -279,7 +280,7 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
   const headlineOf = new Map((headlines.data?.items ?? []).map((row) => [row.experimentId, row.batches]));
   const compared = comparisonQueries.flatMap((value) => value.data ? [value.data] : []);
   return <div className="clinical-workspace experiment-registry">
-    {!creating ? <PageHeader eyebrow={mode === 'setup' ? '03 EXPERIMENTAL SETUP' : '04 EXPERIMENTS'} title={comparing ? 'Compare saved designs' : title} description={comparing ? 'Compare saved inputs and training settings.' : mode === 'setup' ? 'Prepare datasets, targets, training splits and hyperparameters. Freeze a setup when the full design is ready.' : 'Run frozen setups and follow queued, active, completed and failed experiments.'} actions={comparing ? <StageBackButton onClick={() => setComparing(false)}>Back to experiments</StageBackButton> : mode === 'execution' ? <a className="btn btn-primary" href="#experimental-setup">Prepare a setup</a> : <StageCreateButton onClick={() => setCreating(true)}>Create setup</StageCreateButton>} /> : null}
+    {!creating ? <PageHeader eyebrow={stageEyebrow(mode === 'setup' ? 'experimental-setup' : 'experiments')} title={comparing ? 'Compare saved designs' : title} description={comparing ? 'Compare saved inputs and training settings.' : mode === 'setup' ? 'Prepare datasets, targets, training splits and hyperparameters. Freeze a setup when the full design is ready.' : 'Run frozen setups and follow queued, active, completed and failed experiments.'} actions={comparing ? <StageBackButton onClick={() => setComparing(false)}>Back to experiments</StageBackButton> : mode === 'execution' ? <a className="btn btn-primary" href="#experimental-setup">Prepare a setup</a> : <StageCreateButton onClick={() => setCreating(true)}>Create setup</StageCreateButton>} /> : null}
 
     <StagePage pageKey={creating ? 'create' : comparing ? 'comparison' : 'library'}>
     {creating ? <CreateExperiment setup={mode === 'setup'} project={project} templates={allItems} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); void client.invalidateQueries({ queryKey: ['scientific', project, 'drafts'] }); onOpen(item.id); }} /> : comparing ? <>

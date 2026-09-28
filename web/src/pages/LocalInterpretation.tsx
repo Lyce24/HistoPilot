@@ -19,6 +19,7 @@ import './ClinicalInsights.css';
 import './InterpretationGallery.css';
 import './InterpretationWizard.css';
 import '../components/InterpretationReview.css';
+import { stageEyebrow } from '../lib/roadmap';
 
 const MAX_SLIDES = 128;
 const PAGE_SIZE = 24;
@@ -121,7 +122,7 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
   const stepper = <StageSteps label="Interpretation steps" current={stage === 'review' ? 'review' : ready ? 'slides' : 'model'} steps={steps} disabled={batch.locked && stage !== 'review'} onChange={(id) => navigate(id === 'review' ? 'review' : 'select')} />;
 
   if (stage === 'review') return <div className="clinical-workspace model-chains clinical-insights interpretation-wizard">
-    <PageHeader eyebrow="MODEL INTERPRETATION" title="Attention review" description={predictor ? `${predictor.manifest.name} · ${modelLabel(predictor.manifest.recipe.model)} · ${predictorMethodLabel(predictor.manifest.method)}. Select a slide to see where the model attends, its highest-attention patches and its predicted label.` : 'Select a slide to see where the model attends, its highest-attention patches and its predicted label.'} actions={<StageBackButton onClick={() => navigate('select')}>Back to slide selection</StageBackButton>} />
+    <PageHeader eyebrow={stageEyebrow('interpretation')} title="Attention review" description={predictor ? `${predictor.manifest.name} · ${modelLabel(predictor.manifest.recipe.model)} · ${predictorMethodLabel(predictor.manifest.method)}. Select a slide to see where the model attends, its highest-attention patches and its predicted label.` : 'Select a slide to see where the model attends, its highest-attention patches and its predicted label.'} actions={<StageBackButton onClick={() => navigate('select')}>Back to slide selection</StageBackButton>} />
     {stepper}
     <ErrorNotice error={linkedRecord.error ?? (draft.batch?.error ? new Error(draft.batch.error) : null)} />
     {draft.batch?.uncertain ? <p className="callout" role="alert">The attention request response was lost, so some jobs may already exist. <button className="btn btn-secondary" disabled={batch.busy} onClick={batch.retryExact}>Retry the same attention request</button></p> : null}
@@ -132,7 +133,7 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
   </div>;
 
   return <div className="clinical-workspace model-chains clinical-insights interpretation-wizard">
-    <PageHeader eyebrow="07 INTERPRETATION" title="Model interpretation" description="Load trained model weights with a dataset and its features, choose slides, then review attention overlays, the highest-attention patches and each slide's predicted label. No evaluation, inference or clinical results are needed." />
+    <PageHeader eyebrow={stageEyebrow('interpretation')} title="Model interpretation" description="Load trained model weights with a dataset and its features, choose slides, then review attention overlays, the highest-attention patches and each slide's predicted label. No evaluation, inference or clinical results are needed." />
     {stepper}
     <ErrorNotice error={registry.error ?? sources.error ?? records.error} />
     <Panel title="Load model weights and features" subtitle="Slides come from the chosen frozen dataset. Attention runs the model weights on the feature bundle's features or its frozen pack.">

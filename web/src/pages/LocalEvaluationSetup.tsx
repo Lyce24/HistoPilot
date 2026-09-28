@@ -24,6 +24,7 @@ import { readEditorRecovery, recoveredStep, useEditorRecoveryBackup, type Editor
 import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import { useHashParameters } from '../lib/hashRoute';
 import { cohortKind, cohortKindLabel, isInferencePurpose } from '../lib/inference';
+import { stageEyebrow } from '../lib/roadmap';
 
 const newTestTarget = (): ProtocolSpec['target'] => ({ field: '', task: '', unit: 'slide', classes: [], labels: {}, missing: 'block', unmapped: 'block' });
 
@@ -276,7 +277,7 @@ export default function LocalEvaluationSetup({ workspace }: { workspace: Workspa
   useStageLibrary(openLibrary);
 
   return <div className="clinical-workspace protocol-workspace evaluation-setup" id="test-cohort-page" tabIndex={-1}>
-    <PageHeader eyebrow="03 EVALUATE · TEST COHORTS" title={step === 0 ? 'Test cohorts' : savedCohort ? name : inference ? 'Create inference cohort' : 'Create test cohort'}
+    <PageHeader eyebrow={stageEyebrow('test-data')} title={step === 0 ? 'Test cohorts' : savedCohort ? name : inference ? 'Create inference cohort' : 'Create test cohort'}
       description={step === 0 ? 'Open a cohort, or create a labeled evaluation cohort or an unlabeled inference cohort from your datasets.' : inference ? 'Select unlabeled slides, then review and freeze the inference cohort. No labels are read.' : 'Select test data, define prediction targets, then review and freeze your cohort.'}
       actions={step === 0 ? <div className="inline-actions"><StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create test cohort</StageCreateButton><button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(newInferenceSpec(), inferenceName); })}>Create inference cohort</button></div> : <StageBackButton disabled={busy || Boolean(freezeReview)} onClick={openLibrary}>Back to test cohorts</StageBackButton>} />
     <ErrorNotice error={error ?? datasets.error ?? drafts.error ?? frozen.error} />

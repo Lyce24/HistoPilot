@@ -47,6 +47,7 @@ describe('later test cohort setup', () => {
     try {
       const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={workspace} /></QueryClientProvider>);
       expect(html).toContain('No-consensus slides');
+      expect(html).toContain('<div class="eyebrow">05 Test cohorts</div>');
       expect(html).toContain('Inference · unlabeled');
       expect(html).toContain('Type · target');
       expect(html).toContain('Create inference cohort');

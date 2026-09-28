@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Workspace } from '../api/types';
 import type { DemoPipeline, DemoRecord, DemoStep } from '../api/demo';
-import { ROADMAP_MODULES, type RoadmapModuleId } from '../lib/roadmap';
+import { ROADMAP_MODULES, stageStep, type RoadmapModuleId } from '../lib/roadmap';
 import { Badge, Icon } from '../components/ui';
 import { StageLibraryToolbar, StagePage, StageSteps, useStageLibrary } from '../components/StageWorkflow';
 import { RunTable } from '../components/ExperimentTracking';
@@ -31,9 +31,9 @@ export function BlcaDemoOverview({ workspace }: { workspace: Workspace }) {
     <header className="blca-demo-hero"><div><span className="eyebrow">An illustrated research workflow</span><h1>BLCA demo</h1><p>Follow a bladder cancer project from slide records to model evaluation and clinical utility, one step at a time.</p><a className="btn btn-primary" href="#dataset">Explore the pipeline <Icon name="arrow" size={16} /></a></div><div className="blca-demo-hero-mark" aria-hidden="true">BLCA<small>FROM SLIDES<br />TO EVIDENCE</small></div></header>
     <DemoNotice />
     <dl className="blca-demo-summary"><div><dt>Synthetic slide records</dt><dd>{workspace.dataset.slideCount}</dd></div><div><dt>Pipeline stages</dt><dd>7</dd></div><div><dt>Illustrative training runs</dt><dd>{runCount}</dd></div></dl>
-    <section aria-labelledby="blca-pipeline-title"><div className="blca-demo-section-heading"><h2 id="blca-pipeline-title">Explore each stage</h2><p>Open a record, then use the steps to follow its inputs and outputs.</p></div><div className="blca-demo-pipeline">{ROADMAP_MODULES.map((module, index) => {
+    <section aria-labelledby="blca-pipeline-title"><div className="blca-demo-section-heading"><h2 id="blca-pipeline-title">Explore each stage</h2><p>Open a record, then use the steps to follow its inputs and outputs.</p></div><div className="blca-demo-pipeline">{ROADMAP_MODULES.map((module) => {
       const records = pipeline.records.filter((record) => record.module === module.id);
-      return <a href={`#${module.id}`} className="blca-demo-stage" key={module.id}><span className="blca-demo-stage-number">{String(index + 1).padStart(2, '0')}</span><div><h3>{module.shortTitle}</h3><p>{module.id === 'interpretation' ? 'Learn how attention maps connect predictions to slide regions. No slide pixels are included.' : module.description}</p><small>{records.length ? `${records.length} illustrative ${records.length === 1 ? 'record' : 'records'}` : 'Workflow explanation'}</small></div><Icon name="arrow" size={17} /></a>;
+      return <a href={`#${module.id}`} className="blca-demo-stage" key={module.id}><span className="blca-demo-stage-number">{stageStep(module.id)}</span><div><h3>{module.shortTitle}</h3><p>{module.id === 'interpretation' ? 'Learn how attention maps connect predictions to slide regions. No slide pixels are included.' : module.description}</p><small>{records.length ? `${records.length} illustrative ${records.length === 1 ? 'record' : 'records'}` : 'Workflow explanation'}</small></div><Icon name="arrow" size={17} /></a>;
     })}</div></section>
     <section className="card blca-demo-basis"><h2>What this demo is based on</h2><ul>{pipeline.sourceBasis.map((basis, index) => <li key={index}>{basis}</li>)}</ul><p className="muted">Only the workflow structure and stated aggregate characteristics inform this example. Slide pixels, patient records, real feature tensors, checkpoints, predictions, and local file paths are not included.</p><p className="muted">Reproducible synthetic generation · Seed {pipeline.seed}</p></section>
   </div>;

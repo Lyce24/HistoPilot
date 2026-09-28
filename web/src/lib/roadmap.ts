@@ -84,6 +84,33 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
   },
 ];
 
+export interface RoadmapStep { id: string; step: string; title: string; modules: readonly RoadmapModuleId[] }
+
+/**
+ * The roadmap's numbered steps, the one source for stage numbers. Stages worked on side by side
+ * share a step: slide features with targets & splits, and test cohorts with evaluation and
+ * inference. The roadmap page and every stage page's eyebrow read their numbers from here.
+ */
+export const ROADMAP_STEPS: readonly RoadmapStep[] = [
+  { id: 'datasets', step: '01', title: 'Datasets', modules: ['dataset'] },
+  { id: 'prepare', step: '02', title: 'Prepare in parallel', modules: ['features', 'cohort'] },
+  { id: 'setup', step: '03', title: 'Experimental Setup', modules: ['experimental-setup'] },
+  { id: 'develop', step: '04', title: 'Experiments', modules: ['experiments'] },
+  { id: 'evaluate', step: '05', title: 'Evaluate models & run inference', modules: ['test-data', 'evaluation', 'inference'] },
+  { id: 'clinical', step: '06', title: 'Clinical utility', modules: ['clinical-utility'] },
+  { id: 'interpret', step: '07', title: 'Interpretation', modules: ['interpretation'] },
+];
+
+/** A stage's roadmap step number, for example "02" for Slide features. */
+export const stageStep = (id: RoadmapModuleId): string | undefined => ROADMAP_STEPS.find((item) => item.modules.includes(id))?.step;
+
+/** A stage page's eyebrow: its roadmap step number and short name, for example "02 Slide features". */
+export function stageEyebrow(id: RoadmapModuleId): string {
+  const step = stageStep(id);
+  const name = ROADMAP_MODULES.find((item) => item.id === id)?.shortTitle ?? (id === 'test-data' ? 'Test cohorts' : id);
+  return step ? `${step} ${name}` : name;
+}
+
 export interface RoadmapModule extends RoadmapModuleDefinition {
   status: RoadmapStatus;
   unlocked: boolean;

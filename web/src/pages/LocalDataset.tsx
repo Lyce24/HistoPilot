@@ -48,6 +48,7 @@ import { canReuseImportMapping, inspectedAttributes } from '../lib/datasetImport
 import { readEditorRecovery, useEditorRecoveryBackup, type EditorRecovery } from '../lib/editorRecovery';
 import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import './dataset-workflow.css';
+import { stageEyebrow } from '../lib/roadmap';
 
 export const newDatasetImportSpec = (workspace: Workspace): ImportSpec => ({
   source: { path: '' },
@@ -312,7 +313,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
   return (
     <div className="clinical-workspace dataset-workspace">
       <PageHeader
-        eyebrow="01 PREPARE"
+        eyebrow={stageEyebrow('dataset')}
         title={view === 'library' ? 'Datasets' : view === 'dataset' ? version ? datasetVersionLabel(version) : 'Saved dataset' : draft ? name : 'Create dataset'}
         description={view === 'library' ? 'Open a dataset or import slide and patient records.'
           : view === 'dataset' ? 'Review this frozen dataset, its mapping evidence and saved records.'

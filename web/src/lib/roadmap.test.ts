@@ -5,7 +5,7 @@ import type { Configuration, DatasetVersion, ProtocolSpec, ScientificDraft } fro
 import type { Workspace } from '../api/types';
 import type { FrozenBatch, TrainingExecution } from '../api/development';
 import type { ExtractionJob } from '../api/trident';
-import { buildRoadmap, completedDevelopmentBatches, suggestedRoadmapModule, ROADMAP_MODULES, type RoadmapEvidence, type RoadmapModuleId } from './roadmap';
+import { buildRoadmap, completedDevelopmentBatches, suggestedRoadmapModule, stageEyebrow, stageStep, ROADMAP_MODULES, ROADMAP_STEPS, type RoadmapEvidence, type RoadmapModuleId } from './roadmap';
 
 function workspace(mode: Workspace['mode'] = 'local'): Workspace {
   return {
@@ -401,5 +401,17 @@ describe('project roadmap progress', () => {
   it('does not present optional analyses as remaining required work', () => {
     const roadmap = buildRoadmap(workspace()).map((module) => ({ ...module, unlocked: true, blockers: [], status: module.optional ? 'draft' as const : 'complete' as const }));
     expect(suggestedRoadmapModule(roadmap)).toBeUndefined();
+  });
+});
+
+describe('stage numbers', () => {
+  it('gives every stage one roadmap step, shared only by stages worked on side by side', () => {
+    expect(ROADMAP_STEPS.map((item) => item.step)).toEqual(['01', '02', '03', '04', '05', '06', '07']);
+    const stages: RoadmapModuleId[] = [...ROADMAP_MODULES.map((item) => item.id), 'test-data'];
+    for (const id of stages) expect(ROADMAP_STEPS.filter((item) => item.modules.includes(id))).toHaveLength(1);
+    expect(stages.map(stageEyebrow)).toEqual(['01 Datasets', '02 Slide features', '02 Targets & splits', '03 Experimental Setup', '04 Experiments', '05 Evaluate models', '05 Run inference', '06 Clinical utility', '07 Model interpretation', '05 Test cohorts']);
+    // Test cohorts belong with evaluation, not with Experimental Setup's step.
+    expect(stageStep('test-data')).toBe(stageStep('evaluation'));
+    expect(stageStep('test-data')).not.toBe(stageStep('experimental-setup'));
   });
 });

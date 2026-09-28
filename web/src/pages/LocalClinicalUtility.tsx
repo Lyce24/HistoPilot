@@ -16,6 +16,7 @@ import { shortRecordId } from '../lib/recordLabels';
 import { StageCreateButton, StageBackButton, StageContinueButton, StageLibrary, StageLibraryToolbar, StageRecordManageButton, StagePage, StageSteps, useStageLibrary } from '../components/StageWorkflow';
 import './ModelChains.css';
 import './ClinicalInsights.css';
+import { stageEyebrow } from '../lib/roadmap';
 
 export default function LocalClinicalUtility({ workspace }: { workspace: Workspace }) {
   const parameters = useHashParameters();
@@ -96,7 +97,7 @@ function ClinicalWorkspace({ workspace, linkedEvaluation, linkedPredictor, linke
     finally { setDownloading(false); }
   }
   return <div className="clinical-workspace model-chains clinical-insights">
-    <PageHeader eyebrow="06 CLINICAL UTILITY" title={view === 'library' ? 'Clinical utility' : view === 'report' ? savedRecord?.manifest.name ?? 'Clinical utility report' : 'Create clinical analysis'} description={view === 'library' ? 'Open an analysis or create one from completed evaluation results.' : 'Assess probability quality, operating tradeoffs and potential clinical benefit using completed model evaluations.'} actions={view === 'library' ? <StageCreateButton onClick={() => create()}>Create clinical analysis</StageCreateButton> : <StageBackButton disabled={publication.locked} onClick={openLibrary}>Back to clinical analyses</StageBackButton>} />
+    <PageHeader eyebrow={stageEyebrow('clinical-utility')} title={view === 'library' ? 'Clinical utility' : view === 'report' ? savedRecord?.manifest.name ?? 'Clinical utility report' : 'Create clinical analysis'} description={view === 'library' ? 'Open an analysis or create one from completed evaluation results.' : 'Assess probability quality, operating tradeoffs and potential clinical benefit using completed model evaluations.'} actions={view === 'library' ? <StageCreateButton onClick={() => create()}>Create clinical analysis</StageCreateButton> : <StageBackButton disabled={publication.locked} onClick={openLibrary}>Back to clinical analyses</StageBackButton>} />
     {view !== 'library' ? <EvidenceChain current="clinical-utility" {...context} /> : null}
     <ErrorNotice error={publication.error ?? evaluations.error ?? registry.error ?? saved.error ?? linked.error ?? downloadError} />
     <StagePage pageKey={view === 'library' ? 'library' : page === 'report' ? savedId : page}>

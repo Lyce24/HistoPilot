@@ -23,6 +23,7 @@ import { readEditorRecovery, recoveredStep, useEditorRecoveryBackup, type Editor
 import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import { scientificReviewInvalidated } from '../lib/scientificReview';
 import './LocalTargetSplit.css';
+import { stageEyebrow } from '../lib/roadmap';
 
 export const targetSplitKey = (project: string) => [...scienceKey(project), 'configurations', 'target-split'];
 const methodNames = { random: 'Random split', rules: 'Metadata conditions', imported: 'Predefined partition values' };
@@ -228,7 +229,7 @@ export default function LocalTargetSplit({ workspace }: { workspace: Workspace }
   const loading = datasets.isPending || drafts.isPending || frozen.isPending;
 
   return <div className="clinical-workspace scientific-page target-split-workspace">
-    <PageHeader eyebrow="02 DEFINE COHORT" title="Targets & splits" description="Choose dataset records, split training and testing, then define each prediction target."
+    <PageHeader eyebrow={stageEyebrow('cohort')} title="Targets & splits" description="Choose dataset records, split training and testing, then define each prediction target."
       actions={view === 'library' ? <StageCreateButton disabled={busy} onClick={() => void run(create)}>Create targets &amp; splits</StageCreateButton> : <StageBackButton disabled={busy} onClick={openLibrary}>Back to targets &amp; splits</StageBackButton>} />
     <ErrorNotice error={error ?? datasets.error ?? drafts.error ?? frozen.error ?? selectedRecord.error} />
     <SavedNotice>{message}</SavedNotice>

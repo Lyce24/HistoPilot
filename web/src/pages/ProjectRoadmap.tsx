@@ -1,5 +1,5 @@
 import type { useRoadmap } from '../components/useRoadmap';
-import { suggestedRoadmapModule } from '../lib/roadmap';
+import { ROADMAP_STEPS, suggestedRoadmapModule } from '../lib/roadmap';
 import { Icon } from '../components/ui';
 
 export type Roadmap = ReturnType<typeof useRoadmap>;
@@ -12,15 +12,7 @@ export const moduleIcons: Record<string, string> = {
 };
 export const completedModuleLabel = (id: string) => id === 'experiments' ? 'Experiment outputs available' : id === 'interpretation' ? 'Attention maps available' : id === 'clinical-utility' ? 'Analysis saved' : id === 'evaluation' ? 'Evaluation results available' : id === 'inference' ? 'Predictions available' : 'Complete & frozen';
 
-const phases = [
-  { id: 'datasets', title: 'Datasets', step: '01', modules: ['dataset'] },
-  { id: 'prepare', title: 'Prepare in parallel', step: '02', modules: ['features', 'cohort'] },
-  { id: 'setup', title: 'Experimental Setup', step: '03', modules: ['experimental-setup'] },
-  { id: 'develop', title: 'Experiments', step: '04', modules: ['experiments'] },
-  { id: 'evaluate', title: 'Evaluate models & run inference', step: '05', modules: ['evaluation', 'inference'] },
-  { id: 'clinical', title: 'Clinical utility', step: '06', modules: ['clinical-utility'] },
-  { id: 'interpret', title: 'Interpretation', step: '07', modules: ['interpretation'] },
-];
+const phases = ROADMAP_STEPS;
 
 /** Modules a project must complete; the optional analyses are not counted. */
 const requiredModules = (modules: Module[]) => modules.filter((module) => !module.optional);
