@@ -62,7 +62,7 @@ def test_describe_uses_sample_sd_and_ignores_missing_values():
 def test_point_metrics_equal_the_training_worker_metrics(target, threshold, tie_every):
     module = pytest.importorskip("histopilot.training.module")
     rows = rows_for(target, tie_every=tie_every)
-    expected = module._metrics(rows, target, decision_threshold=threshold)
+    expected = module.validated_metrics(rows, target, decision_threshold=threshold)
     actual = cv.point_metrics(rows, target, threshold)
     for name in ("count", "accuracy", "balancedAccuracy", "macroF1", "loss", "auroc", "auprc"):
         assert actual[name] == pytest.approx(expected[name], abs=1e-12), name

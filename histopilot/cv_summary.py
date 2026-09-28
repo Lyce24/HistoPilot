@@ -1,8 +1,9 @@
 """Cross-validation summaries: per fold, per training seed, seed average and seed ensemble.
 
-Pure numpy, importable by the lightweight API (no torch). Point metrics follow
-``histopilot.training.module._metrics`` exactly, so a number shown here equals the one
-the training worker recorded; ``tests/test_cv_summary.py`` checks the parity.
+Pure numpy, importable by the lightweight API (no torch). The training worker scores its
+predictions with ``point_metrics`` (``histopilot.training.module.validated_metrics``), so
+a number shown here equals the one it recorded; ``tests/test_cv_summary.py`` checks the
+parity.
 
 Seed-average intervals resample the experiment's independent units (slides in a
 slide-level design, patients otherwise) and score every seed on the same draw, so the
@@ -52,7 +53,8 @@ def describe(values) -> dict | None:
     return {"mean": mean, "sd": sd, "min": min(finite), "max": max(finite), "n": count}
 
 
-def _log_probabilities(row) -> list[float]:
+def row_log_probabilities(row) -> list[float]:
+    """Saved log probabilities, or the logs of probabilities clipped at 1e-300."""
     if "logProbabilities" in row:
         return row["logProbabilities"]
     return np.log(np.clip(row["probabilities"], 1e-300, 1)).tolist()
@@ -100,7 +102,7 @@ def point_metrics(rows: list[dict], target: dict, decision_threshold=None) -> di
         return {"available": False, "count": 0, "reason": "No assessment records."}
     probabilities = np.asarray([row["probabilities"] for row in rows], dtype=np.float64)
     labels = np.asarray([row["labelIndex"] for row in rows], dtype=np.int64)
-    logs = np.asarray([_log_probabilities(row) for row in rows], dtype=np.float64)
+    logs = np.asarray([row_log_probabilities(row) for row in rows], dtype=np.float64)
     predicted = _predicted(probabilities, target, decision_threshold)
     confusion = np.zeros((len(classes), len(classes)), dtype=np.int64)
     np.add.at(confusion, (labels, predicted), 1)
@@ -211,7 +213,7 @@ def seed_ensemble(
         return None
     rows = []
     for members in zip(*ordered, strict=True):
-        logs = np.asarray([_log_probabilities(row) for row in members], dtype=np.float64)
+        logs = np.asarray([row_log_probabilities(row) for row in members], dtype=np.float64)
         if aggregation == "mean_logit":
             average = logs.mean(axis=0)
             normalized = average - np.logaddexp.reduce(average)

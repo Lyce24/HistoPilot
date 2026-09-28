@@ -11,46 +11,13 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from histopilot.cv_summary import point_metrics, row_log_probabilities
 from histopilot.models import catalog, registry
-from histopilot.scoring import class_ranking_score, patient_predictions
+from histopilot.scoring import patient_predictions
 
 
-def _auc(labels, scores):
-    positive = np.asarray(labels, dtype=bool)
-    n_positive = int(positive.sum())
-    n_negative = len(positive) - n_positive
-    if not n_positive or not n_negative:
-        return None
-    _, inverse, counts = np.unique(scores, return_inverse=True, return_counts=True)
-    ranks = (np.cumsum(counts) - (counts - 1) / 2)[inverse]
-    return float(
-        (ranks[positive].sum() - n_positive * (n_positive + 1) / 2) / (n_positive * n_negative)
-    )
-
-
-def _average_precision(labels, scores):
-    """Threshold-grouped average precision; ties have no arbitrary ordering."""
-    positive = np.asarray(labels, dtype=bool)
-    if not positive.any():
-        return None
-    scores = np.asarray(scores)
-    order = np.argsort(-scores, kind="stable")
-    cumulative = np.cumsum(positive[order])
-    ordered = scores[order]
-    # Compare directly so tied +/-infinity legacy endpoint scores stay grouped.
-    boundaries = np.r_[np.flatnonzero(ordered[1:] != ordered[:-1]), len(scores) - 1]
-    true_positive = cumulative[boundaries]
-    precision = true_positive / (boundaries + 1)
-    return float(np.sum(np.diff(np.r_[0, true_positive]) * precision) / positive.sum())
-
-
-def _log_probabilities(row):
-    if "logProbabilities" in row:
-        return row["logProbabilities"]
-    return np.log(np.clip(row["probabilities"], 1e-300, 1)).tolist()
-
-
-def _metrics(rows, target, *, decision_threshold=None):
+def validated_metrics(rows, target, *, decision_threshold=None):
+    """Check prediction rows against the frozen classes, then score them with ``point_metrics``."""
     classes = target["classes"]
     if (
         len(classes) < 2
@@ -79,7 +46,6 @@ def _metrics(rows, target, *, decision_threshold=None):
         if "logProbabilities" in row and not numeric_vector(row["logProbabilities"]):
             raise ValueError("Log probabilities require one numeric value per frozen class.")
     probabilities = np.asarray([row["probabilities"] for row in rows], dtype=np.float64)
-    labels = np.asarray([row["labelIndex"] for row in rows], dtype=np.int64)
     if (
         not np.isfinite(probabilities).all()
         or np.any(probabilities < 0)
@@ -87,7 +53,8 @@ def _metrics(rows, target, *, decision_threshold=None):
         or not np.allclose(probabilities.sum(axis=1), 1, atol=1e-5, rtol=0)
     ):
         raise ValueError("Predictions must contain finite, normalized probabilities in [0, 1].")
-    predicted = probabilities.argmax(axis=1)
+    # A threshold applies to binary targets only; multiclass decisions are the argmax.
+    threshold = None
     if target["task"] == "binary_classification" and decision_threshold is not None:
         if (
             isinstance(decision_threshold, bool)
@@ -96,65 +63,18 @@ def _metrics(rows, target, *, decision_threshold=None):
             or not 0 <= decision_threshold <= 1
         ):
             raise ValueError("The binary decision threshold must be finite and between zero and one.")
-        positive_index = classes.index(target["positiveClass"])
-        predicted = np.where(
-            probabilities[:, positive_index] >= decision_threshold,
-            positive_index, 1 - positive_index,
-        )
-    log_probabilities = np.asarray([_log_probabilities(row) for row in rows], dtype=np.float64)
+        threshold = float(decision_threshold)
+    log_probabilities = np.asarray([row_log_probabilities(row) for row in rows], dtype=np.float64)
     if (
         not np.isfinite(log_probabilities).all()
         or not np.allclose(np.logaddexp.reduce(log_probabilities, axis=1), 0, atol=1e-5, rtol=0)
         or not np.allclose(np.exp(log_probabilities), probabilities, atol=1e-6, rtol=1e-5)
     ):
         raise ValueError("Log probabilities must be finite, normalized and match probabilities.")
-    confusion = np.zeros((len(classes), len(classes)), dtype=np.int64)
-    np.add.at(confusion, (labels, predicted), 1)
-    support = confusion.sum(axis=1)
-    recall = np.divide(confusion.diagonal(), support, out=np.zeros(len(classes)), where=support > 0)
-    precision = np.divide(
-        confusion.diagonal(),
-        confusion.sum(axis=0),
-        out=np.zeros(len(classes)),
-        where=confusion.sum(axis=0) > 0,
-    )
-    f1 = np.divide(
-        2 * precision * recall,
-        precision + recall,
-        out=np.zeros(len(classes)),
-        where=(precision + recall) > 0,
-    )
-    scores = np.asarray(
-        [[class_ranking_score(row, index) for index in range(len(classes))] for row in rows]
-    )
-    if target["task"] == "binary_classification":
-        positive = classes.index(target["positiveClass"])
-        auroc = _auc(labels == positive, scores[:, positive])
-        auprc = _average_precision(labels == positive, scores[:, positive])
-    else:
-        class_auroc = [_auc(labels == index, scores[:, index]) for index in range(len(classes))]
-        auroc = (
-            float(np.mean(class_auroc)) if all(value is not None for value in class_auroc) else None
-        )
-        class_auprc = [
-            _average_precision(labels == index, scores[:, index]) for index in range(len(classes))
-        ]
-        auprc = (
-            float(np.mean(class_auprc)) if all(value is not None for value in class_auprc) else None
-        )
-    return {
-        "available": True,
-        "count": len(rows),
-        "loss": float(-log_probabilities[np.arange(len(rows)), labels].mean()),
-        "accuracy": float(np.mean(predicted == labels)),
-        "balancedAccuracy": float(recall[support > 0].mean()),
-        "macroF1": float(f1.mean()),
-        "auroc": auroc,
-        "auprc": auprc,
-        "classCounts": {label: int(support[index]) for index, label in enumerate(classes)},
-        "missingClasses": [label for index, label in enumerate(classes) if not support[index]],
-        "confusionMatrix": confusion.tolist(),
-    }
+    metrics = point_metrics(rows, target, threshold)
+    # Training records keep their established fields; per-class rows are summary-only.
+    metrics.pop("perClass")
+    return metrics
 
 
 def aggregate_patients(rows, aggregation="mean_probabilities"):
@@ -176,7 +96,7 @@ def aggregate_patients(rows, aggregation="mean_probabilities"):
             # slide; averaging them gives the same patient softmax. This also
             # supports prediction artifacts produced before logits were saved.
             logits = np.asarray(
-                [row.get("logits", _log_probabilities(row)) for row in slides], dtype=np.float64
+                [row.get("logits", row_log_probabilities(row)) for row in slides], dtype=np.float64
             )
             if (
                 logits.ndim != 2
@@ -213,12 +133,12 @@ def classification_metrics(
         raise ValueError(f"Unsupported patient aggregation: {aggregation}")
     if split_unit == "slide" and target["unit"] != "slide":
         raise ValueError("Slide-level experiments require slide-level scoring.")
-    slide_metrics = _metrics(rows, target, decision_threshold=decision_threshold)
+    slide_metrics = validated_metrics(rows, target, decision_threshold=decision_threshold)
     if split_unit == "slide":
         patient_metrics = {"available": False, "reason": "Patient analysis is disabled for slide-level experiments.", "count": 0}
     else:
         try:
-            patient_metrics = _metrics(
+            patient_metrics = validated_metrics(
                 aggregate_patients(rows, aggregation), target, decision_threshold=decision_threshold
             )
         except ValueError as error:

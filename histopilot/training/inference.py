@@ -20,8 +20,8 @@ from histopilot.storage.io import content_hash, read_file_bounded, write_json_at
 from histopilot.storage.project_lock import ensure_managed_directory, reject_symlink_components
 from histopilot.training.module import (
     MILTrainModule,
-    _metrics,
     class_logits,
+    validated_metrics,
     window_uncertainty_rows,
 )
 from histopilot.workers.train_batch import check_inputs
@@ -41,7 +41,7 @@ def _decisions(records, target, threshold):
 def evaluation_metrics(records, target, threshold):
     """Metrics use labeled rows only; threshold changes decisions, never ranking scores."""
     labeled = [row for row in records if row["labelIndex"] is not None]
-    result = _metrics(labeled, target, decision_threshold=threshold)
+    result = validated_metrics(labeled, target, decision_threshold=threshold)
     return {
         **result,
         "predictionCount": len(records),

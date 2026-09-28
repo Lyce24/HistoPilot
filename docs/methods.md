@@ -91,7 +91,7 @@ Headline numbers are seed-average OOF values; AUROC is the primary metric. The R
 
 ## Metrics
 
-`histopilot/training/module.py` and `histopilot/cv_summary.py`, which produce identical values. All are computed in NumPy.
+`histopilot/cv_summary.py` (`point_metrics`); the training and inference workers validate their predictions in `histopilot/training/module.py` and score them with the same function. All are computed in NumPy.
 
 | Metric | Definition |
 | --- | --- |

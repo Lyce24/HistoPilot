@@ -140,6 +140,8 @@ def compute_snapshot() -> dict:
         root / "domain" / "features.py",
         root / "application" / "clinical_inputs.py",
         root / "candidate_selection.py",
+        # The training worker scores its predictions with cv_summary.point_metrics.
+        root / "cv_summary.py",
         *(root / "models").glob("*.py"),
         *(root / "datasets").glob("*.py"),
         *(root / "training").glob("*.py"),
