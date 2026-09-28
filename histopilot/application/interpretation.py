@@ -528,7 +528,8 @@ class InterpretationService:
             fields = clinical_fields(model["recipe"])
             values = frozen_clinical_values(self.store, self.filesystem, [dataset_id], memberships, fields)
             try:
-                clinical_rows(memberships, values, fields)
+                # Attention reads each selected slide's own values; no patient grouping applies.
+                clinical_rows(memberships, values, fields, unit="slide")
             except ValueError as error:
                 raise StorageError(str(error), "CLINICAL_VALUES_INVALID", 422) from error
             requests = [{**row, "clinical": values[row["slideId"]]} for row in requests]

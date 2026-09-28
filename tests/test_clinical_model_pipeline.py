@@ -71,7 +71,7 @@ def test_matched_clinical_models_keep_frozen_covariates_through_publication(tmp_
                     "key": name,
                     "sourceColumn": name,
                     "owner": "patient",
-                    "type": "number" if name == "age" else "text",
+                    "type": "integer" if name == "age" else "text",
                 }
                 for name in ("label", "age", "site", "cohort")
             ],

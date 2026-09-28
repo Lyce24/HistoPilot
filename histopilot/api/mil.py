@@ -2,9 +2,10 @@
 
 from typing import Literal
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Query, Response
 
 from histopilot.adapters.native.runtime import training_runtime
+from histopilot.application.clinical_inputs import clinical_field_choices
 from histopilot.application.development import DevelopmentService
 from histopilot.application.mil_inputs import MILInputService
 from histopilot.application.project_workspace import ProjectWorkspace
@@ -19,6 +20,7 @@ from histopilot.schemas.development import (
 )
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.project_lock import StorageError
 
 
 def mil_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -> APIRouter:
@@ -27,6 +29,14 @@ def mil_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -> APIRo
     @router.post("/preview")
     def preview(identity: str, payload: MILInputSpec):
         return MILInputService(projects.scientific_store(identity), filesystem).preview(payload)
+
+    @router.get("/clinical-fields")
+    def clinical_fields(identity: str, protocolId: str = Query(min_length=1, max_length=128)):  # noqa: N803
+        store = projects.scientific_store(identity)
+        protocol = store.get_configuration(protocolId)["manifest"]
+        if protocol.get("kind") != "protocol":
+            raise StorageError("Choose the experiment's frozen split.", "INVALID_PROTOCOL", 422)
+        return {"fields": clinical_field_choices(store, filesystem, protocol)}
 
     @router.get("/batches")
     def batches(identity: str):

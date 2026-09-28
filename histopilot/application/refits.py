@@ -417,7 +417,10 @@ class RefitService:
             clinical_preprocessing = None
             if fields:
                 clinical_preprocessing = fit_clinical_preprocessor(
-                    plan["data"]["memberships"], plan["data"].get("clinicalValues", {}), fields
+                    plan["data"]["memberships"],
+                    plan["data"].get("clinicalValues", {}),
+                    fields,
+                    unit=plan.get("splitUnit", "patient"),
                 )
                 if receipt.get("clinicalPreprocessing") != clinical_preprocessing:
                     raise StorageError("Refit clinical preprocessing differs from development patients.",

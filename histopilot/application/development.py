@@ -50,6 +50,39 @@ def expand_recipes(spec: DevelopmentBatchSpec) -> list[dict]:
     return list({_hash(recipe): recipe for recipe in recipes}.values())
 
 
+# A covariate this close to the label deserves a second look before anyone trusts an
+# improvement from adding it; a legitimate strong predictor still passes with the warning.
+SEPARATION_WARNING = 0.98
+
+
+def _label_separation_findings(protocol, recipes, clinical_values):
+    from histopilot.clinical_features import clinical_fields, label_separation
+
+    target = protocol["spec"]["target"]
+    rows = list({row["slideId"]: row for row in protocol["memberships"]}.values())
+    fields = {item["field"]: item for recipe in recipes for item in clinical_fields(recipe)}
+    findings = []
+    for field, item in sorted(fields.items()):
+        separation = label_separation(
+            rows,
+            clinical_values,
+            item,
+            target.get("positiveClass"),
+            unit=protocol["spec"].get("splitUnit", "patient"),
+        )
+        if separation is not None and separation >= SEPARATION_WARNING:
+            findings.append(
+                {
+                    "severity": "warning",
+                    "code": "CLINICAL_FIELD_SEPARATES_LABELS",
+                    "message": f"{field} alone separates the development labels almost perfectly "
+                    f"({separation:.3f}). Use it only if it is known before the prediction is made "
+                    "and is not derived from the label.",
+                }
+            )
+    return findings
+
+
 def _plan_metadata(row):
     metadata = {
         key: row[key]
@@ -254,7 +287,13 @@ class DevelopmentService:
                             fitting = [row for row in protocol["memberships"]
                                        if row["partition"] == "train"
                                        and _hash(_plan_metadata(row)) == split["id"]]
-                            fit_clinical_preprocessor(fitting, clinical_values, clinical_fields(recipe))
+                            fit_clinical_preprocessor(
+                                fitting,
+                                clinical_values,
+                                clinical_fields(recipe),
+                                unit=protocol["spec"].get("splitUnit", "patient"),
+                            )
+                findings.extend(_label_separation_findings(protocol, recipes, clinical_values))
             except (StorageError, ValueError) as error:
                 findings.append({"severity": "error", "code": getattr(error, "code", "CLINICAL_INPUTS_INVALID"),
                                  "message": str(error)})

@@ -632,7 +632,9 @@ class PredictorService:
             if fields:
                 clinical_preprocessing = fit_clinical_preprocessor(
                     [row for row in expected_memberships if row["partition"] == "train"],
-                    expected_clinical, fields,
+                    expected_clinical,
+                    fields,
+                    unit=run_plan.get("splitUnit", "patient"),
                 )
                 if receipt.get("clinicalPreprocessing") != clinical_preprocessing:
                     raise StorageError("Clinical preprocessing differs from its training patients.",

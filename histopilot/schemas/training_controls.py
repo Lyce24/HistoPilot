@@ -24,8 +24,6 @@ def validate_split_unit(recipe, target, split_unit=None):
     if split_unit == "slide":
         if recipe.get("samplingStrategy", "slide_uniform") != "slide_uniform":
             raise ValueError("Slide-level experiments require slide-uniform sampling; patient sampling is unavailable.")
-        if recipe.get("inputMode", "image") != "image" or recipe.get("clinicalFields"):
-            raise ValueError("Patient-based clinical preprocessing is unavailable for slide-level experiments.")
 
 
 def resolve_stopping(recipe, target, rows, *, split_unit=None):

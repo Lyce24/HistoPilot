@@ -121,7 +121,7 @@ def test_slide_probes_complete_image_clinical_and_combined_studies(
                     "key": name,
                     "sourceColumn": name,
                     "owner": "patient",
-                    "type": "number" if name == "age" else "text",
+                    "type": "integer" if name == "age" else "text",
                 }
                 for name in ("label", "age", "site", "cohort")
             ],

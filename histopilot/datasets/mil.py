@@ -164,7 +164,12 @@ class SlideDataset(Dataset):
         if self.input_mode != "image":
             from histopilot.clinical_features import clinical_rows
 
-            clinical_rows(self.rows, self.clinical_values, self.recipe.get("clinicalFields", []))
+            clinical_rows(
+                self.rows,
+                self.clinical_values,
+                self.recipe.get("clinicalFields", []),
+                unit=plan.get("splitUnit", "patient"),
+            )
         self.bag_size = self.recipe["bagSize"]
         self.eval_bag_size = self.recipe.get("evalBagSize")
         self.dimensions = plan["featureDim"]

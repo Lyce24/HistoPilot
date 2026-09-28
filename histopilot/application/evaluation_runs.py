@@ -506,7 +506,9 @@ class EvaluationRunService:
             fields,
         )
         try:
-            clinical_rows(test["memberships"], values, fields)
+            clinical_rows(
+                test["memberships"], values, fields, unit=test["spec"].get("splitUnit", "patient")
+            )
         except ValueError as error:
             raise StorageError(str(error), "CLINICAL_VALUES_INVALID", 422) from error
         return {"inputMode": recipe["inputMode"], "fields": fields, "valuesSha256": _hash(values)}

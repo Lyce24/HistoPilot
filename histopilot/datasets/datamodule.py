@@ -81,7 +81,12 @@ class MILDataModule(L.LightningDataModule):
         validate_split_unit(self.plan["recipe"], self.plan["target"], self.plan.get("splitUnit"))
         fields = clinical_fields(self.plan["recipe"])
         self.clinical_preprocessor = (
-            fit_clinical_preprocessor(self.memberships["train"], self.plan.get("clinicalValues", {}), fields)
+            fit_clinical_preprocessor(
+                self.memberships["train"],
+                self.plan.get("clinicalValues", {}),
+                fields,
+                unit=self.plan.get("splitUnit", "patient"),
+            )
             if fields else None
         )
 
