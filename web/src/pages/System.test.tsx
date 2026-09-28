@@ -20,6 +20,7 @@ describe('system capability reporting', () => {
     expect(html).not.toContain('Native execution implemented');
     expect(html).not.toContain('Compute workers');
     expect(html).toContain('<h2>Task Center</h2>');
+    expect(html).toContain('Runs training folds and results, refits and predictors, evaluations and inference, attention maps, feature extraction and validation, feature packing, and study archives</span>');
     expect(html).toContain('TRIDENT feature extraction runtime');
     expect(html).toContain('Extraction runtime setup required');
     expect(html).toContain('tmux available');

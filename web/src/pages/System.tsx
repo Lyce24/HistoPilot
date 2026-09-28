@@ -4,7 +4,7 @@ import { useSystem, useSystemCompute } from '../api/queries';
 import type { SystemCompute, SystemStatus } from '../api/types';
 import { Badge, ErrorNotice, Icon, PageHeader, Panel } from '../components/ui';
 import RunStatusChip, { useRunRollup } from '../components/RunStatusChip';
-import { taskCenterHref } from '../api/taskCenter';
+import { taskCenterHref, taskCenterWork } from '../api/taskCenter';
 import './System.css';
 
 const unavailable = 'Unavailable';
@@ -116,7 +116,7 @@ export function TaskCenterCard({ tmuxAvailable, extractionReady }: { tmuxAvailab
   return <Panel title="Task Center" actions={<Badge tone={runner === null ? 'neutral' : runner ? 'green' : 'amber'}>{runner === null ? machine.isError ? 'Status unavailable' : 'Checking runner…' : runner ? 'Runner running' : 'Runner stopped'}</Badge>}>
     <RunStatusChip scope={{}} variant="chip" />
     <ul className="detail-list">
-      <li><span>Runs training, refits, evaluation, inference and attention</span><strong>{runner === false ? 'Queued work waits until the runner starts' : 'One queue for every project on this host'}</strong></li>
+      <li><span>Runs {taskCenterWork()}</span><strong>{runner === false ? 'Queued work waits until the runner starts' : 'One queue for every project on this host'}</strong></li>
       <li><span>tmux (hosts the Task Center runner)</span><strong>{tmuxAvailable === undefined ? 'Availability not reported' : tmuxAvailable ? 'tmux available' : 'tmux unavailable'}</strong></li>
       <li><span>TRIDENT feature extraction runtime</span><strong>{extractionReady ? 'Runtime ready' : 'Extraction runtime setup required'}</strong></li>
     </ul>

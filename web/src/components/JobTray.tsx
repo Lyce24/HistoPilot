@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { formatDuration, taskCenter, taskCenterHref, taskCenterKeys, taskDisplayTitle, taskProgress, taskStateLabel, type TaskItem, type TaskRollup } from '../api/taskCenter';
+import { formatDuration, taskCenter, taskCenterHref, taskCenterKeys, taskCenterWork, taskDisplayTitle, taskProgress, taskStateLabel, type TaskItem, type TaskRollup } from '../api/taskCenter';
 import { useRunRollup } from './RunStatusChip';
 import { Badge, ErrorNotice, Icon } from './ui';
 import './JobTray.css';
@@ -98,7 +98,7 @@ export default function JobTray({ inline = false }: { inline?: boolean }) {
           {liveTasks.length ? <JobTrayLinks jobs={liveTasks.map(taskJobLink)} /> : null}
           {liveTaskCount(rollup) > liveTasks.length && liveTasks.length ? <p className="muted">{liveTaskCount(rollup) - liveTasks.length} more in the Task Center.</p> : null}
           {rollup?.lastFailure && rollup.recentFailures ? <p className="job-tray-failure"><Badge tone="orange">Failed</Badge> <a href={taskCenterHref({ task: rollup.lastFailure.taskId })}>{rollup.lastFailure.title}</a>{rollup.lastFailure.message ? ` · ${rollup.lastFailure.message}` : ''}</p> : null}
-          {!loading && !tasks.isPending && !live && !rollup?.recentFailures ? <p className="muted">Nothing is running or queued. Training, refits, evaluations, inference and attention maps appear here once submitted.</p> : null}
+          {!loading && !tasks.isPending && !live && !rollup?.recentFailures ? <p className="muted">Nothing is running or queued. {taskCenterWork(true)} appear here once submitted.</p> : null}
           <div className="job-tray-links"><a className="text-link" href={rollup?.lastFailure && rollup.recentFailures ? taskCenterHref({ task: rollup.lastFailure.taskId }) : '#task-center'}>Open Task Center →</a></div>
         </div>
       ) : null}

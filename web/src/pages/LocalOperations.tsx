@@ -7,7 +7,7 @@ import { Badge, ErrorNotice, Icon, PageHeader, Panel } from '../components/ui';
 import ServerFolderPicker from '../components/ServerFolderPicker';
 import RunStatusChip from '../components/RunStatusChip';
 import LegacyRecordNote, { createdBeforeTaskCenter } from '../components/LegacyRecordNote';
-import { taskCenterHref } from '../api/taskCenter';
+import { taskCenterHref, taskCenterWork } from '../api/taskCenter';
 import './LocalOperations.css';
 
 const active = new Set(['starting', 'queued', 'running', 'cancelling']);
@@ -98,7 +98,7 @@ export default function LocalOperations({ workspace }: { workspace: Workspace })
     <PageHeader eyebrow="Project operations" title="Study backups & sources" description="Verify project archives and reconnect moved source folders." actions={<button type="button" className="btn btn-secondary" onClick={() => { void inventory.refetch(); void archives.refetch(); void sources.refetch(); }}>Refresh</button>} />
     <ErrorNotice error={error ?? inventory.error ?? sources.error ?? archives.error} />
     {notice ? <p className="callout" role="status">{notice}</p> : null}
-    <p className="callout operations-task-center" role="note"><Icon name="clock" size={16} /><span>Training, refits, evaluations, interpretation, feature extraction and packing run in the <a href={taskCenterHref({ project })}>Task Center</a>, which orders and tracks them for every project on this machine.</span></p>
+    <p className="callout operations-task-center" role="note"><Icon name="clock" size={16} /><span>{taskCenterWork(true)}, including the archive operations on this page, run in the <a href={taskCenterHref({ project })}>Task Center</a>, which orders and tracks them for every project on this machine.</span></p>
     <Panel title="Verified project archives" subtitle="Save the project database, frozen records, review notes, logs and project-contained outputs with checksums.">
       <p className="callout">External slides, feature folders and outputs remain external references. The archive records unavailable references. Export after active jobs finish; restoring preserves the project identity and never overwrites an existing folder.</p>
       <div className="operations-form"><label className="operations-field">Operation<select value={action} disabled={busy} onChange={(event) => setAction(event.target.value as ArchiveAction)}><option value="export">Export project</option><option value="verify">Verify archive</option><option value="restore">Restore archive</option></select></label>

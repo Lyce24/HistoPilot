@@ -5,7 +5,7 @@ import type { Workspace } from '../api/types';
 import { experimentPollInterval, experiments } from '../api/experiments';
 import {
   exitReasonLabel, formatDuration, measuredVramGb, ownerCountsText, ownerKindLabel, readTaskCenterRoute, runnerActionOutcome, secondsBetween, taskCenter,
-  taskCenterHref, taskCenterKeys, taskCenterLink, taskCenterPollInterval, taskCounts, taskDisplayTitle, taskKindLabel, taskLive, taskProgress, taskProgressDetails,
+  taskCenterHref, taskCenterKeys, taskCenterLink, taskCenterWork, taskCenterPollInterval, taskCounts, taskDisplayTitle, taskKindLabel, taskLive, taskProgress, taskProgressDetails,
   taskStateLabel, taskStateTone,
   type CapacityResponse, type CapacitySuggestion, type RunnerActionResponse, type TaskCenterRoute, type TaskCenterRunner, type TaskCenterSummary, type TaskDetail,
   type TaskEvent, type TaskFailure, type TaskHistoryGroup, type TaskItem, type TaskOwner, type TaskOwnerRef,
@@ -789,7 +789,7 @@ export default function TaskCenter({ workspace }: { workspace: Workspace }) {
   const closeTask = () => navigate({ ...route, task: undefined });
   const pausing = actions.isPending(pauseIdentity(true)) || actions.isPending(pauseIdentity(false));
   return <div className={`task-center${route.task ? ' has-drawer' : ''}`}>
-    <PageHeader eyebrow="LOCAL WORKSPACE" title="Task Center" description="Training, refits, evaluations and interpretation from every project on this machine, in the order they will run." actions={<>
+    <PageHeader eyebrow="LOCAL WORKSPACE" title="Task Center" description={`${taskCenterWork(true)} from every project on this machine, in the order they will run.`} actions={<>
       <button type="button" className="btn btn-secondary" disabled={paused === undefined || pausing} title={paused ? undefined : 'Running tasks continue; queued tasks wait until you resume.'} onClick={() => setPaused(!paused)}>{paused ? 'Resume queue' : 'Pause queue'}</button>
       <button type="button" className="btn btn-secondary" disabled={refreshing} onClick={() => void refresh()}><Icon name="reset" />{refreshing ? 'Refreshing…' : 'Refresh'}</button>
     </>} />

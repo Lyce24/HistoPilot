@@ -31,6 +31,7 @@ describe('project operations workspace', () => {
     const html = render({ ...empty, jobs: [{ key: 'extraction:x', id: 'x', kind: 'extraction', name: 'Slide embeddings', job: { status: 'running', cancellable: true } }] });
     expect(html).toContain('Study backups &amp; sources');
     expect(html).toContain('href="#task-center?project=project"');
+    expect(html).toContain('Training folds and results, refits and predictors, evaluations and inference, attention maps, feature extraction and validation, feature packing, and study archives, including the archive operations on this page, run in the');
     expect(html).toContain('Export waits for 1 active project job to finish');
     expect(html).not.toContain('Unified job queue');
     expect(html).not.toContain('Cancel job');

@@ -414,6 +414,9 @@ export function measuredVramGb(task: Pick<TaskItem, 'progress' | 'resources'>) {
 export interface TaskCenterRoute { owner?: string; task?: string; project?: string; kind?: string; state?: string }
 const routeKeys = ['owner', 'task', 'project', 'kind', 'state'] as const;
 /** `#task-center?owner=…&task=…&project=…&kind=…&state=…`, empty values dropped. */
+/** Everything the Task Center runs, for the places that describe it. Sentence case, no final stop. */
+export const TASK_CENTER_WORK = 'training folds and results, refits and predictors, evaluations and inference, attention maps, feature extraction and validation, feature packing, and study archives';
+export const taskCenterWork = (capitalized = false) => capitalized ? TASK_CENTER_WORK[0].toUpperCase() + TASK_CENTER_WORK.slice(1) : TASK_CENTER_WORK;
 export function taskCenterHref(route: TaskCenterRoute = {}) {
   const query = new URLSearchParams();
   for (const key of routeKeys) if (route[key]) query.set(key, route[key]!);

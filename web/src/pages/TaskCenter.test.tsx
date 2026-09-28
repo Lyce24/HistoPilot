@@ -52,6 +52,8 @@ describe('Task Center page', () => {
   it('summarizes the runner, queue, recent failures and time to empty', () => {
     const html = render(seeded());
     expect(html).toContain('<h1>Task Center</h1>');
+    // The header names every kind of work the queue runs, not only model jobs.
+    expect(html).toContain('Training folds and results, refits and predictors, evaluations and inference, attention maps, feature extraction and validation, feature packing, and study archives from every project on this machine');
     expect(html).toContain('Pause queue');
     expect(html).toContain('Queue active');
     expect(html).toContain('4 running · 41 queued · 2 failed in the last 24 h · about 2 h 10 m left');
