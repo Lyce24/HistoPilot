@@ -52,7 +52,8 @@ export interface ComputeExecution {
   progressWarning?: string | null;
   status: 'not_started' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   cancellationRequested?: boolean; error?: string | null; sessionName?: string; logPath?: string; updatedAt?: string;
-  /** Jobs run by the Task Center report their queue state instead of a tmux session. */
+  /** "task-center" for Task Center jobs, which report their queue state; "tmux" (or absent) for
+   * read-only records created before it, whose stored `sessionName` is never shown. */
   executor?: 'task-center' | 'tmux';
   /** `runnerAlive` is null when the service cannot tell; false means queued work cannot start. */
   task?: { id: string; state: TaskState; attempt: number; waitingReason: string | null; held: boolean; ownerKey?: string; runnerAlive?: boolean | null } | null;

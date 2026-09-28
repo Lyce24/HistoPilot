@@ -481,18 +481,6 @@
   margin-bottom: 8px;
   font-size: 12px;
 }
-.trident-log-heading > span {
-  font-size: 10px;
-  color: var(--muted);
-}
-.trident-log-heading i {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 4px;
-  border-radius: 50%;
-  background: var(--green);
-}
 .trident-log {
   padding: 16px;
   background: var(--brand-deep);

@@ -23,7 +23,6 @@ export interface TridentRuntime {
   ready?: boolean;
   python?: string;
   script?: string;
-  tmux?: boolean | string;
   message?: string;
   findings?: Finding[];
   [key: string]: unknown;
@@ -37,7 +36,6 @@ export interface TridentCatalog {
   slideEncoders: string[];
   managedOptions?: string[];
   defaultOutputPath?: string;
-  tmuxAvailable?: boolean;
   runtime?: TridentRuntime;
 }
 export interface ExtractionSpec {
@@ -139,9 +137,9 @@ export interface ExtractionJob {
   spec: ExtractionSpec;
   outputPath: string;
   logPath: string;
-  /** Null for Task Center jobs, which have no tmux session. */
+  /** Kept by records created before the Task Center; null for Task Center jobs. Never shown. */
   sessionName: string | null;
-  /** "task-center" for jobs run as Task Center tasks; "tmux" (or absent) for older jobs. */
+  /** "task-center" for Task Center jobs; "tmux" (or absent) for read-only records created before it. */
   executor?: 'task-center' | 'tmux';
   executionMode?: 'task-center';
   ownerKey?: string;

@@ -8,6 +8,7 @@ import { extractionActive } from '../api/trident';
 import { featurePackActive } from '../api/packing';
 import type { ExtractionJob } from '../api/trident';
 import type { FeaturePackJob } from '../api/packing';
+import { legacyRecordNote } from '../components/LegacyRecordNote';
 
 const clients: QueryClient[] = [];
 afterEach(() => { clients.splice(0).forEach((client) => client.clear()); vi.restoreAllMocks(); });
@@ -44,6 +45,11 @@ describe('project operations workspace', () => {
     expect(html).not.toContain('Checksums verified');
     expect(html).toContain('/missing/slides/A.svs');
     expect(html).toContain('existing frozen versions keep their recorded paths');
-    expect(html).toContain('tmux attach -t archive-session');
+  });
+  it('shows an archive operation created before the Task Center read-only, without its session', () => {
+    const html = render(empty, true);
+    expect(html).toContain(legacyRecordNote);
+    expect(html).toContain('/logs/archive.log');
+    for (const text of ['archive-session', 'tmux attach', 'Reconnect', 'Retry saved operation', 'Cancel archive operation', '>Resume<']) expect(html).not.toContain(text);
   });
 });

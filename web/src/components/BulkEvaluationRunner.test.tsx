@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fixturePredictor } from '../testFixtures/predictors';
 import { fixtureExperiment } from '../testFixtures/evaluations';
-import BulkEvaluationRunner, { EvaluationBatchStatus, batchMemberStatus, legacyBatchCancellable } from './BulkEvaluationRunner';
+import BulkEvaluationRunner, { EvaluationBatchStatus, batchMemberStatus } from './BulkEvaluationRunner';
+import { legacyRecordNote } from './LegacyRecordNote';
 import { taskCenterKeys } from '../api/taskCenter';
 import { fixtureRollup } from '../testFixtures/taskCenter';
 import type { EvaluationCohort } from '../api/evaluation';
@@ -86,20 +87,18 @@ describe('evaluation batch status', () => {
     } finally { client.clear(); }
   });
 
-  it('keeps Cancel for a batch whose members run in tmux, which the Task Center cannot reach', () => {
+  it('shows a batch whose members ran before the Task Center read-only, with no Cancel', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    const batch = { id: 'batch', status: 'running', cohortId: 'c', items: [{ predictorId: 'p1', predictorName: 'Ensemble · seed 42', method: 'ensemble' as const, status: 'running', evaluationId: 'e1' }] };
+    const batch = { id: 'batch', status: 'interrupted', cohortId: 'c', items: [{ predictorId: 'p1', predictorName: 'Ensemble · seed 42', method: 'ensemble' as const, status: 'interrupted', evaluationId: 'e1', execution: { status: 'interrupted' as const, executor: 'tmux' as const, sessionName: 'hp-eval' } }] };
     client.setQueryData(['evaluation-batch', 'p', 'batch'], batch);
     client.setQueryData(taskCenterKeys.rollup({ ownerKind: 'evaluation-batch', ownerId: 'batch', project: 'p' }), fixtureRollup({ state: 'not-started', counts: {}, byKind: {}, live: 0, active: 0, pending: 0 }));
     try {
       const html = renderToStaticMarkup(<QueryClientProvider client={client}><EvaluationBatchStatus project="p" id="batch" onOpen={() => {}} /></QueryClientProvider>);
-      expect(html).toContain('>Cancel evaluation batch<');
+      expect(html).toContain(legacyRecordNote);
+      expect(html).toContain('>Interrupted<');
+      for (const text of ['Cancel evaluation batch', 'hp-eval', 'tmux attach']) expect(html).not.toContain(text);
+      client.setQueryData(['evaluation-batch', 'p', 'batch'], { ...batch, items: [{ ...batch.items[0], execution: { status: 'interrupted', executor: 'task-center' } }] });
+      expect(renderToStaticMarkup(<QueryClientProvider client={client}><EvaluationBatchStatus project="p" id="batch" onOpen={() => {}} /></QueryClientProvider>)).not.toContain(legacyRecordNote);
     } finally { client.clear(); }
-    const notStarted = { state: 'not-started' };
-    expect(legacyBatchCancellable(batch, notStarted)).toBe(true);
-    expect(legacyBatchCancellable(batch, { state: 'running' })).toBe(false);
-    expect(legacyBatchCancellable(batch, undefined)).toBe(false);
-    expect(legacyBatchCancellable({ ...batch, status: 'completed', items: [{ ...batch.items[0], status: 'completed' }] }, notStarted)).toBe(false);
-    expect(legacyBatchCancellable({ ...batch, lifecycleState: 'trashed' }, notStarted)).toBe(false);
   });
 });

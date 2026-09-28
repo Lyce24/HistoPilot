@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ExperimentPredictors from './ExperimentPredictors';
 import type { ExperimentPredictorExecution, ModelExperiment } from '../api/experiments';
+import { legacyRecordNote } from './LegacyRecordNote';
 
 const clients: QueryClient[] = [];
 afterEach(() => clients.splice(0).forEach((client) => client.clear()));
@@ -28,8 +29,20 @@ describe('experiment predictor creation', () => {
     expect(html).not.toContain('tmux attach');
   });
 
-  it('keeps the tmux reconnect hint for coordinators started before the Task Center', () => {
-    expect(render()).toContain('tmux attach -t hp-predictors');
+  it('shows a coordinator created before the Task Center read-only, without its session or controls', () => {
+    const html = render({ status: 'interrupted', retryable: true, cancellable: true, error: { code: 'CREATED_BEFORE_TASK_CENTER', message: 'Created before the Task Center; it did not finish.' } }, 'progress');
+    expect(html).toContain('>Interrupted<');
+    expect(html).toContain('Created before the Task Center; it did not finish.');
+    expect(html).toContain(legacyRecordNote);
+    expect(html).toContain('/coordinator/worker.log');
+    for (const text of ['hp-predictors', 'tmux attach', 'Resume predictor creation', 'Cancel remaining predictors']) expect(html).not.toContain(text);
+    expect(render({ executor: 'task-center' })).not.toContain(legacyRecordNote);
+  });
+
+  it('does not call a coordinator cancelled before it ever started a pre-Task Center record', () => {
+    const html = render({ status: 'cancelled', sessionName: null, logPath: null, cancellable: false }, 'progress');
+    expect(html).toContain('>Cancelled<');
+    expect(html).not.toContain(legacyRecordNote);
   });
 
   it('says so when the Task Center runner is not running for queued predictor work', () => {

@@ -14,7 +14,7 @@ import {
   useRefreshScientific,
 } from '../components/ScientificUI';
 import ServerFolderPicker from '../components/ServerFolderPicker';
-import TridentExtraction, { legacyActive } from '../components/TridentExtraction';
+import TridentExtraction from '../components/TridentExtraction';
 import FeatureExtractionRuns from '../components/FeatureExtractionRuns';
 import { extractionActive, trident } from '../api/trident';
 import { useHashParameters } from '../lib/hashRoute';
@@ -63,8 +63,8 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest, packReque
   const extractionJobs = useQuery({
     queryKey: ['extractions', project, 'jobs'],
     queryFn: () => trident.jobs(project),
-    // Task Center runs are followed by their status chips; tmux runs keep fast polling.
-    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? query.state.data.jobs.some(legacyActive) ? 3000 : 10_000 : false,
+    // Runs are followed by their status chips; the list refreshes slowly while one is active.
+    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 10_000 : false,
   });
   const runs = extractionJobs.data?.jobs ?? [];
   const activeExtractions = runs.filter(extractionActive);

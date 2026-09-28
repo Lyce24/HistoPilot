@@ -5,6 +5,7 @@ import ComputeJobControls, { computeExecutionQuery, recordBehindRollup } from '.
 import type { ComputeExecution } from '../api/predictors';
 import { taskCenterKeys } from '../api/taskCenter';
 import { fixtureRollup } from '../testFixtures/taskCenter';
+import { legacyRecordNote } from './LegacyRecordNote';
 
 const clients: QueryClient[] = [];
 afterEach(() => clients.splice(0).forEach((client) => client.clear()));
@@ -46,13 +47,11 @@ describe('compute job science action and run status', () => {
     expect(render({ status: 'failed', executor: 'task-center' }, { rollup: single({ state: 'attention', live: 0, active: 0, retryable: false }) })).not.toContain('>Resume<');
   });
 
-  it('follows Task Center jobs through the task store instead of polling the record', () => {
+  it('follows jobs through the task store instead of polling the record', () => {
     render({ status: 'running', executor: 'task-center' }, { rollup: single() });
     const managed = clients.at(-1)?.getQueryCache().find({ queryKey: ['compute-job', 'p', 'refit', 'job'] })?.options as QueryObserverOptions | undefined;
-    const interval = managed?.refetchInterval as ((query: unknown) => number | false) | undefined;
-    expect(interval?.({ state: { data: { status: 'running', executor: 'task-center' } } })).toBe(false);
-    expect(interval?.({ state: { data: { status: 'running', executor: 'tmux' } } })).toBe(5000);
-    expect(interval?.({ state: { data: { status: 'completed' } } })).toBe(false);
+    expect(managed?.refetchInterval).toBeUndefined();
+    expect(computeExecutionQuery('p', 'refit', 'job', { status: 'running', executor: 'tmux' }, true)).not.toHaveProperty('refetchInterval');
   });
 
   it('reads the record again on mount: what a list handed in may predate a Task Center change', () => {
@@ -73,7 +72,7 @@ describe('compute job science action and run status', () => {
     expect(recordBehindRollup(done, running)).toBe(true);
     expect(recordBehindRollup(single({ state: 'attention', live: 0, active: 0 }), { ...running, status: 'queued' })).toBe(true);
     expect(recordBehindRollup(single({ state: 'cancelled', live: 0, active: 0 }), running)).toBe(true);
-    // Still live, not in the store yet, already up to date, or a tmux job: nothing to do.
+    // Still live, not in the store yet, already up to date, or created before the Task Center: nothing to do.
     expect(recordBehindRollup(single(), running)).toBe(false);
     expect(recordBehindRollup(single({ state: 'not-started' }), running)).toBe(false);
     expect(recordBehindRollup(done, { status: 'completed', executor: 'task-center' })).toBe(false);
@@ -110,13 +109,20 @@ describe('compute job science action and run status', () => {
     expect(html).toMatch(/disabled="">Run evaluation/);
   });
 
-  it('keeps status, cancel and the tmux hint for jobs started before the Task Center', () => {
-    const legacy = render({ status: 'running', sessionName: 'hp-refit', logPath: '/job/worker.log', progress: { epoch: 2, maxEpochs: 8 } });
-    expect(legacy).toContain('tmux attach -t hp-refit');
-    expect(legacy).toContain('Cancel job');
+  it('shows a job created before the Task Center read-only: saved status and a note, no actions or session', () => {
+    const legacy = render({ status: 'interrupted', executor: 'tmux', sessionName: 'hp-refit', logPath: '/job/worker.log', progress: { epoch: 2, maxEpochs: 8 }, error: 'Created before the Task Center; it did not finish.' });
+    expect(legacy).toContain('>Interrupted<');
     expect(legacy).toContain('Epoch 2 / 8');
-    expect(legacy).not.toContain('Task Center');
-    expect(render({ status: 'queued', sessionName: 'hp-refit', cancellationRequested: true })).toContain('Cancellation requested');
+    expect(legacy).toContain('Created before the Task Center; it did not finish.');
+    expect(legacy).toContain(legacyRecordNote);
+    expect(legacy).toContain('/job/worker.log');
+    for (const text of ['hp-refit', 'tmux attach', 'Cancel job', '>Resume<', 'Restore this record']) expect(legacy).not.toContain(text);
+    // A record without an executor also predates the Task Center; a finished one keeps its status.
+    const finished = render({ status: 'completed', sessionName: 'hp-refit' });
+    expect(finished).toContain('>Completed<');
+    expect(finished).toContain(legacyRecordNote);
+    // A saved record never launched is not one: it can still be run.
+    expect(render({ status: 'not_started' })).not.toContain(legacyRecordNote);
   });
 
   it('shows a progress-read warning with the status', () => {

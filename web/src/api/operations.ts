@@ -20,9 +20,10 @@ export interface SourceInventory {
 }
 export interface ArchiveJob {
   id: string; action: ArchiveAction; status: string; createdAt: string;
-  /** Null for Task Center operations, which have no tmux session. */
+  /** Kept by records created before the Task Center; null for Task Center operations. Never shown. */
   sessionName: string | null; logPath: string; error: string | null;
-  /** Task Center operations: the task view and why a queued operation waits. */
+  /** Task Center operations: the task view and why a queued operation waits. "tmux" (or absent)
+   * marks a read-only record created before the Task Center. */
   executor?: 'task-center' | 'tmux'; executionMode?: 'task-center'; ownerKey?: string;
   task?: RecordTaskView | null; waitingReason?: string | null;
   progress?: { stage: string; completed: number; total: number; file: string };

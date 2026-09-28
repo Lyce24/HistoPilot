@@ -104,6 +104,7 @@ export interface SystemStatus {
   workspace: string;
   storage: { engine: string; journalMode: string; schemaVersion: number };
   control: { cudaModelsLoaded: boolean; process: string };
+  /** `tmuxAvailable`: tmux is available to host the Task Center runner. */
   workers: { executionEnabled: boolean; status: string; tmuxAvailable?: boolean; nativeExecutionImplemented?: boolean };
   sourcesReadOnly: boolean;
 }

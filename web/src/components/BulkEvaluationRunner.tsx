@@ -14,8 +14,8 @@ import EvaluationExperimentPicker from './EvaluationExperimentPicker';
 import EvaluationInputSettings, { initialEvaluationInputs, evaluationExecutionSelection, EvaluationCoverageSummary, type EvaluationExecutionInputs } from './EvaluationInputSettings';
 import { reportEditorValidity } from './NumericField';
 import { Badge, ErrorNotice } from './ui';
-import RunStatusChip, { useRunRollup } from './RunStatusChip';
-import { ConfirmAction, definiteRejection } from '../lib/taskCenterActions';
+import RunStatusChip from './RunStatusChip';
+import LegacyRecordNote, { computeCreatedBeforeTaskCenter } from './LegacyRecordNote';
 import { StageCreateButton, StageBackButton, StageContinueButton, StagePage, StageSteps } from './StageWorkflow';
 import './RunWorkspace.css';
 
@@ -131,41 +131,23 @@ const memberStatus: Record<string, string> = {
 export const batchMemberStatus = (status: string) => memberStatus[status] ?? status.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
 
 /**
- * Whether the batch still needs its own Cancel: its members run in their own tmux sessions
- * (submitted before the Task Center ran them), so the task store has no owner to cancel.
- */
-export const legacyBatchCancellable = (batch: EvaluationBatch | undefined, rollup: { state: string } | undefined) =>
-  Boolean(batch && rollup?.state === 'not-started' && bulkEvaluationActive(batch) && batch.lifecycleState !== 'trashed');
-
-/**
  * A batch of evaluations (or inference runs): one status line over the batch's Task Center
  * owner and each predictor's result. Cancelling, queue order and logs are in the Task Center.
  * The record is re-read only while members still run, and once when the batch settles.
- * Batches whose members run in tmux have no Task Center owner and keep their Cancel here.
+ * Batches whose members ran before the Task Center are read-only: their saved statuses.
  */
 export function EvaluationBatchStatus({ project, id, onOpen, kind = 'evaluation' }: { project: string; id: string; onOpen: (id: string) => void; kind?: 'evaluation' | 'inference' }) {
   const client = useQueryClient();
   const scope = { ownerKind: 'evaluation-batch', ownerId: id, project };
-  const rollup = useRunRollup(scope).data;
-  const record = useQuery({ queryKey: ['evaluation-batch', project, id], queryFn: () => bulkEvaluations.get(project, id), refetchInterval: (query) => query.state.data && bulkEvaluationActive(query.state.data) ? rollup?.state === 'not-started' ? 5000 : 15000 : false });
+  const record = useQuery({ queryKey: ['evaluation-batch', project, id], queryFn: () => bulkEvaluations.get(project, id), refetchInterval: (query) => query.state.data && bulkEvaluationActive(query.state.data) ? 15000 : false });
   const batch: EvaluationBatch | undefined = record.data;
-  const [operation, setOperation] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  async function cancel() {
-    if (busy) return;
-    const op = operation ?? crypto.randomUUID(); setOperation(op); setBusy(true); setError(null);
-    try { client.setQueryData(['evaluation-batch', project, id], await bulkEvaluations.cancel(project, id, op)); setOperation(null); }
-    catch (reason) { setError(reason instanceof Error ? reason : new Error('Cancel request failed.')); if (definiteRejection(reason)) setOperation(null); }
-    finally { setBusy(false); }
-  }
-  const legacyCancel = legacyBatchCancellable(batch, rollup);
-  return <><ErrorNotice error={error ?? record.error} />{batch ? <>
+  const legacy = Boolean(batch?.items.some((item) => computeCreatedBeforeTaskCenter(item.execution)));
+  return <><ErrorNotice error={record.error} />{batch ? <>
     <div className="run-selection-bar">
       <RunStatusChip scope={scope} variant="chip" notStartedText={batchMemberStatus(batch.status)} onSettled={() => void client.invalidateQueries({ queryKey: ['evaluation-batch', project, id] })} />
-      {legacyCancel ? <ConfirmAction label={batch.cancelRequested ? 'Cancelling…' : operation ? 'Retry cancellation' : `Cancel ${kind} batch`} disabled={busy || batch.cancelRequested} busy={busy} busyLabel="Cancelling…" question={`Cancel this ${kind} batch? Running jobs stop after saving what they can.`} confirmLabel={`Cancel ${kind} batch`} onConfirm={() => void cancel()} /> : null}
       <RecordManageButton recordKey={`configuration:${batch.id}`} name={batch.name ?? (kind === 'inference' ? 'Inference batch' : 'Evaluation batch')} />
     </div>
+    {legacy ? <LegacyRecordNote /> : null}
     <div className="run-table-scroll"><table className="run-table"><thead><tr><th>Predictor</th><th>Method</th><th>Status</th><th>Details</th><th>Results</th></tr></thead><tbody>{batch.items.map((item) => <tr key={item.predictorId}><td>{item.predictorName ?? item.predictorId}</td><td>{predictorMethodLabel(item.method)}</td><td>{batchMemberStatus(item.status)}</td><td>{item.error ?? item.findings?.map((finding) => finding.message).join(' ')}</td><td>{item.evaluationId ? <button className="text-button" onClick={() => onOpen(item.evaluationId!)}>{kind === 'inference' ? 'Open predictions' : 'Open evaluation'}</button> : '—'}</td></tr>)}</tbody></table></div>
   </> : <p>Loading {kind} batch…</p>}</>;
 }

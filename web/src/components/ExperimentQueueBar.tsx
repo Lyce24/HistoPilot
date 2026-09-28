@@ -30,8 +30,8 @@ export function experimentRollupScope(project: string, experimentId: string, own
  * The experiment's run status: one line (training and predictor progress, queue place,
  * failures, time left) linking to the experiment in the Task Center, plus one Resume when it
  * needs attention. Queue controls, logs and resources live in the Task Center.
- * `managed` is false for experiments submitted before the Task Center: their batches run in
- * their own tmux sessions, so the line appears only if the task store knows the experiment.
+ * `managed` is false for experiments submitted before the Task Center: the task store may not
+ * know them (their records are read-only), so the line appears only if it does.
  */
 export default function ExperimentQueueBar({ project, experimentId, ownerKey, managed = true, batchIds }: { project: string; experimentId: string; ownerKey?: string | null; waitingReason?: string | null; managed?: boolean; batchIds?: string[] }) {
   const scope = experimentRollupScope(project, experimentId, ownerKey, batchIds);

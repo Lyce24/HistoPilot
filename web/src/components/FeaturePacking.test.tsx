@@ -3,10 +3,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Configuration } from '../api/scientific';
 import type { FeaturePackArtifact, FeaturePackJob, FeaturePackPreview, FeatureValidationReport } from '../api/packing';
-import FeaturePacking, { ExistingPackComparison, FeaturePackCoverage, FeaturePackProgress, FeatureValidationSummary, ManagedFeatureJob, SavedPackChoice, canIncludeFeaturePack, legacyPackActive, nextBundlePackIds, formatPackBytes } from './FeaturePacking';
+import FeaturePacking, { ExistingPackComparison, FeaturePackCoverage, FeaturePackProgress, FeatureValidationSummary, ManagedFeatureJob, SavedPackChoice, canIncludeFeaturePack, nextBundlePackIds, formatPackBytes } from './FeaturePacking';
 import { taskCenterKeys } from '../api/taskCenter';
 import { fixtureRollup } from '../testFixtures/taskCenter';
 import PackFolderExamples from './PackFolderExamples';
+import { legacyRecordNote } from './LegacyRecordNote';
 
 const report: FeatureValidationReport = {
   valid: true, tensorValidationComplete: true, provenanceComplete: false,
@@ -43,7 +44,7 @@ describe('feature preparation presentation', () => {
   it('validates slide embeddings without offering patch packing or coordinate requirements', () => {
     const slideConfiguration = { ...configuration, manifest: { ...configuration.manifest, spec: { ...configuration.manifest.spec, featureKind: 'slide' } } } as Configuration;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    client.setQueryData(['feature-packs', 'project'], { jobs: [], artifacts: [], tmuxAvailable: true, formatAvailable: true, defaultOutputRoot: '/packs' });
+    client.setQueryData(['feature-packs', 'project'], { jobs: [], artifacts: [], formatAvailable: true, defaultOutputRoot: '/packs' });
     client.setQueryData(['feature-packs', 'project', 'validation', 'features'], null);
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeaturePacking project="project" configuration={slideConfiguration} configurations={[slideConfiguration]} onSelectVersion={() => {}} selectedPackIds={[]} onSelectedPackIdsChange={() => {}} /></QueryClientProvider>);
     expect(html).toContain('Validate slide embeddings');
@@ -98,11 +99,12 @@ describe('feature preparation presentation', () => {
     expect(html).not.toContain('role="progressbar"');
   });
 
-  it('recovers an active saved job on mount with cancellation and collapsed operational details', () => {
+  it('recovers an active saved job on mount and leaves its controls and logs to the Task Center', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    client.setQueryData(['feature-packs', 'project'], { jobs: [job()], artifacts: [], tmuxAvailable: true, formatAvailable: true, defaultOutputRoot: '/packs' });
+    const managed = job({ executor: 'task-center', ownerKey: 'owner-pack', sessionName: null });
+    client.setQueryData(['feature-packs', 'project'], { jobs: [managed], artifacts: [], formatAvailable: true, defaultOutputRoot: '/packs' });
     client.setQueryData(['feature-packs', 'project', 'validation', 'features'], null);
-    client.setQueryData(['feature-packs', 'project', 'job', 'packing-job'], job());
+    client.setQueryData(['feature-packs', 'project', 'job', 'packing-job'], managed);
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeaturePacking project="project" configuration={configuration} configurations={[configuration]} onSelectVersion={() => {}} selectedPackIds={[]} onSelectedPackIdsChange={() => {}} /></QueryClientProvider>);
     expect(html).not.toContain('Features only — skip packing');
     expect(html).not.toContain('Features + new pack');
@@ -112,17 +114,30 @@ describe('feature preparation presentation', () => {
     expect(html).not.toContain('Existing pack folder');
     expect(html).not.toContain('Destination folder');
     expect(html).toContain('data-stage-page="activity"');
-    expect(html).toContain('Cancel job');
-    expect(html).toContain('tmux attach -t hp-pack-example');
-    expect(html).toContain('<details class="feature-pack-run-details">');
-    expect(html).not.toContain('<details class="feature-pack-run-details" open');
+    for (const text of ['Cancel job', 'tmux attach', 'feature-pack-run-details', legacyRecordNote]) expect(html).not.toContain(text);
     client.clear();
+  });
+
+  it('shows a job created before the Task Center read-only, with its saved result and log but no session', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const legacy = job({ state: 'interrupted', executor: 'tmux', spec: { featureSetId: 'features', action: 'validate', dtype: 'preserve' }, error: 'Created before the Task Center; it did not finish.' });
+    client.setQueryData(['feature-packs', 'project'], { jobs: [legacy], artifacts: [], formatAvailable: true, defaultOutputRoot: '/packs' });
+    client.setQueryData(['feature-packs', 'project', 'validation', 'features'], null);
+    client.setQueryData(['feature-packs', 'project', 'job', 'packing-job'], legacy);
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeaturePacking project="project" configuration={configuration} configurations={[configuration]} onSelectVersion={() => {}} selectedPackIds={[]} onSelectedPackIdsChange={() => {}} requestedJob="packing-job" /></QueryClientProvider>);
+      expect(html).toContain('Validation interrupted');
+      expect(html).toContain('Created before the Task Center; it did not finish.');
+      expect(html).toContain(legacyRecordNote);
+      expect(html).toContain('/logs/packing.log');
+      for (const text of ['Cancel job', 'hp-pack-example', 'tmux attach', 'Reconnect']) expect(html).not.toContain(text);
+    } finally { client.clear(); }
   });
 
   it('shows draft pack inclusions and keeps stale artifacts unavailable for addition', () => {
     const artifact: FeaturePackArtifact = { id: 'registered', materializationId: 'contents', outputPath: '/mmap/blca', featureSetId: 'features', sourceContentHash: 'content', slideCount: 2, totalPatches: 1024, dimensions: 768, outputDtype: 'float32', sourceDtype: 'float32', dtypePolicy: 'preserve', validation: report, current: true, origin: 'existing' };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    client.setQueryData(['feature-packs', 'project'], { jobs: [], artifacts: [artifact, { ...artifact, id: 'stale', current: false, outputPath: '/changed' }], tmuxAvailable: true, formatAvailable: true, defaultOutputRoot: '/packs' });
+    client.setQueryData(['feature-packs', 'project'], { jobs: [], artifacts: [artifact, { ...artifact, id: 'stale', current: false, outputPath: '/changed' }], formatAvailable: true, defaultOutputRoot: '/packs' });
     client.setQueryData(['feature-packs', 'project', 'validation', 'features'], report);
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeaturePacking project="project" configuration={configuration} configurations={[configuration]} onSelectVersion={() => {}} selectedPackIds={['registered']} onSelectedPackIdsChange={() => {}} /></QueryClientProvider>);
     expect(html).toContain('Features + 1 pack');
@@ -141,7 +156,7 @@ describe('feature preparation presentation', () => {
 
   it('keeps historical jobs on the runs page without presenting an old job as the current task', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    client.setQueryData(['feature-packs', 'project'], { jobs: [job({ state: 'succeeded' })], artifacts: [], tmuxAvailable: true, formatAvailable: true, defaultOutputRoot: '/packs' });
+    client.setQueryData(['feature-packs', 'project'], { jobs: [job({ state: 'succeeded' })], artifacts: [], formatAvailable: true, defaultOutputRoot: '/packs' });
     client.setQueryData(['feature-packs', 'project', 'validation', 'features'], report);
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeaturePacking project="project" configuration={configuration} configurations={[configuration]} onSelectVersion={() => {}} selectedPackIds={[]} onSelectedPackIdsChange={() => {}} /></QueryClientProvider>);
     expect(html).toContain('Runs &amp; results');
@@ -193,7 +208,7 @@ describe('feature preparation presentation', () => {
 
   it('shows unavailable draft packs explicitly and leaves them removable', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    client.setQueryData(['feature-packs', 'project'], { jobs: [], artifacts: [], tmuxAvailable: true, formatAvailable: true, defaultOutputRoot: '/packs' });
+    client.setQueryData(['feature-packs', 'project'], { jobs: [], artifacts: [], formatAvailable: true, defaultOutputRoot: '/packs' });
     client.setQueryData(['feature-packs', 'project', 'validation', 'features'], report);
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeaturePacking project="project" configuration={configuration} configurations={[configuration]} onSelectVersion={() => {}} selectedPackIds={['missing']} onSelectedPackIdsChange={() => {}} /></QueryClientProvider>);
     expect(html).toContain('Features + 1 pack');
@@ -206,7 +221,7 @@ describe('feature preparation presentation', () => {
 
   it('distinguishes matching structure from verified contents and explains unequal container sizes', () => {
     const preview: FeaturePackPreview = {
-      spec: { featureSetId: 'features', action: 'attach', dtype: 'preserve', existingPath: '/mmap/blca' }, previewHash: 'hash', canRun: true, findings: [], slideCount: 2, patchCount: 1024, dimensions: 768, sourceDtype: 'float32', outputDtype: 'float32', estimatedBytes: null, availableBytes: null, outputPath: null, tmuxAvailable: true, matchesFeatures: true,
+      spec: { featureSetId: 'features', action: 'attach', dtype: 'preserve', existingPath: '/mmap/blca' }, previewHash: 'hash', canRun: true, findings: [], slideCount: 2, patchCount: 1024, dimensions: 768, sourceDtype: 'float32', outputDtype: 'float32', estimatedBytes: null, availableBytes: null, outputPath: null, matchesFeatures: true,
       packInspection: { format: 'oceanpath', formatVariant: 'legacy', slideCount: 2, totalPatches: 1024, dimensions: 768, sourceDtype: 'float32', precision: 'exact', outputDtype: 'float32', featureBytes: 3145728, coordinateBytes: 8192, totalBytes: 3155000, expectedFeatureBytes: 3145728, expectedCoordinateBytes: 8192, sourceContainerBytes: 3210000, sourcePatchCount: 1024, missingSlideCount: 0, extraSlideCount: 0, mismatchedSlideCount: 0, missingSlides: [], extraSlides: [], mismatchedSlides: [] },
     };
     const html = renderToStaticMarkup(<ExistingPackComparison preview={preview} />);
@@ -252,8 +267,6 @@ describe('Task Center packing jobs', () => {
       expect(html).toContain('>40 / 120<');
       expect(html).toContain('href="#task-center?owner=owner-pack&amp;project=project"');
       for (const text of ['tmux attach', 'Cancel job', 'Current stage']) expect(html).not.toContain(text);
-      expect(legacyPackActive(managed)).toBe(false);
-      expect(legacyPackActive(job())).toBe(true);
     } finally { client.clear(); }
   });
 });

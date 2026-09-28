@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import JobTray, { JobTrayLinks, extractionJobLink, jobTrayStatus, legacyExtraction, liveTaskCount, taskJobLink } from './JobTray';
-import type { ExtractionJob } from '../api/trident';
+import JobTray, { JobTrayLinks, jobTrayStatus, liveTaskCount, taskJobLink } from './JobTray';
 import { taskCenterKeys } from '../api/taskCenter';
 import { fixtureRollup, fixtureTask } from '../testFixtures/taskCenter';
 
@@ -10,14 +9,12 @@ const clients: QueryClient[] = [];
 function client() {
   const value = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   clients.push(value);
-  value.setQueryData(['extractions', 'project', 'jobs'], { jobs: [] });
   return value;
 }
-const render = (value: QueryClient) => renderToStaticMarkup(<QueryClientProvider client={value}><JobTray projectId="project" /></QueryClientProvider>);
+const render = (value: QueryClient) => renderToStaticMarkup(<QueryClientProvider client={value}><JobTray /></QueryClientProvider>);
 afterEach(() => clients.splice(0).forEach((value) => value.clear()));
 const machineKey = taskCenterKeys.rollup({});
 
-const extraction: ExtractionJob = { id: 'extract/one', state: 'running', createdAt: '', updatedAt: '', outputPath: '/features', logPath: '/logs/extraction', sessionName: 'extraction', spec: { datasetId: null, outputPath: '/features', options: { patch_encoder: 'uni_v2' } }, progress: { stage: 'patch_features', stages: [], label: 'Patch features', detail: '', completed: 12, total: 80, unit: 'slides', percent: 15, currentSlide: null, elapsedSeconds: null, etaSeconds: null, ratePerSecond: null, scope: 'stage', warnings: [] } };
 const machine = (changes: Parameters<typeof fixtureRollup>[0] = {}) => fixtureRollup({ scope: {}, progress: null, recentFailures: 0, ownerKey: null, href: '#task-center', ...changes });
 
 describe('Task Center summary tray', () => {
@@ -31,21 +28,18 @@ describe('Task Center summary tray', () => {
     expect(html).not.toMatch(/<span role="status">4 running/);
   });
 
-  it('counts extraction still outside the Task Center, and recedes when nothing is active', () => {
+  it('recedes when nothing is active and reads no extraction records of its own', () => {
     const value = client();
     value.setQueryData(machineKey, machine({ state: 'completed', live: 0, active: 0, pending: 0, counts: { succeeded: 3 }, eta: null }));
     expect(render(value)).toContain('is-idle');
     expect(render(value)).toContain('0 running · 0 queued');
-    value.setQueryData(['extractions', 'project', 'jobs'], { jobs: [extraction, { ...extraction, id: 'second', state: 'queued' }, { ...extraction, id: 'managed', executor: 'task-center' }] });
-    expect(render(value)).toContain('0 running · 0 queued · 2 extractions');
-    expect(render(value)).not.toContain('is-idle');
-    expect(legacyExtraction({ ...extraction, executor: 'task-center' } as ExtractionJob)).toBe(false);
+    expect(value.getQueryCache().findAll({ queryKey: ['extractions'] })).toHaveLength(0);
   });
 
   it('names a paused queue and a stopped runner only when they hold work back', () => {
-    expect(jobTrayStatus(machine({ counts: { queued: 2 }, paused: true, eta: null }), 0)).toBe('0 running · 2 queued · queue paused');
-    expect(jobTrayStatus(machine({ counts: { queued: 2 }, runnerAlive: false, eta: null }), 0)).toBe('0 running · 2 queued · runner stopped');
-    expect(jobTrayStatus(machine({ counts: {}, runnerAlive: false, paused: true, eta: null }), 0)).toBe('0 running · 0 queued');
+    expect(jobTrayStatus(machine({ counts: { queued: 2 }, paused: true, eta: null }))).toBe('0 running · 2 queued · queue paused');
+    expect(jobTrayStatus(machine({ counts: { queued: 2 }, runnerAlive: false, eta: null }))).toBe('0 running · 2 queued · runner stopped');
+    expect(jobTrayStatus(machine({ counts: {}, runnerAlive: false, paused: true, eta: null }))).toBe('0 running · 0 queued');
   });
 
   it('waits for the rollup before reporting counts', () => {
@@ -61,7 +55,6 @@ describe('Task Center summary tray', () => {
     expect(render(value)).toContain('1 running · 0 queued · status may be outdated');
     const fresh = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false, staleTime: Infinity } } });
     clients.push(fresh);
-    fresh.setQueryData(['extractions', 'project', 'jobs'], { jobs: [] });
     fresh.getQueryCache().build(fresh, { queryKey: machineKey }).setState({ status: 'error', error: new Error('Connection lost') });
     expect(render(fresh)).toContain('Task status unavailable');
   });
@@ -78,10 +71,9 @@ describe('Task Center summary tray', () => {
     expect(taskJobLink(fixtureTask({ link: null, state: 'queued', progress: null, waitingReason: 'Waiting for a GPU slot (4/4)' }))).toMatchObject({ detail: 'Waiting for a GPU slot (4/4)', status: 'Queued' });
   });
 
-  it('links legacy extraction to its progress page and displays stage counts', () => {
-    const html = renderToStaticMarkup(<JobTrayLinks jobs={[extractionJobLink(extraction)]} />);
-    expect(html).toContain('href="#features?extraction=extract%2Fone"');
-    expect(html).toContain('Details: uni_v2 extraction');
-    expect(html).toContain('Patch features · 12/80 slides');
+  it('lists each live task as a link to its Task Center detail', () => {
+    const html = renderToStaticMarkup(<JobTrayLinks jobs={[taskJobLink(fixtureTask())]} />);
+    expect(html).toContain('href="#task-center?task=task-1"');
+    expect(html).toContain('Epoch 23 / 100');
   });
 });

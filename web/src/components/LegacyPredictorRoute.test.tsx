@@ -5,6 +5,7 @@ import type { RefitBuild } from '../api/predictors';
 import type { Workspace } from '../api/types';
 import { fixturePredictor } from '../testFixtures/predictors';
 import LegacyPredictorRoute from './LegacyPredictorRoute';
+import { legacyRecordNote } from './LegacyRecordNote';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -19,12 +20,13 @@ function render(hash: string, builds: RefitBuild[] = []) {
 }
 
 describe('historical predictor links', () => {
-  it('opens the exact running refit from a compute job link', () => {
+  it('opens the exact refit from a compute job link, read-only when it ran before the Task Center', () => {
     const predictor = fixturePredictor(1, 11, 'refit');
-    const build = { ...predictor, id: 'refit/one', manifest: { ...predictor.manifest, kind: 'refit-build' }, execution: { status: 'running', progress: { epoch: 3, maxEpochs: 12 } } } as unknown as RefitBuild;
+    const build = { ...predictor, id: 'refit/one', manifest: { ...predictor.manifest, kind: 'refit-build' }, execution: { status: 'interrupted', progress: { epoch: 3, maxEpochs: 12 } } } as unknown as RefitBuild;
     const html = render('#post-development?tab=refits&refit=refit%2Fone', [build]);
     expect(html).toContain('Epoch 3 / 12');
-    expect(html).toContain('Cancel job');
+    expect(html).toContain(legacyRecordNote);
+    expect(html).not.toContain('Cancel job');
     expect(html).not.toContain('Predictors now belong to their experiment');
   });
 

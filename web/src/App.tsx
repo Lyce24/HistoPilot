@@ -253,11 +253,11 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
           <WorkspaceErrorBoundary key={page} onExit={onExit}>
             <Content page={page} workspace={w} roadmap={roadmap} />
           </WorkspaceErrorBoundary>
-          {!blcaDemo && (page === 'dataset' || page === 'cohort') ? <JobTray inline projectId={w.project.id} /> : null}
+          {!blcaDemo && (page === 'dataset' || page === 'cohort') ? <JobTray inline /> : null}
           <footer className="content-footer"><span>HistoPilot <span className="footer-dot">·</span> Interactive PFM–MIL workflows</span><span>{w.mode === 'synthetic-demo' ? 'Synthetic data · Demonstration workspace' : 'Saved in your project folder'}</span></footer>
         </main>
       </div>
     </div>
-    {floatingJobTray ? <JobTray projectId={w.project.id} /> : null}
+    {floatingJobTray ? <JobTray /> : null}
   </>;
 }

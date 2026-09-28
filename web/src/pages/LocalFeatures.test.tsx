@@ -6,6 +6,7 @@ import type { Configuration } from '../api/scientific';
 import type { FeatureBundle } from '../api/bundles';
 import type { ExtractionJob } from '../api/trident';
 import LocalFeatures from './LocalFeatures';
+import { legacyRecordNote } from '../components/LegacyRecordNote';
 
 const workspace = {
   project: { id: 'project', storagePath: '/project' },
@@ -152,6 +153,15 @@ describe('extraction visibility and navigation', () => {
     expect(html).toContain('Log for older-extraction');
     expect(html).not.toContain('Log for running-extraction');
     expect(html).toContain('class="trident-job-history" open=""');
+  });
+
+  it('shows an extraction created before the Task Center read-only, with its log but no session or Cancel', () => {
+    vi.stubGlobal('window', { location: { hash: '#features?extraction=older-extraction' } });
+    const html = render([], [], [extraction('older-extraction', 'interrupted')]);
+    expect(html).toContain(legacyRecordNote);
+    expect(html).toContain('Log for older-extraction');
+    expect(html).toContain('Review &amp; resume');
+    for (const text of ['extraction-session', 'tmux attach', 'Reconnect', 'Cancel job', 'Updates every']) expect(html).not.toContain(text);
   });
 
   it('retains completed and failed runs in the library with links to their outputs', () => {

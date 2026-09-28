@@ -30,7 +30,8 @@ export interface ExperimentPredictorExecution {
   items?: ExperimentPredictorItem[];
   error: { code: string; message: string } | null; updatedAt: string | null; sessionName: string | null; logPath: string | null;
   retryable: boolean; cancellable: boolean;
-  /** Coordinators run by the Task Center have no tmux session to attach to. */
+  /** "task-center" for Task Center coordinators; "tmux" (or absent) for read-only coordinators
+   * created before it, whose stored `sessionName` is never shown. */
   executor?: 'task-center' | 'tmux';
   waitingReason?: string | null;
   /** Task Center coordinators only; null when the service cannot tell. */

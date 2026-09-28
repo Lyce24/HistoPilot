@@ -125,12 +125,10 @@ export default function InterpretationReview({ project, selected, items, states,
 
 /**
  * A slide's own job controls: its Resume when it stopped short, "Compute slide attention" for
- * a saved record never launched, and the legacy status and Cancel of a job still running in
- * its own tmux session. A Task Center job in progress is followed by the batch chip.
+ * a saved record never launched (a job created before the Task Center shows its saved status,
+ * read-only). A job in progress is followed by the batch chip.
  */
-export const slideJobControlsShown = (execution?: ComputeExecution) => Boolean(execution && (
-  ['failed', 'cancelled', 'interrupted', 'not_started'].includes(execution.status)
-  || (computeActive(execution) && execution.executor !== 'task-center')));
+export const slideJobControlsShown = (execution?: ComputeExecution) => Boolean(execution && ['failed', 'cancelled', 'interrupted', 'not_started'].includes(execution.status));
 
 function SlideAttention({ project, slide, state, item, record, classOrder, canControlJobs }: { project: string; slide: GallerySlide; state?: SelectedStudyState; item?: VisualizeItem; record?: Interpretation; classOrder: readonly string[]; canControlJobs: boolean }) {
   const result = completedSlideResult(slide, state);

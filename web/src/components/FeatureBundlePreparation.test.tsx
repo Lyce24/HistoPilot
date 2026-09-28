@@ -18,7 +18,7 @@ const pack: FeaturePackArtifact = { id: 'pack', materializationId: 'materializat
 
 function render(initialPackIds: string[] = []) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  client.setQueryData(['feature-packs', 'project'], { jobs: [], artifacts: [pack], tmuxAvailable: true, formatAvailable: true, defaultOutputRoot: '/packs' });
+  client.setQueryData(['feature-packs', 'project'], { jobs: [], artifacts: [pack], formatAvailable: true, defaultOutputRoot: '/packs' });
   client.setQueryData(['feature-packs', 'project', 'validation', 'features'], validation);
   try {
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeatureBundlePreparation project="project" configuration={configuration} configurations={[configuration]} initialPackIds={initialPackIds} onSelectVersion={() => {}} onFrozen={() => {}} /></QueryClientProvider>);

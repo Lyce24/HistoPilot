@@ -24,6 +24,7 @@ import SlideListField from './SlideListField';
 import { slideListReady, type SlideListSource } from '../api/slideLists';
 import ExtractionProgress, { extractionModelLabel, extractionStateLabel, extractionTaskLabel } from './ExtractionProgress';
 import RunStatusChip from './RunStatusChip';
+import LegacyRecordNote, { createdBeforeTaskCenter } from './LegacyRecordNote';
 import { StagePage, StageSteps } from './StageWorkflow';
 import { readHashParameters } from '../lib/hashRoute';
 import './TridentExtraction.css';
@@ -84,8 +85,8 @@ export default function TridentExtraction({
   const jobs = useQuery({
     queryKey: [...queryKey, 'jobs'],
     queryFn: () => trident.jobs(project),
-    // Task Center runs are followed by their status chip; only tmux runs need fast polling.
-    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? query.state.data.jobs.some(legacyActive) ? 3000 : 10_000 : false,
+    // Runs are followed by their status chip; the list refreshes slowly while one is active.
+    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 10_000 : false,
   });
   const [datasetId, setDatasetId] = useState<string | null>(initialDatasetId ?? null);
   const [slideList, setSlideList] = useState<SlideListSource | null>(null);
@@ -95,7 +96,7 @@ export default function TridentExtraction({
   const [overrides, setOverrides] = useState<Record<string, unknown>>({});
   const [preview, setPreview] = useState<ExtractionPreview | null>(null);
   const [selectedJob, setSelectedJob] = useState(requestedJob?.id ?? '');
-  const [busy, setBusy] = useState<'preview' | 'start' | 'cancel' | 'resume' | null>(null);
+  const [busy, setBusy] = useState<'preview' | 'start' | 'resume' | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const operationId = useRef<string | null>(null);
   const [selectedPage, setPage] = useState<'settings' | 'review' | 'activity' | null>(requestedJob ? 'activity' : null);
@@ -112,7 +113,7 @@ export default function TridentExtraction({
     queryKey: [...queryKey, 'job', selectedId],
     queryFn: () => trident.job(project, selectedId),
     enabled: Boolean(selectedId),
-    refetchInterval: (query) => extractionActive(query.state.data) ? legacyActive(query.state.data) ? 3000 : 10_000 : false,
+    refetchInterval: (query) => extractionActive(query.state.data) ? 10_000 : false,
   });
   const values = { ...catalog.data?.defaults, ...overrides };
   const task = String(values.task ?? 'all');
@@ -393,7 +394,6 @@ export default function TridentExtraction({
                 onResume={() => void run('resume', async () => updateJob(await trident.resume(project, job.id)))}
                 dataset={job.spec.datasetId ? datasetById.get(job.spec.datasetId) : undefined}
                 busy={busy !== null}
-                onCancel={() => void run('cancel', async () => updateJob(await trident.cancel(project, job.id)))}
                 onUseSettings={() => {
                   setDatasetId(job.spec.datasetId);
                   setSlideRoot(job.spec.slideRoot ?? '');
@@ -578,26 +578,23 @@ function OutputLayout({ layout }: { layout: TridentOutputLayout }) {
   );
 }
 
-/** An extraction still running in its own tmux session (submitted before the Task Center ran extraction). */
-export const legacyActive = (job?: ExtractionJob) => Boolean(job && extractionActive(job) && job.executor !== 'task-center');
-
 function JobDetail({
-  job, project, dataset, busy, onCancel, onResume, onUseSettings, onAttach,
+  job, project, dataset, busy, onResume, onUseSettings, onAttach,
 }: {
   job: ExtractionJob;
   project: string;
   onResume: () => void;
   dataset?: DatasetVersion;
   busy: boolean;
-  onCancel: () => void;
   onUseSettings: () => void;
   onAttach: (input: { datasetId: string | null; path: string; encoderId?: string; featureKind?: 'patch' | 'slide'; sourceExtractionJobId?: string }) => void;
 }) {
   const layout = job.result?.outputLayout ?? job.outputLayout;
   const featurePath = job.result?.featurePath ?? job.result?.featureDirectory;
   // Task Center runs: progress, cancel, attempts and the log are in the Task Center; this page
-  // keeps the settings, findings, coverage and the outputs.
-  const managed = job.executor === 'task-center';
+  // keeps the settings, findings, coverage and the outputs. Runs created before the Task Center
+  // are read-only: their saved progress, error and log.
+  const managed = !createdBeforeTaskCenter(job);
   return (
     <div className="trident-job-detail">
       <div className="trident-job-heading">
@@ -616,11 +613,11 @@ function JobDetail({
       {managed ? <RunStatusChip scope={job.ownerKey ? { owner: job.ownerKey } : { ownerKind: 'extraction', ownerId: job.id, project }} variant="row" label={`Extraction · ${extractionModelLabel(job)}`}
         primaryAction={['failed', 'cancelled', 'interrupted'].includes(job.state) ? <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={onResume}>Resume</button> : null} /> : <ExtractionProgress job={job} />}
       {job.error && !managed ? <div className="callout callout-warning trident-run-error" role="alert"><strong>{extractionActive(job) ? 'Processing notice' : 'Processing stopped'}</strong><p>{job.error}</p><small>Technical details are available in Troubleshooting.</small></div> : null}
+      {managed ? null : <LegacyRecordNote />}
       {job.result?.findings?.length ? <Findings findings={job.result.findings} /> : null}
       {job.state !== 'succeeded' && job.result?.missingSlides ? <p className="trident-job-coverage">{job.result.missingSlides.toLocaleString()} slides have missing outputs. Review the run details before attaching features.</p> : null}
       <div className="inline-actions trident-job-actions">
         <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={onUseSettings}><Icon name="reset" size={15} /> {extractionActive(job) || job.state === 'succeeded' ? 'Reuse settings' : 'Review & resume'}</button>
-        {extractionActive(job) && !managed ? <button type="button" className="btn btn-secondary btn-small" disabled={busy || job.state === 'cancelling'} onClick={onCancel}><Icon name="close" size={15} /> {job.state === 'cancelling' ? 'Cancelling…' : 'Cancel job'}</button> : null}
       </div>
       {job.state === 'succeeded' && featurePath ? (
         <div className="trident-completion">
@@ -635,9 +632,8 @@ function JobDetail({
           <div><dt>Job identifier</dt><dd className="mono">{job.id}</dd></div>
           <div><dt>Output directory</dt><dd className="mono">{job.outputPath}</dd></div>
           <div><dt>Persistent log</dt><dd className="mono">{job.logPath || 'Waiting for log file'}</dd></div>
-          <div><dt>Reconnect in a terminal</dt><dd className="mono">{job.sessionName ? `tmux attach -t ${job.sessionName}` : 'Waiting for session'}</dd></div>
         </dl>
-        <div className="trident-log-heading"><strong>Technical log</strong>{extractionActive(job) ? <span><i /> Updates every 3 seconds</span> : null}</div>
+        <div className="trident-log-heading"><strong>Technical log</strong></div>
         <pre className="trident-log" aria-label="Extraction log" tabIndex={0}>{job.logs || (extractionActive(job) ? 'Waiting for TRIDENT output…' : 'No log output is available.')}</pre>
       </details>}
     </div>

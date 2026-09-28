@@ -6,20 +6,13 @@ import { taskCenterHref } from '../api/taskCenter';
 import type { CandidateResult, DevelopmentResults, FrozenBatch, TrainingExecution, TrainingRuntime } from '../api/development';
 import { Badge, ErrorNotice } from './ui';
 import { ConfirmAction } from '../lib/taskCenterActions';
+import LegacyRecordNote from './LegacyRecordNote';
 import { Findings } from './ScientificUI';
 import { downloadJSON } from '../lib/download';
 import { gib, metricValue, metricsText, MetricEvidence, ResourceCards, RunTable } from './ExperimentTracking';
 export { RunTable } from './ExperimentTracking';
 export type ExperimentExecutionStage = 'planning' | 'running' | 'finished';
 
-export function executionActions(execution?: TrainingExecution | null) {
-  return {
-    launch: !execution,
-    cancel: trainingActive(execution) && !execution?.cancelRequested,
-    resume: Boolean(execution && ['failed', 'cancelled', 'interrupted'].includes(execution.status)
-      && execution.runCounts.completed < execution.runCounts.total),
-  };
-}
 
 export default function DevelopmentExecution({ project, batch, implemented, knownExecution, view, allowChanges = true, readOnly = false, stage }: {
   project: string; batch: FrozenBatch; implemented: boolean; knownExecution?: TrainingExecution;
@@ -31,18 +24,18 @@ export default function DevelopmentExecution({ project, batch, implemented, know
   const resultsEnabled = trackingEnabled && view === 'results';
   const [error, setError] = useState<Error | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const operationIds = useRef<Partial<Record<'launch' | 'cancel' | 'resume', string>>>({});
+  const operationIds = useRef<Partial<Record<'launch' | 'cancel', string>>>({});
   const submitting = useRef(false);
-  // Task Center batches are started, stopped and resumed from the Task Center (and the
-  // experiment's one Resume); only batches with their own tmux worker need the runtime check.
-  const knownManaged = managedByTaskCenter(knownExecution);
-  const runtime = useQuery({ queryKey: ['training-runtime', project], queryFn: () => development.runtime(project), enabled: trackingEnabled && canChange && !knownManaged, staleTime: 30000 });
   const executionQuery = useQuery({
     queryKey: ['training-execution', project, batch.id], queryFn: () => development.execution(project, batch.id), enabled: trackingEnabled,
     refetchInterval: (query) => trainingActive(latestExecution(query.state.data, knownExecution)) ? 5000 : false,
   });
   const execution = latestExecution(executionQuery.data, knownExecution);
-  const managed = managedByTaskCenter(execution) || knownManaged;
+  // Task Center batches are stopped and resumed from the Task Center (and the experiment's one
+  // Resume). Only a batch never launched outside an experiment offers Launch, after the runtime check.
+  const launchable = stage === undefined && !execution;
+  const runtime = useQuery({ queryKey: ['training-runtime', project], queryFn: () => development.runtime(project), enabled: trackingEnabled && canChange && launchable, staleTime: 30000 });
+  const managed = managedByTaskCenter(execution) || managedByTaskCenter(knownExecution);
   const ownerKey = execution?.taskCenter?.ownerKey ?? knownExecution?.taskCenter?.ownerKey ?? null;
   const taskCenterLink = managed ? taskCenterHref(ownerKey ? { owner: ownerKey } : {}) : undefined;
   const results = useQuery({
@@ -57,7 +50,7 @@ export default function DevelopmentExecution({ project, batch, implemented, know
       void client.invalidateQueries({ queryKey: ['development-results', project, batch.id] });
     }
   }, [status, client, project, batch.id]);
-  async function act(action: 'launch' | 'cancel' | 'resume') {
+  async function act(action: 'launch' | 'cancel') {
     if (submitting.current || !canChange || (stage !== undefined && action === 'launch')) return;
     submitting.current = true; setPending(action); setError(null);
     const operationId = operationIds.current[action] ?? crypto.randomUUID();
@@ -77,17 +70,17 @@ export default function DevelopmentExecution({ project, batch, implemented, know
   }
   if (stage === 'planning') return <p className="muted">Inputs and batches remain editable until the experiment is submitted. Runs and results are locked during planning.</p>;
   return <div className="development-execution">
-    <ErrorNotice error={error ?? executionQuery.error ?? (canChange && !managed ? runtime.error : null) ?? (resultsEnabled ? results.error : null)} />
+    <ErrorNotice error={error ?? executionQuery.error ?? (canChange && launchable ? runtime.error : null) ?? (resultsEnabled ? results.error : null)} />
     {implemented ? <>
       {view !== 'results' ? <>
-        {managed ? <ManagedBatchCancel execution={execution} pending={pending} readOnly={!canChange} onCancel={() => void act('cancel')} /> : <TrainingControls execution={execution} runtime={runtime.data} checking={executionQuery.isPending || executionQuery.isError} pending={pending} onAction={(action) => void act(action)} allowLaunch={stage === undefined} readOnly={!canChange} />}
+        {managed ? <ManagedBatchCancel execution={execution} pending={pending} readOnly={!canChange} onCancel={() => void act('cancel')} /> : <TrainingControls execution={execution} runtime={runtime.data} checking={executionQuery.isPending || executionQuery.isError} pending={pending} onLaunch={() => void act('launch')} allowLaunch={stage === undefined} readOnly={!canChange} />}
         {executionQuery.isError ? <p className="callout callout-warning" role="status">Tracking could not refresh. Any run status and measurements shown are the last known values.</p> : null}
-        {executionQuery.isError || (canChange && !managed && runtime.isError) ? <button type="button" className="btn btn-secondary btn-small" onClick={() => { void executionQuery.refetch(); if (canChange && !managed) void runtime.refetch(); }}>Retry training status</button> : null}
+        {executionQuery.isError || (canChange && launchable && runtime.isError) ? <button type="button" className="btn btn-secondary btn-small" onClick={() => { void executionQuery.refetch(); if (canChange && launchable) void runtime.refetch(); }}>Retry training status</button> : null}
         {execution ? <ExecutionStatus execution={execution} /> : <p className="muted">{stage ? 'This submitted batch has not been queued yet.' : 'This batch is frozen and has not been launched.'}</p>}
       </> : null}
     </> : <p className="muted">Training execution is unavailable from this service. Frozen plans remain available for review and export.</p>}
     {view === 'runs' ? <RunTable project={trackingEnabled ? project : undefined} batch={batch} execution={execution} taskCenterHref={taskCenterLink} /> : null}
-    {implemented && view !== 'results' && !managed ? execution ? <ExecutionEvidence project={trackingEnabled ? project : undefined} execution={execution} runtime={canChange ? runtime.data : undefined} showStatus={false} /> : canChange && runtime.data ? <DeviceRuntime runtime={runtime.data} /> : null : null}
+    {implemented && view !== 'results' && !managed ? execution ? <ExecutionEvidence project={trackingEnabled ? project : undefined} execution={execution} showStatus={false} /> : canChange && runtime.data ? <DeviceRuntime runtime={runtime.data} /> : null : null}
     {view === 'results' ? <>
       {/* The experiment can keep running (other batches, predictors) after this batch's folds are done. */}
       {stage !== 'finished' && (trainingActive(execution) || (stage === 'running' && !execution)) ? <p className="callout" role="status">Partial results: groups appear as their folds finish.</p> : null}
@@ -108,22 +101,22 @@ export function ManagedBatchCancel({ execution, pending, readOnly, onCancel }: {
   return <div className="inline-actions"><ConfirmAction label="Cancel batch" busy={pending === 'cancel'} busyLabel="Requesting cancellation…" disabled={Boolean(pending)} question="Cancel this batch? Its runs stop after saving what they can; other batches keep running." confirmLabel="Cancel batch" onConfirm={onCancel} /></div>;
 }
 
-export function TrainingControls({ execution, runtime, checking, pending, onAction, allowLaunch = true, readOnly = false }: {
+/**
+ * A batch the Task Center does not run: Launch for one never launched (outside an experiment),
+ * or, for a batch launched before the Task Center, its saved status, read-only.
+ */
+export function TrainingControls({ execution, runtime, checking, pending, onLaunch, allowLaunch = true, readOnly = false }: {
   execution?: TrainingExecution | null; runtime?: TrainingRuntime; checking: boolean; pending: string | null;
-  onAction: (action: 'launch' | 'cancel' | 'resume') => void; allowLaunch?: boolean; readOnly?: boolean;
+  onLaunch: () => void; allowLaunch?: boolean; readOnly?: boolean;
 }) {
-  const actions = executionActions(execution);
-  const allowed = { launch: actions.launch && allowLaunch && !readOnly, cancel: actions.cancel && !readOnly, resume: actions.resume && !readOnly };
+  const launch = !execution && allowLaunch && !readOnly;
   return <div className="development-training-controls">
     <div className="inline-actions">
-      {allowed.launch ? <button type="button" className="btn btn-primary" disabled={Boolean(pending) || checking || !runtime?.available} onClick={() => onAction('launch')}>{pending === 'launch' ? 'Launching…' : 'Launch batch'}</button> : null}
-      {trainingActive(execution) && !readOnly ? <button type="button" className="btn btn-secondary" disabled={Boolean(pending) || !allowed.cancel} onClick={() => onAction('cancel')}>{execution?.cancelRequested ? 'Cancellation requested' : pending === 'cancel' ? 'Requesting cancellation…' : 'Cancel batch'}</button> : null}
-      {allowed.resume ? <button type="button" className="btn btn-primary" disabled={Boolean(pending) || checking || !runtime?.available} onClick={() => onAction('resume')}>{pending === 'resume' ? 'Resuming…' : 'Resume unfinished runs'}</button> : null}
+      {launch ? <button type="button" className="btn btn-primary" disabled={Boolean(pending) || checking || !runtime?.available} onClick={onLaunch}>{pending === 'launch' ? 'Launching…' : 'Launch batch'}</button> : null}
       <Badge>{execution?.status ?? 'Not launched'}</Badge>
     </div>
-    {allowed.launch || allowed.resume ? !runtime ? <p className="muted">Checking the training runtime…</p> : !runtime.available ? <><p className="callout">Training cannot launch until the runtime is available.</p><Findings findings={runtime.findings} /></> : null : null}
-    {allowed.resume ? <p className="muted">Completed runs are retained. Unfinished runs resume their latest checkpoint when available; otherwise they restart.</p> : null}
-    {execution?.cancelRequested && trainingActive(execution) ? <p role="status">Cancellation is being applied. Status will update when the worker and active runs stop.</p> : null}
+    {launch ? !runtime ? <p className="muted">Checking the training runtime…</p> : !runtime.available ? <><p className="callout">Training cannot launch until the runtime is available.</p><Findings findings={runtime.findings} /></> : null : null}
+    {execution ? <LegacyRecordNote /> : null}
   </div>;
 }
 
@@ -144,7 +137,7 @@ export function DeviceRuntime({ execution, runtime }: { execution?: TrainingExec
   </details>;
 }
 
-export function ExecutionEvidence({ execution, project, runtime, showStatus = true }: { execution: TrainingExecution; project?: string; runtime?: TrainingRuntime; showStatus?: boolean }) {
+export function ExecutionEvidence({ execution, project, showStatus = true }: { execution: TrainingExecution; project?: string; showStatus?: boolean }) {
   const telemetry = execution.telemetry;
   return <section className="experiment-execution-resources" aria-label="Batch resource usage and worker details">
     {showStatus ? <ExecutionStatus execution={execution} /> : null}
@@ -156,8 +149,8 @@ export function ExecutionEvidence({ execution, project, runtime, showStatus = tr
       {telemetry.latest.runs.length ? <div className="development-table"><table><thead><tr><th>Run</th><th>{trainingActive(execution) ? 'Latest' : 'Last recorded'} process-tree RAM</th><th>Observed peak RAM</th></tr></thead><tbody>{telemetry.latest.runs.map((run) => <tr key={run.runId}><td><code>{run.runId}</code></td><td>{gib(run.rssGb)}</td><td>{gib(telemetry.peak.runRssGb[run.runId])}</td></tr>)}</tbody></table></div> : <p className="muted">No active run measurements. Saved per-run peaks are available under Runs.</p>}
       </> : null}
     </details> : null}
-    <details className="experiment-worker-details"><summary>Worker and saved artifacts</summary><dl className="development-paths">{managedByTaskCenter(execution) ? <><dt>Execution</dt><dd>Managed by the Task Center</dd></> : <><dt>Session</dt><dd><code>{execution.sessionName}</code></dd></>}<dt>Worker log</dt><dd><code>{execution.logPath}</code></dd><dt>Output directory</dt><dd><code>{execution.outputPath}</code></dd>{execution.computePath ? <><dt>Pinned training code</dt><dd><code>{execution.computePath}</code></dd></> : null}{execution.provenancePath ? <><dt>Attempt and driver history</dt><dd><code>{execution.provenancePath}</code></dd></> : null}{telemetry?.path ? <><dt>Resource history</dt><dd><code>{telemetry.path}</code></dd></> : null}<dt>Updated</dt><dd>{execution.updatedAt}</dd></dl></details>
-    <DeviceRuntime execution={execution} runtime={runtime} />
+    <details className="experiment-worker-details"><summary>Worker and saved artifacts</summary><dl className="development-paths">{managedByTaskCenter(execution) ? <><dt>Execution</dt><dd>Managed by the Task Center</dd></> : null}<dt>Worker log</dt><dd><code>{execution.logPath}</code></dd><dt>Output directory</dt><dd><code>{execution.outputPath}</code></dd>{execution.computePath ? <><dt>Pinned training code</dt><dd><code>{execution.computePath}</code></dd></> : null}{execution.provenancePath ? <><dt>Attempt and driver history</dt><dd><code>{execution.provenancePath}</code></dd></> : null}{telemetry?.path ? <><dt>Resource history</dt><dd><code>{telemetry.path}</code></dd></> : null}<dt>Updated</dt><dd>{execution.updatedAt}</dd></dl></details>
+    <DeviceRuntime execution={execution} />
   </section>;
 }
 

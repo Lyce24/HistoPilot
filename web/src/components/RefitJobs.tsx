@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { predictors, computeStatusLabel, type RefitBuild, type FrozenPredictor } from '../api/predictors';
 import { taskCenterHref, type RollupScope } from '../api/taskCenter';
 import RunStatusChip from './RunStatusChip';
+import { computeCreatedBeforeTaskCenter } from './LegacyRecordNote';
 import { predictorSourceKey } from '../api/predictorBuilds';
 import { shortRecordId } from '../lib/recordLabels';
 import { cleanupLink } from '../lib/hashRoute';
 import { Badge, ErrorNotice } from './ui';
 import './RunWorkspace.css';
 
-/** Science actions only; cancelling and queue order are managed in the Task Center. */
+/** Science actions only; cancelling and queue order are managed in the Task Center. Refits
+ * created before the Task Center are never resumed (the service refuses them). */
 type Action = 'launch' | 'resume' | 'publish';
 
 /**
@@ -22,6 +24,9 @@ export function refitRollupScope(project: string, builds: Pick<RefitBuild, 'id' 
   const recordIds = ids.join(',');
   return recordIds.length > 12000 ? { recordKind: 'refit', project } : { recordKind: 'refit', recordIds, project };
 }
+/** Whether a refit's state allows the action (lifecycle and publication are checked apart). */
+export const refitActionReady = (action: Action, item: Pick<RefitBuild, 'execution'>) => action === 'launch' ? !item.execution || item.execution.status === 'not_started'
+  : action === 'publish' ? item.execution?.status === 'completed' : ['failed', 'interrupted', 'cancelled'].includes(item.execution?.status ?? '') && !computeCreatedBeforeTaskCenter(item.execution);
 type Submission = { id: string; name: string; operation: string; done: boolean; error?: string };
 export default function RefitJobs({ project, builds, published, onOpen, refresh }: { project: string; builds: RefitBuild[]; published: FrozenPredictor[]; onOpen: (id: string) => void; refresh: () => Promise<void> }) {
   const [selected, setSelected] = useState<string[]>([]);
@@ -34,7 +39,7 @@ export default function RefitJobs({ project, builds, published, onOpen, refresh 
   const isPublished = (item: RefitBuild) => publishedSources.has(predictorSourceKey(item.manifest));
   const visible = builds.filter((item) => (visibility === 'all' || item.lifecycleState === visibility) && `${item.manifest.name} ${item.manifest.trainingSeed} ${item.manifest.splitSeed}`.toLowerCase().includes(search.toLowerCase()));
   const selectable = builds.filter((item) => selected.includes(item.id));
-  const eligible = (action: Action) => selectable.filter((item) => item.lifecycleState === 'active' && !isPublished(item) && (action === 'launch' ? !item.execution || item.execution.status === 'not_started' : action === 'publish' ? item.execution?.status === 'completed' : ['failed', 'interrupted', 'cancelled'].includes(item.execution?.status ?? '')));
+  const eligible = (action: Action) => selectable.filter((item) => item.lifecycleState === 'active' && !isPublished(item) && refitActionReady(action, item));
   const unfinished = submission?.items.some((item) => !item.done) ?? false;
   async function submit(action: Action, retry = false) {
     if (busy) return;

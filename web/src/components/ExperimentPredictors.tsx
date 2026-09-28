@@ -7,6 +7,7 @@ import { taskCenterHref } from '../api/taskCenter';
 import { predictorConfigurationLabel, predictorMatches } from '../lib/predictorGroups';
 import { batchPredictorPolicy } from '../lib/experimentPredictors';
 import { Badge, ErrorNotice, Panel } from './ui';
+import LegacyRecordNote, { createdBeforeTaskCenter } from './LegacyRecordNote';
 import './ExperimentPredictors.css';
 
 const statusLabel: Record<ExperimentPredictorExecution['status'], string> = {
@@ -19,8 +20,11 @@ const pageSize = 25;
  * Predictors of an experiment. `progress` (the Runs tab) says how many exist and how many
  * are still to come; Task Center experiments leave jobs, logs, cancel and resume to the Task
  * Center and the experiment status line. `library` (the Results tab) lists ready predictors.
- * Coordinators started before the Task Center keep their own job table and controls here.
+ * Coordinators created before the Task Center keep their job table here, read-only.
  */
+/** A coordinator started before the Task Center; one cancelled before it ever started has no session. */
+export const coordinatorCreatedBeforeTaskCenter = (execution: ExperimentPredictorExecution) => createdBeforeTaskCenter(execution) && Boolean(execution.sessionName);
+
 export default function ExperimentPredictors({ project, record, view = 'all' }: { project: string; record: ModelExperiment; view?: 'all' | 'progress' | 'library' }) {
   const stage = experimentStage(record);
   const managed = record.predictorExecution?.executor === 'task-center';
@@ -64,7 +68,7 @@ export default function ExperimentPredictors({ project, record, view = 'all' }: 
       {execution.counts.waiting ? <p className="muted">Waiting jobs need their source batch to complete. Predictor jobs run through the <a href={taskCenterHref({ project })}>Task Center</a>.</p> : null}
       {execution.executor === 'task-center' && execution.runnerAlive === false && ['queued', 'waiting', 'running'].includes(execution.status) ? <p className="callout" role="status">The Task Center runner is not running; predictor jobs start once it runs. <a className="text-link" href={taskCenterHref({ project })}>Start it in the Task Center →</a></p> : null}
       {execution.error ? <p className="callout" role="status">{execution.error.message}</p> : null}
-      {stage === 'running' && record.state === 'active' ? <PredictorActions project={project} record={record} execution={execution} /> : null}
+      {coordinatorCreatedBeforeTaskCenter(execution) ? <LegacyRecordNote /> : stage === 'running' && record.state === 'active' ? <PredictorActions project={project} record={record} execution={execution} /> : null}
       {execution.items?.length ? <details open={stage === 'running'}><summary>Predictor jobs · {execution.items.length}</summary>
         <label className="label experiment-predictor-tools">Job status<select className="field" value={workFilter} onChange={(event) => { setWorkFilter(event.target.value); setWorkPage(0); }}><option value="all">All jobs</option><option value="waiting">Waiting</option><option value="queued">Queued</option><option value="running">Running</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select></label>
         <div className="experiment-predictor-table"><table><thead><tr><th>Batch / configuration</th><th>Seeds</th><th>Method</th><th>Status</th><th>Progress</th></tr></thead><tbody>{workItems.slice(currentWorkPage * pageSize, (currentWorkPage + 1) * pageSize).map((item) => <tr key={item.key}>
@@ -77,7 +81,7 @@ export default function ExperimentPredictors({ project, record, view = 'all' }: 
         {!workItems.length ? <p className="muted">No jobs match this status.</p> : null}
         <Pagination count={workItems.length} page={currentWorkPage} setPage={setWorkPage} label="Predictor jobs" />
       </details> : null}
-      {execution.logPath ? <details><summary>Predictor worker details</summary><code className="record-path">{execution.logPath}</code>{execution.sessionName && execution.executor !== 'task-center' ? <code className="record-path">tmux attach -t {execution.sessionName}</code> : null}{execution.updatedAt ? <p className="muted">Updated {execution.updatedAt}</p> : null}</details> : null}
+      {execution.logPath ? <details><summary>Predictor worker details</summary><code className="record-path">{execution.logPath}</code>{execution.updatedAt ? <p className="muted">Updated {execution.updatedAt}</p> : null}</details> : null}
     </div> : execution ? null : !creation ? null : skipped ? <p className="muted">Predictor creation was skipped in every batch. This experiment contains cross-validation results only.</p> : record.submission?.status !== 'submitted' && stage === 'running' ? <p className="callout">Predictor creation waits until experiment submission is complete. Resolve the submission notice above to continue.</p> : !hasPredictorPlan ? <p className="muted">Predictors from this historical experiment are retained here. <a href={`#post-development?${new URLSearchParams({ tab: 'refits', experiment: record.id })}`}>Open historical refit jobs</a></p> : view === 'progress' ? <p className="muted">Predictors are created after each batch’s folds finish. Ready predictors are listed under Predictors.</p> : null}
     {showLibrary ? <>
     <ErrorNotice error={query.error} />

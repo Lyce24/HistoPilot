@@ -5,6 +5,7 @@ import { defaultRecipe, defaultResources, nnmilRecipe } from '../api/development
 import type { FrozenBatch, TrainingExecution, TrainingHistory, TrainingRun, TrainingRuntime } from '../api/development';
 import DevelopmentExecution, { ResultsTable, TrainingControls } from './DevelopmentExecution';
 import { EpochProgress, LossHistory, ResourceCards, RunDetails, RunTable, metricValue, runLabel, runHistoryOptions, runStoppingMetric } from './ExperimentTracking';
+import { legacyRecordNote } from './LegacyRecordNote';
 
 const run: TrainingRun = { id: 'run-one', candidateId: 'configuration-one', splitPlanId: 'split-one', trainingSeed: 42, status: 'running', progress: { epoch: 2, maxEpochs: 10, globalStep: 20, trainingLoss: 0.0, validation: { loss: null } } };
 const batch = { id: 'batch-one', createdAt: '', manifest: {
@@ -244,13 +245,15 @@ describe('experiment tracking', () => {
     expect(renderToStaticMarkup(<ResourceCards execution={{ ...execution, telemetry: undefined }} />)).toContain('not been recorded yet');
   });
 
-  it('prevents embedded launch and every read-only mutation, including cancellation', () => {
-    const props = { runtime, checking: false, pending: null, onAction: () => {}, allowLaunch: false };
+  it('prevents embedded launch and leaves a batch launched before the Task Center read-only', () => {
+    const props = { runtime, checking: false, pending: null, onLaunch: () => {}, allowLaunch: false };
     expect(renderToStaticMarkup(<TrainingControls {...props} />)).not.toContain('Launch batch');
-    expect(renderToStaticMarkup(<TrainingControls {...props} execution={execution} />)).toContain('Cancel batch');
-    const readonly = renderToStaticMarkup(<TrainingControls {...props} execution={execution} readOnly />);
-    expect(readonly).not.toContain('Cancel batch');
-    expect(readonly).not.toContain('Resume unfinished runs');
+    const legacy = renderToStaticMarkup(<TrainingControls {...props} execution={{ ...execution, status: 'interrupted' }} />);
+    expect(legacy).toContain('interrupted');
+    expect(legacy).toContain(legacyRecordNote);
+    for (const text of ['Cancel batch', 'Resume unfinished runs', 'Checking the training runtime', 'batch-one']) expect(legacy).not.toContain(text);
+    const readonly = renderToStaticMarkup(<TrainingControls {...props} readOnly allowLaunch />);
+    expect(readonly).not.toContain('Launch batch');
     expect(readonly).not.toContain('Checking the training runtime');
   });
 

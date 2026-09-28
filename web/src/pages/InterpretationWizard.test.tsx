@@ -157,7 +157,7 @@ describe('focused interpretation screens', () => {
     expect(legacy).toMatch(/aria-pressed="true"><strong>two<\/strong>/); expect(legacy).toContain('Attention workspace for two');
     expect(legacy).toContain('aria-label="Predicted label and class probabilities"'); expect(legacy).toContain('Predicted high · decision margin 0.20');
   });
-  it('polls every selected running job and lets finished slides open before the whole batch completes', () => {
+  it('follows every selected running job through the batch rollup and lets finished slides open before the whole batch completes', () => {
     const ids = Array.from({ length: 12 }, (_, index) => `slide-${index}`);
     const value = draft(ids); const records = ids.map((id, index) => record(id, index ? 'running' : 'completed'));
     const { client, html } = render('stage=review', value, records);
@@ -165,7 +165,8 @@ describe('focused interpretation screens', () => {
     expect(html).toContain('Attention workspace for slide-0'); expect(html).not.toContain('class="slide-gallery-image"');
     const jobs = client.getQueryCache().findAll({ queryKey: ['compute-job', 'p', 'interpretation'] });
     expect(jobs).toHaveLength(12);
-    for (const job of jobs) { const interval = (job.options as QueryObserverOptions).refetchInterval; expect(typeof interval).toBe('function'); }
+    // One rollup follows the jobs; a record is re-read when a job of the batch ends, never polled.
+    for (const job of jobs) expect((job.options as QueryObserverOptions).refetchInterval).toBeUndefined();
     const waiting = render('stage=review&slide=slide-3', value, records).html;
     expect(waiting).toMatch(/aria-pressed="true"><strong>slide-3<\/strong>/); expect(waiting).toContain('other slides can be reviewed meanwhile');
   });

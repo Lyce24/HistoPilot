@@ -2,7 +2,6 @@ import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
 import { interpretations, type GallerySlide, type Interpretation, type VisualizeSelection } from '../api/interpretation';
-import { computeActive } from '../api/predictors';
 import { mergeVisualizationItems, visualizationRequest } from '../lib/interpretationGallery';
 import { persistWizardDraft, selectedBatchReady, type InterpretationWizardDraft, type SelectedStudyState } from '../lib/interpretationWizard';
 import { useRunRollup } from './RunStatusChip';
@@ -25,11 +24,11 @@ export function useInterpretationBatch(project: string, draft: InterpretationWiz
   const ids = [...new Set(items.map((item) => item.interpretationId).filter((id): id is string => Boolean(id)))];
   const documents = useQueries({ queries: ids.map((id) => ({ queryKey: ['interpretation', project, id], queryFn: () => interpretations.get(project, id), staleTime: 60000 })) });
   // One rollup follows every slide's attention job in the task store; a slide's own record is
-  // re-read only when another job of the batch ends (or, for jobs outside the Task Center, polled).
+  // re-read only when another job of the batch ends.
   const statusScope = ids.length ? { recordKind: 'interpretation', recordIds: ids.join(','), project } : null;
   const rollup = useRunRollup(statusScope);
   const ended = rollup.data ? ['succeeded', 'failed', 'cancelled', 'interrupted'].reduce((sum, state) => sum + (rollup.data!.counts[state as 'succeeded'] ?? 0), 0) : null;
-  const jobs = useQueries({ queries: ids.map((id) => ({ queryKey: ['compute-job', project, 'interpretation', id], queryFn: () => interpretations.execution(project, id), refetchInterval: (query: { state: { data?: import('../api/interpretation').InterpretationExecution } }) => computeActive(query.state.data) && query.state.data?.executor !== 'task-center' ? 5000 : false })) });
+  const jobs = useQueries({ queries: ids.map((id) => ({ queryKey: ['compute-job', project, 'interpretation', id], queryFn: () => interpretations.execution(project, id) })) });
   const lastEnded = useRef<number | null>(null);
   const idKey = ids.join(',');
   useEffect(() => {
