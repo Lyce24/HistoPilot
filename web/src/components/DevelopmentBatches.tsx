@@ -259,6 +259,9 @@ export function batchSpecification(values: BatchEditorValues): DevelopmentBatchS
     candidateSelection: comparison ? 'all' : values.candidateSelection, ...(comparison ? { comparison } : {}) };
 }
 
+/** The service accepts at most 100 distinct training seeds per batch (`DevelopmentBatchSpec`). */
+export const TRAINING_SEED_LIMITS = { label: 'Training seeds', min: 0, max: 2 ** 32 - 1, maxItems: 100 };
+
 export default function DevelopmentBatches({ project, inputs, experimentName, experimentId, experimentRevision, ownedBatches, ownedDrafts, executionImplemented = false, readOnly = false, record, experimentStage, protocol, onPlanDirtyChange, onPlanBusyChange, onEditorOpenChange, tab, onOpenSetup }: {
   project: string; inputs: MILExperimentSpec; experimentName: string; experimentId: string; experimentRevision: number;
   record?: ModelExperiment; experimentStage?: ExperimentStage; protocol?: ProtocolSpec; onPlanDirtyChange?: (dirty: boolean) => void; onPlanBusyChange?: (busy: boolean) => void;
@@ -339,7 +342,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   let plannedConfigurations: number | null = null;
   let plannedSeeds: number | null = null;
   try {
-    if (validateBatchNumberList(seeds, { label: 'Training seeds', min: 0, max: 2 ** 32 - 1 })) throw new Error('Invalid seeds');
+    if (validateBatchNumberList(seeds, TRAINING_SEED_LIMITS)) throw new Error('Invalid seeds');
     if (mode === 'grid' && (validateBatchNumberList(lrs, { label: 'Learning rates', integer: false, min: 0, minExclusive: true }) || validateBatchNumberList(wds, { label: 'Weight decays', integer: false, min: 0 }) || validateBatchNumberList(epochs, { label: 'Maximum epochs', min: 1, max: 100000 }))) throw new Error('Invalid grid');
     plannedConfigurations = batchConfigurationCount({ mode, configurations: rows.map((row) => row.recipe), grid: {
       learningRates: mode === 'grid' ? parseNumberList(lrs, 'Learning rates', false, Number.MIN_VALUE) : [],
@@ -490,7 +493,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
               <input type="radio" name={configurationModeId} value={option.id} checked={mode === option.id} onChange={() => changeMode(option.id)} /><span><strong>{option.name}</strong><small>{option.description}</small></span>
             </label>)}</div></fieldset>
             {mode === 'grid' ? <div className="batch-grid-values"><div className="development-fields"><BatchNumberList label="Learning rates" value={lrs} onChange={setLrs} integer={false} min={0} minExclusive /><BatchNumberList label="Weight decays" value={wds} onChange={setWds} integer={false} min={0} /><BatchNumberList label="Maximum epochs" value={epochs} onChange={setEpochs} min={1} max={100000} /></div><p className="muted">Enter comma-separated values. Every learning rate × weight decay × epoch limit becomes a configuration.</p></div> : null}
-            <div className="batch-seeds-field"><BatchNumberList label="Training seeds" value={seeds} onChange={setSeeds} min={0} max={2 ** 32 - 1} hint="Comma-separated, for example 42, 43, 44. These repeat training; they do not change the frozen folds." /></div>
+            <div className="batch-seeds-field"><BatchNumberList {...TRAINING_SEED_LIMITS} value={seeds} onChange={setSeeds} hint={`Comma-separated, for example 42, 43, 44; up to ${TRAINING_SEED_LIMITS.maxItems}. These repeat training; they do not change the frozen folds.`} /></div>
             <div className="batch-size-summary" role="status" aria-live="polite">{plannedConfigurations !== null && plannedSeeds !== null ? <><strong>{plannedConfigurations} configuration{plannedConfigurations === 1 ? '' : 's'} × {plannedSeeds} training seed{plannedSeeds === 1 ? '' : 's'} = {plannedConfigurations * plannedSeeds} training group{plannedConfigurations * plannedSeeds === 1 ? '' : 's'}</strong><span>Each group runs all frozen folds. Check batch to confirm the total fold runs.</span></> : <span>Enter valid parameter values and training seeds to see the planned size.</span>}</div>
           </section>
           </div><div data-batch-step="2" hidden={batchPage !== 2}><section className="batch-editor-section batch-all-settings" aria-label="Settings">

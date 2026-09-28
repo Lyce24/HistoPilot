@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProtocolSpec } from '../api/scientific';
-import { changeSplitStrategy } from './split';
+import { changeSplitStrategy, MAX_SPLIT_SEEDS, splitSeedsError } from './split';
 
 const spec = (): ProtocolSpec['split'] => ({
   version: 4,
@@ -68,5 +68,16 @@ describe('changing strategies after editing numeric settings', () => {
     expect({ ...before, ...changeSplitStrategy(before, 'held_out') }).toMatchObject({
       testFraction: 0,
     });
+  });
+});
+
+describe('split seed validation', () => {
+  it('accepts up to ten distinct whole-number seeds, as the service does', () => {
+    expect(MAX_SPLIT_SEEDS).toBe(10);
+    expect(splitSeedsError('42')).toBe('');
+    expect(splitSeedsError('0, 1, 2, 3, 4, 5, 6, 7, 8, 4294967295')).toBe('');
+    expect(splitSeedsError('0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10')).toBe('Enter at most 10 split seeds; you entered 11.');
+    expect(splitSeedsError('42, 42')).toBe('Each split seed must be different.');
+    for (const text of ['', '42,', '1.5', '-1', '4294967296', 'x']) expect(splitSeedsError(text)).toContain('whole-number seeds');
   });
 });

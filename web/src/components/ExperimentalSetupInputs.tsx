@@ -6,6 +6,7 @@ import { targetSplits, targetSplitUnit } from '../api/targetSplits';
 import { type ProtocolSpec } from '../api/scientific';
 import { ApiError } from '../api/client';
 import { newDevelopmentSplit } from '../lib/protocol';
+import { splitSeedsError } from '../lib/split';
 import { sameJSON } from '../lib/json';
 import { preparationLink, type PreparationContext } from '../lib/preparationRoute';
 import { readSessionDraft, sessionDraftKey, useSessionDraftBackup, writeSessionDraft } from '../lib/sessionDraft';
@@ -60,7 +61,8 @@ export function ExperimentalSetupInputs({ project, record, context, readOnly, on
   const targetSplit = partitions.data?.configurations.find((item) => item.id === current.targetSplitId);
   const bundle = features.data?.items.find((item) => item.id === current.featureBundleId);
   const selectedPacks = bundle?.manifest.packs ?? [];
-  const validSeeds = seedsText.split(',').every((value) => /^\d+$/.test(value.trim()) && Number(value.trim()) <= 4294967295) && new Set(seedsText.split(',').map(Number)).size === seedsText.split(',').length;
+  const seedsError = splitSeedsError(seedsText);
+  const validSeeds = !seedsError;
   function edit(update: Partial<Design>) { setDesign((value) => ({ ...value, ...update })); setError(null); }
   function split(update: Partial<ProtocolSpec['split']>) { edit({ trainingSplit: { ...design.trainingSplit, ...update } }); }
   async function verify() {
@@ -102,7 +104,7 @@ export function ExperimentalSetupInputs({ project, record, context, readOnly, on
       </Panel>
       <Panel title="2. Training design" subtitle="Folds, validation and model selection use training records only. The testing set remains reserved for evaluation or inference.">
         <label className="label">Early-stop validation (% of fitting data)<input className="field" type="number" min="1" max="90" value={Number(((current.trainingSplit.validationFraction ?? 0.15) * 100).toFixed(6))} onChange={(event) => split({ validationFraction: Number(event.target.value) / 100 })} /></label>
-        <SplitStrategy splitUnit={targetSplit ? targetSplitUnit(targetSplit.manifest.spec) : record.setupDesign ? record.setupDesign.splitUnit ?? 'patient' : 'unknown'} supportedModes={['kfold']} split={current.trainingSplit} onChange={split} seedsText={readOnly ? current.trainingSplit.seeds.join(', ') : seedsText} seedsValid={validSeeds} onSeedsChange={(value) => { setSeedsText(value); if (value.split(',').every((seed) => /^\d+$/.test(seed.trim()))) split({ seeds: value.split(',').map(Number) }); }} fieldContext={{ project, datasetId: current.datasetId, dictionary: dataset?.manifest.dictionary ?? [] }} />
+        <SplitStrategy splitUnit={targetSplit ? targetSplitUnit(targetSplit.manifest.spec) : record.setupDesign ? record.setupDesign.splitUnit ?? 'patient' : 'unknown'} supportedModes={['kfold']} split={current.trainingSplit} onChange={split} seedsText={readOnly ? current.trainingSplit.seeds.join(', ') : seedsText} seedsError={readOnly ? '' : seedsError} onSeedsChange={(value) => { setSeedsText(value); if (value.split(',').every((seed) => /^\d+$/.test(seed.trim()))) split({ seeds: value.split(',').map(Number) }); }} fieldContext={{ project, datasetId: current.datasetId, dictionary: dataset?.manifest.dictionary ?? [] }} />
       </Panel>
     </fieldset>
     {!readOnly ? <Panel title="Check setup inputs" subtitle="Verify training membership, feature coverage, and fold feasibility before adding hyperparameters.">

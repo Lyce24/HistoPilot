@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { changeSplitStrategy, DEFAULT_VALIDATION_FRACTION } from '../lib/split';
+import { changeSplitStrategy, DEFAULT_VALIDATION_FRACTION, MAX_SPLIT_SEEDS } from '../lib/split';
 import { useQuery } from '@tanstack/react-query';
 import { scientific, type ProtocolSpec } from '../api/scientific';
 import {
@@ -34,7 +34,7 @@ export function SplitStrategy({
   onChange,
   seedsText,
   onSeedsChange,
-  seedsValid,
+  seedsError = '',
   fieldContext,
   supportedModes,
   splitUnit = 'patient',
@@ -43,12 +43,14 @@ export function SplitStrategy({
   onChange: (value: Partial<Split>) => void;
   seedsText: string;
   onSeedsChange: (text: string) => void;
-  seedsValid: boolean;
+  /** Why the seeds cannot be saved; empty when they can (see `splitSeedsError`). */
+  seedsError?: string;
   fieldContext: ProtocolFieldContext;
   supportedModes?: readonly Split['mode'][];
   splitUnit?: 'slide' | 'patient' | 'unknown';
 }) {
   const strategyGroup = useId();
+  const seedsErrorId = useId();
   const validation = split.validationFraction ?? DEFAULT_VALIDATION_FRACTION;
   const test =
     split.mode === 'kfold'
@@ -131,8 +133,11 @@ export function SplitStrategy({
           <input
             className="field"
             value={seedsText}
+            aria-invalid={seedsError ? true : undefined}
+            aria-describedby={seedsError ? seedsErrorId : undefined}
             onChange={(event) => onSeedsChange(event.target.value)}
           />
+          <small>Up to {MAX_SPLIT_SEEDS} seeds. Each seed gives a different fold assignment.</small>
         </label>
         {split.mode === 'kfold' ? (
           <NumberSetting
@@ -180,9 +185,9 @@ export function SplitStrategy({
           />
         ) : null}
       </div>
-      {!seedsValid ? (
-        <p className="callout callout-warning" role="alert">
-          Enter integer seeds from 0 to 4294967295, separated by commas.
+      {seedsError ? (
+        <p id={seedsErrorId} className="callout callout-warning" role="alert">
+          {seedsError}
         </p>
       ) : null}
       <label className="science-check">

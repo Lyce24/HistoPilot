@@ -12,7 +12,7 @@ describe('development-only split interface', () => {
       const html = renderToStaticMarkup(
         <QueryClientProvider client={client}>
           <SplitStrategy
-            split={split} onChange={() => {}} seedsText="42" onSeedsChange={() => {}} seedsValid
+            split={split} onChange={() => {}} seedsText="42" onSeedsChange={() => {}} seedsError=""
             fieldContext={{ project: 'project', datasetId: 'dataset', dictionary: [] }}
           />
         </QueryClientProvider>,
@@ -24,13 +24,26 @@ describe('development-only split interface', () => {
     },
   );
 
+  it('shows why split seeds cannot be saved, next to the field', () => {
+    const client = new QueryClient();
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <SplitStrategy split={newDevelopmentSplit()} onChange={() => {}} seedsText="1,2,3,4,5,6,7,8,9,10,11" onSeedsChange={() => {}} seedsError="Enter at most 10 split seeds; you entered 11."
+          fieldContext={{ project: 'project', datasetId: 'dataset', dictionary: [] }} />
+      </QueryClientProvider>,
+    );
+    client.clear();
+    expect(html).toContain('Up to 10 seeds.');
+    expect(html).toMatch(/aria-invalid="true" aria-describedby="([^"]+)"[^>]*>[\s\S]*<p id="\1" class="callout callout-warning" role="alert">Enter at most 10 split seeds; you entered 11.<\/p>/);
+  });
+
   it('offers case-grouped folds only for development slide targets, keeping slide labels', () => {
     const render = (splitUnit: 'slide' | 'patient', groupByPatient?: boolean) => {
       const split = { ...newDevelopmentSplit(), ...(groupByPatient ? { groupByPatient } : {}) };
       const client = new QueryClient();
       const html = renderToStaticMarkup(
         <QueryClientProvider client={client}>
-          <SplitStrategy split={split} onChange={() => {}} seedsText="42" onSeedsChange={() => {}} seedsValid splitUnit={splitUnit}
+          <SplitStrategy split={split} onChange={() => {}} seedsText="42" onSeedsChange={() => {}} seedsError="" splitUnit={splitUnit}
             fieldContext={{ project: 'project', datasetId: 'dataset', dictionary: [] }} />
         </QueryClientProvider>,
       );

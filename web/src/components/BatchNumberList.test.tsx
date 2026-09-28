@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateBatchNumberList } from './BatchNumberList';
+import { TRAINING_SEED_LIMITS } from './DevelopmentBatches';
 
 describe('batch parameter lists', () => {
   it('accepts decimal scientific notation and seed zero without accepting partial numeric text', () => {
@@ -14,6 +15,12 @@ describe('batch parameter lists', () => {
     for (const text of ['42, 42', '1.2', '4294967296', '-1']) expect(validateBatchNumberList(text, seeds)).not.toBe('');
     expect(validateBatchNumberList('1e-4, 0.0001', { label: 'Learning rates', integer: false, min: 0, minExclusive: true })).toContain('distinct');
     expect(validateBatchNumberList('50, 100001', { label: 'Maximum epochs', min: 1, max: 100000 })).toContain('at most 100000');
+  });
+
+  it('caps training seeds at the 100 the service accepts', () => {
+    const seeds = (count: number) => Array.from({ length: count }, (_, index) => index).join(', ');
+    expect(validateBatchNumberList(seeds(100), TRAINING_SEED_LIMITS)).toBe('');
+    expect(validateBatchNumberList(seeds(101), TRAINING_SEED_LIMITS)).toBe('Training seeds: enter at most 100 values.');
   });
 
   it('keeps an empty GPU list as CPU mode while enforcing GPU IDs and list limits', () => {
