@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AttributeMapping, TableSource } from '../api/scientific';
-import { canReuseImportMapping, inspectedAttributes, readTableUpload, UploadReadState } from './datasetImport';
+import { canReuseImportMapping, inspectedAttributes, readTableUpload, slideFileColumnNote, slidePathStyle, slideSourceNextNote, UploadReadState } from './datasetImport';
 
 function deferredFile(name: string) {
   let resolve!: (bytes: ArrayBuffer) => void;
@@ -109,5 +109,27 @@ describe('metadata reinspection mapping', () => {
     expect(canReuseImportMapping({ path: '/other.csv' }, source, source)).toBe(false);
     // A new unsaved import starts with a fresh source object even for the same path.
     expect(canReuseImportMapping({ ...source }, source, undefined)).toBe(false);
+  });
+});
+
+describe('slide file column guidance', () => {
+  const inspection = (values: (string | null)[]) => ({ rows: values.map((path) => ({ Slide_ID: 'x', path })), columnSummaries: {} });
+  it('tells full paths from paths inside the slide folder, as the service does', () => {
+    expect(slidePathStyle(inspection(['/data/rih/SL-1.svs', '/data/rih/SL-2.svs', null]), 'path')).toBe('absolute');
+    expect(slidePathStyle(inspection(['rih/SL-1.svs', 'SL-2.svs']), 'path')).toBe('relative');
+    expect(slidePathStyle(inspection(['/data/SL-1.svs', 'SL-2.svs']), 'path')).toBe('mixed');
+    expect(slidePathStyle(inspection([null, ' ']), 'path')).toBe('unknown');
+    expect(slidePathStyle(null, 'path')).toBe('unknown');
+    expect(slidePathStyle(inspection(['/data/SL-1.svs']), undefined)).toBe('unknown');
+  });
+  it('asks for a slide folder only when relative paths need one', () => {
+    expect(slideFileColumnNote('path', 'absolute')).toContain('no slide folder is needed');
+    expect(slideFileColumnNote('path', 'relative')).toContain('Choose that folder above');
+    expect(slideFileColumnNote(undefined, 'unknown')).toContain('a full path such as /data/rih/SL-145.svs, or a path inside the slide folder');
+    expect(slideSourceNextNote({ slidePathColumn: 'path' }, 'absolute')).toBe('Next, review the ID columns and attributes from your metadata.');
+    expect(slideSourceNextNote({ slidePathColumn: 'path' }, 'relative')).toContain('Choose the slide folder that the file paths are inside');
+    expect(slideSourceNextNote({ slidePathColumn: 'path' }, 'unknown')).toContain('unless the file column holds full paths');
+    expect(slideSourceNextNote({}, 'unknown')).toBe('Choose a slide folder, or select Keep metadata rows above if you are starting from existing features.');
+    expect(slideSourceNextNote({ slideRoot: '/slides' }, 'relative')).toContain('Next, review');
   });
 });

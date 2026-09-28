@@ -44,7 +44,7 @@ import SetupContext from '../components/SetupContext';
 import { StageLibrary, StageLibraryToolbar, StageRecordManageButton, StagePage, StageSteps, useStageLibrary } from '../components/StageWorkflow';
 import { datasetVersionLabel } from '../lib/versionLabels';
 import { scientificReviewInvalidated } from '../lib/scientificReview';
-import { canReuseImportMapping, inspectedAttributes } from '../lib/datasetImport';
+import { canReuseImportMapping, inspectedAttributes, slideFileColumnNote, slidePathStyle, slideSourceNextNote } from '../lib/datasetImport';
 import { readEditorRecovery, useEditorRecoveryBackup, type EditorRecovery } from '../lib/editorRecovery';
 import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import './dataset-workflow.css';
@@ -142,6 +142,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
     return order || left.item.id.localeCompare(right.item.id);
   });
   const resetLibraryFilters = () => setLibraryFilters({ search: '', status: 'all', sort: 'recent' });
+  const pathStyle = slidePathStyle(inspection, spec.slidePathColumn);
   const columns = inspection?.headers ?? [
     ...new Set(
       [
@@ -615,7 +616,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                         </select>
                         <small>
                           {columns.length
-                            ? 'A column naming each file, relative to the slide folder \u2014 for example rih/SL-145.svs.'
+                            ? slideFileColumnNote(spec.slidePathColumn, pathStyle)
                             : 'Read your metadata file above to choose a column.'}
                         </small>
                       </label>
@@ -649,11 +650,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                     </section>
                   </div>
                   <div className="dataset-source-next">
-                    <p className="muted">
-                      {spec.slideRoot || spec.includeMissingSlides
-                        ? 'Next, review the ID columns and attributes from your metadata.'
-                        : 'Choose a slide folder, or select Keep metadata rows above if you are starting from existing features.'}
-                    </p>
+                    <p className="muted">{slideSourceNextNote(spec, pathStyle)}</p>
                     <button
                       type="button"
                       className="btn btn-secondary"
