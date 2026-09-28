@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import WorkspaceCleanup, { CleanupReviewPanel, filterCleanupItems, bulkCleanupSelection } from './WorkspaceCleanup';
+import WorkspaceCleanup, { CleanupReviewPanel, filterCleanupItems, bulkCleanupSelection, withInferenceKinds } from './WorkspaceCleanup';
 import type { CleanupInventory, CleanupItem, CleanupPreview } from '../api/lifecycle';
 import type { Workspace } from '../api/types';
 
@@ -77,6 +77,28 @@ describe('workspace cleanup review', () => {
     expect(html).not.toContain('Earlier target draft');
     expect(html).toContain('0 selected');
     expect(html).toMatch(/disabled="">Review selected changes/);
+  });
+
+  it('labels inference runs and their batches by purpose, which cleanup rows do not carry', () => {
+    const records: CleanupItem[] = [
+      { key: 'configuration:run-i', type: 'configuration', id: 'run-i', kind: 'model-evaluation', name: 'Unlabeled slides', state: 'active', dependsOn: [], usedBy: ['configuration:batch-i'] },
+      { key: 'configuration:batch-i', type: 'configuration', id: 'batch-i', kind: 'evaluation-batch', name: 'Nightly inference', state: 'active', dependsOn: ['configuration:run-i'], usedBy: [] },
+      { key: 'configuration:run-e', type: 'configuration', id: 'run-e', kind: 'model-evaluation', name: 'External test', state: 'active', dependsOn: [], usedBy: [] },
+      { key: 'configuration:batch-e', type: 'configuration', id: 'batch-e', kind: 'evaluation-batch', name: 'External batch', state: 'active', dependsOn: ['configuration:run-e'], usedBy: [] },
+    ];
+    const labelled = withInferenceKinds(records, new Set(['run-i']));
+    expect(labelled.map((item) => item.kind)).toEqual(['inference-run', 'inference-batch', 'model-evaluation', 'evaluation-batch']);
+    expect(withInferenceKinds(records, new Set())).toBe(records);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['cleanup', 'p'], { projectId: 'p', revision: 3, projectState: 'active', items: records, audit: [], note: '' } satisfies CleanupInventory);
+    client.setQueryData(['model-evaluations', 'p'], { executionEnabled: true, items: [{ id: 'run-i', manifest: { purpose: 'inference' } }, { id: 'run-e', manifest: {} }] });
+    const workspace = { mode: 'local', project: { id: 'p', lifecycleState: 'active' } } as Workspace;
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><WorkspaceCleanup workspace={workspace} /></QueryClientProvider>);
+    expect(html).toContain('Saved configuration · Inference run');
+    expect(html).toContain('Saved configuration · Inference batch');
+    expect(html).toContain('Saved configuration · Evaluation</small>');
+    expect(html).toContain('Saved configuration · Evaluation batch');
+    expect(html).toContain('<option value="inference-run">Inference run</option>');
   });
 
   it('keeps whole-project changes separate from bulk child record selections', () => {

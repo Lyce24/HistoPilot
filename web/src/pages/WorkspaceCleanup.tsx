@@ -4,6 +4,8 @@ import { ApiError } from '../api/client';
 import { lifecycle, lifecycleLabel, cleanupPollInterval, cleanupJobActive, cleanupReviewMatches, cleanupApplyRequest } from '../api/lifecycle';
 import type { CleanupAction, CleanupItem, CleanupPreview, LifecycleState } from '../api/lifecycle';
 import type { Workspace } from '../api/types';
+import { modelEvaluations } from '../api/predictors';
+import { isInferenceRun } from '../lib/inference';
 import { useHashParameters } from '../lib/hashRoute';
 import { Badge, ErrorNotice, PageHeader, Panel } from '../components/ui';
 import './WorkspaceCleanup.css';
@@ -15,6 +17,7 @@ const kindLabels: Record<string, string> = {
   feature: 'Feature inventory', 'feature-bundle': 'Feature bundle', 'mil-batch': 'Training batch',
   'development-batch': 'Training batch draft', 'mil-experiment': 'Saved experiment inputs',
   'model-experiment': 'Experiment', 'frozen-predictor': 'Predictor', 'predictor-refit': 'Refit training plan', 'model-evaluation': 'Evaluation', 'evaluation-batch': 'Evaluation batch',
+  'inference-run': 'Inference run', 'inference-batch': 'Inference batch',
   'clinical-analysis': 'Clinical utility report', 'model-interpretation': 'Model interpretation',
   'evaluation-cohort': 'Test cohort', 'dataset-import': 'Import draft', extraction: 'Feature extraction',
   'feature-validate': 'Feature validation', 'feature-validation': 'Feature validation',
@@ -25,6 +28,18 @@ const retentionNote = 'Delete moves records to recoverable Trash. Source CSV/H5 
 type Review = { preview: CleanupPreview; operationId: string; uncertain: boolean };
 const readableError = (reason: unknown) => reason instanceof Error ? reason : new Error('The workspace could not be updated.');
 const operation = () => `cleanup:${crypto.randomUUID()}`;
+
+/**
+ * Inference runs are stored as evaluations (`model-evaluation`, grouped by `evaluation-batch`)
+ * whose inference purpose the cleanup rows do not carry. Relabel the runs the evaluation list
+ * confirms as inference, and the batches that created them; others keep their stored kind.
+ */
+export function withInferenceKinds(items: CleanupItem[], inferenceRunIds: ReadonlySet<string>): CleanupItem[] {
+  if (!inferenceRunIds.size) return items;
+  const runs = new Set(items.filter((item) => item.type === 'configuration' && item.kind === 'model-evaluation' && inferenceRunIds.has(item.id)).map((item) => item.key));
+  return items.map((item) => runs.has(item.key) ? { ...item, kind: 'inference-run' }
+    : item.kind === 'evaluation-batch' && [...item.dependsOn, ...item.usedBy].some((key) => runs.has(key)) ? { ...item, kind: 'inference-batch' } : item);
+}
 
 export function filterCleanupItems(items: CleanupItem[], state: LifecycleState, kind: string, search: string) {
   const text = search.trim().toLocaleLowerCase();
@@ -80,7 +95,10 @@ export default function WorkspaceCleanup({ workspace }: { workspace: Workspace }
   const cancellationIds = useRef(new Map<string, string>());
   const requestedKey = useHashParameters().get('key');
   const openedKey = useRef<string | null>(null);
-  const items = inventory.data?.items ?? [];
+  // Only labels depend on this list; cleanup works the same without it.
+  const evaluations = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), staleTime: 30000 });
+  const inferenceRunIds = new Set((evaluations.data?.items ?? []).filter(isInferenceRun).map((item) => item.id));
+  const items = withInferenceKinds(inventory.data?.items ?? [], inferenceRunIds);
   const visible = filterCleanupItems(items, state, kind, search);
   const selectedSet = new Set(selected);
   const editable = !busy && !review?.uncertain;
