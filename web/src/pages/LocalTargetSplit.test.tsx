@@ -5,7 +5,7 @@ import type { DatasetVersion } from '../api/scientific';
 import type { Workspace } from '../api/types';
 import { newTargetSplitSpec, targetSplitPartitionRequest, targetSplitTrainingTarget, targetSplitTestingIssue, targetSplitUnit, targetSplitWithUnit, targetDefinitionReady, targetSplitMethod, targetSplitTestingRemainder, targetSplitSetupLink, TARGET_SPLIT_STEPS, type TargetSplit } from '../api/targetSplits';
 import { editorRecoveryKey } from '../lib/editorRecovery';
-import LocalTargetSplit, { TargetSplitSummary, TargetSplitTestCohort, TargetSplitTestingRules, targetSplitKey } from './LocalTargetSplit';
+import LocalTargetSplit, { randomSplitNote, TargetSplitSummary, TargetSplitTestCohort, TargetSplitTestingRules, targetSplitKey } from './LocalTargetSplit';
 
 const workspace = { project: { id: 'project', name: 'Study', config: { seed: 42 } }, dataset: { id: 'dataset' } } as Workspace;
 const dataset = { id: 'dataset', projectId: 'project', createdAt: '', contentHash: 'dataset-hash', artifacts: {}, versionLabel: { tag: 'Reviewed slides' }, manifest: { dictionary: [] } } as unknown as DatasetVersion;
@@ -236,5 +236,17 @@ describe('dataset target and train/test construction', () => {
     expect(initial).not.toHaveProperty('featureBundleId');
     expect(initial.split).not.toHaveProperty('folds');
     expect(targetSplitSetupLink(record)).toBe('#experimental-setup?dataset=dataset&targetSplit=target-split-a');
+  });
+});
+
+describe('random split note', () => {
+  it('says slide splits are rounded per group and never empty a set, rather than promising the percentage', () => {
+    expect(randomSplitNote('slide', false)).toContain('rounded to whole slides and keeps at least one slide in each set');
+    expect(randomSplitNote('slide', true)).toContain('Each value of the balanced field is split on its own');
+    for (const stratified of [false, true]) {
+      expect(randomSplitNote('slide', stratified)).toContain('The counts below show the actual split.');
+      expect(randomSplitNote('slide', stratified)).not.toContain('follow the requested percentage');
+    }
+    expect(randomSplitNote('patient', true)).toBe('Patient groups stay intact, so exact counts can differ.');
   });
 });
