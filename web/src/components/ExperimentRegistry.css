@@ -37,6 +37,7 @@
 .experiment-lifecycle { display: grid; gap: 12px; min-width: 0; }
 .experiment-detail-heading { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .experiment-detail-id { color: var(--muted); overflow-wrap: anywhere; }
+.experiment-detail-reason { margin: 6px 0 0; color: var(--muted); overflow-wrap: anywhere; }
 .experiment-snapshot { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; font-size: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
 @media (max-width: 760px) { .experiment-create-fields { grid-template-columns: 1fr; } }
 

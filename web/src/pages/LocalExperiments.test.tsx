@@ -54,6 +54,9 @@ describe('MIL experiment loading ownership', () => {
       expect(running).toMatch(/id="development-tab-predictors"/);
       expect(running).toContain('retained-protocol');
       expect(running).not.toContain('Check &amp; continue');
+      // The detail header gives the service's reason for queued and waiting work.
+      expect(render({ stage: 'running', configurationLocked: true, status: 'queued', statusReason: 'Waiting for a free GPU.' })).toContain('<p class="experiment-detail-reason" role="status">Waiting for a free GPU.</p>');
+      expect(render({ stage: 'running', configurationLocked: true, status: 'running', statusReason: 'stale' })).not.toContain('experiment-detail-reason');
       const finished = render({ stage: 'finished', configurationLocked: true, status: 'completed' });
       expect(finished).toMatch(/id="development-tab-results"[^>]*aria-current="page"/);
       expect(finished).not.toMatch(/id="development-tab-results"[^>]*disabled=""/);

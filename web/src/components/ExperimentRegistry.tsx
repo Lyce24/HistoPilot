@@ -6,7 +6,7 @@ import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { experimentHeadlines } from '../api/experimentResults';
 import ExperimentHeadline from './ExperimentHeadline';
 import { ApiError } from '../api/client';
-import { experiments, experimentExecutionStatus, experimentPollInterval, experimentStage, experimentStageLabel, experimentStatusFilters, experimentStatusLabel, experimentStatusTone } from '../api/experiments';
+import { experiments, experimentExecutionStatus, experimentPollInterval, experimentStatusReason, experimentStage, experimentStageLabel, experimentStatusFilters, experimentStatusLabel, experimentStatusTone } from '../api/experiments';
 import type { CreateExperimentInput, ModelExperiment } from '../api/experiments';
 import type { LifecycleState } from '../api/lifecycle';
 import { lifecycleLabel } from '../api/lifecycle';
@@ -301,7 +301,7 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
         <td><input aria-label={`Compare ${item.name} ${item.id}`} type="checkbox" checked={selected.includes(item.id)} disabled={selected.length >= 4 && !selected.includes(item.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} /></td>
         <th scope="row"><button className="text-button stage-record-name experiment-name" title={`Open ${item.name}`} onClick={() => onOpen(item.id)}>{item.name}</button><small title={item.id}>{shortRecordId(item.id)}</small>{item.tags.length || item.legacy ? <div className="experiment-tags">{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}{item.legacy ? <Badge>Legacy record</Badge> : null}</div> : null}</th>
         {/* A setup's badge describes the setup; run outcomes belong to the Experiments page. */}
-        <td><Badge tone={mode === 'setup' ? item.frozenSetupId ? 'green' : 'neutral' : experimentStage(item) === 'planning' ? 'neutral' : experimentStatusTone(item.status)}>{mode === 'setup' ? item.frozenSetupId ? 'Frozen' : 'Draft' : experimentStatusLabel(item.status)}</Badge>{mode === 'execution' && item.statusReason && ['waiting', 'held', 'needs-attention'].includes(experimentExecutionStatus(item.status)) ? <small title={item.statusReason}>{item.statusReason}</small> : null}{item.state !== 'active' ? <small>{lifecycleLabel[item.state]}</small> : null}</td>
+        <td><Badge tone={mode === 'setup' ? item.frozenSetupId ? 'green' : 'neutral' : experimentStage(item) === 'planning' ? 'neutral' : experimentStatusTone(item.status)}>{mode === 'setup' ? item.frozenSetupId ? 'Frozen' : 'Draft' : experimentStatusLabel(item.status)}</Badge>{(() => { const reason = mode === 'execution' ? experimentStatusReason(item) : null; return reason ? <small title={reason}>{reason}</small> : null; })()}{item.state !== 'active' ? <small>{lifecycleLabel[item.state]}</small> : null}</td>
         <td>{(() => { const count = item.batches.length + (experimentStage(item) === 'planning' ? item.batchPlans?.length ?? 0 : 0); return `${count} ${count === 1 ? 'batch' : 'batches'}`; })()}<small>{item.batches.length ? `${item.batches.reduce((total, batch) => total + batch.manifest.summary.runCount, 0)} planned runs` : item.batchPlans?.length ? item.frozenSetupId ? 'Frozen recipes' : 'Editable recipes' : item.inputs ? 'Inputs selected' : 'Inputs not set'}</small></td>
 
         {mode !== 'setup' ? <td><ExperimentHeadline batches={headlineOf.get(item.id)} /></td> : null}

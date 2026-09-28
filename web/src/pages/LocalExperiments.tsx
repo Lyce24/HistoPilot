@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import { ApiError } from '../api/client';
 import type { ProtocolSpec } from '../api/scientific';
-import { experiments, experimentStage, experimentStageLabel, experimentStatusLabel, experimentStatusTone, type ExperimentStage, type ModelExperiment } from '../api/experiments';
+import { experiments, experimentStage, experimentStageLabel, experimentStatusLabel, experimentStatusReason, experimentStatusTone, type ExperimentStage, type ModelExperiment } from '../api/experiments';
 import { lifecycleLabel } from '../api/lifecycle';
 import ExperimentRegistry, { ExperimentMetadata, newExperimentLibraryFilters } from '../components/ExperimentRegistry';
 import ExperimentLifecycle from '../components/ExperimentLifecycle';
@@ -169,6 +169,7 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
   return <div className="clinical-workspace mil-workspace">
     <PageHeader eyebrow={mode === 'setup' ? '03 EXPERIMENTAL SETUP' : '04 EXPERIMENTS'} title={name} description={record.notes || (mode === 'setup' ? 'Prepare and freeze the full training design before running it.' : 'Run your frozen setup, follow progress, and review the resulting models.')} actions={<StageBackButton disabled={busy || planBusy || submitting} onClick={backToExperiments}>Back to {mode === 'setup' ? 'setups' : 'experiments'}</StageBackButton>} />
     <div className="experiment-detail-heading"><Badge tone={mode === 'setup' || stage === 'planning' ? 'neutral' : experimentStatusTone(record.status)}>{mode === 'setup' ? record.frozenSetupId ? 'Frozen setup' : 'Setup draft' : record.frozenSetupId && stage === 'planning' ? 'Ready to run' : stage === 'planning' ? experimentStageLabel[stage] : experimentStatusLabel(record.status)}</Badge><Badge>{lifecycleLabel[record.state]}</Badge>{record.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}<span className="experiment-detail-id">{record.id} · revision {record.revision}</span></div>
+    {mode !== 'setup' && stage !== 'planning' && experimentStatusReason(record) ? <p className="experiment-detail-reason" role="status">{experimentStatusReason(record)}</p> : null}
     {record.legacy ? <p className="callout">This legacy record retains its original batch or draft identity. Use it as a template from the experiments list to organize new work; historical runs stay here.</p> : null}
     {record.state !== 'active' ? <p className="callout">This experiment is {lifecycleLabel[record.state].toLowerCase()}. Its saved history remains visible. Restore it to Active to manage it; submitted configurations remain locked.</p> : null}
     <section className="experiment-context" aria-label={dirty && !readOnly ? 'Draft input context' : 'Saved input context'}>

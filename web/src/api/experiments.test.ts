@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { experimentExecutionStatus, experimentPollInterval, experimentStage, experimentStatusFilters, experimentStatusLabel, experimentStatusTone } from './experiments';
+import { experimentExecutionStatus, experimentPollInterval, experimentStage, experimentStatusFilters, experimentStatusLabel, experimentStatusReason, experimentStatusTone } from './experiments';
 import type { ModelExperiment } from './experiments';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
@@ -90,5 +90,9 @@ describe('model experiment identity contracts', () => {
     expect(experimentPollInterval({ items: [stopped, { status: 'running' } as ModelExperiment] })).toBe(3000);
     expect(experimentPollInterval({ items: [] })).toBe(15000);
     expect(Object.keys(experimentStatusFilters)).toEqual(['ready', 'queued', 'running', 'waiting', 'held', 'needs-attention', 'cancelled', 'completed']);
+    // Queued work shows its reason too; running and planning statuses show none.
+    for (const status of ['queued', 'scheduled', 'waiting', 'held', 'needs-attention', 'failed']) expect(experimentStatusReason({ status, statusReason: 'Why' })).toBe('Why');
+    for (const status of ['running', 'completed', 'ready', 'planned']) expect(experimentStatusReason({ status, statusReason: 'Why' })).toBeNull();
+    expect(experimentStatusReason({ status: 'queued', statusReason: null })).toBeNull();
   });
 });

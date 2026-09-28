@@ -162,6 +162,14 @@ const statusTones: Partial<Record<ExperimentStatus, string>> = {
   running: 'green', held: 'amber', 'needs-attention': 'orange', completed: 'success',
 };
 export const experimentStatusTone = (status: string) => statusTones[experimentExecutionStatus(status) as ExperimentStatus] ?? 'neutral';
+/**
+ * The service's reason for an experiment that is not simply running or finished: why it is
+ * queued, waiting or held, or what needs attention. Planning statuses carry none.
+ */
+export function experimentStatusReason(item: Pick<ModelExperiment, 'status' | 'statusReason'>): string | null {
+  const status = experimentExecutionStatus(item.status);
+  return item.statusReason && ['queued', 'waiting', 'held', 'needs-attention'].includes(status) ? item.statusReason : null;
+}
 /** Filter choices on the Experiments page, in the order they matter. */
 export const experimentStatusFilters: Record<string, string> = Object.fromEntries(
   (['ready', 'queued', 'running', 'waiting', 'held', 'needs-attention', 'cancelled', 'completed'] as const).map((status) => [status, statusLabels[status]]),

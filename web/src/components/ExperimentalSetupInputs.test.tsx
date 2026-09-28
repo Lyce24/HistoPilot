@@ -45,16 +45,19 @@ describe('independent experiment preparation and execution', () => {
 
   it('shows one execution status, and a setup badge that never encodes run outcome', () => {
     const attention = record('gej3', { stage: 'running', status: 'needs-attention', frozenSetupId: 'setup-5', statusReason: 'Another operation is changing this workspace.' });
-    const cache = client(); cache.setQueryData(['model-experiments', 'p', 'summary'], { items: [...items, attention] });
+    const queued = record('gej4', { stage: 'running', status: 'queued', frozenSetupId: 'setup-6', statusReason: 'Waiting for a free GPU.' });
+    const cache = client(); cache.setQueryData(['model-experiments', 'p', 'summary'], { items: [...items, attention, queued] });
     try {
       const render = (mode: 'setup' | 'execution') => renderToStaticMarkup(<QueryClientProvider client={cache}><ExperimentRegistry project="p" mode={mode} onOpen={() => {}} /></QueryClientProvider>);
       const execution = render('execution');
       expect(execution).toContain('<span class="badge badge-orange">Needs attention</span>');
       expect(execution).toContain('Another operation is changing this workspace.');
+      expect(execution).toContain('<small title="Waiting for a free GPU.">Waiting for a free GPU.</small>');
       expect(execution).toContain('<span class="badge badge-green">Running</span>');
       expect(execution).not.toContain('>Failed<');
       const setup = render('setup');
-      expect(setup.match(/badge badge-green">Frozen</g)).toHaveLength(5);
+      expect(setup.match(/badge badge-green">Frozen</g)).toHaveLength(6);
+      expect(setup).not.toContain('Waiting for a free GPU.');
       expect(setup).not.toContain('badge-orange');
     } finally { cache.clear(); }
   });
