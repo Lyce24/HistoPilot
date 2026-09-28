@@ -59,6 +59,39 @@ def _selection_stats(rows, unit):
     }
 
 
+def _percent(fraction):
+    return f"{fraction * 100:.3g}%"
+
+
+def _achieved_test_fraction(spec, assignments, stratified, finding):
+    """The testing share a random split reached, in split units; warns beyond 5 points.
+
+    Each stratum is rounded to whole units separately, and a stratum of two or more keeps
+    at least one unit in each set, so small or stratified cohorts can miss the request.
+    """
+    total = len(assignments)
+    if not total:
+        return {}
+    testing = sum(role == "test" for role in assignments.values())
+    fraction, requested = testing / total, spec.split.testFraction
+    units = "slides" if spec.splitUnit == "slide" else "patient groups"
+    if abs(fraction - requested) * 100 > 5 + 1e-9:
+        finding(
+            "TEST_FRACTION_DIFFERS",
+            f"Testing holds {testing} of {total} {units} ({_percent(fraction)}), not the "
+            f"requested {_percent(requested)}. "
+            + (
+                f"Each value of {spec.split.stratifyField} is split on its own, rounded to whole "
+                f"{units} with at least one in each set."
+                if stratified
+                else f"The testing set is rounded to whole {units} and keeps at least one in "
+                "each set."
+            ),
+            "warning",
+        )
+    return {"testingUnits": testing, "splitUnits": total, "achievedTestFraction": fraction}
+
+
 def _reference(document):
     return {key: document[key] for key in ("id", "contentHash")}
 
@@ -259,7 +292,7 @@ class TargetSplitService:
         if len({row["slideId"] for row in rows}) != len(rows):
             finding("DUPLICATE_SLIDE_ID", "Dataset slide identifiers must be unique.")
         evaluator = FilterEvaluator()
-        eligible, assignments = [], {}
+        eligible, assignments, achieved = [], {}, {}
         groups = {}
         direct = {role: [] for role in ("train", "test")}
         expanded = {role: [] for role in ("train", "test")}
@@ -348,6 +381,7 @@ class TargetSplitService:
                         count = max(1, min(len(ordered) - 1, count))
                     for index, patient in enumerate(ordered):
                         assignments[patient] = "test" if index < count else "train"
+                achieved = _achieved_test_fraction(spec, assignments, bool(stratify_field), finding)
         except FilterFailure as error:
             finding(error.code, str(error))
         partitions = {
@@ -433,13 +467,16 @@ class TargetSplitService:
                 ),
                 "assigned": _selection_stats(assigned, spec.splitUnit),
             }
-        return dataset, fields, rows, eligible, partitions, selection
+        return dataset, fields, rows, eligible, partitions, selection, achieved
 
     @staticmethod
-    def _selection_summary(rows, eligible, partitions, unit="patient"):
+    def _selection_summary(rows, eligible, partitions, unit="patient", achieved=None):
         training, testing = partitions["train"], partitions["test"]
         selected = training + testing
         return {
+            # Random splits: testing and all split units (slides or patient groups), and
+            # the fraction in testing, which rounding can move off the requested one.
+            **(achieved or {}),
             "totalSlides": len(rows),
             "eligibleSlides": len(eligible),
             "selectedSlides": len(selected),
@@ -474,8 +511,8 @@ class TargetSplitService:
         request = TargetSplitPartitionPreviewRequest.model_validate(request)
         findings = []
         finding = _finding_collector(findings)
-        dataset, fields, rows, eligible, partitions, selection = self._partition_selection(
-            request, finding
+        dataset, fields, rows, eligible, partitions, selection, achieved = (
+            self._partition_selection(request, finding)
         )
         allocation_valid = not any(item["severity"] == "error" for item in findings)
         targets = {}
@@ -528,7 +565,7 @@ class TargetSplitService:
             "dataset": cohort_statistics(rows),
             "cohort": cohort_statistics(eligible),
             "summary": {
-                **self._selection_summary(rows, eligible, partitions, request.splitUnit),
+                **self._selection_summary(rows, eligible, partitions, request.splitUnit, achieved),
                 **(
                     {"splitUnit": request.splitUnit}
                     if "splitUnit" in request.model_fields_set
@@ -545,10 +582,10 @@ class TargetSplitService:
         spec = TargetSplitSpec.model_validate(spec)
         findings = []
         finding = _finding_collector(findings)
-        dataset, fields, rows, eligible, partitions, _selection = self._partition_selection(
-            spec, finding
+        dataset, fields, rows, eligible, partitions, _selection, achieved = (
+            self._partition_selection(spec, finding)
         )
-        selection = self._selection_summary(rows, eligible, partitions, spec.splitUnit)
+        selection = self._selection_summary(rows, eligible, partitions, spec.splitUnit, achieved)
         test_target = spec.testTarget if "testTarget" in spec.model_fields_set else spec.target
         targets = {"train": spec.target, "test": test_target}
         _testing_target_findings(dataset, fields, spec.target, test_target, finding)

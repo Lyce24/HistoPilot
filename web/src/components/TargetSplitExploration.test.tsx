@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { newTargetSplitSpec, targetSplitPartitionRequest, type TargetSplitPartitionPreview } from '../api/targetSplits';
+import { newTargetSplitSpec, targetSplitPartitionRequest, testingShareText, type TargetSplitPartitionPreview } from '../api/targetSplits';
 import { TargetSplitDistributions, TargetSplitPartitionCounts, TargetSplitSelection, TargetSplitSelectionSummary, targetSplitExplorationKey } from './TargetSplitExploration';
 import PredictionTargetEditor from './PredictionTargetEditor';
 import { CohortStats } from './ProtocolExploration';
@@ -62,6 +62,13 @@ describe('target and split live exploration', () => {
     const html = renderToStaticMarkup(<TargetSplitSelectionSummary value={live} />);
     expect(html).toContain('10 of 12 eligible slides assigned · 2 excluded by split conditions');
     expect(html).not.toContain('6 excluded');
+    expect(html).not.toContain('Testing holds');
+  });
+  it('says what share of the split units a random split put in testing', () => {
+    const random = { ...live, summary: { ...live.summary, testingUnits: 3, splitUnits: 10, achievedTestFraction: 0.3 } };
+    expect(renderToStaticMarkup(<TargetSplitSelectionSummary value={random} splitUnit="slide" />)).toContain('Testing holds 3 of 10 slides (30%).');
+    expect(testingShareText({ testingUnits: 1, splitUnits: 3, achievedTestFraction: 1 / 3 }, 'patient')).toBe('1 of 3 patient groups (33.3%)');
+    expect(testingShareText({}, 'slide')).toBeNull();
   });
   it('keeps role distributions adjacent to their selected target editor', () => {
     const html = renderToStaticMarkup(<TargetSplitDistributions partitions={live.partitions} partition="train" mapped />);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { targetSplits, type TargetSplitPartition, type TargetSplitPartitionPreview, type TargetSplitPartitionRequest, type TargetSplitUnit } from '../api/targetSplits';
+import { targetSplits, testingShareText, type TargetSplitPartition, type TargetSplitPartitionPreview, type TargetSplitPartitionRequest, type TargetSplitUnit } from '../api/targetSplits';
 import { DistributionBars } from './ProtocolExploration';
 import { Metric } from './ui';
 import { scienceKey } from './ScientificUI';
@@ -55,6 +55,7 @@ export function TargetSplitSelectionSummary({ value, splitUnit = 'patient' }: { 
   const unassigned = Math.max(0, value.summary.eligibleSlides - value.summary.selectedSlides);
   return <div className="target-split-selection-summary" aria-live="polite">
     <p>{value.summary.selectedSlides.toLocaleString()} of {value.summary.eligibleSlides.toLocaleString()} eligible slides assigned · {unassigned.toLocaleString()} excluded by split conditions.</p>
+    {testingShareText(value.summary, splitUnit) ? <p>Testing holds {testingShareText(value.summary, splitUnit)}.</p> : null}
     <p className="muted">{value.membershipStatus === 'provisional' ? 'These assignments are provisional. Resolve the findings below before continuing.' : splitUnit === 'slide' ? 'Each slide is assigned independently. Defining targets does not redraw these assignments.' : 'Patient groups stay in one set. Defining targets does not redraw these assignments.'}</p>
   </div>;
 }

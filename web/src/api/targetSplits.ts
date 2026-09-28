@@ -28,7 +28,7 @@ export interface TargetSplitSpec {
   };
 }
 
-export interface TargetSplitSummary {
+export interface TargetSplitSummary extends TargetSplitTestingShare {
   splitUnit?: TargetSplitUnit;
   totalSlides: number;
   includedSlides: number;
@@ -50,6 +50,20 @@ export interface TargetSplitSummary {
   selectedTestingSlides?: number;
   selectedTrainingPatients?: number;
   selectedTestingPatients?: number;
+}
+
+/** Random splits only: the split units (slides or patient groups) in testing and in total. */
+export interface TargetSplitTestingShare {
+  testingUnits?: number;
+  splitUnits?: number;
+  achievedTestFraction?: number;
+}
+
+/** "3 of 12 slides (25%)": the testing share a random split reached, or null for other methods. */
+export function testingShareText(summary: TargetSplitTestingShare, unit: TargetSplitUnit): string | null {
+  if (summary.achievedTestFraction === undefined || summary.testingUnits === undefined || summary.splitUnits === undefined) return null;
+  const units = unit === 'slide' ? 'slides' : 'patient groups';
+  return `${summary.testingUnits.toLocaleString()} of ${summary.splitUnits.toLocaleString()} ${units} (${Number((summary.achievedTestFraction * 100).toPrecision(3))}%)`;
 }
 
 export interface TargetSplitMembership extends Pick<DataRecord, 'slideId' | 'patientId' | 'patientIdSource'> {
@@ -98,7 +112,7 @@ export interface TargetSplitPartitionRequest {
 export interface TargetSplitPartitionPreview {
   dataset?: ProtocolCohortStats;
   cohort?: ProtocolCohortStats;
-  summary: { totalSlides: number; eligibleSlides: number; selectedSlides: number; excludedSlides: number; trainingSlides: number; testingSlides: number; trainingPatients: number; testingPatients: number };
+  summary: TargetSplitTestingShare & { totalSlides: number; eligibleSlides: number; selectedSlides: number; excludedSlides: number; trainingSlides: number; testingSlides: number; trainingPatients: number; testingPatients: number };
   partitions: Record<'train' | 'test', TargetSplitPartition>;
   findings: Finding[];
   valid: boolean;

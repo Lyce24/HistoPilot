@@ -122,6 +122,36 @@ def test_default_random_partition_is_fixed_grouped_and_feature_free(construction
     assert first["spec"]["split"]["stratify"] is False
 
 
+def test_random_split_reports_the_testing_share_it_reached(construction):
+    _store, service, spec, _rows = construction
+    exact = service.preview_spec(spec)
+    reached = ("testingUnits", "splitUnits", "achievedTestFraction")
+    assert [exact["summary"][key] for key in reached] == [8, 40, 0.2]
+    assert "TEST_FRACTION_DIFFERS" not in {item["code"] for item in exact["findings"]}
+    # Forty one-patient strata each round 10% down to no testing patient.
+    split = {"method": "random", "testFraction": 0.1, "stratify": True, "stratifyField": "number"}
+    rounded = service.preview_spec({**spec, "split": split})
+    assert [rounded["summary"][key] for key in reached] == [0, 40, 0]
+    [warning] = [item for item in rounded["findings"] if item["code"] == "TEST_FRACTION_DIFFERS"]
+    assert warning["severity"] == "warning"
+    assert warning["message"].startswith(
+        "Testing holds 0 of 40 patient groups (0%), not the requested 10%. "
+        "Each value of number is split on its own"
+    )
+    live = service.partition_preview({"datasetId": spec["datasetId"], "split": split})
+    assert [live["summary"][key] for key in reached] == [0, 40, 0]
+    assert "TEST_FRACTION_DIFFERS" in {item["code"] for item in live["findings"]}
+    imported = {
+        "method": "imported",
+        "partitionField": "partition",
+        "trainValues": ["train"],
+        "testValues": ["test"],
+    }
+    assert (
+        "achievedTestFraction" not in service.preview_spec({**spec, "split": imported})["summary"]
+    )
+
+
 def test_deprecated_predictors_stay_empty_and_keep_stored_hashes(construction):
     _store, service, spec, _rows = construction
     # Every stored draft and frozen spec carries "predictors": []; it must keep its hash.

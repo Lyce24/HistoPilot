@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import { ApiError } from '../api/client';
 import { scientific, type Condition, type VersionLabelInput } from '../api/scientific';
-import { newTargetSplitSpec, targetDefinitionReady, targetSplitMethod, targetSplitPartitionRequest, targetSplitTestingRemainder, targetSplitTrainingTarget, targetSplitTestingIssue, targetSplitUnit, targetSplitWithUnit, TARGET_SPLIT_STEPS, targetSplitSetupLink, targetSplits, type TargetSplit, type TargetSplitDraft, type TargetSplitPreview, type TargetSplitSpec, type TargetSplitUnit } from '../api/targetSplits';
+import { newTargetSplitSpec, targetDefinitionReady, targetSplitMethod, targetSplitPartitionRequest, targetSplitTestingRemainder, targetSplitTrainingTarget, targetSplitTestingIssue, targetSplitUnit, targetSplitWithUnit, TARGET_SPLIT_STEPS, targetSplitSetupLink, targetSplits, testingShareText, type TargetSplit, type TargetSplitDraft, type TargetSplitPreview, type TargetSplitSpec, type TargetSplitUnit } from '../api/targetSplits';
 import ConditionEditor from '../components/ConditionEditor';
 import PredictionTargetEditor from '../components/PredictionTargetEditor';
 import { CohortStats, useProtocolExploration, type ProtocolFieldContext } from '../components/ProtocolExploration';
@@ -45,7 +45,7 @@ export function TargetSplitSummary({ value }: { value: Pick<TargetSplitPreview, 
       <div><dt>Split unit</dt><dd>{unit === 'slide' ? 'Slide' : 'Patient'}</dd></div>
       <div><dt>Training target</dt><dd>{spec.target.field} · {spec.target.unit === 'patient' ? 'Patient labels' : 'Slide labels'}</dd></div>
       <div><dt>Testing target</dt><dd>{testingTarget ? `${testingTarget.field} · ${spec.testTarget === undefined ? 'Same mapping as training' : 'Separate source mapping'}` : 'None · Pure inference'}</dd></div>
-      <div><dt>Selection</dt><dd>{methodNames[spec.split.method]}{spec.split.method === 'random' ? ` · ${Math.round(spec.split.testFraction * 100)}% testing · seed ${spec.split.seed}` : spec.split.testRemaining ? ` · testing takes every eligible ${unit === 'slide' ? 'slide' : 'patient group'} outside training` : ''}</dd></div>
+      <div><dt>Selection</dt><dd>{methodNames[spec.split.method]}{spec.split.method === 'random' ? ` · ${Math.round(spec.split.testFraction * 100)}% testing requested${testingShareText(summary, unit) ? `, ${testingShareText(summary, unit)} reached` : ''} · seed ${spec.split.seed}` : spec.split.testRemaining ? ` · testing takes every eligible ${unit === 'slide' ? 'slide' : 'patient group'} outside training` : ''}</dd></div>
       {spec.target.positiveClass ? <div><dt>Positive class</dt><dd>{spec.target.positiveClass}</dd></div> : null}
       <div><dt>Cohort conditions</dt><dd>{spec.eligibility.length ? spec.eligibility.map(describeCondition).join(' AND ') : 'All dataset records'}</dd></div>
     </dl>
