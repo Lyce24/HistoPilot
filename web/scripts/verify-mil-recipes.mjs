@@ -10,7 +10,7 @@ import react from '@vitejs/plugin-react';
 
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = await mkdtemp(join(tmpdir(), 'histopilot-mil-recipes-'));
-const artifacts = resolve(web, '../docs/dev-review/2026-09-14-mil-recipes');
+const artifacts = resolve(web, '../.local/verify/mil-recipes');
 await mkdir(artifacts, { recursive: true });
 const source = (path) => JSON.stringify(join(web, 'src', path));
 const fixture = join(output, 'fixture.tsx');

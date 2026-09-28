@@ -87,10 +87,7 @@ const post = (value: unknown) => ({ method: 'POST', body: JSON.stringify(value) 
 export const predictors = {
   list: (project: string) => request<{ items: FrozenPredictor[]; executionEnabled: boolean }>(`${base(project)}/predictors?include_inactive=true`),
   choices: (project: string) => request<{ items: PredictorChoice[]; executionEnabled: boolean }>(`${base(project)}/predictors/choices`),
-  preview: (project: string, selection: PredictorSelection) => request<PredictorPreview>(`${base(project)}/predictors/preview`, post(selection)),
-  freeze: (project: string, selection: PredictorSelection, previewHash: string, operationId: string) => request<FrozenPredictor>(`${base(project)}/predictors/freeze`, post({ ...selection, previewHash, operationId })),
   refits: (project: string) => request<{ items: RefitBuild[] }>(`${base(project)}/predictors/refits?include_inactive=true`),
-  planRefit: (project: string, selection: PredictorSelection, previewHash: string, operationId: string) => request<RefitBuild>(`${base(project)}/predictors/refits`, post({ ...selection, previewHash, operationId })),
   refitExecution: (project: string, id: string) => request<ComputeExecution>(`${base(project)}/predictors/refits/${encodeURIComponent(id)}/execution`),
   refitJob: (project: string, id: string, action: 'launch' | 'resume' | 'cancel', operationId: string, resources?: ResourcePolicy) => request<ComputeExecution>(`${base(project)}/predictors/refits/${encodeURIComponent(id)}/${action}`, post({ operationId, ...(resources ? { resources } : {}) })),
   publishRefit: (project: string, id: string, operationId: string) => request<FrozenPredictor>(`${base(project)}/predictors/refits/${encodeURIComponent(id)}/publish`, post({ operationId })),

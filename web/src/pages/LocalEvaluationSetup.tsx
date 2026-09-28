@@ -37,30 +37,8 @@ export const newEvaluationSpec = (): EvaluationSpec => ({
 /** Unlabeled slides for Run inference: membership only, never a target. */
 export const newInferenceSpec = (): EvaluationSpec => ({ ...newEvaluationSpec(), purpose: 'inference', target: null });
 
-export { parseConditionValue as evaluationConditionValue } from '../lib/conditions';
-
 function SlideIds({ label, ids }: { label: string; ids: string[] }) {
   return ids.length > 0 ? <details className="evaluation-slide-ids"><summary>{label} · {ids.length.toLocaleString()}</summary><pre>{ids.join('\n')}</pre></details> : null;
-}
-
-export function evaluationLabelProblem(rows: [string, string][], classes: string[]): string | null {
-  if (rows.some(([raw]) => !raw.trim())) return 'Enter a raw value for every label mapping.';
-  if (new Set(rows.map(([raw]) => raw)).size !== rows.length) return 'Each raw value must map to exactly one class. Remove or change duplicate values.';
-  if (classes.some((label) => !rows.some(([, mapped]) => mapped === label))) return 'Map at least one raw value to every inherited class.';
-  return null;
-}
-
-export function EvaluationTargetMapping({ rows, classes, onChange }: {
-  rows: [string, string][]; classes: string[]; onChange: (rows: [string, string][]) => void;
-}) {
-  return <div className="evaluation-label-mapping">
-    {rows.map(([raw, mapped], index) => <div className="evaluation-mapping-row" key={index}>
-      <label className="label">Raw dataset value<input className="field" value={raw} maxLength={4096} onChange={(event) => onChange(rows.map((row, at) => at === index ? [event.target.value, mapped] : row))} /></label>
-      <label className="label">Inherited class<select className="field" value={mapped} onChange={(event) => onChange(rows.map((row, at) => at === index ? [raw, event.target.value] : row))}>{classes.map((label) => <option key={label}>{label}</option>)}</select></label>
-      <button type="button" className="icon-button" aria-label={`Remove label mapping ${index + 1}`} onClick={() => onChange(rows.filter((_, at) => at !== index))}><Icon name="close" /></button>
-    </div>)}
-    <button type="button" className="btn btn-secondary btn-small" disabled={rows.length >= 200} onClick={() => onChange([...rows, ['', classes[0]]])}><Icon name="plus" size={14} />Add raw label value</button>
-  </div>;
 }
 
 export { EvaluationInferenceFields } from '../components/EvaluationInputSettings';
@@ -75,34 +53,6 @@ export function cohortIdentityNote(preview: Pick<EvaluationPreview, 'findings' |
   }
   if (preview.findings.some((finding) => finding.code === 'SLIDE_ID_FALLBACK_GROUPING')) return 'Includes acknowledged slide / case groups. Patient independence is unverified.';
   return 'Distinct recorded grouping IDs. Patient-ID provenance counts are unavailable in this saved summary.';
-}
-
-export function EvaluationEvidence({ preview }: { preview: EvaluationPreview }) {
-  const { summary, coverage } = preview;
-  return <div className="evaluation-evidence">
-    <div className="evaluation-counts">
-      <div><strong>{summary.includedSlides.toLocaleString()}</strong><span>Selected slides</span></div>
-      <div><strong>{summary.includedPatients.toLocaleString()}</strong><span>Patient / slide groups</span></div>
-      <div><strong>{summary.labeledSlides.toLocaleString()}</strong><span>Labeled slides</span></div>
-      <div><strong>{summary.excludedSlides.toLocaleString()}</strong><span>Excluded slides</span></div>
-    </div>
-    <p className="muted">{cohortIdentityNote(preview)}</p>
-    <Findings findings={preview.findings} />
-    <div className="grid-2">
-      <div><h3>Exact feature coverage</h3><p>{coverage.missingFeatureSlideIds.length === 0 ? 'Every selected slide has a feature file.' : `${coverage.missingFeatureSlideIds.length.toLocaleString()} selected slides are missing feature files.`}</p>
-        {coverage.packChecked ? <p>{coverage.missingPackSlideIds.length === 0 ? 'The selected pack covers every selected slide.' : `${coverage.missingPackSlideIds.length.toLocaleString()} selected slides are missing from the pack.`}</p> : <p className="muted">{preview.spec.inference.loadingPolicy === 'packed' ? 'Packed loading was requested, but pack coverage could not be verified. Review the findings above.' : 'Original feature files selected; no pack coverage is required.'}</p>}
-      </div>
-      <div><h3>Overlap with development</h3><p>{summary.developmentSlideOverlap.toLocaleString()} overlapping slide IDs</p><p>{preview.overlap.patientsComparable ? `${summary.developmentPatientOverlap.toLocaleString()} overlapping patient IDs` : 'Patient overlap cannot be checked across separate naming systems.'}</p><p className="muted">Overlap is checked against the selected development protocol. Identifier conventions and prior use of these records still need to be correct.</p></div>
-    </div>
-    <SlideIds label="Missing feature slide IDs" ids={coverage.missingFeatureSlideIds} />
-    <SlideIds label="Missing pack slide IDs" ids={coverage.missingPackSlideIds} />
-    <SlideIds label="Overlapping development slide IDs" ids={preview.overlap.slideIds} />
-    <SlideIds label="Source files already used in development under different slide IDs" ids={preview.overlap.sourceSlideIds ?? []} />
-    {preview.overlap.patientsComparable ? <SlideIds label="Overlapping development patient IDs" ids={preview.overlap.patientIds} /> : null}
-    <SlideIds label="Selected slide IDs" ids={coverage.selectedSlideIds} />
-    <p className="muted">Development representation: {preview.compatibility.development.encoderId ?? 'unspecified encoder'} · {preview.compatibility.development.dimensions ?? '?'} dimensions. Test representation: {preview.compatibility.evaluation.encoderId ?? 'unspecified encoder'} · {preview.compatibility.evaluation.dimensions ?? '?'} dimensions.</p>
-    {Object.keys(summary.classCounts).length > 0 ? <p className="muted">Mapped class counts: {Object.entries(summary.classCounts).map(([label, count]) => `${label}: ${count.toLocaleString()}`).join(' · ')}</p> : null}
-  </div>;
 }
 
 export function cohortDatasetIds(spec: EvaluationSpec): string[] {

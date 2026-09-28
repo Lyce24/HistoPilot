@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import type { ProtocolExploration } from '../api/scientific';
 import type { EvaluationPreview } from '../api/evaluation';
-import LocalEvaluationSetup, { EvaluationEvidence, EvaluationInferenceFields, EvaluationTargetMapping, evaluationConditionValue, evaluationLabelProblem, newEvaluationSpec, TestCohortSummary, cohortDatasetIds, mergeTestDistributions, independentCohortSpec, cohortIdentityNote, newInferenceSpec } from './LocalEvaluationSetup';
+import { parseConditionValue } from '../lib/conditions';
+import LocalEvaluationSetup, { EvaluationInferenceFields, newEvaluationSpec, TestCohortSummary, cohortDatasetIds, mergeTestDistributions, independentCohortSpec, cohortIdentityNote, newInferenceSpec } from './LocalEvaluationSetup';
 
 const preview: EvaluationPreview = {
   spec: newEvaluationSpec(),
@@ -115,7 +116,6 @@ describe('later test cohort setup', () => {
     const html = renderToStaticMarkup(<TestCohortSummary preview={value} />);
     expect(html).toContain('1 supplied patient IDs · 1 acknowledged slide / case groups · 2 slides with unresolved or unrecorded patient-ID provenance');
     expect(html).not.toContain('Verified patients');
-    expect(renderToStaticMarkup(<EvaluationEvidence preview={value} />)).toContain('1 supplied patient IDs');
   });
 
   it('never calls fallback or legacy grouping IDs verified patients or infers counts from warning prose', () => {
@@ -153,50 +153,14 @@ describe('later test cohort setup', () => {
     expect(legacy.protocolId).toBe('old-protocol');
   });
 
-  it('shows exact missing feature and pack IDs even when the bundle has many other slides', () => {
-    const html = renderToStaticMarkup(<EvaluationEvidence preview={preview} />);
-    expect(html).toContain('Missing feature slide IDs');
-    expect(html).toContain('Missing pack slide IDs');
-    expect(html).toContain('<pre>test-2</pre>');
-    expect(html).toContain('One selected test slide has no features.');
-    expect(html).toContain('Blocking');
-    expect(html).toContain('Overlapping development patient IDs');
-    expect(html).toContain('<pre>patient-3</pre>');
-    expect(html).not.toContain('Every selected slide has a feature file.');
-  });
-
-  it('does not report patient disjointness when dataset naming systems are independent', () => {
-    const html = renderToStaticMarkup(<EvaluationEvidence preview={{ ...preview, overlap: { slideIds: [], patientIds: [], patientsComparable: false }, summary: { ...preview.summary, developmentSlideOverlap: 0, developmentPatientOverlap: 0 } }} />);
-    expect(html).toContain('Patient overlap cannot be checked across separate naming systems.');
-    expect(html).not.toContain('0 overlapping patient IDs');
-  });
-
-  it('keeps failed packed verification visible instead of claiming original-file loading', () => {
-    const html = renderToStaticMarkup(<EvaluationEvidence preview={{ ...preview, spec: { ...preview.spec, inference: { ...preview.spec.inference, loadingPolicy: 'packed', packArtifactId: 'unavailable' } }, coverage: { ...preview.coverage, packChecked: false } }} />);
-    expect(html).toContain('Packed loading was requested, but pack coverage could not be verified.');
-    expect(html).not.toContain('Original feature files selected');
-  });
-
-  it('allows separate-file raw values to map to fixed inherited classes and rejects ambiguous mappings', () => {
-    const html = renderToStaticMarkup(<EvaluationTargetMapping rows={[["0", "low"], ["1", "high"]]} classes={['low', 'high']} onChange={() => {}} />);
-    expect(html).toMatch(/<input[^>]*value="0"/);
-    expect(html).toMatch(/<input[^>]*value="1"/);
-    expect(html).toContain('Inherited class');
-    expect(html).toContain('Add raw label value');
-    expect(html).not.toContain('readonly');
-    expect(evaluationLabelProblem([['0', 'low'], ['1', 'high']], ['low', 'high'])).toBeNull();
-    expect(evaluationLabelProblem([['0', 'low'], ['0', 'high']], ['low', 'high'])).toContain('exactly one class');
-    expect(evaluationLabelProblem([['0', 'low']], ['low', 'high'])).toContain('every inherited class');
-  });
-
   it('keeps numeric and boolean filters typed while preserving exact categorical and regex values', () => {
-    expect(evaluationConditionValue('4', 'gte', 'text')).toBe(4);
-    expect(evaluationConditionValue('1 | 2', 'in', 'integer')).toEqual([1, 2]);
-    expect(evaluationConditionValue('001', 'eq', 'text')).toBe('001');
-    expect(evaluationConditionValue('false', 'eq', 'boolean')).toBe(false);
-    expect(evaluationConditionValue('^1$', 'regex', 'integer')).toBe('^1$');
-    expect(evaluationConditionValue('', 'gte', 'integer')).toBe('');
-    expect(evaluationConditionValue('Infinity', 'gte', 'integer')).toBe('Infinity');
+    expect(parseConditionValue('4', 'gte', 'text')).toBe(4);
+    expect(parseConditionValue('1 | 2', 'in', 'integer')).toEqual([1, 2]);
+    expect(parseConditionValue('001', 'eq', 'text')).toBe('001');
+    expect(parseConditionValue('false', 'eq', 'boolean')).toBe(false);
+    expect(parseConditionValue('^1$', 'regex', 'integer')).toBe('^1$');
+    expect(parseConditionValue('', 'gte', 'integer')).toBe('');
+    expect(parseConditionValue('Infinity', 'gte', 'integer')).toBe('Infinity');
   });
 });
 

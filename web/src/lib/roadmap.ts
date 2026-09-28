@@ -1,5 +1,5 @@
 import type { FeatureBundle } from '../api/bundles';
-import type { Configuration, DatasetVersion, ProtocolSpec, ScientificDraft } from '../api/scientific';
+import type { Configuration, DatasetVersion, ScientificDraft } from '../api/scientific';
 import type { TargetSplit } from '../api/targetSplits';
 import type { Workspace } from '../api/types';
 import { trainingActive, type FrozenBatch, type TrainingExecution } from '../api/development';
@@ -84,17 +84,6 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
   },
 ];
 
-/** Main workflow branches. Cards describe additional inputs checked before execution. */
-export const ROADMAP_CONNECTIONS: readonly { from: RoadmapModuleId; to: RoadmapModuleId }[] = [
-  { from: 'dataset', to: 'features' }, { from: 'dataset', to: 'cohort' },
-  { from: 'cohort', to: 'experimental-setup' }, { from: 'features', to: 'experimental-setup' },
-  { from: 'experimental-setup', to: 'experiments' },
-  { from: 'experiments', to: 'evaluation' }, { from: 'cohort', to: 'evaluation' },
-  { from: 'experiments', to: 'inference' },
-  { from: 'evaluation', to: 'clinical-utility' }, { from: 'experiments', to: 'interpretation' },
-  { from: 'features', to: 'interpretation' },
-];
-
 export interface RoadmapModule extends RoadmapModuleDefinition {
   status: RoadmapStatus;
   unlocked: boolean;
@@ -160,14 +149,6 @@ function extractionEvidence(jobs: readonly ExtractionJob[]): string | undefined 
   return `${jobs.length} extraction run${jobs.length === 1 ? '' : 's'} · latest ${outcome} · ${latest.state === 'succeeded' ? 'review outputs and freeze a bundle' : 'review run'}`;
 }
 
-/** A compatible input pair still requires the existing MIL review before a plan can be saved. */
-export function protocolBundleCompatible(protocol: Configuration, bundle: FeatureBundle): boolean {
-  const spec = protocol.manifest.spec as ProtocolSpec;
-  return (!spec.featureBundleId || spec.featureBundleId === bundle.id)
-    && (!spec.featureSetId || spec.featureSetId === bundle.manifest.spec.featureSetId)
-    && (!spec.featurePackId || bundle.manifest.spec.packArtifactIds.includes(spec.featurePackId));
-}
-
 function bundleReady(bundle: FeatureBundle): boolean {
   return bundle.current
     && !bundle.findings.some((finding) => finding.severity === 'error')
@@ -204,7 +185,6 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     });
   }
   const saved = { ...EMPTY_EVIDENCE, ...evidence };
-  const demo = workspace.mode === 'synthetic-demo';
   const datasetIds = new Set(saved.datasets.map((dataset) => dataset.id));
   const readyBundles = saved.bundles.filter((bundle) => bundleReady(bundle));
   const importDrafts = saved.drafts.filter((draft) => draft.payload.type === 'dataset-import');
@@ -215,43 +195,36 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     status: 'not-started', artifactCount: 0, evidence: 'No completed artifact yet',
   } satisfies ModuleProgress])) as Record<RoadmapModuleId, ModuleProgress>;
 
-  if (demo) {
-    states.dataset = progress(workspace.dataset.slideCount > 0 ? 1 : 0, 0, 'synthetic dataset', '', 'No sample dataset');
-    states.cohort = progress(workspace.cohortSnapshots.length, 0, 'saved sample cohort', '', 'Save a sample cohort');
-    states.features = progress(workspace.featureSets.length, 0, 'sample feature set', '', 'No sample feature sets');
-    states.experiments = progress(0, workspace.drafts.length, '', 'saved sample experiment draft', 'No saved sample experiment drafts');
-  } else {
-    states.dataset = progress(saved.datasets.length, importDrafts.length, 'frozen dataset', 'saved import draft', 'No frozen dataset or saved import');
-    states.cohort = progress(targetSplits.length, protocolDrafts.length + saved.targetSplits.length - targetSplits.length, 'frozen target and split', 'saved target draft', 'No frozen targets and splits');
-    states['experimental-setup'] = progress(saved.setups.length, modelDrafts.filter((draft) => draft.status !== 'frozen').length, 'frozen setup', 'setup draft', 'No frozen experimental setup');
-    states.features = progress(readyBundles.length, saved.features.length + saved.bundles.length - readyBundles.length, 'verified frozen bundle', 'saved feature artifact', 'No saved feature source or frozen bundle');
-    if (states.features.status === 'draft') states.features.evidence += ' · complete bundle verification';
-    const extraction = extractionEvidence(saved.extractions);
-    if (extraction) {
-      const existing = states.features;
-      states.features = {
-        status: existing.status === 'complete' ? 'complete' : 'draft',
-        artifactCount: existing.status === 'complete' ? existing.artifactCount : existing.artifactCount + saved.extractions.length,
-        evidence: existing.status === 'not-started' ? extraction : `${existing.evidence} · ${extraction}`,
-      };
-    }
-    states.experiments = progress(0, saved.batches.length + saved.setups.length, '', 'setup ready to run', 'No experiments started');
-    if (saved.executions.length) {
-      const finishedBatches = completedDevelopmentBatches(saved.batches, saved.executions);
-      const completed = saved.executions.reduce((sum, execution) => sum + execution.runCounts.completed, 0);
-      const total = saved.executions.reduce((sum, execution) => sum + execution.runCounts.total, 0);
-      const active = saved.executions.filter(trainingActive).length;
-      states.experiments = {
-        status: finishedBatches.length ? 'complete' : 'draft', artifactCount: Math.max(saved.batches.length, saved.executions.length),
-        evidence: `${finishedBatches.length ? `${finishedBatches.length} completed development batch${finishedBatches.length === 1 ? '' : 'es'} · ` : ''}${completed}/${total} training runs completed${active ? ` · ${active} active batch${active === 1 ? '' : 'es'}` : ''}`,
-      };
-    }
-    const currentCohorts = saved.evaluationCohorts.filter((item) => item.current === true && !item.findings?.some((finding) => finding.severity === 'error'));
-    states['test-data'] = progress(currentCohorts.length, saved.evaluationCohorts.length - currentCohorts.length + saved.drafts.filter((draft) => draft.payload.type === 'evaluation-cohort').length, 'frozen test cohort', 'saved test cohort', 'No prepared test cohort');
+  states.dataset = progress(saved.datasets.length, importDrafts.length, 'frozen dataset', 'saved import draft', 'No frozen dataset or saved import');
+  states.cohort = progress(targetSplits.length, protocolDrafts.length + saved.targetSplits.length - targetSplits.length, 'frozen target and split', 'saved target draft', 'No frozen targets and splits');
+  states['experimental-setup'] = progress(saved.setups.length, modelDrafts.filter((draft) => draft.status !== 'frozen').length, 'frozen setup', 'setup draft', 'No frozen experimental setup');
+  states.features = progress(readyBundles.length, saved.features.length + saved.bundles.length - readyBundles.length, 'verified frozen bundle', 'saved feature artifact', 'No saved feature source or frozen bundle');
+  if (states.features.status === 'draft') states.features.evidence += ' · complete bundle verification';
+  const extraction = extractionEvidence(saved.extractions);
+  if (extraction) {
+    const existing = states.features;
+    states.features = {
+      status: existing.status === 'complete' ? 'complete' : 'draft',
+      artifactCount: existing.status === 'complete' ? existing.artifactCount : existing.artifactCount + saved.extractions.length,
+      evidence: existing.status === 'not-started' ? extraction : `${existing.evidence} · ${extraction}`,
+    };
   }
+  states.experiments = progress(0, saved.batches.length + saved.setups.length, '', 'setup ready to run', 'No experiments started');
+  if (saved.executions.length) {
+    const finishedBatches = completedDevelopmentBatches(saved.batches, saved.executions);
+    const completed = saved.executions.reduce((sum, execution) => sum + execution.runCounts.completed, 0);
+    const total = saved.executions.reduce((sum, execution) => sum + execution.runCounts.total, 0);
+    const active = saved.executions.filter(trainingActive).length;
+    states.experiments = {
+      status: finishedBatches.length ? 'complete' : 'draft', artifactCount: Math.max(saved.batches.length, saved.executions.length),
+      evidence: `${finishedBatches.length ? `${finishedBatches.length} completed development batch${finishedBatches.length === 1 ? '' : 'es'} · ` : ''}${completed}/${total} training runs completed${active ? ` · ${active} active batch${active === 1 ? '' : 'es'}` : ''}`,
+    };
+  }
+  const currentCohorts = saved.evaluationCohorts.filter((item) => item.current === true && !item.findings?.some((finding) => finding.severity === 'error'));
+  states['test-data'] = progress(currentCohorts.length, saved.evaluationCohorts.length - currentCohorts.length + saved.drafts.filter((draft) => draft.payload.type === 'evaluation-cohort').length, 'frozen test cohort', 'saved test cohort', 'No prepared test cohort');
 
-  const retainedPredictors = demo ? [] : saved.predictors.filter((item) => item.lifecycleState !== 'trashed');
-  const retainedEvaluations = demo ? [] : saved.modelEvaluations.filter((item) => item.lifecycleState !== 'trashed');
+  const retainedPredictors = saved.predictors.filter((item) => item.lifecycleState !== 'trashed');
+  const retainedEvaluations = saved.modelEvaluations.filter((item) => item.lifecycleState !== 'trashed');
   if (retainedPredictors.length) {
     const published = `${retainedPredictors.length} ready predictor${retainedPredictors.length === 1 ? '' : 's'}`;
     states.experiments = { status: 'complete', artifactCount: Math.max(states.experiments.artifactCount, retainedPredictors.length), evidence: states.experiments.artifactCount ? `${states.experiments.evidence} · ${published}` : published };
@@ -263,14 +236,14 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
   states.evaluation = progress(completedEvaluations, scored.length - completedEvaluations, 'completed evaluation', 'saved evaluation plan', 'No evaluation of a predictor');
   const completedInference = predicted.filter((item) => item.execution?.status === 'completed').length;
   states.inference = progress(completedInference, predicted.length - completedInference, 'completed inference run', 'saved inference plan', 'No predictions for unlabeled slides');
-  const clinicalAnalyses = demo ? [] : saved.clinicalAnalyses.filter((item) => item.lifecycleState !== 'trashed');
-  const interpretations = demo ? [] : saved.interpretations.filter((item) => item.lifecycleState !== 'trashed');
+  const clinicalAnalyses = saved.clinicalAnalyses.filter((item) => item.lifecycleState !== 'trashed');
+  const interpretations = saved.interpretations.filter((item) => item.lifecycleState !== 'trashed');
   const completedInterpretations = interpretations.filter((item) => item.execution?.status === 'completed').length;
   states['clinical-utility'] = progress(clinicalAnalyses.length, 0, 'saved clinical analysis', '', 'No saved clinical utility analysis');
   states.interpretation = progress(completedInterpretations, interpretations.length - completedInterpretations, 'completed attention map', 'saved interpretation plan', 'No attention overlay generated');
 
-  const compatibleInputs = demo || targetSplits.length > 0 && readyBundles.length > 0;
-  const retained: Partial<Record<RoadmapModuleId, boolean>> = demo ? {} : {
+  const compatibleInputs = targetSplits.length > 0 && readyBundles.length > 0;
+  const retained: Partial<Record<RoadmapModuleId, boolean>> = {
     cohort: saved.targetSplits.length > 0 || protocolDrafts.length > 0,
     'experimental-setup': saved.setups.length > 0 || modelDrafts.length > 0,
     features: saved.features.length > 0 || saved.bundles.length > 0 || saved.extractions.length > 0,
@@ -295,7 +268,7 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     // These pages are registries: users can create an experiment before inputs,
     // inspect historical chains and recover records without completing all other
     // experiments. Individual training/freeze/evaluation actions check readiness.
-    const registry = !demo && ['dataset', 'features', 'cohort', 'experimental-setup', 'experiments', 'test-data', 'evaluation', 'inference', 'clinical-utility', 'interpretation'].includes(module.id);
+    const registry = ['dataset', 'features', 'cohort', 'experimental-setup', 'experiments', 'test-data', 'evaluation', 'inference', 'clinical-utility', 'interpretation'].includes(module.id);
     return { ...module, ...states[module.id], blockers, unlocked: registry || blockers.length === 0, compatibilityIssue, retainedWork };
   });
 }

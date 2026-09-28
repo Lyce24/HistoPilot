@@ -1,11 +1,5 @@
-import type { GallerySlide, InterpretationSource, VisualizeItem, VisualizeSelection } from '../api/interpretation';
+import type { InterpretationSource, VisualizeItem, VisualizeSelection } from '../api/interpretation';
 import type { ResourcePolicy } from '../api/development';
-export function selectedGallerySlides(selected: Map<string, GallerySlide>, item: GallerySlide, checked: boolean) {
-  const next = new Map(selected);
-  if (checked && item.available && next.size < 128) next.set(item.slidePath, item);
-  if (!checked) next.delete(item.slidePath);
-  return next;
-}
 export function representationCompatible(dtype: unknown, expectedDtype: unknown) {
   return typeof dtype === 'string' && typeof expectedDtype === 'string' && dtype === expectedDtype;
 }

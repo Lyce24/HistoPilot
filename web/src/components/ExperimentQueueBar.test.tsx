@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { taskCenterKeys, type RollupScope } from '../api/taskCenter';
-import ExperimentQueueBar, { experimentNeedsResume, experimentOwner, experimentRollupScope } from './ExperimentQueueBar';
+import ExperimentQueueBar, { experimentNeedsResume, experimentRollupScope } from './ExperimentQueueBar';
 import { fixtureOwner, fixtureRollup } from '../testFixtures/taskCenter';
 
 const clients: QueryClient[] = [];
@@ -16,12 +16,6 @@ function render(rollup: ReturnType<typeof fixtureRollup> | null, { ownerKey, man
 }
 
 describe('experiment run status', () => {
-  it('finds only this project experiment owner', () => {
-    const owners = [fixtureOwner({ key: 'other-project', projectId: 'elsewhere' }), fixtureOwner({ key: 'batch', kind: 'mil-batch' }), fixtureOwner({ key: 'other-workspace', sameWorkspace: false, link: null }), fixtureOwner({ key: 'mine' })];
-    expect(experimentOwner(owners, 'project', 'exp')?.key).toBe('mine');
-    expect(experimentOwner(owners, 'project', 'missing')).toBeUndefined();
-  });
-
   it('shows training and predictor progress, failures and time left with a deep link, and no queue controls', () => {
     const html = render(fixtureRollup({ byKind: { 'mil-fold': { counts: {}, completed: 30, total: 30 }, 'predictor-coordinator': { counts: {}, completed: 0, total: 1 }, 'compute-job': { counts: {}, completed: 4, total: 11 } } }));
     expect(html).toContain('Training 30/30 ✓');

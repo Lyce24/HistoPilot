@@ -212,13 +212,6 @@
 .split-strategy-workbench .split-pool-card .science-subheading h3 {
   font-size: 13px;
 }
-.split-strategy-workbench .split-pool-card .protocol-partition-live {
-  border: 0;
-  border-top: 1px solid var(--theme-line);
-  border-radius: 0;
-  background: transparent;
-  padding: 16px 0 0;
-}
 .split-strategy-workbench .split-validation-control {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);

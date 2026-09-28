@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import LocalInterpretation, { GalleryWorkspace } from './LocalInterpretation';
 import type { GallerySlide, GallerySource, InterpretationSource, VisualizeSelection } from '../api/interpretation';
-import { defaultRepresentation, mergeVisualizationItems, representationCompatible, selectedGallerySlides, sourceCompatible, validInterpretationResources, visualizationRequest } from '../lib/interpretationGallery';
+import { defaultRepresentation, mergeVisualizationItems, representationCompatible, sourceCompatible, validInterpretationResources, visualizationRequest } from '../lib/interpretationGallery';
 import SlideGalleryCard from '../components/SlideGalleryCard';
 import type { Workspace } from '../api/types';
 const source: GallerySource = { predictorId: 'refit-1', featureBundleId: 'bundle', packArtifactId: null, slideFolder: '/slides' };
@@ -13,15 +13,6 @@ const clients: QueryClient[] = [];
 afterEach(() => { clients.splice(0).forEach((client) => client.clear()); vi.unstubAllGlobals(); });
 function client() { const value = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); clients.push(value); return value; }
 describe('interpretation gallery selection and source identity', () => {
-  it('retains explicit selections across search and pages without including unavailable matches', () => {
-    const first = slide('first'), nextPage = slide('second'), unavailable = slide('missing', false);
-    const selected = selectedGallerySlides(new Map(), first, true);
-    const next = selectedGallerySlides(selected, nextPage, true);
-    expect([...next.keys()]).toEqual([first.slidePath, nextPage.slidePath]);
-    expect([...selected.keys()]).toEqual([first.slidePath]);
-    expect(selectedGallerySlides(next, unavailable, true).size).toBe(2);
-    expect([...selectedGallerySlides(next, first, false).keys()]).toEqual([nextPage.slidePath]);
-  });
   it('checks frozen source encoder, dimensions and integrity before enabling it', () => {
     const item: InterpretationSource = { id: 'b', name: 'Verified features', current: true, encoderId: 'uni', dimensions: 1024, dtype: 'float32', findings: [], packs: [], slideCount: 100, featureSetId: 'f' };
     expect(sourceCompatible(item, 'uni', 1024, 'float32')).toBe(true);

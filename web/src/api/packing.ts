@@ -158,12 +158,6 @@ export const packing = {
     request<FeaturePackJob>(`${prefix(project)}/${encodeURIComponent(id)}/cancel`, post({})),
   validation: (project: string, featureSetId: string) =>
     request<FeatureValidationReport | null>(`/projects/${encodeURIComponent(project)}/features/${encodeURIComponent(featureSetId)}/validation`),
-  selection: (project: string, featureSetId: string) =>
-    request<FeaturePackSelection>(`/projects/${encodeURIComponent(project)}/features/${encodeURIComponent(featureSetId)}/pack-selection`),
-  select: (project: string, featureSetId: string, artifactId: string | null) =>
-    request<FeaturePackSelection>(`/projects/${encodeURIComponent(project)}/features/${encodeURIComponent(featureSetId)}/pack-selection`, { method: 'PUT', body: JSON.stringify({ artifactId }) }),
-  artifact: (project: string, artifactId: string) =>
-    request<FeaturePackArtifact>(`${prefix(project)}/artifacts/${encodeURIComponent(artifactId)}`),
 };
 
 export const featurePackActive = (job: Pick<FeaturePackJob, 'state'> | undefined) =>

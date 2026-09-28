@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  clearEditorRecovery,
   editorRecoveryKey,
   isEditorRecovery,
   readEditorRecovery,
@@ -36,8 +35,6 @@ describe('scientific editor recovery', () => {
     expect(readEditorRecovery('project', 'dataset')).toEqual(recovery);
     expect(readEditorRecovery('project', 'protocol')).toBeNull();
     expect(readEditorRecovery('other', 'dataset')).toBeNull();
-    clearEditorRecovery('project', 'dataset');
-    expect(readEditorRecovery('project', 'dataset')).toBeNull();
   });
 
   it('keeps input that was never saved as a draft', () => {
@@ -74,6 +71,5 @@ describe('scientific editor recovery', () => {
   it('does not fail the editor when browser storage is unavailable', () => {
     vi.stubGlobal('window', { get sessionStorage() { throw new Error('Storage denied'); } });
     expect(readEditorRecovery('project', 'dataset')).toBeNull();
-    expect(() => clearEditorRecovery('project', 'dataset')).not.toThrow();
   });
 });

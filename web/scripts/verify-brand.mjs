@@ -11,7 +11,7 @@ import react from '@vitejs/plugin-react';
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = await mkdtemp(join(tmpdir(), 'histopilot-brand-'));
 const fixture = join(output, 'fixture.tsx');
-const artifacts = resolve(web, '../docs/dev-review/2026-09-13-interface-consistency-assets');
+const artifacts = resolve(web, '../.local/verify/brand');
 await mkdir(artifacts, { recursive: true });
 const source = (path) => JSON.stringify(join(web, 'src', path));
 await writeFile(fixture, `

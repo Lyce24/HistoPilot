@@ -4,7 +4,6 @@ import type { ConfidenceInterval } from './statistics';
 
 /** Metrics in display order. Loss is reported, never resampled or used to rank models. */
 export type ResultMetric = 'auroc' | 'auprc' | 'balancedAccuracy' | 'macroF1' | 'accuracy' | 'loss';
-export const resultMetrics: ResultMetric[] = ['auroc', 'auprc', 'balancedAccuracy', 'macroF1', 'accuracy', 'loss'];
 export const lowerIsBetter = (metric: ResultMetric) => metric === 'loss';
 
 /** Mean, sample SD (n − 1), range and count of one metric across seeds or folds. */

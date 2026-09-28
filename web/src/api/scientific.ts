@@ -488,10 +488,6 @@ export const scientific = {
     { method: 'PUT', body: JSON.stringify(label) },
     'versionLabels',
   ),
-  records: (project: string, id: string, offset = 0) =>
-    request<RecordsPage>(
-      `${prefix(project)}/datasets/${encodeURIComponent(id)}/records?offset=${offset}&limit=200`,
-    ),
   queryDataset: (project: string, id: string, query: DatasetQuery) =>
     request<DatasetQueryResult>(
       `${prefix(project)}/datasets/${encodeURIComponent(id)}/query`,

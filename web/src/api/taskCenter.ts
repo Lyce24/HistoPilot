@@ -209,7 +209,6 @@ export function taskQueryString(params: TaskQuery | HistoryQuery | Record<string
   return text ? `?${text}` : '';
 }
 export const taskCenter = {
-  summary: () => request<TaskCenterSummary>(`${base}/summary`),
   snapshot: () => request<TaskCenterSnapshot>(`${base}/snapshot`),
   rollup: (scope: RollupScope = {}) => request<TaskRollup>(`${base}/rollup${taskQueryString(scope as Record<string, string | undefined>)}`),
   history: (params: HistoryQuery = {}) => request<TaskHistory>(`${base}/history${taskQueryString(params)}`),
@@ -218,7 +217,6 @@ export const taskCenter = {
   /** The whole log as text (the detail carries only its tail). */
   log: async (id: string) => (await fetchArtifactBlob(`${base}/tasks/${encodeURIComponent(id)}/log`)).text(),
   downloadLog: (id: string, filename: string) => downloadArtifact(`${base}/tasks/${encodeURIComponent(id)}/log?download=true`, filename),
-  owners: (scope: 'live' | 'all' = 'live') => request<{ owners: TaskOwner[] }>(`${base}/owners?scope=${scope}`),
   owner: (key: string) => request<TaskOwner>(`${base}/owners/${encodeURIComponent(key)}`),
   taskAction: (id: string, action: 'cancel' | 'retry', operationId: string) =>
     request<TaskItem>(`${base}/tasks/${encodeURIComponent(id)}/${action}`, post({ operationId })),
@@ -245,12 +243,10 @@ export function runnerActionOutcome(response?: RunnerActionResponse | null): { m
 /** Shared cache keys; the page, the job tray and the experiment queue bar read the same entries. */
 export const taskCenterKeys = {
   all: ['task-center'] as const,
-  summary: ['task-center', 'summary'] as const,
   snapshot: ['task-center', 'snapshot'] as const,
   rollup: (scope: RollupScope) => ['task-center', 'rollup', rollupScopeKey(scope)] as const,
   history: (params: HistoryQuery) => ['task-center', 'history', taskQueryString(params)] as const,
   capacity: ['task-center', 'capacity'] as const,
-  owners: (scope: 'live' | 'all') => ['task-center', 'owners', scope] as const,
   owner: (key: string) => ['task-center', 'owner', key] as const,
   tasks: (view: string, ...rest: string[]) => ['task-center', 'tasks', view, ...rest] as const,
   task: (id: string) => ['task-center', 'task', id] as const,

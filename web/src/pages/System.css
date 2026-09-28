@@ -71,6 +71,7 @@
 .system-service-details { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--theme-line); }
 .system-service-details > summary { cursor: pointer; margin-bottom: 20px; color: var(--theme-ink); font-size: 14px; font-weight: 600; }
 .system-service-details .detail-list strong { text-align: right; }
+.system-service-details .detail-list .mono { word-break: break-all; }
 .system-service-details .panel-header h2 { font-size: 14px; }
 @media (max-width: 800px) {
   .system-sample { align-items: flex-start; flex-direction: column; gap: 8px; }

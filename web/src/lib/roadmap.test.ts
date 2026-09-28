@@ -5,15 +5,12 @@ import type { Configuration, DatasetVersion, ProtocolSpec, ScientificDraft } fro
 import type { Workspace } from '../api/types';
 import type { FrozenBatch, TrainingExecution } from '../api/development';
 import type { ExtractionJob } from '../api/trident';
-import { buildRoadmap, protocolBundleCompatible, completedDevelopmentBatches, suggestedRoadmapModule, ROADMAP_CONNECTIONS, ROADMAP_MODULES, type RoadmapEvidence, type RoadmapModuleId } from './roadmap';
+import { buildRoadmap, completedDevelopmentBatches, suggestedRoadmapModule, ROADMAP_MODULES, type RoadmapEvidence, type RoadmapModuleId } from './roadmap';
 
 function workspace(mode: Workspace['mode'] = 'local'): Workspace {
   return {
     project: { id: 'project', name: 'Project', description: '', storagePath: '', mode, createdAt: '', updatedAt: '', config: {}, sources: [], available: true }, mode, executionEnabled: false,
-    dataset: { id: 'dataset', slideCount: 20, patientCount: 10, specimenCount: 20 },
-    patients: [], slides: [], encoders: [], milModels: [], featureSets: [],
-    split: { id: 'split', seed: 42, groupBy: 'patient' }, results: [],
-    cohortSnapshots: [], drafts: [], sources: [], exampleManifests: [],
+    dataset: { id: 'dataset', slideCount: 20, patientCount: 10, specimenCount: 20 }, sources: [],
   } as Workspace;
 }
 
@@ -160,15 +157,6 @@ describe('project roadmap progress', () => {
       ['experimental-setup', 'develop'], ['experiments', 'develop'],
       ['evaluation', 'evaluate'], ['inference', 'evaluate'],
       ['clinical-utility', 'insights'], ['interpretation', 'insights'],
-    ]);
-    expect(ROADMAP_CONNECTIONS).toEqual([
-      { from: 'dataset', to: 'features' }, { from: 'dataset', to: 'cohort' },
-      { from: 'cohort', to: 'experimental-setup' }, { from: 'features', to: 'experimental-setup' },
-      { from: 'experimental-setup', to: 'experiments' },
-      { from: 'experiments', to: 'evaluation' }, { from: 'cohort', to: 'evaluation' },
-      { from: 'experiments', to: 'inference' },
-      { from: 'evaluation', to: 'clinical-utility' }, { from: 'experiments', to: 'interpretation' },
-      { from: 'features', to: 'interpretation' },
     ]);
     expect(ROADMAP_MODULES.find((module) => module.id === 'inference')?.prerequisites).toEqual(['experiments']);
     expect(ROADMAP_MODULES.find((module) => module.id === 'cohort')?.prerequisites).toEqual(['dataset']);
@@ -364,50 +352,15 @@ describe('project roadmap progress', () => {
     expect(roadmap.cohort.blockers).toContain('dataset');
   });
 
-  it('honors the exact named bundle pinned by a protocol', () => {
-    const required = bundle('other-dataset');
-    const bound = protocol('dataset', { featureBundleId: required.id });
-    expect(protocolBundleCompatible(bound, required)).toBe(true);
-    expect(protocolBundleCompatible(bound, { ...required, id: 'same-features-different-bundle' })).toBe(false);
-    const roadmap = modules({ datasets: [dataset()], bundles: [required] });
-    expect(roadmap.experiments.compatibilityIssue).toBeUndefined();
-  });
-
-  it('honors an existing protocol feature and pack binding before unlocking model development', () => {
-    const features = bundle();
-    const bound = protocol('dataset', { featureSetId: 'different-feature' });
-    expect(protocolBundleCompatible(bound, features)).toBe(false);
-    bound.manifest.spec = { datasetId: 'dataset', featureSetId: 'feature', featurePackId: 'required-pack' } as ProtocolSpec;
-    expect(protocolBundleCompatible(bound, features)).toBe(false);
-    features.manifest.spec.packArtifactIds = ['required-pack'];
-    expect(protocolBundleCompatible(bound, features)).toBe(true);
-  });
-
-  it('does not complete downstream stages from a saved model plan or illustrative metrics', () => {
-    const source = workspace();
-    source.results = [{ id: 'example-result' }] as Workspace['results'];
+  it('does not complete downstream stages from a saved model plan', () => {
     const roadmap = modules({
       datasets: [dataset()], targetSplits: [targetSplit()], bundles: [bundle()], drafts: [draft('mil-experiment', 'frozen')],
-    }, source);
+    });
     expect(roadmap.experiments.status).toBe('not-started');
     expect(roadmap['experimental-setup'].status).toBe('not-started');
     expect(roadmap.evaluation.status).toBe('not-started');
     expect(roadmap.evaluation.unlocked).toBe(true);
     expect(roadmap['experimental-setup'].unlocked).toBe(true);
-  });
-
-  it('uses sample workspace artifacts in demo mode without claiming a completed predictor', () => {
-    const demo = workspace('synthetic-demo');
-    demo.featureSets = [{ id: 'sample-feature' }] as Workspace['featureSets'];
-    demo.cohortSnapshots = [{ id: 'sample-cohort' }] as Workspace['cohortSnapshots'];
-    demo.drafts = [{ id: 'sample-plan' }] as Workspace['drafts'];
-    demo.results = [{ id: 'sample-result' }] as Workspace['results'];
-    const roadmap = modules({}, demo);
-    expect(roadmap.dataset.status).toBe('complete');
-    expect(roadmap.features.evidence).toBe('1 sample feature set');
-    expect(roadmap.experiments.unlocked).toBe(false);
-    expect(roadmap.experiments.status).toBe('draft');
-    expect(roadmap.evaluation.unlocked).toBe(false);
   });
 
   it('accepts a separately imported verified test cohort while development is only planned', () => {

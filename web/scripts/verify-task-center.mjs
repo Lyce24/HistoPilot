@@ -48,7 +48,6 @@ const all = [...running, ...pending, failed];
 function track(method, ...args) { state.calls.push({ method, args: copy(args) }); }
 const summary = () => fixtureSummary({ running: 4, queued: 41, succeeded: 20 }, { paused: state.capacity.settings.paused, recentFailures: 1 });
 taskCenter.snapshot = async () => { track('snapshot'); return { summary: summary(), running: copy(running), owners: copy(state.owners), pendingCount: 41, updatedAt: '2026-09-27T10:00:01Z' }; };
-taskCenter.summary = async () => { track('summary'); return summary(); };
 taskCenter.rollup = async (scope) => { track('rollup', scope); return fixtureRollup({ scope: {}, counts: summary().counts, recentFailures: 1, progress: null, ownerKey: null, href: '#task-center', lastFailure: { taskId: 'done-1', title: failed.title, state: 'failed', reason: 'error', message: 'The project was busy', cause: '', retry: 'safe', at: failed.finishedAt } }); };
 taskCenter.capacity = async () => { track('capacity'); return copy(state.capacity); };
 taskCenter.history = async (params) => { track('history', params); return { total: 1, offset: 0, limit: params.limit, groups: [fixtureHistoryGroup({ lastFailure: { taskId: 'done-1', title: failed.title, state: 'failed', reason: 'error', message: 'The project was busy', cause: failed.failure.cause, retry: 'safe', at: failed.finishedAt } })] }; };

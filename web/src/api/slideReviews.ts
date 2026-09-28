@@ -13,7 +13,6 @@ export interface ReviewPage { items: Omit<SlideReview, 'history'>[]; total: numb
 const base = (project: string, dataset: string) => `/projects/${encodeURIComponent(project)}/datasets/${encodeURIComponent(dataset)}/slide-reviews`;
 export const slideReviews = {
   get: (project: string, dataset: string, slide: string, signal?: AbortSignal) => request<SlideReview>(`${base(project, dataset)}/${encodeURIComponent(slide)}`, { signal }),
-  list: (project: string, dataset: string, offset = 0, signal?: AbortSignal) => request<ReviewPage>(`${base(project, dataset)}?${new URLSearchParams({ offset: String(offset), limit: '200' })}`, { signal }),
   save: (project: string, dataset: string, slide: string, values: SlideReviewValues & { expectedRevision: number }) => request<SlideReview>(`${base(project, dataset)}/${encodeURIComponent(slide)}`, { method: 'PUT', body: JSON.stringify(values) }),
 };
 export const reviewStatusLabels: Record<ReviewStatus, string> = { unreviewed: 'Not reviewed', accept: 'Accept', exclude: 'Recommend exclusion', review: 'Needs review' };

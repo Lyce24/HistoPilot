@@ -50,24 +50,23 @@ export const liveTaskCount = (rollup?: Pick<TaskRollup, 'counts'> | null) =>
  * The machine's run status on every page: the same rollup the stage chips read, the live
  * tasks (each opening its Task Center detail) and one link to the Task Center.
  */
-export default function JobTray({ inline = false, projectId }: { inline?: boolean; projectId?: string }) {
+export default function JobTray({ inline = false, projectId }: { inline?: boolean; projectId: string }) {
   const [open, setOpen] = useState(false);
   const contentId = useId();
   const root = useRef<HTMLElement>(null);
-  const machine = useRunRollup(projectId ? {} : null);
+  const machine = useRunRollup({});
   const rollup = machine.data;
   const live = (rollup?.live ?? 0) > 0;
-  const tasks = useQuery({ queryKey: taskCenterKeys.tasks('tray'), queryFn: () => taskCenter.tasks({ state: 'live', limit: 5 }), enabled: Boolean(projectId) && open, refetchIntervalInBackground: false, refetchInterval: live ? 5000 : 30000 });
-  const extractions = useQuery({ queryKey: ['extractions', projectId, 'jobs'], queryFn: () => trident.jobs(projectId!), enabled: Boolean(projectId), refetchIntervalInBackground: false, refetchInterval: (query) => query.state.data?.jobs.some((job) => extractionActive(job) && legacyExtraction(job)) ? 10000 : 60000 });
+  const tasks = useQuery({ queryKey: taskCenterKeys.tasks('tray'), queryFn: () => taskCenter.tasks({ state: 'live', limit: 5 }), enabled: open, refetchIntervalInBackground: false, refetchInterval: live ? 5000 : 30000 });
+  const extractions = useQuery({ queryKey: ['extractions', projectId, 'jobs'], queryFn: () => trident.jobs(projectId), refetchIntervalInBackground: false, refetchInterval: (query) => query.state.data?.jobs.some((job) => extractionActive(job) && legacyExtraction(job)) ? 10000 : 60000 });
   const legacyJobs = (extractions.data?.jobs ?? []).filter(legacyExtraction);
   const activeExtractions = legacyJobs.filter(extractionActive).length;
-  const loading = Boolean(projectId) && (machine.isPending || extractions.isPending);
+  const loading = machine.isPending || extractions.isPending;
   const error = machine.error ?? extractions.error ?? null;
   const text = jobTrayStatus(rollup, activeExtractions);
-  const status = !projectId ? 'Demonstration workspace'
-    : machine.error && !rollup ? activeExtractions ? `${text} · Task Center unavailable` : 'Task status unavailable'
-      : error ? text ? `${text} · status may be outdated` : 'Task status unavailable'
-        : loading ? 'Checking tasks…' : text;
+  const status = machine.error && !rollup ? activeExtractions ? `${text} · Task Center unavailable` : 'Task status unavailable'
+    : error ? text ? `${text} · status may be outdated` : 'Task status unavailable'
+      : loading ? 'Checking tasks…' : text;
   // Nothing running, queued or recently failed: the tray recedes until there is activity to report.
   const idle = !open && !error && !loading && !live && !activeExtractions && !rollup?.recentFailures;
   const liveTasks = tasks.data?.tasks ?? [];
@@ -111,13 +110,13 @@ export default function JobTray({ inline = false, projectId }: { inline?: boolea
         <div className="job-tray-content" id={contentId}>
           <ErrorNotice error={error ?? tasks.error ?? null} />
           {error ? <><p className="muted">Some statuses could not be refreshed. Counts shown may be outdated.</p><button type="button" className="btn btn-secondary btn-small" disabled={machine.isFetching || extractions.isFetching} onClick={() => { void machine.refetch(); void extractions.refetch(); void tasks.refetch(); }}>Retry task status</button></> : null}
-          {loading || (projectId && tasks.isPending) ? <p className="muted" role="status">Checking tasks…</p> : null}
+          {loading || tasks.isPending ? <p className="muted" role="status">Checking tasks…</p> : null}
           {liveTasks.length ? <JobTrayLinks jobs={liveTasks.map(taskJobLink)} /> : null}
           {liveTaskCount(rollup) > liveTasks.length && liveTasks.length ? <p className="muted">{liveTaskCount(rollup) - liveTasks.length} more in the Task Center.</p> : null}
           {rollup?.lastFailure && rollup.recentFailures ? <p className="job-tray-failure"><Badge tone="orange">Failed</Badge> <a href={taskCenterHref({ task: rollup.lastFailure.taskId })}>{rollup.lastFailure.title}</a>{rollup.lastFailure.message ? ` · ${rollup.lastFailure.message}` : ''}</p> : null}
           {legacyJobs.length ? <><p className="muted">Extraction started before the Task Center ran it:</p><JobTrayLinks jobs={legacyJobs.map(extractionJobLink)} /></> : null}
-          {projectId && !loading && !tasks.isPending && !live && !legacyJobs.length && !rollup?.recentFailures ? <p className="muted">Nothing is running or queued. Training, refits, evaluations, inference and attention maps appear here once submitted.</p> : null}
-          {projectId ? <div className="job-tray-links"><a className="text-link" href={rollup?.lastFailure && rollup.recentFailures ? taskCenterHref({ task: rollup.lastFailure.taskId }) : '#task-center'}>Open Task Center →</a></div> : null}
+          {!loading && !tasks.isPending && !live && !legacyJobs.length && !rollup?.recentFailures ? <p className="muted">Nothing is running or queued. Training, refits, evaluations, inference and attention maps appear here once submitted.</p> : null}
+          <div className="job-tray-links"><a className="text-link" href={rollup?.lastFailure && rollup.recentFailures ? taskCenterHref({ task: rollup.lastFailure.taskId }) : '#task-center'}>Open Task Center →</a></div>
         </div>
       ) : null}
     </aside>

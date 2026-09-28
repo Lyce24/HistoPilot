@@ -100,7 +100,6 @@ export interface CreateExperimentInput extends ExperimentInput { setupVersion?: 
 export interface UpdateExperimentInput extends ExperimentInput { expectedRevision: number; batchPlans?: ExperimentBatchPlan[] }
 const prefix = (project: string) => `/projects/${encodeURIComponent(project)}/model-experiments`;
 export const experiments = {
-  list: (project: string) => request<{ items: ModelExperiment[] }>(prefix(project)),
   summaries: (project: string) => request<{ items: ModelExperimentSummary[] }>(`${prefix(project)}?summary=true`),
   get: (project: string, id: string) => request<ModelExperiment>(`${prefix(project)}/${encodeURIComponent(id)}`),
   create: (project: string, input: CreateExperimentInput) =>

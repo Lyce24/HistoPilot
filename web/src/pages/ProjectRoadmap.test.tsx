@@ -2,11 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Workspace } from '../api/types';
 import { buildRoadmap } from '../lib/roadmap';
-import ProjectRoadmap, { ModuleStatus, RoadmapLauncher, RoadmapProgress, completedModuleLabel, type Roadmap } from './ProjectRoadmap';
+import ProjectRoadmap, { RoadmapLauncher, RoadmapProgress, completedModuleLabel, type Roadmap } from './ProjectRoadmap';
 
-const workspace = {
-  mode: 'local', project: { id: 'project' }, dataset: { slideCount: 0 }, drafts: [], featureSets: [], cohortSnapshots: [],
-} as unknown as Workspace;
+const workspace = { mode: 'local', project: { id: 'project' }, dataset: { slideCount: 0 } } as unknown as Workspace;
 
 function roadmap(overrides: Partial<Roadmap> = {}): Roadmap {
   const modules = buildRoadmap(workspace);
@@ -90,10 +88,6 @@ describe('compact project workflow launcher', () => {
     expect(html).toContain('data-next="dataset"');
     expect(html).toContain('>Next step<');
     expect(html).not.toContain('Ready');
-    // The demo has illustrative records, not a next step to take.
-    const demo = renderToStaticMarkup(<RoadmapProgress modules={buildRoadmap(workspace)} demo />);
-    expect(demo).toContain('Every stage below holds an illustrative record.');
-    expect(demo).not.toContain('roadmap-state-next');
   });
 
   it('marks the one module that can be worked on next, in place', () => {
@@ -103,7 +97,7 @@ describe('compact project workflow launcher', () => {
   });
 
   it('keeps the page concise with no chart, totals, recommendation or expanded module explanation', () => {
-    const html = renderToStaticMarkup(<ProjectRoadmap workspace={workspace} roadmap={roadmap()} />);
+    const html = renderToStaticMarkup(<ProjectRoadmap roadmap={roadmap()} />);
     expect(html).toContain('<h1>Project roadmap</h1>');
     // Progress and one next step; no chart, no legend, no aggregate artifact totals.
     expect(html).toContain('<strong>0 of 6</strong> required steps complete');
@@ -118,32 +112,22 @@ describe('compact project workflow launcher', () => {
 
   it('keeps the launcher available after a refresh failure but provides recovery when no data loaded', () => {
     const error = new Error('Records could not be loaded');
-    const cached = renderToStaticMarkup(<ProjectRoadmap workspace={workspace} roadmap={roadmap({ error })} />);
+    const cached = renderToStaticMarkup(<ProjectRoadmap roadmap={roadmap({ error })} />);
     expect(cached).toContain('Some saved records could not refresh');
     expect(cached).toContain('href="#experiments"');
-    const failed = renderToStaticMarkup(<ProjectRoadmap workspace={workspace} roadmap={roadmap({ error, hasData: false })} />);
+    const failed = renderToStaticMarkup(<ProjectRoadmap roadmap={roadmap({ error, hasData: false })} />);
     expect(failed).toContain('role="alert"');
     expect(failed).toContain('Retry');
     expect(failed).toContain('href="#dataset"');
     expect(failed).not.toContain('roadmap-launcher');
-    const loading = renderToStaticMarkup(<ProjectRoadmap workspace={workspace} roadmap={roadmap({ hasData: false, isLoading: true })} />);
+    const loading = renderToStaticMarkup(<ProjectRoadmap roadmap={roadmap({ hasData: false, isLoading: true })} />);
     expect(loading).toContain('role="status"');
     expect(loading).toContain('Loading workflow');
     expect(loading).not.toContain('roadmap-launcher');
   });
 
-  it('labels synthetic records as examples rather than saved real outputs', () => {
-    const modules = buildRoadmap(workspace).map((module) => ({ ...module, status: 'complete' as const, unlocked: true }));
-    const html = renderToStaticMarkup(<ProjectRoadmap workspace={{ ...workspace, mode: 'synthetic-demo' }} roadmap={roadmap({ modules })} />);
-    expect(html).toContain('Synthetic demo. These are illustrative records.');
-    expect(html.match(/>Example</g)).toHaveLength(9);
-    expect(html).not.toContain('frozen dataset');
-  });
-
   it('preserves the scientific status labels shared with module pages', () => {
-    const html = renderToStaticMarkup(<ModuleStatus status="complete" completedLabel={completedModuleLabel('experiments')} />);
-    expect(html).toContain('Experiment outputs available');
-    expect(html).not.toContain('frozen');
+    expect(completedModuleLabel('experiments')).toBe('Experiment outputs available');
     expect(completedModuleLabel('evaluation')).toBe('Evaluation results available');
     expect(completedModuleLabel('inference')).toBe('Predictions available');
   });

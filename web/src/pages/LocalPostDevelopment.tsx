@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { predictors, predictorMethodLabel, computeActive, computePollInterval, computeStatusLabel, type FrozenPredictor, type PredictorChoice, type RefitBuild } from '../api/predictors';
+import { predictors, predictorMethodLabel, computeActive, computePollInterval, computeStatusLabel, type FrozenPredictor, type RefitBuild } from '../api/predictors';
 import { predictorSourceKey } from '../api/predictorBuilds';
 import { ApiError } from '../api/client';
 import type { Workspace } from '../api/types';
@@ -17,7 +17,6 @@ import { downloadJSON } from '../lib/download';
 import './ModelChains.css';
 import '../components/RunWorkspace.css';
 
-export const predictorChoiceKey = (choice: PredictorChoice) => predictorSourceKey(choice);
 const experimentLink = (id: string) => `#experiments?experiment=${encodeURIComponent(id)}`;
 
 export default function LocalPredictors({ workspace, historical = false }: { workspace: Workspace; historical?: boolean }) {

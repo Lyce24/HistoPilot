@@ -1,4 +1,3 @@
-import type { Workspace } from '../api/types';
 import type { useRoadmap } from '../components/useRoadmap';
 import { suggestedRoadmapModule } from '../lib/roadmap';
 import { Icon } from '../components/ui';
@@ -8,17 +7,10 @@ type Module = Roadmap['modules'][number];
 export const moduleIcons: Record<string, string> = {
   'experimental-setup': 'branch', dataset: 'dataset', cohort: 'cohort', features: 'features', experiments: 'experiments',
   'source-cv': 'evaluation', selection: 'experiments', predictor: 'experiments',
-  'test-data': 'folder', evaluation: 'evaluation', inference: 'inference', reports: 'provenance',
+  'test-data': 'folder', evaluation: 'evaluation', inference: 'inference',
   'clinical-utility': 'evaluation', interpretation: 'explorer',
 };
 export const completedModuleLabel = (id: string) => id === 'experiments' ? 'Experiment outputs available' : id === 'interpretation' ? 'Attention maps available' : id === 'clinical-utility' ? 'Analysis saved' : id === 'evaluation' ? 'Evaluation results available' : id === 'inference' ? 'Predictions available' : 'Complete & frozen';
-export const completedModuleAction = (id: string) => id === 'experiments' ? 'Review experiment outputs' : id === 'interpretation' ? 'Review attention maps' : id === 'clinical-utility' ? 'Review saved analysis' : id === 'evaluation' ? 'Review evaluation results' : id === 'inference' ? 'Review predictions' : 'Review frozen versions';
-export function ModuleStatus({ status, completedLabel = 'Complete & frozen' }: { status: Module['status']; completedLabel?: string }) {
-  return <span className={`module-status status-${status}`}>
-    <span aria-hidden="true" />
-    {status === 'complete' ? completedLabel : status === 'draft' ? 'Saved work' : 'Not started'}
-  </span>;
-}
 
 const phases = [
   { id: 'datasets', title: 'Datasets', step: '01', modules: ['dataset'] },
@@ -45,14 +37,13 @@ function missingInputs(module: Module, modules: Module[]): string | null {
  * label because it answers the reader's actual question in the same line.
  * Module explanations and artifact totals stay off these rows.
  */
-function LauncherItem({ module, modules, demo, next }: { module: Module; modules: Module[]; demo: boolean; next?: boolean }) {
-  const complete = module.unlocked && !demo && module.status === 'complete';
+function LauncherItem({ module, modules, next }: { module: Module; modules: Module[]; next?: boolean }) {
+  const complete = module.unlocked && module.status === 'complete';
   // A finished module reports what it produced. Unfinished work names what it is
   // still waiting for, keeping any evidence it has already saved.
-  const missing = complete || demo ? null : missingInputs(module, modules);
+  const missing = complete ? null : missingInputs(module, modules);
   const evidence = module.status === 'not-started' ? null : module.evidence;
-  const status = demo ? 'Example'
-    : missing ? evidence ? `${evidence} · needs ${missing}` : `Needs ${missing}`
+  const status = missing ? evidence ? `${evidence} · needs ${missing}` : `Needs ${missing}`
       : evidence ?? 'Not started';
   const state = missing ? 'is-blocked' : `status-${module.status}`;
   // The row stays one line; the full compatibility explanation belongs on the
@@ -80,21 +71,19 @@ function LauncherItem({ module, modules, demo, next }: { module: Module; modules
  * counts required modules only, so an optional analysis never reads as missing
  * work. A project with every required module complete is told so plainly.
  */
-export function RoadmapProgress({ modules, demo = false }: { modules: Module[]; demo?: boolean }) {
+export function RoadmapProgress({ modules }: { modules: Module[] }) {
   const required = requiredModules(modules);
   const done = required.filter((module) => module.status === 'complete');
-  const next = demo ? undefined : suggestedRoadmapModule(modules);
+  const next = suggestedRoadmapModule(modules);
   return <section className="roadmap-state" aria-labelledby="roadmap-state-title">
     <h2 id="roadmap-state-title" className="sr-only">Project progress</h2>
     <div className="roadmap-state-bar">
       <ol className="roadmap-state-steps" aria-hidden="true">
         {required.map((module) => <li key={module.id} className={module.status === 'complete' ? 'is-complete' : module.status === 'draft' ? 'is-draft' : ''} />)}
       </ol>
-      <p className="roadmap-state-count">{demo
-        ? 'Every stage below holds an illustrative record.'
-        : <><strong>{done.length} of {required.length}</strong> required steps complete</>}</p>
+      <p className="roadmap-state-count"><strong>{done.length} of {required.length}</strong> required steps complete</p>
     </div>
-    {demo ? null : next
+    {next
       ? <a className="roadmap-state-next" href={`#${next.id}`} data-next={next.id} aria-label={`Continue with ${next.shortTitle}. ${next.description}`}>
         <span className="roadmap-state-next-icon" aria-hidden="true"><Icon name={moduleIcons[next.id]} size={20} /></span>
         <span className="roadmap-state-next-copy">
@@ -108,8 +97,8 @@ export function RoadmapProgress({ modules, demo = false }: { modules: Module[]; 
   </section>;
 }
 
-export function RoadmapLauncher({ modules, demo = false }: { modules: Module[]; demo?: boolean }) {
-  const next = demo ? undefined : suggestedRoadmapModule(modules);
+export function RoadmapLauncher({ modules }: { modules: Module[] }) {
+  const next = suggestedRoadmapModule(modules);
   return <>
     <div className="roadmap-launcher">
       {phases.map((phase) => <section key={phase.id} className="roadmap-section" data-phase={phase.id} aria-labelledby={`roadmap-${phase.id}`}>
@@ -117,24 +106,23 @@ export function RoadmapLauncher({ modules, demo = false }: { modules: Module[]; 
             stays the phase name for assistive technology and tests. */}
         <h2 id={`roadmap-${phase.id}`} data-step={phase.step}>{phase.title}</h2>
         {phase.id === 'prepare' ? <p className="muted roadmap-parallel-note">Slide features and Targets &amp; splits are independent. Prepare either one first, or work on both together.</p> : null}
-        <ul>{modules.filter((module) => phase.modules.includes(module.id)).map((module) => <LauncherItem key={module.id} module={module} modules={modules} demo={demo} next={module.id === next?.id} />)}</ul>
+        <ul>{modules.filter((module) => phase.modules.includes(module.id)).map((module) => <LauncherItem key={module.id} module={module} modules={modules} next={module.id === next?.id} />)}</ul>
       </section>)}
     </div>
 
   </>;
 }
 
-export default function ProjectRoadmap({ workspace, roadmap }: { workspace: Workspace; roadmap: Roadmap }) {
+export default function ProjectRoadmap({ roadmap }: { roadmap: Roadmap }) {
   return <div className="project-roadmap">
     {/* The next-step card below states what to open, so the heading does not repeat it. */}
     <header className="roadmap-heading"><h1>Project roadmap</h1></header>
-    {workspace.mode === 'synthetic-demo' ? <div className="callout roadmap-demo">Synthetic demo. These are illustrative records.</div> : null}
     {roadmap.error && roadmap.hasData ? <div className="callout callout-warning roadmap-refresh-warning" role="status"><span>Some saved records could not refresh.</span><button className="text-button" onClick={() => void roadmap.refetch()}>Retry</button></div> : null}
     {roadmap.isLoading && !roadmap.hasData ? <div className="roadmap-loading" role="status"><Icon name="clock" size={24} /><p>Loading workflow…</p></div>
       : roadmap.error && !roadmap.hasData ? <div className="roadmap-loading" role="alert"><h2>Could not load the workflow</h2><p>{roadmap.error.message}</p><button className="btn btn-primary" onClick={() => void roadmap.refetch()}>Retry</button><a className="btn btn-secondary" href="#dataset">Open datasets</a></div>
       : <>
-        <RoadmapProgress modules={roadmap.modules} demo={workspace.mode === 'synthetic-demo'} />
-        <RoadmapLauncher modules={roadmap.modules} demo={workspace.mode === 'synthetic-demo'} />
+        <RoadmapProgress modules={roadmap.modules} />
+        <RoadmapLauncher modules={roadmap.modules} />
       </>}
   </div>;
 }

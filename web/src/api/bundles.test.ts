@@ -28,16 +28,13 @@ describe('immutable feature bundle API', () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(json({ token: 'session' }))
       .mockResolvedValueOnce(json({ canFreeze: true }))
-      .mockResolvedValueOnce(json({ items: [{ id: 'bundle/one' }] }))
-      .mockResolvedValueOnce(json({ id: 'bundle/one', current: true }));
+      .mockResolvedValueOnce(json({ items: [{ id: 'bundle/one' }] }));
     vi.stubGlobal('fetch', fetcher);
     const { bundles } = await import('./bundles');
     await bundles.preview('project', { featureSetId: 'feature', packArtifactIds: [] });
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ featureSetId: 'feature', packArtifactIds: [] });
     await expect(bundles.list('project')).resolves.toEqual({ items: [{ id: 'bundle/one' }] });
-    await expect(bundles.get('project', 'bundle/one')).resolves.toMatchObject({ id: 'bundle/one', current: true });
     expect(fetcher.mock.calls[2][0]).toBe('/api/v1/projects/project/feature-bundles');
-    expect(fetcher.mock.calls[3][0]).toBe('/api/v1/projects/project/feature-bundles/bundle%2Fone');
   });
 
   it('surfaces stale review rejection without changing the pack list or retrying the write', async () => {

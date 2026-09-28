@@ -8,7 +8,6 @@ import type {
   DatasetVersion,
   Finding,
   Inspection,
-  ScientificDraft,
   TableSource,
 } from '../api/scientific';
 import { Badge, ErrorNotice, Icon } from './ui';
@@ -120,36 +119,6 @@ export function DatasetSelect({
         {versions.map((version) => (
           <option key={version.id} value={version.id}>
             {datasetVersionLabel(version)} · {version.manifest.summary?.slideCount ?? '?'} slides
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-export function DraftSelect({
-  drafts,
-  value,
-  onChange,
-  disabled,
-}: {
-  drafts: ScientificDraft[];
-  value: string;
-  onChange: (value: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <label className="label">
-      Saved drafts
-      <select
-        className="field"
-        disabled={disabled}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        <option value="">Start a new draft</option>
-        {drafts.map((draft) => (
-          <option key={draft.id} value={draft.id}>
-            {draft.name} · revision {draft.revision} · {draft.status}
           </option>
         ))}
       </select>

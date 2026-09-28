@@ -6,7 +6,6 @@ import { Badge, Icon } from './components/ui';
 import { Brand } from './components/Brand';
 import JobTray from './components/JobTray';
 import { downloadJSON } from './lib/download';
-import { useUIStore } from './store/ui';
 import ProjectRoadmap, { moduleIcons, completedModuleLabel, type Roadmap } from './pages/ProjectRoadmap';
 import { useRoadmap } from './components/useRoadmap';
 import WorkspaceErrorBoundary from './components/WorkspaceErrorBoundary';
@@ -16,14 +15,7 @@ import { RecordManagementScope } from './components/RecordManagement';
 import { lazyPage, PageLoading } from './components/LazyPage';
 
 const Start = lazyPage(() => import('./pages/Start'));
-const Dataset = lazyPage(() => import('./pages/Dataset'));
-const Cohort = lazyPage(() => import('./pages/Cohort'));
-const Experiments = lazyPage(() => import('./pages/Experiments'));
 const System = lazyPage(() => import('./pages/System'));
-const EvaluationPage = lazyPage<{ workspace: Workspace }>(() => import('./pages/Results').then((module) => ({ default: module.EvaluationPage })));
-const ExplorerPage = lazyPage<{ workspace: Workspace }>(() => import('./pages/Results').then((module) => ({ default: module.ExplorerPage })));
-const ProvenancePage = lazyPage<{ workspace: Workspace }>(() => import('./pages/Results').then((module) => ({ default: module.ProvenancePage })));
-const LocalWorkspace = lazyPage(() => import('./pages/LocalWorkspace'));
 const LocalDataset = lazyPage(() => import('./pages/LocalDataset'));
 const LocalTargetSplit = lazyPage(() => import('./pages/LocalTargetSplit'));
 const HistoricalProtocols = lazyPage(() => import('./pages/HistoricalProtocols'));
@@ -37,7 +29,6 @@ const LocalClinicalUtility = lazyPage(() => import('./pages/LocalClinicalUtility
 const LocalInterpretation = lazyPage(() => import('./pages/LocalInterpretation'));
 const LocalOperations = lazyPage(() => import('./pages/LocalOperations'));
 const TaskCenter = lazyPage(() => import('./pages/TaskCenter'));
-const RoadmapModule = lazyPage(() => import('./pages/RoadmapModule'));
 const BlcaDemo = lazyPage(() => import('./pages/BlcaDemo'));
 const BlcaDemoOverview = lazyPage<{ workspace: Workspace }>(() => import('./pages/BlcaDemo').then((module) => ({ default: module.BlcaDemoOverview })));
 
@@ -49,8 +40,7 @@ const pages: Record<Page, string> = {
   selection: 'Experiments', predictor: 'Experiments',
   'test-data': 'Test cohorts', evaluation: 'Evaluate models', inference: 'Run inference',
   'clinical-utility': 'Clinical utility', interpretation: 'Model interpretation',
-  reports: 'Metrics, clinical analyses and reports', 'example-results': 'Illustrative results', explorer: 'Slide explorer',
-  provenance: 'Provenance', cleanup: 'Workspace cleanup', operations: 'Study backups & sources', 'task-center': 'Task Center', system: 'System & storage',
+  cleanup: 'Workspace cleanup', operations: 'Study backups & sources', 'task-center': 'Task Center', system: 'System & storage',
 };
 const toolIcons: Partial<Record<Page, string>> = { operations: 'folder', 'task-center': 'clock' };
 export function pageFromHash(value: string): Page {
@@ -58,7 +48,7 @@ export function pageFromHash(value: string): Page {
   if (['selection', 'predictor', 'predictors', 'build-predictors'].includes(hash)) return 'post-development';
   if (['setup', 'setups', 'experiment-setup'].includes(hash)) return 'experimental-setup';
   if (hash === 'test-cohorts') return 'test-data';
-  if (hash === 'evaluate-models') return 'evaluation';
+  if (hash === 'evaluate-models' || hash === 'reports') return 'evaluation';
   if (hash === 'predict' || hash === 'run-inference') return 'inference';
   if (hash === 'clinical') return 'clinical-utility';
   if (hash === 'interpret') return 'interpretation';
@@ -73,7 +63,7 @@ export function projectFromUrl(href = window.location.href): string | null {
 }
 export function moduleForPage(page: Page) {
   if (page === 'legacy-protocol') return 'cohort';
-  return ['selection', 'predictor', 'post-development', 'source-cv'].includes(page) ? 'experiments' : page === 'reports' ? 'evaluation' : page;
+  return ['selection', 'predictor', 'post-development', 'source-cv'].includes(page) ? 'experiments' : page;
 }
 /**
  * A module whose inputs are not ready is still open for planning and for reviewing
@@ -122,8 +112,7 @@ function StageContent({ page, workspace, roadmap }: { page: Page; workspace: Wor
     <p>Its records and files have been retained. Restore the project in Workspace cleanup before continuing your work.</p>
     <a className="btn btn-primary" href="#cleanup">Open Workspace cleanup</a>
   </div>;
-  if (page === 'overview') return <ProjectRoadmap workspace={workspace} roadmap={roadmap} />;
-  if (page === 'example-results' && workspace.mode === 'synthetic-demo') return <EvaluationPage workspace={workspace} />;
+  if (page === 'overview') return <ProjectRoadmap roadmap={roadmap} />;
   const moduleId = moduleForPage(page);
   const module = roadmap.modules.find((item) => item.id === moduleId);
   const check = module ? roadmap.checksById[module.id] : null;
@@ -133,7 +122,6 @@ function StageContent({ page, workspace, roadmap }: { page: Page; workspace: Wor
     {check.error ? <button className="btn btn-primary" onClick={() => void roadmap.refetch()}>Try again</button> : null}
     <a className="btn btn-secondary" href="#overview">Back to roadmap</a>
   </div>;
-  if (module && !module.unlocked) return <RoadmapModule module={module} roadmap={roadmap} workspace={workspace} />;
   if (workspace.mode === 'local') {
     if (page === 'operations') return <LocalOperations workspace={workspace} />;
     if (page === 'test-data') return <LocalEvaluationSetup workspace={workspace} />;
@@ -149,26 +137,13 @@ function StageContent({ page, workspace, roadmap }: { page: Page; workspace: Wor
     if (page === 'features') return <LocalFeatures workspace={workspace} />;
     if (page === 'experiments') return <LocalExperiments mode="execution" workspace={workspace} />;
     if (moduleId === 'evaluation') return <LocalModelEvaluation workspace={workspace} />;
-    if (page !== 'system') return <LocalWorkspace page={page} workspace={workspace} />;
   }
-  switch (page) {
-    case 'dataset': return <Dataset workspace={workspace} />;
-    case 'cohort': return <Cohort workspace={workspace} />;
-    case 'experiments': return <Experiments workspace={workspace} />;
-    case 'evaluation': return <EvaluationPage workspace={workspace} />;
-    case 'explorer': return <ExplorerPage workspace={workspace} />;
-    case 'provenance': return <ProvenancePage workspace={workspace} />;
-    case 'system': return <System />;
-    default: return <ProjectRoadmap workspace={workspace} roadmap={roadmap} />;
-  }
+  return page === 'system' ? <System /> : <ProjectRoadmap roadmap={roadmap} />;
 }
 export default function App() {
   const [projectId, setProjectId] = useState(() => projectFromUrl());
   useEffect(() => {
-    const restore = () => {
-      useUIStore.getState().resetSelection();
-      setProjectId(projectFromUrl());
-    };
+    const restore = () => setProjectId(projectFromUrl());
     window.addEventListener('popstate', restore);
     return () => window.removeEventListener('popstate', restore);
   }, []);
@@ -181,7 +156,6 @@ export default function App() {
     else url.searchParams.delete('project');
     url.hash = id ? page : '';
     window.history.pushState({}, '', url);
-    useUIStore.getState().resetSelection();
     setProjectId(id);
     window.scrollTo({ top: 0 });
   }
@@ -258,19 +232,18 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
             const locked = !roadmap.checksById[item.id].hasData || !item.unlocked;
             const contents = <><Icon name={moduleIcons[item.id]} size={16} /><span>{item.shortTitle}</span>{showState ? locked ? <Icon name="lock" size={12} /> : <span className={`nav-status status-${item.status}`} aria-label={blcaDemo ? 'Illustrative example' : item.status === 'complete' ? completedModuleLabel(item.id) : item.status === 'draft' ? 'Saved work' : 'Not started'} /> : null}</>;
             return locked ? <div key={item.id} className="nav-link nav-locked" aria-disabled="true" title={showState ? `Requires ${item.blockers.map((id) => roadmap.modules.find((m) => m.id === id)?.shortTitle).join(' + ') || 'compatible frozen inputs'}` : 'Checking prerequisites'}>{contents}</div>
-              : <a key={item.id} className={`nav-link ${module?.id === item.id ? 'active' : ''}`} href={`#${item.id}`} onClick={(event) => { if ((w.mode === 'local' || blcaDemo) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && module?.id === item.id && ['dataset', 'cohort', 'features', 'experimental-setup', 'experiments', 'source-cv', 'test-data', 'evaluation', 'inference', 'reports', 'clinical-utility'].includes(page)) { event.preventDefault(); window.dispatchEvent(new Event('histopilot:stage-library')); } }} aria-current={module?.id === item.id ? 'page' : undefined}>{contents}</a>;
+              : <a key={item.id} className={`nav-link ${module?.id === item.id ? 'active' : ''}`} href={`#${item.id}`} onClick={(event) => { if ((w.mode === 'local' || blcaDemo) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && module?.id === item.id && ['dataset', 'cohort', 'features', 'experimental-setup', 'experiments', 'source-cv', 'test-data', 'evaluation', 'inference', 'clinical-utility'].includes(page)) { event.preventDefault(); window.dispatchEvent(new Event('histopilot:stage-library')); } }} aria-current={module?.id === item.id ? 'page' : undefined}>{contents}</a>;
           })}
           {!blcaDemo ? <div className="nav-label nav-system">PROJECT TOOLS</div> : null}
           {w.mode === 'local' ? <a className={`nav-link ${page === 'cleanup' ? 'active' : ''}`} href="#cleanup" aria-current={page === 'cleanup' ? 'page' : undefined}><Icon name="folder" size={16} /><span>Workspace cleanup</span></a> : null}
-          {w.mode === 'synthetic-demo' && !blcaDemo ? <a className={`nav-link ${page === 'example-results' ? 'active' : ''}`} href="#example-results" aria-current={page === 'example-results' ? 'page' : undefined}><Icon name="evaluation" size={16} /><span>Illustrative results</span></a> : null}
-          {(blcaDemo ? [] : w.mode === 'local' ? ['task-center', 'operations', 'system'] as const : ['explorer', 'provenance', 'system'] as const).map((id) => <a key={id} className={`nav-link ${page === id ? 'active' : ''}`} href={`#${id}`} aria-current={page === id ? 'page' : undefined}><Icon name={toolIcons[id] ?? id} size={16} /><span>{pages[id]}</span></a>)}
+          {(w.mode === 'local' ? ['task-center', 'operations', 'system'] as const : []).map((id) => <a key={id} className={`nav-link ${page === id ? 'active' : ''}`} href={`#${id}`} aria-current={page === id ? 'page' : undefined}><Icon name={toolIcons[id] ?? id} size={16} /><span>{pages[id]}</span></a>)}
         </nav>
         <div className="sidebar-bottom"><div className="prototype-label"><span />Local workspace <b>v0.1</b></div><p>Your data. Your infrastructure.<br />Every step, traceable.</p></div>
       </aside>
       {mobile && menu ? <button className="nav-backdrop" aria-label="Close navigation overlay" onClick={() => setMenu(false)} /> : null}
       <div className="main-shell">
         <header className="topbar"><div className="breadcrumbs"><button ref={menuButton} className="icon-button mobile-menu" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="menu" /></button><button type="button" className="breadcrumb-home" onClick={onExit}>Projects</button><Icon name="chevron" size={12} /><a href="#overview" className="breadcrumb-project">{w.project.name}</a><Icon name="chevron" size={12} /><strong>{page === 'overview' ? 'Roadmap' : module?.shortTitle ?? pages[page]}</strong></div><div className="topbar-actions"><span className="demo-indicator"><span />{w.mode === 'synthetic-demo' ? 'Synthetic demo' : 'Saved locally'}</span><button className="btn btn-secondary btn-small" aria-label="Export workspace" onClick={() => { if (w.mode === 'local') window.location.hash = 'operations'; else downloadJSON('histopilot-workspace.json', { schema_version: '0.1.0', executable: false, ...w }); }}><Icon name="download" size={15} /><span>Export</span></button></div></header>
-        <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}${['dataset', 'cohort', 'features', 'experimental-setup', 'experiments', 'source-cv', 'test-data', 'evaluation', 'inference', 'reports', 'clinical-utility'].includes(page) ? ' stage-workspace' : ''}`} id="main-content" tabIndex={-1} ref={main}>
+        <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}${['dataset', 'cohort', 'features', 'experimental-setup', 'experiments', 'source-cv', 'test-data', 'evaluation', 'inference', 'clinical-utility'].includes(page) ? ' stage-workspace' : ''}`} id="main-content" tabIndex={-1} ref={main}>
           {/* Module progress now belongs to the roadmap, and each library states its
               own records' status. A module-level chip beside a record editor described
               the wrong thing, so this strip is only the way back and the demo label. */}
@@ -280,11 +253,11 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
           <WorkspaceErrorBoundary key={page} onExit={onExit}>
             <Content page={page} workspace={w} roadmap={roadmap} />
           </WorkspaceErrorBoundary>
-          {!blcaDemo && (page === 'dataset' || page === 'cohort') ? <JobTray inline projectId={w.mode === 'local' ? w.project.id : undefined} /> : null}
+          {!blcaDemo && (page === 'dataset' || page === 'cohort') ? <JobTray inline projectId={w.project.id} /> : null}
           <footer className="content-footer"><span>HistoPilot <span className="footer-dot">·</span> Interactive PFM–MIL workflows</span><span>{w.mode === 'synthetic-demo' ? 'Synthetic data · Demonstration workspace' : 'Saved in your project folder'}</span></footer>
         </main>
       </div>
     </div>
-    {floatingJobTray ? <JobTray projectId={w.mode === 'local' ? w.project.id : undefined} /> : null}
+    {floatingJobTray ? <JobTray projectId={w.project.id} /> : null}
   </>;
 }

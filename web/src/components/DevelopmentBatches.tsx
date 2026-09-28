@@ -36,12 +36,6 @@ export const developmentTabs: { id: DevelopmentTab; label: string }[] = [
   { id: 'results', label: 'Results' },
 ];
 
-export function batchVersionTag(name: string, experimentId: string) {
-  const suffix = ` · ${experimentId}`;
-  if (suffix.length >= 80) throw new Error('The experiment ID is too long for a batch version tag.');
-  return `${name.trim().slice(0, 80 - suffix.length)}${suffix}`;
-}
-
 export function updateBatchPlans(plans: ExperimentBatchPlan[], plan: ExperimentBatchPlan): ExperimentBatchPlan[] {
   return plans.some((item) => item.id === plan.id) ? plans.map((item) => item.id === plan.id ? plan : item) : [...plans, plan];
 }
@@ -51,7 +45,7 @@ export const batchTemplates = [
   { id: 'baseline', name: 'ABMIL baseline', description: 'One configuration with standard training settings.' },
   { id: 'nnmil', name: 'nnMIL', description: 'Editable feature-sampling attention, automatic fitting-fold patch limits, and feature-window testing with the patient protocol.' },
   { id: 'oceanpath', name: 'OceanPath standard', description: '20 epochs, whole training bags, cosine decay, and patient AUROC checkpoints with mean probabilities.' },
-  { id: 'oceanpath-kras', name: 'OceanPath KRAS', description: 'Binary cross entropy, equal patient weight, 4096-patch bags, weight decay 0.01, and mean probabilities.' },
+  { id: 'oceanpath-kras', name: 'OceanPath binary (BCE)', description: 'Binary cross entropy, equal patient weight, 4096-patch bags, weight decay 0.01, and mean probabilities.' },
   { id: 'quick', name: 'Quick check', description: 'Five epochs and smaller sampled bags to check the training setup.' },
   { id: 'learning-rate', name: 'Learning-rate comparison', description: 'Compare three learning rates with the same folds and training seed.' },
 ] as const;

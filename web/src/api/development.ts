@@ -177,8 +177,6 @@ export const development = {
     `oof-${candidate}-${trainingSeed}-${splitSeed}-${unit}.csv`,
   ),
   preview: (project: string, spec: DevelopmentBatchSpec) => request<BatchPreview>(`${prefix(project)}/preview`, body(spec)),
-  freeze: (project: string, spec: DevelopmentBatchSpec, previewHash: string, operationId: string, versionLabel: { tag: string; note: string }) =>
-    request<FrozenBatch>(`${prefix(project)}/freeze`, body({ spec, previewHash, operationId, versionLabel })),
 };
 
 export const defaultRecipe = (): TrainingRecipe => ({ model: 'abmil', learningRate: 0.0003, weightDecay: 0.0001, maxEpochs: 40, optimizer: 'adamw', batchSize: 1, bagSize: 4096, earlyStopping: true, patience: 8, checkpointMetric: 'validation_auroc', analysis: defaultPatientAnalysis(), decisionThreshold: 0.5, embedDim: 512, attentionDim: 384, numFcLayers: 1, gatedAttention: true, dropout: 0.25, inputDropout: 0, gradientCheckpointing: false, precision: '32-true', gradientClipNorm: 0, accumulateGradBatches: 1, lrScheduler: 'none', warmupEpochs: 0, finalLrFraction: 0.01, earlyStoppingMinDelta: 0, minEpochs: 1 });

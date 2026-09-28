@@ -64,21 +64,6 @@ describe('feature packing requests', () => {
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual(attached);
   });
 
-  it('persists a chosen pack and an explicit switch back to original files', async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' }))
-      .mockResolvedValueOnce(json({ featureSetId: 'feature/one', artifactId: 'pack/one', current: true }))
-      .mockResolvedValueOnce(json({ featureSetId: 'feature/one', artifactId: 'pack/one', current: true }))
-      .mockResolvedValueOnce(json({ featureSetId: 'feature/one', artifactId: null, current: true }));
-    vi.stubGlobal('fetch', fetcher);
-    const { packing } = await import('./packing');
-    await expect(packing.selection('project', 'feature/one')).resolves.toMatchObject({ artifactId: 'pack/one' });
-    await packing.select('project', 'feature/one', 'pack/one');
-    await packing.select('project', 'feature/one', null);
-    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/projects/project/features/feature%2Fone/pack-selection');
-    expect(fetcher.mock.calls[2][1].method).toBe('PUT');
-    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ artifactId: 'pack/one' });
-    expect(JSON.parse(fetcher.mock.calls[3][1].body)).toEqual({ artifactId: null });
-  });
 });
 
 describe('feature job review identity and active states', () => {

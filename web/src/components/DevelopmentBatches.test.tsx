@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { defaultRecipe, defaultResources } from '../api/development';
 import type { DevelopmentResults, FrozenBatch, TrainingExecution, TrainingMetricDetails, TrainingRuntime } from '../api/development';
-import DevelopmentBatches, { ConfigurationTable, RecipeFields, batchVersionTag, developmentTabs } from './DevelopmentBatches';
+import DevelopmentBatches, { ConfigurationTable, RecipeFields, developmentTabs } from './DevelopmentBatches';
 import DevelopmentExecution, { executionActions, RunTable, ResultsTable, TrainingControls, ExecutionEvidence } from './DevelopmentExecution';
 import JobTray from './JobTray';
 import { fixtureRollup } from '../testFixtures/taskCenter';
@@ -40,12 +40,6 @@ describe('development execution controls', () => {
       expect(html).not.toContain('<option value="batch" selected="">');
       expect(html).toContain('Cancel batch');
     } finally { client.clear(); vi.unstubAllGlobals(); }
-  });
-
-  it('namespaces identical batch names by stable experiment identity without changing readable names', () => {
-    expect(batchVersionTag('Baseline', 'draft-one')).not.toBe(batchVersionTag('Baseline', 'draft-two'));
-    expect(batchVersionTag('Baseline', 'draft-one')).toBe('Baseline · draft-one');
-    expect(batchVersionTag('B'.repeat(80), `draft-${'a'.repeat(32)}`)).toHaveLength(80);
   });
 
   it('makes launch explicit and disables it when the runtime is unavailable', () => {

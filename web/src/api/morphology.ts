@@ -26,10 +26,6 @@ export interface QualityEvidence {
   coordinateBounds: { x: number; y: number; width: number; height: number } | null;
   tissueContours: number[][][][]; artifactRemoval: boolean | null; warnings: string[];
 }
-export interface MorphologyNeighbors {
-  scope: 'indexed_slides' | 'sampled_patches'; metric: string; candidateCount: number;
-  items: (MorphologyPoint | MorphologyPatch & { similarity: number })[];
-}
 export type Neighbor = { slideId: string; patchIndex?: number; similarity: number; x: number; y: number };
 const base = (project: string) => `/projects/${encodeURIComponent(project)}/morphology`;
 const params = (datasetId: string, slideId: string, featureBundleId?: string) => new URLSearchParams({ datasetId, slideId, ...(featureBundleId ? { featureBundleId } : {}) });

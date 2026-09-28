@@ -9,7 +9,7 @@ import type { Roadmap } from './pages/ProjectRoadmap';
 import { useRoadmap } from './components/useRoadmap';
 import { fixtureCapacity, fixtureSnapshot, fixtureSummary } from './testFixtures/taskCenter';
 
-const workspace = { mode: 'local', project: { id: 'project' }, dataset: { slideCount: 0 }, drafts: [], featureSets: [], cohortSnapshots: [] } as unknown as Workspace;
+const workspace = { mode: 'local', project: { id: 'project' }, dataset: { slideCount: 0 } } as unknown as Workspace;
 function roadmap(unlocked = false, hasData = true): Roadmap {
   const modules = buildRoadmap(workspace).map((module) => module.id === 'experiments' ? { ...module, unlocked, blockers: unlocked ? [] : module.blockers } : module);
   return {
@@ -30,7 +30,7 @@ describe('experiment predictor navigation and direct URL gates', () => {
 
   it.each(['experiments', 'source-cv'] as const)('opens retained model work through direct %s navigation with archived inputs hidden from selectors', async (page) => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    const source = { ...workspace, project: { ...workspace.project, name: 'Retained study', config: {} }, encoders: [], milModels: [] } as Workspace;
+    const source = { ...workspace, project: { ...workspace.project, name: 'Retained study', config: {} } } as Workspace;
     client.setQueryData(['scientific', 'project', 'datasets'], { datasets: [] });
     for (const kind of ['protocol', 'feature']) client.setQueryData(['scientific', 'project', 'configurations', kind], { configurations: [] });
     client.setQueryData(['feature-bundles', 'project'], { items: [] });
@@ -100,17 +100,13 @@ describe('experiment predictor navigation and direct URL gates', () => {
     expect(moduleForPage('selection')).toBe('experiments');
     expect(moduleForPage('predictor')).toBe('experiments');
     expect(pageFromHash('#unknown')).toBe('overview');
+    // The pre-roadmap settings page and the synthetic CRC demo's tools are gone; their links open the roadmap.
+    for (const hash of ['#explorer', '#provenance', '#example-results']) expect(pageFromHash(hash)).toBe('overview');
+    expect(pageFromHash('#reports')).toBe('evaluation');
     expect(pageFromHash('#experiments?experiment=draft-1&tab=runs')).toBe('experiments');
     expect(pageFromHash('#post-development?experiment=draft-1')).toBe('post-development');
     expect(pageFromHash('#evaluation?predictor=configuration-1')).toBe('evaluation');
     expect(pageFromHash('#cleanup?key=configuration%3Aone')).toBe('cleanup');
-  });
-
-  it.each(['post-development', 'selection', 'predictor'] as const)('applies the experiment gate to legacy %s navigation', async (page) => {
-    const html = await renderLoadedPage(<Content page={page} workspace={workspace} roadmap={roadmap()} />);
-    expect(html).toContain('Prepare the required inputs');
-    expect(html).toContain('Experiments');
-    expect(html).not.toContain('Predictor selection and freeze');
   });
 
   it('waits for prerequisite evidence before rendering a saved post-development route', () => {

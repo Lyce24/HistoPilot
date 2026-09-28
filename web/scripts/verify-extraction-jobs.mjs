@@ -47,9 +47,6 @@ state.extractions = [extraction('extract/first', 'uni_v2', 'first', 12), extract
 scientific.datasets = async () => ({ datasets: [] });
 scientific.configurations = async () => ({ configurations: [] });
 bundles.list = async () => ({ items: [] });
-taskCenter.summary = async () => ({ runner: { alive: true, heartbeatAt: null, pid: 1, state: 'running', message: null, codeHash: 'fixture', codeCurrent: true, autostart: true }, paused: false,
-  capacity: { gpus: [], cpu: { logical: 8, physical: 4, committedThreads: 0, reserveThreads: 2, cpuTaskSlots: 2, usedCpuTasks: 0 }, ram: { totalGb: 32, availableGb: 24, reserveGb: 2 } },
-  counts: {}, eta: null, foreignLeases: [], workspace: '/workspace', updatedAt: '2026-09-25T10:05:00Z' });
 taskCenter.rollup = async (scope) => ({ scope: scope ?? {}, state: 'not-started', counts: {}, byKind: {}, progress: null, live: 0, active: 0, pending: 0, held: false, position: null, queuePosition: null, waitingReason: null, eta: null, runnerAlive: true, paused: false, stopRequest: null, lastFailure: null, recentFailures: 0, current: null, startedAt: null, finishedAt: null, ownerKey: null, ownerKind: null, ownerId: null, title: null, projectId: null, projectName: null, href: '#task-center', updatedAt: '2026-09-25T10:05:00Z' });
 taskCenter.tasks = async () => ({ tasks: [] });
 trident.catalog = async () => ({ source: '#catalog', schemaVersion: 1, defaults: { task: 'all', patch_encoder: 'uni_v2' },

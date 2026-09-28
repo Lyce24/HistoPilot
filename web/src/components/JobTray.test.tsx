@@ -84,10 +84,4 @@ describe('Task Center summary tray', () => {
     expect(html).toContain('Details: uni_v2 extraction');
     expect(html).toContain('Patch features · 12/80 slides');
   });
-
-  it('shows the demonstration state without querying a project', () => {
-    const value = new QueryClient();
-    clients.push(value);
-    expect(renderToStaticMarkup(<QueryClientProvider client={value}><JobTray /></QueryClientProvider>)).toContain('Demonstration workspace');
-  });
 });

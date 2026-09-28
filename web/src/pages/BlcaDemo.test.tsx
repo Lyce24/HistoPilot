@@ -4,7 +4,7 @@ import { renderLoadedPage } from '../testFixtures/renderLoadedPage';
 import type { DemoPipeline, DemoRecord } from '../api/demo';
 import type { Workspace } from '../api/types';
 import type { Roadmap } from './ProjectRoadmap';
-import { Content } from '../App';
+import { Content, pageFromHash } from '../App';
 import { buildRoadmap, ROADMAP_MODULES } from '../lib/roadmap';
 import BlcaDemo, { BlcaDemoOverview, DemoRecordView, DemoStepView, demoLocation, filterDemoRecords } from './BlcaDemo';
 
@@ -75,8 +75,8 @@ describe('BLCA synthetic walkthrough', () => {
   it('routes BLCA modules and old tool links without any live query provider', async () => {
     const modules = buildRoadmap(workspace);
     const roadmap = { modules } as Roadmap;
-    for (const page of ['system', 'explorer', 'provenance', 'example-results', 'cleanup'] as const) {
-      const html = await renderLoadedPage(<Content page={page} workspace={workspace} roadmap={roadmap} />);
+    for (const hash of ['#system', '#explorer', '#provenance', '#example-results', '#cleanup']) {
+      const html = await renderLoadedPage(<Content page={pageFromHash(hash)} workspace={workspace} roadmap={roadmap} />);
       expect(html).toContain('BLCA demo');
       expect(html).toContain('Explore each stage');
       expect(html).not.toContain('CRC');

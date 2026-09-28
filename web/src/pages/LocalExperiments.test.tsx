@@ -2,9 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
-import LocalExperiments, { ExperimentDetail, ExperimentSubmissionControl, LoadingOptions, suggestedExperimentInputs, experimentRoute, availableExperimentTab, isInputDraft } from './LocalExperiments';
-import type { Configuration } from '../api/scientific';
-import type { FeatureBundle } from '../api/bundles';
+import LocalExperiments, { ExperimentDetail, ExperimentSubmissionControl, experimentRoute, availableExperimentTab, isInputDraft } from './LocalExperiments';
 import type { ModelExperiment } from '../api/experiments';
 import { fixtureRollup } from '../testFixtures/taskCenter';
 import { taskCenterKeys } from '../api/taskCenter';
@@ -19,23 +17,14 @@ describe('MIL experiment loading ownership', () => {
     expect(isInputDraft({ spec, baseInputs: { protocolId: 'other' } })).toBe(false);
   });
 
-  it('keeps pack access optional and does not offer unimplemented memory residency', () => {
-    const html = renderToStaticMarkup(<LoadingOptions value="auto" hasPacks={false} onChange={() => {}} />);
-    expect(html).toContain('Original files');
-    expect(html).toMatch(/<input[^>]*disabled=""[^>]*value="mmap"/);
-    expect(html).toContain('whole pack need not fit in RAM');
-    expect(html).not.toContain('value="ram"');
-    expect(html).not.toContain('value="cuda"');
-  });
-
   it('opens a record list before selecting any inputs or batches', () => {
     const workspace = { project: { id: 'project', name: 'BLCA', config: {} } } as Workspace;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     client.setQueryData(['model-experiments', 'project', 'summary'], { items: [] });
     try {
-      const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalExperiments workspace={workspace} /></QueryClientProvider>);
-      expect(html).toContain('Create experiment');
-      expect(html).toContain('Create your first experiment');
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalExperiments mode="setup" workspace={workspace} /></QueryClientProvider>);
+      expect(html).toContain('Create setup');
+      expect(html).toContain('Create your first setup');
       // State and stage filters return with the first saved experiment.
       expect(html).not.toContain('All records');
       expect(html).not.toContain('Trash');
@@ -45,78 +34,14 @@ describe('MIL experiment loading ownership', () => {
     } finally { client.clear(); }
   });
 
-  it('scopes editable inputs and exact history to the selected stable experiment', () => {
-    const workspace = { project: { id: 'project', name: 'BLCA', config: {} } } as Workspace;
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: [] });
-    client.setQueryData(['feature-bundles', 'project'], { items: [] });
-    client.setQueryData(['development-batches', 'project'], { items: [], executions: [], executionImplemented: true });
-    const record: ModelExperiment = { id: 'experiment-one', key: 'draft:experiment-one', name: 'Question one', notes: '', tags: [], revision: 1, state: 'active', status: 'created', legacy: false, createdAt: '', updatedAt: '', inputs: null, batches: [], drafts: [], predictorId: null };
-    try {
-      const html = renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentDetail workspace={workspace} record={record} onBack={() => {}} onOpen={() => {}} /></QueryClientProvider>);
-      expect(html).toContain('Question one');
-      expect(html).toContain('Development protocol');
-      expect(html).toContain('Feature bundle');
-      expect(html).toContain('Verified inputs are shared by every batch');
-      expect(html).toContain('Check &amp; continue to batches');
-      expect(html).toMatch(/id="development-tab-batches"[^>]*disabled=""/);
-      expect(html).not.toContain('Save predictor choices');
-      expect(html).toContain('Exact input history');
-      expect(html).not.toContain('#post-development');
-      expect(html).not.toContain('Create from these inputs');
-      expect(html).toContain('Manage experiment');
-      expect(html).not.toContain('Saved experiment inputs (');
-      expect(html).not.toContain('Saving them separately is optional');
-      expect(html).not.toContain('Initial project preferences');
-    } finally { client.clear(); }
-  });
-
-  it('selects experiment features independently for dataset-only targets and splits', () => {
-    const workspace = { project: { id: 'project', name: 'BLCA', config: {} } } as Workspace;
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    const protocol = { id: 'protocol', manifest: { datasetId: 'development-dataset', spec: {
-      target: { field: 'label', task: 'binary_classification', unit: 'patient' },
-      split: { mode: 'kfold', seeds: [42] },
-    } } } as Configuration;
-    const feature = { id: 'bundle', current: true, findings: [], manifest: {
-      datasetId: 'other-dataset', spec: { featureSetId: 'source', packArtifactIds: [] },
-      summary: { slideCount: 12, patchCount: 120, dimensions: 4, dtype: 'float32', packCount: 0 }, packs: [],
-    } } as unknown as FeatureBundle;
-    client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: [protocol] });
-    client.setQueryData(['feature-bundles', 'project'], { items: [feature] });
-    client.setQueryData(['development-batches', 'project'], { items: [], executions: [], executionImplemented: true });
-    const record: ModelExperiment = { id: 'dataset-only', key: 'draft:dataset-only', name: 'Dataset-only inputs', notes: '', tags: [], revision: 1, state: 'active', status: 'created', legacy: false, createdAt: '', updatedAt: '', inputs: null, batches: [], drafts: [], predictorId: null };
-    try {
-      const html = renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentDetail workspace={workspace} record={record} onBack={() => {}} onOpen={() => {}} /></QueryClientProvider>);
-      expect(html).toMatch(/<option value="bundle" selected=""/);
-      expect(html).not.toMatch(/<option value="bundle"[^>]*disabled/);
-      expect(html).toContain('This experiment selects its feature bundle');
-      expect(html).toContain('complete development-slide coverage');
-      expect(html).toContain('saved targets and split memberships stay fixed');
-      expect(html).not.toContain('feature bundle is selected automatically');
-      expect(html).not.toContain('Feature bundle pinned by older protocol');
-      expect(html).toMatch(/id="development-tab-batches"[^>]*disabled=""/);
-    } finally { client.clear(); }
-  });
-
-  it('locks future stages and protects deep links while keeping saved inputs readable', () => {
+  it('keeps submitted records read-only with their runs, partial results and predictors views', () => {
     const workspace = { project: { id: 'project', name: 'BLCA', config: {} } } as Workspace;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: [] });
     client.setQueryData(['feature-bundles', 'project'], { items: [] });
     const record: ModelExperiment = { id: 'one', key: 'draft:one', name: 'Stage test', notes: '', tags: [], revision: 1, state: 'active', status: 'created', legacy: false, createdAt: '', updatedAt: '', inputs: { protocolId: 'retained-protocol', featureBundleId: 'retained-bundle', loadingPolicy: 'native', packArtifactId: null }, batches: [], drafts: [], predictorId: null };
-    const render = (changes: Partial<ModelExperiment>, tab?: 'setup' | 'runs' | 'results' | 'review') => renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentDetail workspace={workspace} record={{ ...record, ...changes }} initialTab={tab} onBack={() => {}} onOpen={() => {}} /></QueryClientProvider>);
+    const render = (changes: Partial<ModelExperiment>, tab?: 'setup' | 'runs' | 'results' | 'review') => renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentDetail mode="execution" workspace={workspace} record={{ ...record, ...changes }} initialTab={tab} onBack={() => {}} onOpen={() => {}} /></QueryClientProvider>);
     try {
-      const planning = render({ stage: 'planning' }, 'runs');
-      expect(planning).toMatch(/id="development-tab-runs"[^>]*disabled=""/);
-      expect(planning).toMatch(/id="development-tab-results"[^>]*disabled=""/);
-      expect(planning).toMatch(/id="development-tab-batches"[^>]*aria-current="step"/);
-      expect(planning).toContain('Continue to review &amp; submit');
-      expect(planning).not.toContain('Freeze &amp; submit experiment');
-      const review = render({ stage: 'planning' }, 'review');
-      expect(review).toContain('Add at least one batch before submitting');
-      expect(review).toContain('data-stage-page="review"');
-      expect(review).toMatch(/<button[^>]*disabled=""[^>]*>Freeze &amp; submit experiment/);
       const running = render({ stage: 'running', configurationLocked: true, status: 'running' });
       expect(running).toMatch(/id="development-tab-runs"[^>]*aria-current="page"/);
       expect(running).toContain('Submitted plan');
@@ -127,7 +52,6 @@ describe('MIL experiment loading ownership', () => {
       expect(running).toContain('Partial results: training seeds appear as their folds finish.');
       expect(running).toContain('Results fill in as test folds and training seeds finish.');
       expect(running).toMatch(/id="development-tab-predictors"/);
-      expect(running).toMatch(/<fieldset class="mil-plan-fields" disabled=""/);
       expect(running).toContain('retained-protocol');
       expect(running).not.toContain('Check &amp; continue');
       const finished = render({ stage: 'finished', configurationLocked: true, status: 'completed' });
@@ -190,33 +114,5 @@ describe('MIL experiment loading ownership', () => {
     expect(experimentRoute('#experiments?experiment=one&tab=predictors')).toEqual({ id: 'one', tab: 'predictors' });
     expect(experimentRoute('#experiments?experiment=one&tab=review')).toEqual({ id: 'one', tab: 'review' });
     expect(experimentRoute('#source-cv', 'results')).toEqual({ id: '', tab: 'results' });
-  });
-
-  it('retains an explicit dataset-only protocol while its experiment features are still missing', () => {
-    const protocol = { id: 'protocol', manifest: { datasetId: 'data', spec: {} } } as Configuration;
-    expect(suggestedExperimentInputs([protocol], [], { datasetId: 'data', protocolId: 'protocol' })).toMatchObject({ protocolId: 'protocol', featureBundleId: '' });
-    expect(suggestedExperimentInputs([protocol], [], { protocolId: 'missing' }).protocolId).toBe('');
-    expect(suggestedExperimentInputs([protocol], [], { datasetId: 'other', protocolId: 'protocol' }).protocolId).toBe('');
-    expect(suggestedExperimentInputs([protocol], []).protocolId).toBe('');
-  });
-
-  it('preselects only one verified compatible pair and never guesses between versions', () => {
-    const protocol = { id: 'protocol', manifest: { datasetId: 'data', spec: {} } } as Configuration;
-    const feature = { id: 'features', current: true, findings: [], manifest: { datasetId: 'data', spec: { featureSetId: 'source', packArtifactIds: [] } } } as unknown as FeatureBundle;
-    expect(suggestedExperimentInputs([protocol], [feature])).toMatchObject({ protocolId: 'protocol', featureBundleId: 'features', loadingPolicy: 'auto' });
-    expect(suggestedExperimentInputs([protocol], [feature, { ...feature, id: 'other' }]).protocolId).toBe('');
-    expect(suggestedExperimentInputs([protocol], [{ ...feature, current: false }]).featureBundleId).toBe('');
-    expect(suggestedExperimentInputs([protocol], [{ ...feature, findings: [{ severity: 'error', code: 'STALE', message: 'Stale features' }] }]).featureBundleId).toBe('');
-    expect(suggestedExperimentInputs([protocol], [{ ...feature, manifest: { ...feature.manifest, datasetId: 'another-dataset' } }])).toMatchObject({ protocolId: 'protocol', featureBundleId: 'features' });
-    const named = { ...protocol, manifest: { ...protocol.manifest, spec: { featureBundleId: 'features' } } } as Configuration;
-    expect(suggestedExperimentInputs([named], [{ ...feature, manifest: { ...feature.manifest, datasetId: 'another-dataset' } }, { ...feature, id: 'other' }])).toMatchObject({ protocolId: 'protocol', featureBundleId: 'features' });
-    const pinned = { ...protocol, manifest: { ...protocol.manifest, spec: { featurePackId: 'required-pack' } } } as Configuration;
-    expect(suggestedExperimentInputs([pinned], [feature]).protocolId).toBe('');
-    const context = { datasetId: 'data', protocolId: 'protocol', bundleId: 'features' };
-    expect(suggestedExperimentInputs([protocol, { ...protocol, id: 'other-protocol' }], [feature, { ...feature, id: 'other-features' }], context)).toMatchObject({ protocolId: 'protocol', featureBundleId: 'features' });
-    expect(suggestedExperimentInputs([protocol], [feature], { ...context, bundleId: 'missing' })).toMatchObject({ protocolId: 'protocol', featureBundleId: '' });
-    expect(suggestedExperimentInputs([protocol], [feature], { ...context, datasetId: 'different-dataset' }).protocolId).toBe('');
-    expect(suggestedExperimentInputs([protocol], [{ ...feature, current: false }], context).featureBundleId).toBe('');
-    expect(suggestedExperimentInputs([protocol, { ...protocol, id: 'other-protocol' }], [feature], { bundleId: 'features' })).toMatchObject({ protocolId: '', featureBundleId: 'features' });
   });
 });

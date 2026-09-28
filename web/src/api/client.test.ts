@@ -8,18 +8,6 @@ const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
 describe('control service client', () => {
-  it('sends the editor baseline and preserves project-setting conflicts without retrying', async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' }))
-      .mockResolvedValueOnce(json({ detail: 'Reload saved settings.', code: 'PROJECT_CONFIG_CONFLICT' }, 409));
-    vi.stubGlobal('fetch', fetcher);
-    const { api } = await import('./client');
-    await expect(api.updateProject('project/one', { config: { seed: 13 }, expectedConfig: { seed: 7 } }))
-      .rejects.toMatchObject({ code: 'PROJECT_CONFIG_CONFLICT', status: 409 });
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/projects/project%2Fone');
-    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ config: { seed: 13 }, expectedConfig: { seed: 7 } });
-  });
-
   it('reads compute telemetry through the authenticated service with query cancellation', async () => {
     const sample = { sampledAt: '2026-09-12T17:00:00Z' };
     const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' })).mockResolvedValueOnce(json(sample));
@@ -45,7 +33,7 @@ describe('control service client', () => {
     vi.stubGlobal('fetch', fetcher);
     const { request, fetchArtifactBlob } = await import('./client');
     const image = fetchArtifactBlob('/image');
-    await expect(request('/workspace')).resolves.toEqual({ ok: true });
+    await expect(request('/projects')).resolves.toEqual({ ok: true });
     rejectImage(json({ detail: 'Expired' }, 401));
     expect(await (await image).text()).toBe('image');
     expect(fetcher.mock.calls.filter(([path]) => path.endsWith('/session'))).toHaveLength(2);
@@ -80,15 +68,15 @@ describe('control service client', () => {
       .mockResolvedValueOnce(json({ token: 'session' })).mockResolvedValueOnce(json({ ok: true }));
     vi.stubGlobal('fetch', fetcher);
     const { request } = await import('./client');
-    await expect(request('/workspace')).rejects.toMatchObject({ code: 'SERVICE_UNREACHABLE' });
-    await expect(request('/workspace')).resolves.toEqual({ ok: true });
+    await expect(request('/projects')).rejects.toMatchObject({ code: 'SERVICE_UNREACHABLE' });
+    await expect(request('/projects')).resolves.toEqual({ ok: true });
   });
 
   it.each([null, {}, { token: 123 }, { token: ' ' }])('rejects an invalid session payload: %j', async (payload) => {
     const fetcher = vi.fn().mockResolvedValueOnce(json(payload));
     vi.stubGlobal('fetch', fetcher);
     const { request } = await import('./client');
-    await expect(request('/workspace')).rejects.toMatchObject({ status: 401, message: 'The service did not return a valid session token.' });
+    await expect(request('/projects')).rejects.toMatchObject({ status: 401, message: 'The service did not return a valid session token.' });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
@@ -96,7 +84,7 @@ describe('control service client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json({ token: 'session' }))
       .mockResolvedValueOnce(new Response('<html>Proxy</html>')));
     const { request } = await import('./client');
-    await expect(request('/workspace')).rejects.toMatchObject({ code: 'INVALID_SERVICE_RESPONSE', message: expect.stringContaining('unreadable response') });
+    await expect(request('/projects')).rejects.toMatchObject({ code: 'INVALID_SERVICE_RESPONSE', message: expect.stringContaining('unreadable response') });
   });
 
   it('preserves cancellation and does not fetch for a request cancelled during session bootstrap', async () => {
@@ -105,12 +93,12 @@ describe('control service client', () => {
     const fetcher = vi.fn().mockReturnValueOnce(new Promise<Response>((resolve) => { finishSession = resolve; }));
     vi.stubGlobal('fetch', fetcher);
     const { request } = await import('./client');
-    const pending = request('/workspace', { signal: controller.signal });
+    const pending = request('/projects', { signal: controller.signal });
     controller.abort();
     finishSession(json({ token: 'session' }));
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    await expect(request('/workspace', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(request('/projects', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
@@ -125,18 +113,18 @@ describe('control service client', () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(json({ token: 'session-one' }))
-      .mockResolvedValueOnce(json({ id: 'saved-cohort' }))
-      .mockResolvedValueOnce(json({ jobs: [], executionEnabled: false }));
+      .mockResolvedValueOnce(json({ id: 'project' }))
+      .mockResolvedValueOnce(json({ projects: [], defaultStoragePath: '/workspace' }));
     vi.stubGlobal('fetch', fetcher);
     const { api } = await import('./client');
-    await api.saveCohort({ datasetId: 'test', specimenType: 'Any', msi: 'Any', braf: 'Any' });
-    await api.jobs();
+    await api.createProject({ name: 'Bladder', storagePath: '/workspace/bladder' });
+    await api.projects();
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(fetcher.mock.calls[0][0]).toBe('/api/v1/session');
     const mutation = fetcher.mock.calls[1][1];
     expect(mutation.method).toBe('POST');
     expect(mutation.headers.get('X-HistoPilot-Token')).toBe('session-one');
-    expect(JSON.parse(mutation.body)).toMatchObject({ datasetId: 'test' });
+    expect(JSON.parse(mutation.body)).toMatchObject({ name: 'Bladder' });
     expect(fetcher.mock.calls[2][1].headers.get('X-HistoPilot-Token')).toBe('session-one');
   });
   it('renews an expired session once without silently returning fixture data', async () => {
@@ -148,32 +136,25 @@ describe('control service client', () => {
       .mockResolvedValueOnce(json({ detail: 'Still unauthorized' }, 401));
     vi.stubGlobal('fetch', fetcher);
     const { api } = await import('./client');
-    await expect(api.workspace()).rejects.toMatchObject({
+    await expect(api.projectWorkspace('project')).rejects.toMatchObject({
       status: 401,
       message: 'Still unauthorized',
     });
     expect(fetcher).toHaveBeenCalledTimes(4);
     expect(fetcher.mock.calls[3][1].headers.get('X-HistoPilot-Token')).toBe('new');
   });
-  it('surfaces service validation and permits a bodyless draft deletion response', async () => {
+  it('surfaces service validation and permits a bodyless response', async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(json({ token: 'session' }))
-      .mockResolvedValueOnce(json({ detail: [{ msg: 'Fold count exceeds patients' }] }, 422))
+      .mockResolvedValueOnce(json({ detail: [{ msg: 'Choose a supported MIL model' }] }, 422))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetcher);
-    const { api } = await import('./client');
-    await expect(
-      api.createExperiments({
-        cohortId: 'cohort',
-        pairs: ['encoder:mil'],
-        seeds: [42],
-        folds: 5,
-        aggregation: 'mean',
-      }),
-    ).rejects.toMatchObject({ status: 422, message: 'Fold count exceeds patients' });
-    await expect(api.deleteExperiment('draft/one')).resolves.toBeUndefined();
-    expect(fetcher.mock.calls[2][0]).toBe('/api/v1/experiments/draft%2Fone');
+    const { api, request } = await import('./client');
+    await expect(api.createProject({ name: 'Bladder', storagePath: '/workspace/bladder', config: { milId: 'unknown' } }))
+      .rejects.toMatchObject({ status: 422, message: 'Choose a supported MIL model' });
+    await expect(request('/records/one', { method: 'DELETE' })).resolves.toBeUndefined();
+    expect(fetcher.mock.calls[2][0]).toBe('/api/v1/records/one');
   });
   it('creates folders in the selected purpose and surfaces existing-folder conflicts', async () => {
     const created = { path: '/data/features/Bladder Ω', parent: '/data/features', name: 'Bladder Ω' };

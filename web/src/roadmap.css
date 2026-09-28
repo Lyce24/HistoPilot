@@ -41,7 +41,7 @@
 .research-shell .btn-secondary { border-color: var(--theme-line); }
 .research-shell :focus-visible { outline-color: var(--brand-primary); }
 .research-shell .sidebar :focus-visible { outline-color: var(--brand-accent); }
-.nav-status, .module-status > span { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--status-color); }
+.nav-status { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--status-color); }
 .status-not-started { --status-color: var(--brand-gray); --status-bg: var(--theme-soft); color: var(--theme-muted); }
 .status-draft { --status-color: var(--brand-accent); --status-bg: var(--theme-next-soft); color: var(--theme-ink); }
 .status-complete { --status-color: var(--brand-primary); --status-bg: var(--theme-accent-soft); color: var(--theme-ink); }
@@ -51,7 +51,6 @@
 .research-shell .nav-status.status-draft { --status-color: var(--brand-accent); }
 .research-shell .nav-status.status-complete { --status-color: var(--theme-on-dark); }
 .research-shell .active .nav-status.status-complete { --status-color: var(--theme-ink); }
-.module-status { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 550; white-space: nowrap; }
 /* The way back sits directly above the page eyebrow so the two read as one block. */
 .module-context { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-bottom: 12px; }
 .module-context > a, .module-context > div { display: inline-flex; align-items: center; gap: 9px; }
@@ -70,16 +69,6 @@
 .roadmap-loading { min-height: 340px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; }
 .roadmap-loading p { max-width: 650px; overflow-wrap: anywhere; }
 .roadmap-demo { margin-bottom: 20px; }
-.module-gate { background: var(--theme-soft); border: 1px solid var(--theme-line); border-radius: 14px; padding: 27px; display: flex; align-items: center; gap: 21px; margin-bottom: 25px; }
-.module-gate-icon { width: 60px; height: 60px; display: grid; place-items: center; background: #fff; color: var(--theme-ink); border: 1px solid var(--theme-line); border-radius: 14px; flex-shrink: 0; }
-.module-gate h2 { font-size: 18px; margin-bottom: 8px; }
-.module-gate p { color: var(--theme-muted); font-size: 13px; max-width: 720px; }
-.module-prerequisites, .module-expected { border: 1px solid var(--theme-line); background: white; border-radius: 12px; padding: 24px; margin-bottom: 23px; }
-.module-prerequisites > div { display: flex; align-items: center; gap: 15px; padding: 20px 0 0; }
-.module-prerequisites > div > span:first-of-type { flex: 1; display: flex; flex-direction: column; gap: 4px; }
-.module-prerequisites small { color: var(--theme-muted); }
-.module-expected ul { list-style: none; padding: 0; margin-bottom: 0; }
-.module-expected li { display: flex; align-items: center; gap: 10px; padding-top: 9px; color: var(--theme-muted); font-size: 13px; }
 .nav-backdrop { display: none; }
 @media (max-width: 1180px) {
   .research-shell { grid-template-columns: 210px minmax(0, 1fr); }
@@ -102,11 +91,6 @@
   .research-shell .breadcrumbs { gap: 6px; }
   .research-shell .breadcrumbs > .breadcrumb-project { max-width: 100px; }
   .research-shell .topbar-actions .demo-indicator { display: none; }
-  .module-gate { align-items: flex-start; padding: 20px; gap: 12px; }
-  .module-gate-icon { width: 38px; height: 38px; border-radius: 9px; }
-  .module-gate-icon svg { width: 20px; }
-  .module-prerequisites > div { flex-wrap: wrap; }
-  .module-prerequisites > div > span:first-of-type { flex-basis: 75%; }
   .nav-backdrop { display: block; position: fixed; inset: 0; z-index: 31; background: rgb(var(--theme-shadow-rgb) / 44%); }
 }
 

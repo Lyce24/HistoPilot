@@ -1,5 +1,5 @@
 import type { ScientificDraft } from '../api/scientific';
-import { readSessionDraft, useSessionDraftBackup, writeSessionDraft } from './sessionDraft';
+import { readSessionDraft, useSessionDraftBackup } from './sessionDraft';
 
 /**
  * Unsaved scientific editor input, retained for this browser tab only.
@@ -52,10 +52,6 @@ export function readEditorRecovery<S, D = ScientificDraft<S>>(
   kind: EditorRecoveryKind,
 ): EditorRecovery<S, D> | null {
   return readSessionDraft<EditorRecovery<S, D>>(editorRecoveryKey(project, kind), isEditorRecovery);
-}
-
-export function clearEditorRecovery(project: string, kind: EditorRecoveryKind): void {
-  writeSessionDraft(editorRecoveryKey(project, kind), null);
 }
 
 /**

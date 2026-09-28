@@ -67,7 +67,6 @@ development.resourceHistory = async () => ({batchId:'batch-main',rows:[],totalRo
 development.results = async () => ({batchId:'batch-main',status:'queued',findings:[],oof:[],candidates:[]});
 predictors.list = async () => ({items:[]});
 taskCenter.rollup = async (scope) => ({ scope: scope ?? {}, state: 'not-started', counts: {}, byKind: {}, progress: null, live: 0, active: 0, pending: 0, held: false, position: null, queuePosition: null, waitingReason: null, eta: null, runnerAlive: true, paused: false, stopRequest: null, lastFailure: null, recentFailures: 0, current: null, startedAt: null, finishedAt: null, ownerKey: null, ownerKind: null, ownerId: null, title: null, projectId: null, projectName: null, href: '#task-center', updatedAt: '2026-09-25T10:05:00Z' });
-taskCenter.owners = async () => ({owners:[]});
 lifecycle.inventory = async () => ({projectId:'project',revision:1,projectState:'active',items:state.records.map(item=>({key:item.key,id:item.id,type:'draft',kind:'model-experiment',name:item.name,state:'active',createdAt:item.createdAt,dependsOn:[],usedBy:[]})),audit:[],note:''});
 const client = new QueryClient({defaultOptions:{queries:{retry:false,staleTime:Infinity}}});
 window.refreshWorkflow = () => client.invalidateQueries();

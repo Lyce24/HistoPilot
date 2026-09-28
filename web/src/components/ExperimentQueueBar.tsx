@@ -1,13 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { rollupRetryable, taskCenter, type RollupScope, type TaskOwner, type TaskRollup } from '../api/taskCenter';
+import { rollupRetryable, taskCenter, type RollupScope, type TaskRollup } from '../api/taskCenter';
 import { TaskCenterActionNotice, useTaskCenterActions } from '../lib/taskCenterActions';
 import RunStatusChip, { useRunRollup } from './RunStatusChip';
 import { ownerActionIdentity } from './TaskOwnerActions';
 import './ExperimentQueueBar.css';
-
-/** Another workspace on this machine can hold a copy of the same project and experiment IDs; only this workspace's owner is ours. */
-export const experimentOwner = (owners: TaskOwner[] | undefined, project: string, experimentId: string) =>
-  owners?.find((owner) => owner.sameWorkspace && owner.kind === 'experiment' && owner.id === experimentId && owner.projectId === project);
 
 /** What the experiment's one status line counts: fold runs and their collections, then predictors. */
 export const experimentSegments = [

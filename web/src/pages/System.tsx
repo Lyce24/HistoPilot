@@ -133,12 +133,12 @@ function ServiceDetails({ data, stale }: { data: SystemStatus; stale: boolean })
           <li><span>Application mode</span><strong>{data.mode}</strong></li>
           <li><span>Process role</span><strong>{data.control.process}</strong></li>
           <li><span>CUDA models in control process</span><strong>{data.control.cudaModelsLoaded ? 'Loaded' : 'None'}</strong></li>
-          <li><span>Browser connection</span><strong className="mono break-all">{typeof window === 'undefined' ? 'Browser connection' : window.location.origin}</strong></li>
+          <li><span>Browser connection</span><strong className="mono">{typeof window === 'undefined' ? 'Browser connection' : window.location.origin}</strong></li>
         </ul>
       </Panel>
       <Panel title="Local workspace">
         <ul className="detail-list">
-          <li><span>Workspace location</span><strong className="mono break-all">{data.workspace}</strong></li>
+          <li><span>Workspace location</span><strong className="mono">{data.workspace}</strong></li>
           <li><span>Application database</span><strong>{data.storage.engine} · {data.storage.journalMode.toUpperCase()}</strong></li>
           <li><span>Schema version</span><strong>{data.storage.schemaVersion}</strong></li>
           <li><span>Original WSI policy</span><strong>{data.sourcesReadOnly ? 'Referenced read-only' : 'See server configuration'}</strong></li>

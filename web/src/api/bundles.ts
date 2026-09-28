@@ -66,7 +66,6 @@ export interface FeatureBundle {
 const base = (project: string) => `/projects/${encodeURIComponent(project)}/feature-bundles`;
 export const bundles = {
   list: (project: string) => request<{ items: FeatureBundle[] }>(base(project)),
-  get: (project: string, id: string) => request<FeatureBundle>(`${base(project)}/${encodeURIComponent(id)}`),
   preview: (project: string, spec: FeatureBundleSpec) => request<FeatureBundlePreview>(`${base(project)}/preview`, { method: 'POST', body: JSON.stringify(spec) }),
   freeze: (project: string, spec: FeatureBundleSpec, previewHash: string, operationId: string, versionLabel: VersionLabelInput) => request<FeatureBundle>(`${base(project)}/freeze`, {
     method: 'POST', body: JSON.stringify({ ...spec, previewHash, operationId, versionLabel }),

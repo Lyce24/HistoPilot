@@ -43,10 +43,7 @@ function workspace(mode: Workspace['mode'] = 'local'): Workspace {
   return {
     project: { id: 'project', name: 'Project', description: '', storagePath: '', mode, createdAt: '', updatedAt: '', config: {}, sources: [], available: true },
     mode, executionEnabled: false,
-    dataset: { id: 'dataset', slideCount: 20, patientCount: 10, specimenCount: 20 },
-    patients: [], slides: [], encoders: [], milModels: [], featureSets: [],
-    split: { id: 'split', seed: 42, groupBy: 'patient' }, results: [],
-    cohortSnapshots: [], drafts: [], sources: [], exampleManifests: [],
+    dataset: { id: 'dataset', slideCount: 20, patientCount: 10, specimenCount: 20 }, sources: [],
   };
 }
 

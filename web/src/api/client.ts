@@ -1,15 +1,8 @@
 import type {
-  Cohort,
-  CohortInput,
   DirectoryListing,
-  Experiment,
-  ExperimentInput,
   FilesystemRoot,
-  Jobs,
-  InitialConfig,
   ProjectInput,
   ProjectSummary,
-  Source,
   SystemStatus,
   SystemCompute,
   Workspace,
@@ -208,7 +201,6 @@ export async function requestScientificSave<T>(
   }
 }
 export const api = {
-  workspace: () => request<Workspace>('/workspace'),
   projects: () => request<{ projects: ProjectSummary[]; defaultStoragePath: string }>('/projects'),
   createProject: (input: ProjectInput) =>
     request<ProjectSummary>('/projects', { method: 'POST', body: JSON.stringify(input) }),
@@ -216,14 +208,8 @@ export const api = {
     request<ProjectSummary>('/projects/open', { method: 'POST', body: JSON.stringify({ path }) }),
   projectWorkspace: (id: string) =>
     request<Workspace>(`/projects/${encodeURIComponent(id)}/workspace`),
-  updateProject: (id: string, input: { config: InitialConfig; expectedConfig: InitialConfig }) =>
-    request<ProjectSummary>(`/projects/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(input),
-    }),
   system: () => request<SystemStatus>('/system'),
   systemCompute: (signal?: AbortSignal) => request<SystemCompute>('/system/compute', { signal }),
-  jobs: () => request<Jobs>('/jobs'),
   roots: (purpose: 'data' | 'storage' = 'data') =>
     request<{ roots: FilesystemRoot[] }>(
       `/filesystem/roots?purpose=${purpose === 'data' ? 'source' : purpose}`,
@@ -237,20 +223,4 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ parentPath, name, purpose: purpose === 'data' ? 'source' : purpose }),
     }),
-  addSource: (path: string, projectId?: string, role: Source['role'] = 'slides') =>
-    request<Source>(projectId ? `/projects/${encodeURIComponent(projectId)}/sources` : '/sources', {
-      method: 'POST',
-      body: JSON.stringify(projectId ? { path, role } : { path }),
-    }),
-  saveCohort: (input: CohortInput) =>
-    request<Cohort>('/cohorts', { method: 'POST', body: JSON.stringify(input) }),
-  createExperiments: (input: ExperimentInput) =>
-    request<{ drafts: Experiment[] }>('/experiments', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }),
-  deleteExperiment: (id: string) =>
-    request<void>(`/experiments/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  experimentManifest: (id: string) =>
-    request<Record<string, unknown>>(`/experiments/${encodeURIComponent(id)}/manifest`),
 };

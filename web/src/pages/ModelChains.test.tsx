@@ -6,7 +6,8 @@ import type { EvaluationCohort } from '../api/evaluation';
 import type { FrozenPredictor, ModelEvaluation, PredictorChoice, RefitBuild } from '../api/predictors';
 import type { Workspace } from '../api/types';
 import PublicationConfirmation from '../components/PublicationConfirmation';
-import LocalPostDevelopment, { predictorChoiceKey, RefitTraining } from './LocalPostDevelopment';
+import LocalPostDevelopment, { RefitTraining } from './LocalPostDevelopment';
+import { predictorSourceKey } from '../api/predictorBuilds';
 import LocalModelEvaluation from './LocalModelEvaluation';
 
 const workspace = { mode: 'local', project: { id: 'project', name: 'Test project', lifecycleState: 'active' } } as Workspace;
@@ -112,7 +113,7 @@ describe('model development predictor and evaluation chains', () => {
   it('keeps each completed training and split seed group separate within one experiment', () => {
     const options = [choice('same'), choice('same', { trainingSeed: 2024 }), choice('same', { splitSeed: 17 })];
     const html = render('freeze', { choices: options });
-    expect(new Set(options.map(predictorChoiceKey)).size).toBe(3);
+    expect(new Set(options.map(predictorSourceKey)).size).toBe(3);
     expect(html).toContain('configuration 1 training seed 2024 split seed 42');
     expect(html).toContain('configuration 1 training seed 11 split seed 17');
     expect(html).toContain('3 seed groups');
@@ -144,7 +145,7 @@ describe('model development predictor and evaluation chains', () => {
     expect(html).not.toContain('Predictor other');
     expect(html).not.toContain('Batch experiment-other');
     expect(html).toContain('Show all experiments and predictors');
-    expect(predictorChoiceKey(choice(legacyId))).not.toBe(predictorChoiceKey(choice(legacyId, { trainingSeed: 12 })));
+    expect(predictorSourceKey(choice(legacyId))).not.toBe(predictorSourceKey(choice(legacyId, { trainingSeed: 12 })));
   });
 
   it('keeps saved evaluation plans attached to both predictor chains without inventing results', () => {

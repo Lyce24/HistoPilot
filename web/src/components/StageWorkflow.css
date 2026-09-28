@@ -44,7 +44,7 @@
 .stage-library-body { padding: 22px; min-width: 0; overflow-x: auto; }
 /* The library card is already a container; an empty state inside it should not
    read as a second box. */
-.stage-library .empty-state, .stage-library .stage-empty { background: transparent; padding-block: 34px 30px; }
+.stage-library .empty-state { background: transparent; padding-block: 34px 30px; }
 .stage-library-toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 14px; }
 .stage-library-toolbar > .label { flex: 0 1 155px; min-width: 130px; margin: 0; color: var(--theme-muted); font-size: 12px; font-weight: 600; gap: 7px; }
 .stage-library-toolbar > .stage-library-search { flex: 1 1 240px; min-width: 180px; }
@@ -88,10 +88,6 @@
 .stage-library table tbody tr:has(input[type="checkbox"]:checked) > :first-child { box-shadow: inset 3px 0 0 var(--brand-accent); }
 .stage-library table td small, .stage-library table tbody th small { display: block; color: var(--theme-muted); margin-top: 5px; font-size: 11px; font-weight: 400; }
 .stage-library table td:last-child { white-space: nowrap; }
-.stage-empty { display: flex; flex-direction: column; align-items: center; padding: 48px 20px 44px; border-radius: 14px; background: var(--theme-canvas); text-align: center; color: var(--theme-muted); }
-.stage-empty h3 { margin-bottom: 7px; color: var(--theme-ink); font-size: 15px; }
-.stage-empty p { max-width: 430px; font-size: 12.5px; }
-.stage-empty .inline-actions, .stage-empty .stage-action { margin-top: 20px; }
 .stage-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; border-top: 1px solid var(--theme-line); padding: 20px 0; margin-top: 20px; }
 .stage-actions > p { flex: 1; color: var(--theme-muted); font-size: 13px; }
 .stage-page [hidden], .stage-workspace [hidden] { display: none !important; }

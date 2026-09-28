@@ -25,34 +25,10 @@
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-.local-source-form {
-  display: grid;
-  gap: 16px;
-  padding-top: 20px;
-}
-.local-note {
-  margin-top: 20px;
-}
-.local-source-form .grid-2 {
-  margin-bottom: 0;
-}
 .connection-state .btn + .btn {
   margin-left: 10px;
 }
-.settings-fields {
-  min-inline-size: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
 @media (max-width: 720px) {
-  .workspace-banner {
-    flex-wrap: wrap;
-  }
-  .workspace-banner > div:nth-child(2) {
-    min-width: 0;
-    max-width: calc(100% - 66px);
-  }
   .detail-list .local-path {
     max-width: 58vw;
   }

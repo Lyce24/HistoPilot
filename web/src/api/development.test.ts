@@ -43,17 +43,6 @@ describe('development batch intent', () => {
     }
   });
 
-  it('freezes exactly the reviewed batch and reuses the caller operation ID', async () => {
-    const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
-    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' })).mockResolvedValueOnce(response({ id: 'frozen-batch' }));
-    vi.stubGlobal('fetch', fetcher);
-    const { development } = await import('./development');
-    const spec = { version: 1 as const, experimentName: 'ABMIL', batchName: 'Search', inputs: { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native' as const, packArtifactId: null }, recipe: defaultRecipe(), mode: 'single' as const, grid: { learningRates: [0.0003], weightDecays: [0.0001], maxEpochs: [100] }, configurations: [], trainingSeeds: [10, 20, 30], resources: defaultResources(), notes: '' };
-    await development.freeze('project/one', spec, 'reviewed-hash', 'stable-operation', { tag: 'Search', note: '' });
-    expect(fetcher.mock.calls[1][0]).toBe('/api/v1/projects/project%2Fone/mil-experiments/batches/freeze');
-    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ spec, previewHash: 'reviewed-hash', operationId: 'stable-operation', versionLabel: { tag: 'Search', note: '' } });
-  });
-
   it.each(['launch', 'cancel', 'resume'] as const)('%s uses the frozen batch identity and stable operation ID, without resending editable recipe state', async (action) => {
     const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
     const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' }))

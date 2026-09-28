@@ -18,88 +18,10 @@ export type Page =
   | 'inference'
   | 'clinical-utility'
   | 'interpretation'
-  | 'reports'
-  | 'example-results'
-  | 'explorer'
-  | 'provenance'
   | 'cleanup'
   | 'operations'
   | 'task-center'
   | 'system';
-export interface Patient {
-  id: string;
-  site: string;
-  specimenType: string;
-  msi: string;
-  braf: string;
-  kras: string;
-  partition: string;
-}
-export interface Slide {
-  id: string;
-  patientId: string;
-  specimenId: string;
-  site: string;
-  status: string;
-  filename: string;
-}
-export interface Encoder {
-  id: string;
-  name: string;
-  description: string;
-  dimensions: number;
-  adapter: string;
-}
-export interface MilModel {
-  id: string;
-  name: string;
-  description: string;
-  adapter: string;
-}
-export interface FeatureSet {
-  id: string;
-  encoderId: string;
-  slides: number;
-  dimensions: number;
-  status: string;
-}
-export interface Result {
-  id: string;
-  encoderId: string;
-  milId: string;
-  auroc: number;
-  auprc: number;
-  accuracy: number;
-  seed: number;
-  splitId: string;
-  featureSetId: string;
-}
-export interface Cohort {
-  id: string;
-  name: string;
-  datasetId: string;
-  target: string;
-  filters: { specimenType: string; msi: string; braf: string };
-  patientIds: string[];
-  slideIds: string[];
-  splitId: string;
-  createdAt: string;
-}
-export interface Experiment {
-  id: string;
-  status: string;
-  datasetId: string;
-  cohortId: string;
-  cohortSnapshot: Cohort;
-  splitId: string;
-  encoderId: string;
-  milId: string;
-  featureSetId: string | null;
-  seeds: number[];
-  folds: number;
-  aggregation: string;
-  createdAt: string;
-}
 export interface Source {
   id: string;
   path: string;
@@ -145,19 +67,14 @@ export interface ProjectInput {
   featurePath?: string;
   config?: InitialConfig;
 }
-export interface Manifest extends Record<string, unknown> {
-  result: { id: string };
-  run: { id: string };
-  experiment: { id: string };
-  features: { id: string };
-  split: { id: string };
-  dataset: { id: string };
-}
+/** `GET /projects/{id}/workspace`: a local project, or the read-only BLCA demo with `demoPipeline`. */
 export interface Workspace {
   project: ProjectSummary;
   mode: 'local' | 'synthetic-demo';
   executionEnabled: boolean;
   demoPipeline?: DemoPipeline;
+  /** Local projects only: storage diagnostics (not shown in the interface) and record counts. */
+  scientificStorage?: Record<string, unknown>;
   scientificSummary?: { datasetCount: number; protocolCount: number; featureCount: number };
   dataset: {
     id: string;
@@ -168,31 +85,9 @@ export interface Workspace {
     slideCount: number;
     fallbackSlideCount?: number;
     groupCount?: number;
+    unlinkedSlideCount?: number;
   };
-  patients: Patient[];
-  slides: Slide[];
-  encoders: Encoder[];
-  milModels: MilModel[];
-  featureSets: FeatureSet[];
-  split: { id: string; seed: number; groupBy: string };
-  results: Result[];
-  cohortSnapshots: Cohort[];
-  drafts: Experiment[];
   sources: Source[];
-  exampleManifests: Manifest[];
-}
-export interface CohortInput {
-  datasetId: string;
-  specimenType: string;
-  msi: string;
-  braf: string;
-}
-export interface ExperimentInput {
-  cohortId: string;
-  pairs: string[];
-  seeds: number[];
-  folds: number;
-  aggregation: 'mean' | 'max';
 }
 export interface FilesystemRoot {
   path: string;
@@ -203,15 +98,6 @@ export interface DirectoryListing {
   parent: string | null;
   entries: { name: string; path: string; kind: string }[];
   truncated: boolean;
-}
-export interface Job {
-  id: string;
-  status: string;
-  name?: string;
-}
-export interface Jobs {
-  jobs: Job[];
-  executionEnabled: boolean;
 }
 export interface SystemStatus {
   mode: string;

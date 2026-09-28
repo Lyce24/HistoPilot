@@ -106,8 +106,7 @@
 .clinical-workspace .field::placeholder {
   color: var(--theme-muted);
 }
-.clinical-workspace .field:disabled,
-.clinical-workspace .field-readonly {
+.clinical-workspace .field:disabled {
   background-color: var(--theme-soft);
 }
 .clinical-workspace .btn {

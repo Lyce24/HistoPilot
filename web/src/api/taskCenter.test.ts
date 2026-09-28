@@ -10,23 +10,19 @@ const response = (value: unknown, status = 200) => new Response(JSON.stringify(v
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
 describe('Task Center API contract', () => {
-  it('reads the machine-wide summary, filtered tasks, one task and queue owners', async () => {
+  it('reads filtered tasks, one task and one queue owner', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' }));
-    for (let index = 0; index < 6; index++) fetcher.mockResolvedValueOnce(response({}));
+    for (let index = 0; index < 4; index++) fetcher.mockResolvedValueOnce(response({}));
     vi.stubGlobal('fetch', fetcher);
     const { taskCenter } = await import('./taskCenter');
-    await taskCenter.summary();
     await taskCenter.tasks({ state: 'starting,running,stopping', limit: 100 });
     await taskCenter.tasks({ owner: 'owner/1', project: '', kind: undefined });
     await taskCenter.task('task/1');
-    await taskCenter.owners('all');
     await taskCenter.owner('owner/1');
     expect(fetcher.mock.calls.slice(1).map(([path]) => path)).toEqual([
-      '/api/v1/task-center/summary',
       '/api/v1/task-center/tasks?state=starting%2Crunning%2Cstopping&limit=100',
       '/api/v1/task-center/tasks?owner=owner%2F1',
       '/api/v1/task-center/tasks/task%2F1',
-      '/api/v1/task-center/owners?scope=all',
       '/api/v1/task-center/owners/owner%2F1',
     ]);
     expect(fetcher.mock.calls[1][1].headers.get('X-HistoPilot-Token')).toBe('session');

@@ -30,7 +30,6 @@ const strategyDescriptions: Partial<Record<Split['mode'], string>> = {
   nested_kfold: 'Separate model tuning from assessment.',
   held_out: 'Use one development assessment split.',
 };
-export { newDevelopmentSplit as newSplit } from '../lib/protocol';
 const percent = (value: number) => `${Number((value * 100).toFixed(1))}%`;
 
 export function SplitStrategy({
