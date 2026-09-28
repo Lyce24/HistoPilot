@@ -1,5 +1,6 @@
 """Single-process local metadata service and packaged React static assets."""
 
+import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from secrets import token_urlsafe
@@ -26,7 +27,6 @@ from histopilot.storage.database import SCHEMA_VERSION, Database
 from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.extraction_process import TmuxExtractionExecutor
 
 from .lifecycle import lifecycle_router
 from .scientific import scientific_router
@@ -229,7 +229,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/system")
     def system():
         trident = discover_runtime()
-        tmux_available = TmuxExtractionExecutor().available()
+        # tmux hosts the Task Center runner, which runs every job.
+        tmux_available = shutil.which("tmux") is not None
         extraction_ready = trident["available"] and tmux_available
         return {
             "mode": "local-first",

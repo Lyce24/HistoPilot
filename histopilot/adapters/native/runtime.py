@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -60,8 +59,6 @@ def training_runtime(*, refresh=False, python: str | None = None) -> dict:
             if probe.returncode:
                 raise RuntimeError(probe.stderr.strip().splitlines()[-1])
             result.update(json.loads(probe.stdout.strip().splitlines()[-1]))
-            if shutil.which("tmux") is None:
-                raise RuntimeError("Install tmux to run persistent training workers.")
         except (OSError, ValueError, IndexError, RuntimeError, subprocess.TimeoutExpired) as error:
             result["available"] = False
             result["findings"] = [

@@ -77,7 +77,10 @@ def test_health_is_minimal_and_sensitive_routes_require_token(settings):
 
 def test_system_distinguishes_implemented_workers_from_trident_readiness(client, monkeypatch):
     monkeypatch.setattr("histopilot.api.app.discover_runtime", lambda: {"available": False})
-    monkeypatch.setattr("histopilot.api.app.TmuxExtractionExecutor.available", lambda _self: True)
+    # tmux hosts the Task Center runner; /system reports it with a plain PATH lookup.
+    monkeypatch.setattr(
+        "histopilot.api.app.shutil.which", lambda name: "/usr/bin/tmux" if name == "tmux" else None
+    )
     authenticate(client)
     response = client.get(f"{API}/system")
     assert response.status_code == 200
