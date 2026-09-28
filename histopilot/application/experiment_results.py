@@ -99,9 +99,23 @@ def _batch_stamp(folder: Path, batch: dict) -> tuple:
     )
 
 
-def _reported(plan: dict | None, results: dict | None) -> tuple[str | None, str]:
-    """The configuration a batch reports: its validation choice, never an OOF ranking."""
+def _comparison(batch: dict) -> dict | None:
+    return (batch.get("manifest") or {}).get("spec", {}).get("comparison")
+
+
+def _reported(
+    plan: dict | None, results: dict | None, comparison: dict | None = None
+) -> tuple[str | None, str]:
+    """The configuration a batch reports: its declared reference arm or its validation
+    choice, never an OOF ranking."""
     configurations = (plan or {}).get("configurations", [])
+    if comparison is not None:
+        reference = next(
+            (row for row in configurations if row["number"] == comparison.get("reference", 1)),
+            None,
+        )
+        if reference is not None:
+            return reference["id"], "reference"
     selection = (results or {}).get("selection") or {}
     if selection.get("ready") and selection.get("selectedCandidateId"):
         return selection["selectedCandidateId"], "validation"
@@ -130,10 +144,12 @@ def _load(folder: Path, batch: dict) -> dict:
     if (folder / "results.json").exists():
         loaded["results"] = read_json(folder / "results.json")
         root = folder.resolve()
-        reported, _source = _reported(loaded["plan"], loaded["results"])
+        comparison = _comparison(batch)
+        reported, _source = _reported(loaded["plan"], loaded["results"], comparison)
         for candidate in loaded["results"].get("candidates", []):
             path = candidate.get("oofPath")
-            if not candidate.get("complete") or not path or candidate["candidateId"] != reported:
+            wanted = comparison is not None or candidate["candidateId"] == reported
+            if not candidate.get("complete") or not path or not wanted:
                 continue
             resolved = Path(path).resolve()
             # Results name their own files; anything outside the batch folder is ignored.
@@ -238,8 +254,9 @@ def _summarize_batch(item: dict, policy: dict) -> tuple[dict, dict]:
     target = plan["target"]
     selection = (results or {}).get("selection")
     configurations = plan["configurations"]
+    comparison = _comparison(batch)
     # Never pick by OOF: without a validation choice the first configuration is shown.
-    selected_id, source = _reported(plan, results)
+    selected_id, source = _reported(plan, results, comparison)
     summary["selection"] = {
         "source": source,
         "metric": (selection or {}).get("metric"),
@@ -251,7 +268,11 @@ def _summarize_batch(item: dict, policy: dict) -> tuple[dict, dict]:
     summary["selectedCandidateId"] = selected_id
     for configuration in sorted(configurations, key=lambda row: row["number"]):
         result, draws = _summarize_configuration(
-            item, configuration, target, policy, detailed=configuration["id"] == selected_id
+            item,
+            configuration,
+            target,
+            policy,
+            detailed=comparison is not None or configuration["id"] == selected_id,
         )
         result["selected"] = configuration["id"] == selected_id
         result["validationScore"] = summary["selection"]["scores"].get(configuration["id"])
@@ -260,7 +281,55 @@ def _summarize_batch(item: dict, policy: dict) -> tuple[dict, dict]:
     chosen = next((row for row in summary["configurations"] if row["selected"]), None)
     if chosen is not None:
         summary["findings"] = _findings(summary, chosen, target, len(configurations))
+    if comparison is not None and chosen is not None:
+        summary["comparison"] = _arm_contrasts(summary, hidden, chosen, comparison, policy)
     return summary, hidden
+
+
+def _arm_contrasts(summary, hidden, reference, comparison, policy) -> dict:
+    """Reference minus every other arm on shared draws, Holm-adjusted on the primary metric."""
+    metric = comparison.get("primaryMetric", "auroc")
+    contrasts = []
+    for arm in summary["configurations"]:
+        if arm["candidateId"] == reference["candidateId"]:
+            continue
+        left = hidden["draws"].get(reference["candidateId"]) or {}
+        right = hidden["draws"].get(arm["candidateId"]) or {}
+        row = _compare((summary, reference, left), (summary, arm, right), policy)
+        p_value = None
+        a, b = left.get("draws") or {}, right.get("draws") or {}
+        if (
+            row.get("available")
+            and a.get("identities")
+            and a.get("identities") == b.get("identities")
+            and metric in a.get("seedAverage", {})
+        ):
+            p_value = cv.bootstrap_p_value(
+                a["seedAverage"][metric] - b["seedAverage"][metric],
+                a["seedAverage"]["valid"] & b["seedAverage"]["valid"],
+            )
+        contrasts.append(
+            {
+                "armId": arm["candidateId"],
+                "armNumber": arm["number"],
+                "model": arm["model"],
+                "inputMode": arm["inputMode"],
+                "difference": "reference_minus_arm",
+                "available": row["available"],
+                **({"reason": row["reason"]} if "reason" in row else {}),
+                **{key: row[key] for key in ("oof", "oofInterval", "folds") if key in row},
+                "pValue": p_value,
+            }
+        )
+    for row, adjusted in zip(contrasts, cv.holm([row["pValue"] for row in contrasts]), strict=True):
+        row["pValueHolm"] = adjusted
+    return {
+        "referenceId": reference["candidateId"],
+        "referenceNumber": reference["number"],
+        "primaryMetric": metric,
+        "adjustment": "holm",
+        "contrasts": contrasts,
+    }
 
 
 def _summarize_configuration(

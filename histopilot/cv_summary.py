@@ -423,3 +423,28 @@ def fold_differences(
         "tied": sum(value == 0 for value in values),
         "values": values,
     }
+
+
+def bootstrap_p_value(difference: np.ndarray, valid: np.ndarray) -> float | None:
+    """Two-sided bootstrap p-value for no difference: twice the smaller tail share.
+
+    Shares count draws on each side of zero, inclusive, with the usual plus-one
+    correction so a p-value is never reported as exactly zero from finitely many draws.
+    """
+    finite = difference[valid & np.isfinite(difference)]
+    if not len(finite):
+        return None
+    below = (np.count_nonzero(finite <= 0) + 1) / (len(finite) + 1)
+    above = (np.count_nonzero(finite >= 0) + 1) / (len(finite) + 1)
+    return float(min(1.0, 2 * min(below, above)))
+
+
+def holm(p_values: list[float | None]) -> list[float | None]:
+    """Holm step-down adjustment across a family of planned contrasts; None stays None."""
+    ranked = sorted((value, index) for index, value in enumerate(p_values) if value is not None)
+    adjusted: list[float | None] = [None] * len(p_values)
+    running = 0.0
+    for position, (value, index) in enumerate(ranked):
+        running = max(running, min(1.0, (len(ranked) - position) * value))
+        adjusted[index] = running
+    return adjusted

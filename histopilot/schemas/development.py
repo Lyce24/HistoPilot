@@ -244,6 +244,14 @@ class ResourcePolicy(RequestModel):
         return value
 
 
+class ComparisonSpec(RequestModel):
+    """A controlled comparison: every arm against one reference arm on shared folds and seeds."""
+
+    # One-based configuration number of the reference arm.
+    reference: Annotated[StrictInt, Field(ge=1, le=512)] = 1
+    primaryMetric: Literal["auroc", "auprc", "balancedAccuracy", "macroF1", "accuracy"] = "auroc"
+
+
 class DevelopmentBatchSpec(RequestModel):
     version: Literal[1] = 1
     experimentId: str | None = Field(default=None, min_length=1, max_length=128)
@@ -261,6 +269,7 @@ class DevelopmentBatchSpec(RequestModel):
     resources: ResourcePolicy | None = None
     notes: str = Field(default="", max_length=2000)
     predictorPolicy: ExperimentPredictorPolicy | None = None
+    comparison: ComparisonSpec | None = None
     selectionMetric: Literal["validation_auroc", "validation_loss", "validation_accuracy"] | None = (
         "validation_auroc"
     )
@@ -298,6 +307,13 @@ class DevelopmentBatchSpec(RequestModel):
             raise ValueError(
                 "Explicit mode requires configuration rows; other modes use the recipe."
             )
+        if self.comparison is not None:
+            if self.mode != "explicit" or not 2 <= len(self.configurations) <= 8:
+                raise ValueError("A comparison needs two to eight explicit configurations.")
+            if self.candidateSelection != "all":
+                raise ValueError("A comparison reports every arm; build all configurations.")
+            if self.comparison.reference > len(self.configurations):
+                raise ValueError("The reference arm must be one of the configurations.")
         if self.mode == "grid":
             for epochs in self.grid.maxEpochs:
                 TrainingRecipe.model_validate({**self.recipe.model_dump(), "maxEpochs": epochs})
@@ -313,6 +329,8 @@ class DevelopmentBatchSpec(RequestModel):
             values.pop("experimentRevision", None)
         if self.predictorPolicy is None:
             values.pop("predictorPolicy", None)
+        if self.comparison is None:
+            values.pop("comparison", None)
         if self.resources is None:
             values.pop("resources", None)
         if self.selectionMetric is None:

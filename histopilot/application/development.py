@@ -265,6 +265,9 @@ class DevelopmentService:
         binding = MILInputService(self.store, self.filesystem).preview(spec.inputs)
         findings = list(binding["findings"])
         recipes = expand_recipes(spec)
+        from histopilot.application.comparisons import comparison_findings
+
+        findings.extend(comparison_findings(spec, recipes))
         plans, candidates, runs = [], [], []
         protocol = None
         if binding["canPlan"]:

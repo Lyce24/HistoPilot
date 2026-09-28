@@ -42,6 +42,7 @@ def batch_files(
     selection=True,
     slide_prefix="s",
     noise=0,
+    skills=None,
 ):
     """A finished (or partial) batch as the workers leave it: plan, run receipts, OOF files."""
     tgt = target(unit)
@@ -102,7 +103,8 @@ def batch_files(
                 for index in members(fold, folds, slides):
                     label = (index // 2) % len(CLASSES)
                     logits = rng.normal(size=len(CLASSES))
-                    logits[label] += 0 if CLASSES[label] == weak else skill
+                    strength = skills[config["number"] - 1] if skills else skill
+                    logits[label] += 0 if CLASSES[label] == weak else strength
                     logs = logits - np.logaddexp.reduce(logits)
                     rows.append(
                         {
@@ -352,6 +354,49 @@ def test_loader_reads_predictions_of_the_reported_configuration_only(tmp_path):
     loaded = results._load(folder, item["batch"])
     assert set(loaded["oof"]) == {("cand-2", 42, 42), ("cand-2", 43, 42)}
     assert summarize(loaded)["design"]["folds"] == 3
+
+
+def test_loader_reads_every_arm_of_a_declared_comparison(tmp_path):
+    item = batch_files("arms", configurations=2, seeds=(42, 43))
+    item["batch"]["manifest"]["spec"]["comparison"] = {"reference": 1}
+    folder = tmp_path / "arms"
+    folder.mkdir()
+    (folder / "plan.json").write_text(json.dumps(item["plan"]))
+    for candidate in item["results"]["candidates"]:
+        records = item["oof"][(candidate["candidateId"], candidate["trainingSeed"], 42)]
+        path = folder / candidate["oofPath"]
+        path.write_text(json.dumps({"records": records}))
+        candidate["oofPath"] = str(path)
+    (folder / "results.json").write_text(json.dumps(item["results"]))
+    loaded = results._load(folder, item["batch"])
+    assert {key[0] for key in loaded["oof"]} == {"cand-1", "cand-2"}
+
+
+def test_declared_comparison_contrasts_every_arm_with_the_reference():
+    item = batch_files("ablation", configurations=3, skills=(2.5, 0.4, 2.5))
+    item["batch"]["manifest"]["spec"]["comparison"] = {"reference": 1, "primaryMetric": "auroc"}
+    batch = summarize(item)["batches"][0]
+    # The declared reference is reported, whatever validation would have chosen.
+    assert batch["selectedCandidateId"] == "cand-1"
+    assert batch["selection"]["source"] == "reference"
+    assert all(row["intervals"]["available"] for row in batch["configurations"])
+    comparison = batch["comparison"]
+    assert (comparison["referenceNumber"], comparison["primaryMetric"]) == (1, "auroc")
+    weaker, matched = comparison["contrasts"]
+    assert (weaker["armNumber"], matched["armNumber"]) == (2, 3)
+    assert weaker["difference"] == "reference_minus_arm"
+    assert weaker["oof"]["auroc"]["difference"] > 0
+    assert weaker["oofInterval"]["intervals"]["auroc"]["lower"] > 0
+    assert weaker["pValue"] < 0.01
+    for row in comparison["contrasts"]:
+        assert row["pValueHolm"] >= row["pValue"]
+
+
+def test_bootstrap_p_values_and_holm_adjustment():
+    valid = np.ones(99, dtype=bool)
+    assert cv.bootstrap_p_value(np.full(99, 0.1), valid) == pytest.approx(0.02)
+    assert cv.bootstrap_p_value(np.linspace(-1, 1, 99), valid) == 1.0
+    assert cv.holm([0.01, 0.04, 0.03, None]) == [0.03, 0.06, 0.06, None]
 
 
 def test_batch_without_a_plan_is_listed_as_not_started():
