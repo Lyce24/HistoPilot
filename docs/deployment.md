@@ -96,7 +96,7 @@ UV_PROJECT_ENVIRONMENT=.venv-training uv sync --locked --extra training
 
 The `training` extra adds Torch, Lightning, TorchMetrics and scikit-learn. The service finds `.venv-training/bin/python` automatically, and picks up a newly created one without a restart. To use another interpreter, set `HISTOPILOT_TRAINING_PYTHON` before starting the service. A new git worktree has no `.venv-training`, so training from it fails with "No module named 'torch'" until you create one.
 
-The training runtime panel probes this interpreter in a separate process: Torch, Lightning, h5py, PyArrow and scikit-learn imports, versions, CUDA and GPUs, plus tmux. A submitted experiment records the interpreter and package versions it ran with; follow-up work refuses to run in a changed environment (`EXPERIMENT_RUNTIME_CHANGED`). Restore the environment, or copy the experiment to plan it again. See [architecture](architecture.md#pinned-compute-archives).
+The training runtime panel probes this interpreter in a separate process: Torch, Lightning, h5py, PyArrow and scikit-learn imports, versions, CUDA and GPUs. Only the Task Center runner needs tmux; its launcher checks for it. A submitted experiment records the interpreter and package versions it ran with; follow-up work refuses to run in a changed environment (`EXPERIMENT_RUNTIME_CHANGED`). Restore the environment, or copy the experiment to plan it again. See [architecture](architecture.md#pinned-compute-archives).
 
 ### TRIDENT feature extraction
 

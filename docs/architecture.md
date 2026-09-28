@@ -61,7 +61,9 @@ Every long-running job is a Task Center task. Producers (experiment submission, 
 
 A submitted experiment becomes one task per fold, a result-collection task per batch, and one predictor coordinator task. The coordinator waits for each batch's final collection, publishes ensembles and launches every ready refit as its own task. Its plan and state live under `experiment-predictors/<hashed-experiment-id>/` in the project, and every publication and launch has a stable operation identity, so a restarted coordinator resumes where it stopped. A worker that finds its project busy exits with code 75 and is requeued rather than failed.
 
-Stage records keep their own state fields. Stage pages read their tasks' status from the Task Center store through one shared status chip, without taking a project lock. Work created before the Task Center keeps its own tmux workers, which the runner counts through a shared lease registry.
+Stage records keep their own state fields. Stage pages read their tasks' status from the Task Center store through one shared status chip, without taking a project lock.
+
+Records created before the Task Center ran in their own tmux sessions. They stay readable but never run again: a finished one shows its saved status, an unfinished one reads as interrupted, and launching, resuming, retrying or cancelling one is refused with `CREATED_BEFORE_TASK_CENTER` (409). Clone the record, or preview it again, to run the work as tasks. The runner still counts the leases that other checkouts and TRIDENT runs publish in the shared lease registry.
 
 ## Pinned compute archives
 
@@ -72,6 +74,7 @@ Code that produces scientific results runs from a verified, archived copy, never
 - **Submission.** Submitting an experiment prepares every batch, requires all their contracts to match, and stores that contract with the submission. Each batch then launches from its own archive in `training/<batch-id>/compute/`; fold and collection workers import that copy and refuse to run if its fingerprint differs from the plan.
 - **Follow-up work.** A refit launched later, a batch whose launch is retried, and the predictor coordinator run from **the first launched batch's archive** (`application/model_experiments.py:pinned_compute`). They check the submitted contract first and refuse with `EXPERIMENT_RUNTIME_CHANGED` if the code or environment changed; restore the environment or copy the experiment. The coordinator also points its refits at the contract's training interpreter.
 - **Other compute.** Evaluations, inference runs and interpretation archive the current checkout's code when they launch, and a resume reuses that archive.
+- **Archives from before the Task Center.** A launch checks that the archive can run as a task: the archived compute worker and predictor coordinator declare `TASK_CENTER_PROTOCOL` (read without importing them), and an archived training package has `workers/managed_fold.py`. Archives pinned before the Task Center have neither, so work that would run from one is refused with `CREATED_BEFORE_TASK_CENTER`; copy the experiment to run it again.
 
 Updating HistoPilot therefore never changes the code of work that is already running or submitted. Resuming a batch whose archived code differs from the checkout shows a `TRAINING_PINNED_CODE` notice.
 

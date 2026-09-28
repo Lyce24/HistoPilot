@@ -48,7 +48,7 @@ Obtain a token with `GET /api/v1/session`, then send it as the `X-HistoPilot-Tok
 | --- | --- |
 | `GET /health` | Minimal service status and version. Its legacy `executionEnabled` field is always `false`; runtime readiness is in `GET /system`. |
 | `GET /session` | The session token and the service's `scientificCapabilities`. |
-| `GET /system` | Workspace, storage and package diagnostics, plus worker, tmux and TRIDENT readiness. |
+| `GET /system` | Workspace, storage and package diagnostics, plus worker and TRIDENT readiness and whether tmux is available to host the Task Center runner. |
 | `GET /system/compute` | Current CPU, RAM, GPU and VRAM measurements. |
 | `GET /filesystem/roots?purpose=source` | Allowed roots. `purpose=source` (the default) lists only configured data roots; `purpose=storage` adds the application workspace. |
 | `GET /filesystem/list?path=…&purpose=…` | A bounded listing inside those roots. Symlinks are resolved before the root check. Long listings report `truncated: true`. |
@@ -133,7 +133,7 @@ Historical protocol records from before Targets & splits (split versions 1–3) 
 | `POST extractions/preview` | The resolved command and slide list, findings, `estimatedBytes` and `availableBytes`. Errors such as `SLIDE_READER_UNAVAILABLE` or `INSUFFICIENT_SPACE` block `canRun`; warnings such as `LOW_DISK_SPACE` or `SINGLE_GPU_TASK` do not. |
 | `POST extractions` | Submit a previewed extraction (201) as an extraction task plus a dependent validation task. |
 | `GET extractions`, `GET extractions/{job_id}` | Jobs with `executor`, `task`, `tasks.extraction`, `tasks.validation` and `ownerKey`. |
-| `POST extractions/{job_id}/cancel`, `POST extractions/{job_id}/resume` | Cancel, or requeue TRIDENT on the same output. Finished slides are skipped. Jobs from before the Task Center return 409 `EXTRACTION_RESUME_UNSUPPORTED`; resume those through a new preview on the same output folder. |
+| `POST extractions/{job_id}/cancel`, `POST extractions/{job_id}/resume` | Cancel, or requeue TRIDENT on the same output. Finished slides are skipped. Jobs from before the Task Center return 409 `CREATED_BEFORE_TASK_CENTER`; continue those through a new preview on the same output folder. |
 
 ## Experiments and development batches
 

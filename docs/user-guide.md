@@ -281,7 +281,7 @@ All extraction, packing, training, refit, evaluation, inference, interpretation 
 - **Restore archive** restores into a new folder, never over an existing one, and keeps the project's identity.
 - **Source health** lists registered source folders and any unavailable paths. **Relink** points a registration at a moved folder; frozen versions keep the paths they recorded.
 
-Archive jobs run as Task Center tasks. Without the web service, `histopilot verify-study <archive>` and `histopilot restore-study <archive> <new-folder>` do the same.
+Archive jobs run as Task Center tasks. Without the web service, `histopilot verify-study <archive>` and `histopilot restore-study <archive> <new-folder>` queue the same task, even when the original project is gone, and start the runner if it is not running. Follow them with `histopilot runner status` or on the Task Center page.
 
 ## Workspace cleanup
 

@@ -85,7 +85,7 @@ A task starts only when all of these hold:
 
 GPUs with the fewest used slots and the most free memory are tried first. A task larger than any GPU's budget runs alone, and only on a GPU that is really empty (no HistoPilot tasks, and at most 0.5 GiB in use beyond the reserve). Otherwise it waits with a reason such as "Waiting for GPU memory: N GiB of GPU i is in use outside HistoPilot".
 
-RAM requests are scheduling allowances, not operating-system limits. Work started before the Task Center, and schedulers in other workspaces that have not yet migrated, publish leases in a shared registry under the temporary directory (`histopilot-training-<uid>`). The runner counts those leases as used capacity and writes a lease for each of its own tasks, so old and new schedulers never overcommit each other.
+RAM requests are scheduling allowances, not operating-system limits. Schedulers of other checkouts that have not yet migrated, and TRIDENT runs started by hand, publish leases in a shared registry under the temporary directory (`histopilot-training-<uid>`). The runner counts those leases as used capacity and writes a lease for each of its own tasks, so no two of them overcommit each other. Every 5 minutes the runner also removes the leases whose owner process (and supervisor, if it names one) is confirmed dead, so a crashed worker's reservation does not count forever; a lease whose owner is alive, or cannot be verified, or that cannot be read, is kept.
 
 ### Estimates and the suggestion
 
@@ -173,9 +173,15 @@ The state directory is `$HISTOPILOT_STATE_DIR`, else `$XDG_STATE_HOME/histopilot
 
 Only the runner writes task state; the API writes intents and new tasks. Every transition is a guarded update in one transaction. Every 5 minutes the runner truncates the SQLite write-ahead log (`wal_checkpoint(TRUNCATE)`), and connections cap its size at 8 MiB, so the log stays bounded. Tasks, events and history are never pruned, and `runner.log` is not rotated; the store grows slowly with use. Page reads list live owners and page through history, so a large store costs little per poll.
 
-## Work started before the Task Center
+## Work created before the Task Center
 
-Batches, compute jobs, predictor coordinators, extractions, packing jobs and archives created before the Task Center keep their own tmux workers and controls (sessions such as `hp-train-…`, `histopilot-pfm-…` and `histopilot-pack-…`). They appear in the Task Center only as external load, through their leases. Check `tmux ls` before relaunching such work by hand, to avoid a duplicate. New work always runs as Task Center tasks.
+Batches, compute jobs, predictor coordinators, extractions, packing jobs and archives created before the Task Center ran in their own tmux sessions. HistoPilot no longer runs, watches or stops them, and they never appear in the Task Center:
+
+- A finished record shows its saved status and results.
+- An unfinished one reads as interrupted, with a note that it was created before the Task Center.
+- Launch, resume, retry and cancel are refused with `CREATED_BEFORE_TASK_CENTER` (409). Clone the batch or experiment, or preview the extraction or feature job again, to run it as Task Center tasks.
+
+Work submitted from an archive pinned before the Task Center is refused the same way (see [architecture](architecture.md#pinned-compute-archives)). Only the runner itself still runs in tmux.
 
 ## Known limitations
 

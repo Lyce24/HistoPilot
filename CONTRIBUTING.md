@@ -29,7 +29,7 @@ Tests marked `slow` train real models or drive the real Task Center runner. Run 
 
 - each test gets its own Task Center state directory (`HISTOPILOT_STATE_DIR`);
 - the runner never starts on its own (`HISTOPILOT_TASK_CENTER_AUTOSTART=0`);
-- lease and claim registries live in a private temporary directory for the session.
+- the lease registry and output locks live in a private temporary directory for the session.
 
 ### Testing services that submit work
 
@@ -63,7 +63,7 @@ The fixture stops any runner and kills any process group it started when the tes
 - adapter names stored in task rows (`mil-fold`, `compute-job`, `packing` and so on);
 - worker modules started with `python -m`, such as `histopilot.workers.managed_fold`;
 - worker files started by path, such as the TRIDENT runner;
-- the archive protocol marker in `workers/compute_job.py` and `application/experiment_predictors.py`;
+- the archive protocol marker in `workers/compute_job.py` and `application/experiment_predictors.py` (a launch refuses archives without it, as pinned before the Task Center);
 - the files that make up the training code fingerprint.
 
 A queued task stores its adapter name and command line, and a submitted experiment runs its follow-up work from an archived copy of the code. Renaming or moving one of these files strands work that already exists on users' machines. If you must move one, add a compatibility shim or a migration, then update the test.
