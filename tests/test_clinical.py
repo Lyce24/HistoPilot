@@ -84,6 +84,16 @@ def test_known_clinical_statistics_use_frozen_positive_class_and_not_class_index
     json.dumps(value, allow_nan=False)
 
 
+def test_slide_level_evaluations_report_without_a_patient_aggregation_rule():
+    slide_target = {**TARGET, "unit": "slide"}
+    value = report(
+        target=slide_target, inference={"decisionThreshold": 0.5, "patientAggregation": None}
+    )
+    assert value["unit"] == "slide"
+    with pytest.raises(StorageError, match="patient aggregation"):
+        report(inference={"decisionThreshold": 0.5, "patientAggregation": None})
+
+
 def test_analysis_threshold_is_descriptive_and_does_not_mutate_frozen_inference():
     source = predictions()
     original = copy.deepcopy(source)

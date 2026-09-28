@@ -363,7 +363,8 @@ def clinical_report(predictions, target, inference, selection):
         if unit == "patient"
         else slides
     )
-    if inference.get("patientAggregation") not in {"mean", "mean_logits"}:
+    # Slide-level evaluations never aggregate, and their inference records no rule.
+    if unit == "patient" and inference.get("patientAggregation") not in {"mean", "mean_logits"}:
         raise _invalid("Clinical reports require the frozen patient aggregation rule.")
     labeled = [row for row in rows if row["labelIndex"] is not None]
     if not labeled:
