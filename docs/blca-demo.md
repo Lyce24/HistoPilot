@@ -18,7 +18,7 @@ The example has no verified patient identifiers, so it uses **slide fallback gro
 
 ## Visual tour
 
-These captures come from an earlier version of the interface, before Experimental Setup became its own module; the data and results are the same. The current module order is described [below](#walk-through-the-pipeline). Click an image to enlarge it.
+These captures come from the current interface. The module order is described [below](#walk-through-the-pipeline). Click an image to enlarge it.
 
 | Project overview | Dataset review |
 | :---: | :---: |
