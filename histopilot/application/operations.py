@@ -181,7 +181,7 @@ def operations_inventory(store, filesystem):
             jobs.append(row)
     jobs.sort(key=lambda item: (item["job"]["status"] not in ACTIVE, item["name"]))
     from histopilot.taskcenter.leases import read_leases
-    from histopilot.workers.train_batch import _capacity
+    from histopilot.workers.training_process import host_snapshot
 
     # Read-only: a polled inventory never prunes other workers' leases.
     reservations = [
@@ -192,12 +192,16 @@ def operations_inventory(store, filesystem):
         for value in read_leases()
         if not value.get("invalid") and value.get("live")
     ]
-    cpus, ram = _capacity()
+    # The host counters the Task Center admits against (taskcenter.capacity.host).
+    host = host_snapshot()
     return {
         "projectId": store.project_id,
         "jobs": jobs,
         "reservations": reservations,
-        "capacity": {"cpus": cpus, "availableRamGb": round(ram, 2)},
+        "capacity": {
+            "cpus": host["cpuCount"],
+            "availableRamGb": round(host["availableRamGb"], 2),
+        },
         "note": "Reservations coordinate this user's HistoPilot workers across projects. Running jobs keep their original ownership and cancellation controls.",
     }
 
