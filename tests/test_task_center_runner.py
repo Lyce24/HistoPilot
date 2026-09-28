@@ -1526,6 +1526,50 @@ def test_admission_holds_the_registry_lock_against_legacy_schedulers(center, reg
                 child.wait(timeout=5)
 
 
+def test_the_runner_prunes_leases_of_dead_workers_every_few_minutes(center, registry):
+    registry.mkdir(mode=0o700)
+    me = procs.identity(os.getpid())
+
+    def lease(name, identity, **extra):
+        values = {"process": identity, "gpu": 0, "cpus": 4, "ramGb": 8.0, "runsPerGpu": 1}
+        (registry / name).write_text(json.dumps({**values, **extra}))
+
+    dead = {"pid": 999_999, "startTicks": 1, "bootId": "an-earlier-boot"}
+    lease("lease-999999.json", dead, batchId="crashed")
+    lease(f"lease-{me['pid']}.json", me, processGroupId=me["pid"], batchId="alive")
+    lease("lease-123456-preparation-0.json", {**dead, "pid": 123_456}, supervisor=me)
+    clock = [1000.0]
+    runner = center.runner(clock=lambda: clock[0])
+    runner.tick()
+    names = {path.name for path in registry.glob("lease-*.json")}
+    assert names == {f"lease-{me['pid']}.json", "lease-123456-preparation-0.json"}
+    assert any(
+        "pruned 1 lease(s) of dead workers: lease-999999.json" in line for line in center.logs
+    )
+    # Another crash is pruned only once the interval has passed.
+    lease("lease-999998.json", {**dead, "pid": 999_998})
+    clock[0] += runner_module.LEASE_PRUNE_SECONDS / 2
+    runner.tick()
+    assert (registry / "lease-999998.json").exists()
+    clock[0] += runner_module.LEASE_PRUNE_SECONDS
+    with leases.registry_lock():
+        runner.tick()  # a busy registry waits for the next interval, quietly
+    assert (registry / "lease-999998.json").exists()
+    assert not any("lease pruning" in line for line in center.logs)
+    clock[0] += runner_module.LEASE_PRUNE_SECONDS
+    runner.tick()
+    assert not (registry / "lease-999998.json").exists()
+    assert (registry / f"lease-{me['pid']}.json").exists()
+
+    def unsafe(**_options):
+        raise StorageError("Training resource registry is unsafe.", "TRAINING_REGISTRY_UNSAFE")
+
+    runner.lease_pruner = unsafe
+    clock[0] += runner_module.LEASE_PRUNE_SECONDS
+    runner.tick()  # logged; the tick goes on
+    assert any("lease pruning failed" in line for line in center.logs)
+
+
 def test_a_busy_registry_or_an_unwritable_lease_starts_nothing(center, registry):
     center.enqueue("A", center.spec("fold", group="g"))
     children = []

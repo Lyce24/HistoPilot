@@ -1,8 +1,9 @@
-"""Interop with the legacy per-user resource lease registry.
+"""The per-user resource lease registry shared with other checkouts and TRIDENT.
 
-Legacy batch schedulers, compute workers and preparation workers publish leases in
-``$TMPDIR/histopilot-training-<uid>``. The runner reads them without side effects and
-publishes one lease per task it starts, so legacy schedulers see its load too.
+Workers outside this runner (the tmux schedulers of older checkouts, TRIDENT runs)
+publish leases in ``$TMPDIR/histopilot-training-<uid>``. The runner reads them without
+side effects, publishes one lease per task it starts so those workers see its load too,
+and every few minutes prunes leases whose owner is confirmed dead.
 """
 
 import json
@@ -117,9 +118,38 @@ def read_leases() -> list[dict]:
     return leases
 
 
+def prune_dead_leases(*, timeout: float = 5) -> list[str]:
+    """Remove the lease files whose owner is confirmed dead; return their names.
+
+    The owner is the lease's process (with its process group) and its supervisor, if it
+    names one. A lease is kept while any of them lives, when their liveness cannot be
+    verified, and when the file cannot be read. Holds the registry lock, which raises
+    ``StorageError`` (``PROJECT_BUSY``) when it stays taken for ``timeout``.
+    """
+    folder = registry()
+    if not folder.is_dir():
+        return []
+    _check_registry(folder)
+    removed = []
+    with writer_lock(folder, timeout=timeout):
+        for path in sorted(folder.glob("lease-*.json")):
+            if not LEASE_NAME.match(path.name):
+                continue
+            try:
+                value = _read(path)
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue  # an unreadable lease is never removed
+            if not _live(value):
+                path.unlink(missing_ok=True)
+                removed.append(path.name)
+    return removed
+
+
 @contextmanager
 def registry_lock(timeout: float = 5):
-    """Hold the registry writer lock that legacy schedulers take around read, spawn, write.
+    """Hold the registry writer lock other writers take around read, spawn, write.
 
     Raises ``StorageError`` (``PROJECT_BUSY``) when the lock stays taken for ``timeout``.
     """
@@ -139,7 +169,7 @@ def write_task_lease(
     supervisor: dict,
     locked: bool = False,
 ) -> str:
-    """Publish a legacy-compatible lease for a runner task and return its file name.
+    """Publish the lease of a runner task, in the registry's shared format; return its name.
 
     ``locked`` means the caller already holds ``registry_lock()``.
     """

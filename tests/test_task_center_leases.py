@@ -164,3 +164,41 @@ def test_task_lease_is_readable_by_legacy_schedulers_and_removed(registry):
     leases.remove_task_lease(name)
     with train_batch._leases() as (_, active):
         assert active == []
+
+
+def test_pruning_removes_only_leases_whose_owner_is_confirmed_dead(registry):
+    registry.mkdir(mode=0o700)
+    me = process_identity()
+    base = {"gpu": 0, "cpus": 1, "ramGb": 1, "runsPerGpu": 1}
+    files = {
+        # A worker that died without releasing its lease.
+        "lease-999999.json": {**base, "process": dead_identity(), "processGroupId": 999_999},
+        # A dead worker whose supervisor still runs: the supervisor owns the reservation.
+        "lease-123456-preparation-0.json": {
+            **base,
+            "process": dead_identity(123_456),
+            "supervisor": me,
+        },
+        # This process: alive.
+        f"lease-{me['pid']}.json": {**base, "process": me, "processGroupId": me["pid"]},
+        # A supervisor that cannot be verified keeps the lease.
+        "lease-123457.json": {**base, "process": dead_identity(123_457), "supervisor": "?"},
+    }
+    for name, value in files.items():
+        (registry / name).write_text(json.dumps(value))
+    (registry / "lease-1.json").write_text("{not json")
+    (registry / "lease-abc.json").write_text("{}")
+    assert leases.prune_dead_leases() == ["lease-999999.json"]
+    assert sorted(path.name for path in registry.glob("lease-*.json")) == sorted(
+        [*files, "lease-1.json", "lease-abc.json"][1:]
+    )
+    assert leases.prune_dead_leases() == []
+    with leases.registry_lock():
+        with pytest.raises(StorageError) as error:
+            leases.prune_dead_leases(timeout=0.05)
+    assert error.value.code == "PROJECT_BUSY"
+
+
+def test_pruning_without_a_registry_does_nothing(registry):
+    assert leases.prune_dead_leases() == []
+    assert not registry.exists()

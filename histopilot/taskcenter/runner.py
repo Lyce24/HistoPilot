@@ -20,6 +20,7 @@ from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from pathlib import Path
 
+from histopilot.storage.project_lock import StorageError
 from histopilot.taskcenter import adapters as adapter_registry
 from histopilot.taskcenter import capacity, leases, paths, procs
 from histopilot.taskcenter.adapters.base import BUSY_EXIT, AdapterError, RunnerContext, outcome
@@ -101,6 +102,9 @@ EXIT_RECORD_WAIT_SECONDS = 30.0
 EXIT_RECORD_GRACE_SECONDS = 2.0
 # Wrapper journals (start and exit records) older than this are swept at startup.
 JOURNAL_KEEP_SECONDS = 7 * 86400.0
+# How often leases whose owner is confirmed dead are pruned from the shared registry.
+LEASE_PRUNE_SECONDS = 300.0
+LEASE_PRUNE_LOCK_SECONDS = 0.2
 REGISTRY_WAIT = "Waiting for the resource lease registry"
 EARLIER_PROCESS_WAIT = "Waiting for an earlier process of this task to exit"
 NEEDS_MORE_VRAM = "This task needs more GPU memory than this machine has"
@@ -308,6 +312,7 @@ class Runner:
         lease_writer=leases.write_task_lease,
         lease_remover=leases.remove_task_lease,
         lease_lock=leases.registry_lock,
+        lease_pruner=leases.prune_dead_leases,
         adapters=adapter_registry.adapter,
         cuda_probe=procs.cuda_probe,
         sample_interval=10.0,
@@ -323,6 +328,7 @@ class Runner:
         self.lease_writer = lease_writer
         self.lease_remover = lease_remover
         self.lease_lock = lease_lock
+        self.lease_pruner = lease_pruner
         self.adapters = adapters
         self.cuda_probe = cuda_probe
         self.sample_interval = sample_interval
@@ -346,6 +352,7 @@ class Runner:
         self._host_at: float | None = None
         self._heartbeat_at: float | None = None
         self._checkpoint_at: float | None = None
+        self._pruned_at: float | None = None
         self._sample_at: float | None = None
         self._lock_descriptor: int | None = None
         self._stop = None
@@ -596,6 +603,7 @@ class Runner:
         self._retry_bookkeeping(ctx, result)
         self._stops(ctx, result)
         self._reconcile(ctx, result)
+        self._guard("lease pruning", None, self._prune_leases, clock)
         registry = self._lease_housekeeping(ctx, result)
         self.store.promote_ready()
         if not ctx.settings["paused"]:
@@ -1415,6 +1423,25 @@ class Runner:
             self._abort(task, f"The task adapter failed: {error}")
 
     # -- leases --------------------------------------------------------------------------------
+
+    def _prune_leases(self, clock: float) -> None:
+        """Every few minutes, remove leases whose owner process is confirmed dead.
+
+        Older checkouts' tmux schedulers pruned them as they admitted work; without them
+        a crashed worker's lease would count as foreign load forever. A busy registry is
+        tried again at the next interval.
+        """
+        if self._pruned_at is not None and clock - self._pruned_at < LEASE_PRUNE_SECONDS:
+            return
+        self._pruned_at = clock
+        try:
+            removed = self.lease_pruner(timeout=LEASE_PRUNE_LOCK_SECONDS)
+        except StorageError as error:
+            if error.code == "PROJECT_BUSY":
+                return
+            raise
+        if removed:
+            self.log(f"pruned {len(removed)} lease(s) of dead workers: {', '.join(removed)}")
 
     def _lease_housekeeping(self, ctx: RunnerContext, result: dict) -> dict:
         """Read the lease registry once per tick.
