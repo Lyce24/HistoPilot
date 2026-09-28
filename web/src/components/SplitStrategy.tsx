@@ -1,9 +1,5 @@
-import { useId, type ReactNode } from 'react';
-import {
-  changeHeldOutSource,
-  changeSplitStrategy,
-  validationFractionDefault,
-} from '../lib/split';
+import { useId } from 'react';
+import { changeSplitStrategy, DEFAULT_VALIDATION_FRACTION } from '../lib/split';
 import { useQuery } from '@tanstack/react-query';
 import { scientific, type ProtocolSpec } from '../api/scientific';
 import {
@@ -32,6 +28,7 @@ const strategyDescriptions: Partial<Record<Split['mode'], string>> = {
 };
 const percent = (value: number) => `${Number((value * 100).toFixed(1))}%`;
 
+/** Edits a development-only (version 4) split. HistoricalProtocols shows older designs. */
 export function SplitStrategy({
   split,
   onChange,
@@ -39,9 +36,6 @@ export function SplitStrategy({
   onSeedsChange,
   seedsValid,
   fieldContext,
-  rules,
-  imported,
-  pools,
   supportedModes,
   splitUnit = 'patient',
 }: {
@@ -51,50 +45,30 @@ export function SplitStrategy({
   onSeedsChange: (text: string) => void;
   seedsValid: boolean;
   fieldContext: ProtocolFieldContext;
-  rules: ReactNode;
-  imported: ReactNode;
-  pools?: ReactNode;
   supportedModes?: readonly Split['mode'][];
   splitUnit?: 'slide' | 'patient' | 'unknown';
 }) {
   const strategyGroup = useId();
-  const explicitPools = (split.version ?? 1) >= 3;
-  const development = split.version === 4;
-  const validation = split.validationFraction ?? validationFractionDefault(split.version);
+  const validation = split.validationFraction ?? DEFAULT_VALIDATION_FRACTION;
   const test =
     split.mode === 'kfold'
       ? 1 / split.folds
       : split.mode === 'nested_kfold'
         ? 1 / (split.outerFolds ?? 5)
         : (split.testFraction ?? 0.2);
-  const randomHeldOut =
-    (!explicitPools || development) &&
-    split.mode === 'held_out' &&
-    (split.heldOutSource ?? 'fractions') === 'fractions';
   const showPercentages =
     split.mode === 'kfold' ||
     split.mode === 'monte_carlo' ||
     split.mode === 'nested_kfold' ||
-    randomHeldOut;
-  const valFromRules =
-    split.mode === 'held_out' && split.heldOutSource === 'rules' && split.rules.val.length > 0;
-  const predefined =
-    !explicitPools && split.mode === 'held_out' && split.heldOutSource === 'imported';
+    split.mode === 'held_out';
   return (
     <div className="stack split-strategy-workbench">
-      {explicitPools ? pools : null}
       <div className="split-strategy-heading">
         <div>
-          <span className="split-section-caption">
-            {development ? 'B · DEVELOPMENT STRATEGY' : explicitPools ? 'B · EVALUATION STRATEGY' : 'EVALUATION STRATEGY'}
-          </span>
-          <h3>{development ? 'Choose how to compare models' : 'Choose how to evaluate'}</h3>
+          <span className="split-section-caption">B · DEVELOPMENT STRATEGY</span>
+          <h3>Choose how to compare models</h3>
           <p className="muted">
-            {development
-              ? 'Create reproducible development assessments within the selected training data.'
-              : explicitPools
-              ? 'Cross-validation runs within your training pool. The final test set stays reserved.'
-              : 'Choose how training, early-stop validation and reported test sets are assigned.'}
+            Create reproducible development assessments within the selected training data.
           </p>
         </div>
       </div>
@@ -116,7 +90,7 @@ export function SplitStrategy({
               }
             />
             <span
-              className={`split-strategy-motif motif-${value}${explicitPools && value !== 'held_out' ? ' motif-cv-assessment' : ''}`}
+              className={`split-strategy-motif motif-${value}${value !== 'held_out' ? ' motif-cv-assessment' : ''}`}
               aria-hidden="true"
             >
               {[0, 1, 2, 3, 4].map((part) => (
@@ -143,16 +117,10 @@ export function SplitStrategy({
             <span>Compares model settings inside the outer training data.</span>
           </div>
         ) : null}
-        {(development || (explicitPools && split.mode !== 'held_out')) ? (
-          <div className="split-role-assessment">
-            <strong>Development assessment</strong>
-            <span>Held out within the training pool for each CV plan.</span>
-          </div>
-        ) : null}
-        {!development ? <div className="split-role-test">
-          <strong>{explicitPools ? 'Final test' : 'Reported test'}</strong>
-          <span>Evaluates the selected model on unseen data.</span>
-        </div> : null}
+        <div className="split-role-assessment">
+          <strong>Development assessment</strong>
+          <span>Held out within the training pool for each CV plan.</span>
+        </div>
       </div>
       <p className="split-group-note">
         {splitUnit === 'slide' ? split.groupByPatient ? <><span>Slide labels, case-grouped folds</span> Each slide keeps its own label and is scored on its own; all slides of a case share one fold and one side of early-stop validation.</> : <><span>Slide splitting</span> Each slide is assigned independently to folds and early-stop validation.</> : splitUnit === 'patient' ? <><span>Patient grouping</span> Known patients stay together. Each confirmed Slide ID fallback forms one group.</> : <><span>Split unit</span> Choose saved targets and splits to establish the unit used for folds and early-stop validation.</>} Choose training seeds and stopping metrics in the hyperparameters step.
@@ -202,46 +170,13 @@ export function SplitStrategy({
             />
           </>
         ) : null}
-        {!explicitPools && split.mode === 'held_out' ? (
-          <label className="label">
-            Choose the held-out sets
-            <select
-              className="field"
-              value={split.heldOutSource ?? 'fractions'}
-              onChange={(event) =>
-                onChange(
-                  changeHeldOutSource(split, event.target.value as Split['heldOutSource']),
-                )
-              }
-            >
-              <option value="fractions">Generate from percentages</option>
-              <option value="rules">Select with rules</option>
-              <option value="imported">Use a predefined split column</option>
-            </select>
-          </label>
-        ) : null}
-        {split.mode === 'monte_carlo' || randomHeldOut ? (
+        {split.mode === 'monte_carlo' || split.mode === 'held_out' ? (
           <NumberSetting
-            label={
-              development
-                ? 'Development assessment (% of the selected training set)'
-                : explicitPools
-                ? 'CV assessment (% of the selected training set)'
-                : 'Test (% of the eligible cohort)'
-            }
+            label="Development assessment (% of the selected training set)"
             value={(split.testFraction ?? 0.2) * 100}
             min={1}
             max={90}
             onChange={(value) => onChange({ testFraction: value / 100 })}
-          />
-        ) : null}
-        {!explicitPools && !valFromRules && !predefined ? (
-          <NumberSetting
-            label="Early-stop validation (% of the remaining training pool)"
-            value={validation * 100}
-            min={1}
-            max={90}
-            onChange={(value) => onChange({ validationFraction: value / 100 })}
           />
         ) : null}
       </div>
@@ -261,7 +196,7 @@ export function SplitStrategy({
           <small>{splitUnit === 'slide' && !split.groupByPatient ? 'Keep slide class proportions similar where set sizes allow.' : splitUnit === 'patient' || split.groupByPatient ? 'Keep class proportions similar where groups and set sizes allow.' : 'Keep class proportions similar where set sizes allow.'}</small>
         </span>
       </label>
-      {development && splitUnit === 'slide' ? <label className="science-check">
+      {splitUnit === 'slide' ? <label className="science-check">
         <input
           type="checkbox"
           checked={Boolean(split.groupByPatient)}
@@ -272,14 +207,11 @@ export function SplitStrategy({
           <small>Uses each slide's case identifier from the dataset (for example Unik#). No case is both trained on and assessed, which matches applying the model to new cases. Labels, targets and scoring stay per slide; a case whose parts have different grades keeps each slide's grade. Every training slide needs a case identifier.</small>
         </span>
       </label> : null}
-      {showPercentages && !(explicitPools && split.pools?.validationSource === 'fixed') ? (
+      {showPercentages && split.pools?.validationSource !== 'fixed' ? (
         <AllocationPreview
           train={(1 - test) * (1 - validation)}
           val={(1 - test) * validation}
           test={test}
-          nested={split.mode === 'nested_kfold'}
-          trainingOnly={explicitPools}
-          development={development}
           splitUnit={splitUnit}
         />
       ) : null}
@@ -290,68 +222,34 @@ export function SplitStrategy({
               ? 'Every training case rotates through one assessment fold per split seed, taking all its slides with it. Early-stop validation is drawn from the remaining fitting cases.'
               : 'Every training slide rotates through one assessment fold per split seed. Early-stop validation is drawn from the remaining fitting slides.'
             : splitUnit === 'unknown' ? 'Each split seed creates assessment folds and early-stop validation from the selected training records.'
-            : development
-            ? 'Every development group rotates through one assessment fold per split seed. Early-stop validation is drawn from the fitting groups or uses your fixed validation source.'
-            : explicitPools
-            ? 'Rotate assessment folds within your training set. Your selected test set stays reserved for final evaluation.'
-            : 'Each fold takes a turn as the reported test set. Early-stop validation comes from the other folds. Each group is assigned to the reported test set once per seed.'}
+            : 'Every development group rotates through one assessment fold per split seed. Early-stop validation is drawn from the fitting groups or uses your fixed validation source.'}
         </p>
       ) : null}
       {split.mode === 'monte_carlo' ? (
         <p className="callout">
-          {development
-            ? 'Each repeat samples a new development assessment subset. Some groups may be assessed more than once or never; preview shows coverage.'
-            : explicitPools
-            ? 'Each repeat samples fitting and assessment groups from your training set. Your selected test set stays reserved for final evaluation.'
-            : 'Each repeat draws a new train, validation and test split. A group may appear in test more than once, or never. Preview shows test coverage.'}
+          Each repeat samples a new development assessment subset. Some groups may be assessed
+          more than once or never; preview shows coverage.
         </p>
       ) : null}
       {split.mode === 'nested_kfold' ? (
         <div className="callout">
           <p>
-            {explicitPools
-              ? 'Within your selected training set, hold out an outer assessment fold.'
-              : 'Hold out an outer test fold.'}{' '}
-            Inside the remaining data, rotate inner tuning folds.
+            Within your selected training set, hold out an outer assessment fold. Inside the
+            remaining data, rotate inner tuning folds.
           </p>
           <p>
-            {development
-              ? 'Compare configurations using inner folds and assess the selection procedure using outer folds. Outer assessment groups never enter inner training or tuning.'
-              : explicitPools
-              ? 'Use inner folds to compare settings and outer folds to assess them. Your selected test set stays reserved for final evaluation.'
-              : 'After choosing settings, refit on the outer training pool with its own early-stop validation, then evaluate on the untouched outer test fold.'}
+            Compare configurations using inner folds and assess the selection procedure using
+            outer folds. Outer assessment groups never enter inner training or tuning.
           </p>
         </div>
       ) : null}
       {split.mode === 'leave_one_domain_out' ? (
         <>
-          {explicitPools ? (
-            <p className="callout">
-              {development
-                ? 'Rotate sites or cohorts within development data. Early-stop validation uses fitting sites only.'
-                : 'Rotate sites or cohorts within your selected training set. Early-stop validation uses source sites only. Your selected test set stays reserved for final evaluation.'}
-            </p>
-          ) : null}
-          <DomainSettings split={split} onChange={onChange} fieldContext={fieldContext} />
-        </>
-      ) : null}
-      {!explicitPools && split.mode === 'held_out' && split.heldOutSource === 'rules'
-        ? rules
-        : null}
-      {predefined ? (
-        <>
-          <p className="muted">
-            Map source values to training, validation and test. If no rows are assigned to
-            validation, early-stop validation is sampled from the training pool.
+          <p className="callout">
+            Rotate sites or cohorts within development data. Early-stop validation uses fitting
+            sites only.
           </p>
-          <NumberSetting
-            label="Early-stop validation if absent (% of the training pool)"
-            value={validation * 100}
-            min={1}
-            max={90}
-            onChange={(value) => onChange({ validationFraction: value / 100 })}
-          />
-          {imported}
+          <DomainSettings split={split} onChange={onChange} fieldContext={fieldContext} />
         </>
       ) : null}
       <p className="muted">
@@ -391,39 +289,22 @@ function AllocationPreview({
   train,
   val,
   test,
-  nested,
-  trainingOnly = false,
-  development = false,
   splitUnit = 'patient',
 }: {
   train: number;
   val: number;
   test: number;
-  nested: boolean;
-  trainingOnly?: boolean;
-  development?: boolean;
   splitUnit?: 'slide' | 'patient' | 'unknown';
 }) {
   if (![train, val, test].every((value) => Number.isFinite(value) && value >= 0 && value <= 1))
     return null;
   return (
     <figure className="split-allocation">
-      <figcaption>
-        {development
-          ? 'Approximate share of development data per assessment plan'
-          : trainingOnly
-          ? 'Approximate share of the selected training set per CV plan'
-          : nested
-            ? 'Outer refit and evaluation · approximate share of the cohort'
-            : 'Approximate share of the cohort per evaluation'}
-      </figcaption>
+      <figcaption>Approximate share of development data per assessment plan</figcaption>
       <div className="split-allocation-bar" aria-hidden="true">
         <span className="split-train" style={{ width: percent(train) }} />
         <span className="split-val" style={{ width: percent(val) }} />
-        <span
-          className={trainingOnly ? 'split-assessment' : 'split-test'}
-          style={{ width: percent(test) }}
-        />
+        <span className="split-assessment" style={{ width: percent(test) }} />
       </div>
       <div className="split-allocation-legend">
         <span>
@@ -435,16 +316,12 @@ function AllocationPreview({
           Early-stop validation <strong>{percent(val)}</strong>
         </span>
         <span>
-          <i className={trainingOnly ? 'split-assessment' : 'split-test'} />
-          {development ? 'Development assessment' : trainingOnly ? 'CV assessment' : 'Reported test'} <strong>{percent(test)}</strong>
+          <i className="split-assessment" />
+          Development assessment <strong>{percent(test)}</strong>
         </span>
       </div>
       <small className="muted">
-        {development
-          ? `Assessment ${splitUnit === 'slide' ? 'slides' : splitUnit === 'patient' ? 'groups' : 'records'} stay separate from fitting and early stopping. Percentages are applied within the selected development cohort.`
-          : trainingOnly
-          ? 'The final test set is separate. Within each CV plan, take early-stop validation from the remaining training fold.'
-          : 'Remove the test set first, then take the selected validation percentage from the remaining training pool.'}
+        {`Assessment ${splitUnit === 'slide' ? 'slides' : splitUnit === 'patient' ? 'groups' : 'records'} stay separate from fitting and early stopping. Percentages are applied within the selected development cohort.`}
       </small>
     </figure>
   );
@@ -566,13 +443,8 @@ function DomainSettings({
         </div>
       ) : null}
       <p className="callout">
-        {split.version === 4
-          ? 'The held-out site or cohort supplies development assessment.'
-          : split.version === 3
-          ? 'The held-out site or cohort supplies CV assessment within the selected training set. The final test set stays reserved.'
-          : 'The held-out site or cohort supplies the reported test set.'}{' '}
-        Training and early-stop validation use source sites only. Groups must have one
-        consistent site or cohort value.
+        The held-out site or cohort supplies development assessment. Training and early-stop
+        validation use source sites only. Groups must have one consistent site or cohort value.
       </p>
     </div>
   );

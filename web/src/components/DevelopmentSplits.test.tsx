@@ -14,7 +14,6 @@ describe('development-only split interface', () => {
           <SplitStrategy
             split={split} onChange={() => {}} seedsText="42" onSeedsChange={() => {}} seedsValid
             fieldContext={{ project: 'project', datasetId: 'dataset', dictionary: [] }}
-            rules={null} imported={null}
           />
         </QueryClientProvider>,
       );
@@ -32,7 +31,7 @@ describe('development-only split interface', () => {
       const html = renderToStaticMarkup(
         <QueryClientProvider client={client}>
           <SplitStrategy split={split} onChange={() => {}} seedsText="42" onSeedsChange={() => {}} seedsValid splitUnit={splitUnit}
-            fieldContext={{ project: 'project', datasetId: 'dataset', dictionary: [] }} rules={null} imported={null} />
+            fieldContext={{ project: 'project', datasetId: 'dataset', dictionary: [] }} />
         </QueryClientProvider>,
       );
       client.clear();

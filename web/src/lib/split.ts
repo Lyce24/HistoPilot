@@ -3,15 +3,16 @@ import type { ProtocolSpec } from '../api/scientific';
 type Split = ProtocolSpec['split'];
 
 export const DEFAULT_VALIDATION_FRACTION = 0.15;
-export const validationFractionDefault = (version: Split['version']) =>
-  (version ?? 1) >= 3 ? DEFAULT_VALIDATION_FRACTION : 0.2;
 
-export const validFraction = (value: number) =>
+const validFraction = (value: number) =>
   Number.isFinite(value) && value > 0 && value < 1;
 const validInteger = (value: number, min: number, max: number) =>
   Number.isInteger(value) && value >= min && value <= max;
 
-/** Unused invalid controls must not block a strategy after their inputs disappear. */
+/**
+ * Unused invalid controls must not block a development (version 4) strategy after their
+ * inputs disappear.
+ */
 export function changeSplitStrategy(split: Split, mode: Split['mode']): Partial<Split> {
   const next: Partial<Split> = {
     mode,
@@ -35,8 +36,7 @@ export function changeSplitStrategy(split: Split, mode: Split['mode']): Partial<
     !validInteger(split.repeats, 1, 100)
   )
     next.repeats = 5;
-  const showsTestFraction =
-    mode === 'monte_carlo' || (mode === 'held_out' && split.version !== 3);
+  const showsTestFraction = mode === 'monte_carlo' || mode === 'held_out';
   if (
     !showsTestFraction &&
     split.testFraction !== undefined &&
@@ -44,31 +44,10 @@ export function changeSplitStrategy(split: Split, mode: Split['mode']): Partial<
   )
     next.testFraction = 0.2;
   if (
-    (split.version ?? 1) >= 3 &&
     split.pools?.validationSource === 'fixed' &&
     split.validationFraction !== undefined &&
     !validFraction(split.validationFraction)
   )
     next.validationFraction = DEFAULT_VALIDATION_FRACTION;
   return next;
-}
-
-/** Predefined or rule-based held-out sets hide the random test percentage. */
-export function changeHeldOutSource(
-  split: Split,
-  source: Split['heldOutSource'],
-): Partial<Split> {
-  return {
-    heldOutSource: source,
-    rules: { train: [], val: [], test: [] },
-    imported:
-      source === 'imported'
-        ? { partitionLabels: {}, foldLabels: {}, testFoldLabels: [] }
-        : undefined,
-    ...(source !== 'fractions' &&
-    split.testFraction !== undefined &&
-    !validFraction(split.testFraction)
-      ? { testFraction: 0.2 }
-      : {}),
-  };
 }

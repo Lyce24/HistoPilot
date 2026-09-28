@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ProtocolSpec } from '../api/scientific';
-import {
-  changeHeldOutSource,
-  changeSplitStrategy,
-} from './split';
+import { changeSplitStrategy } from './split';
 
 const spec = (): ProtocolSpec['split'] => ({
-  version: 3,
+  version: 4,
   mode: 'monte_carlo',
   seeds: [42],
   folds: 5,
@@ -46,7 +43,8 @@ describe('changing strategies after editing numeric settings', () => {
       folds: 5,
       outerFolds: 5,
       innerFolds: 3,
-      testFraction: 0.2,
+      // A development holdout shows its assessment percentage, so the user corrects it.
+      testFraction: Infinity,
     });
   });
 
@@ -67,21 +65,8 @@ describe('changing strategies after editing numeric settings', () => {
       repeats: 0,
       validationFraction: 0,
     });
-    expect({
-      ...before,
-      ...changeSplitStrategy({ ...before, version: 2 }, 'held_out'),
-    }).toMatchObject({ testFraction: 0 });
+    expect({ ...before, ...changeSplitStrategy(before, 'held_out') }).toMatchObject({
+      testFraction: 0,
+    });
   });
-});
-
-it('repairs a hidden random test fraction when an older held-out design switches to predefined sets', () => {
-  const before = { ...spec(), version: 2 as const, mode: 'held_out' as const, testFraction: 0 };
-  expect(changeHeldOutSource(before, 'imported')).toMatchObject({
-    testFraction: 0.2,
-    heldOutSource: 'imported',
-    imported: { partitionLabels: {} },
-  });
-  expect(changeHeldOutSource({ ...before, testFraction: 0.3 }, 'rules')).not.toHaveProperty(
-    'testFraction',
-  );
 });

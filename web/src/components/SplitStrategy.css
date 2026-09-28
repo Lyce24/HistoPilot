@@ -140,9 +140,6 @@
 .split-strategy-workbench .split-role-guide .split-role-validation {
   border-color: #d7b776;
 }
-.split-strategy-workbench .split-role-guide .split-role-test {
-  border-color: #38887c;
-}
 .split-strategy-workbench .split-role-guide .split-role-assessment {
   border-color: #82a4b5;
 }
@@ -253,9 +250,6 @@
 .split-strategy-workbench .split-val {
   background: #d5b477;
 }
-.split-strategy-workbench .split-test {
-  background: #4b8b83;
-}
 .split-strategy-workbench .split-assessment {
   background: #82a4b5;
 }
@@ -317,9 +311,6 @@
 }
 .split-val {
   background: #dcaa4b;
-}
-.split-test {
-  background: #21998c;
 }
 .split-allocation-legend {
   display: flex;
