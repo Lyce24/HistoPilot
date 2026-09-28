@@ -415,6 +415,9 @@ def clinical_report(predictions, target, inference, selection):
             )
         losses.append(max(0.0, loss))
     roc, pr, auc, ap = _ranking_curves(labels, ranking_scores, scores)
+    # Curves are sampled on distinct ranking scores, which can outnumber distinct
+    # probabilities when saved log probabilities separate scores that round alike.
+    distinct_scores = len(set(ranking_scores))
     calibration = _calibration(labels, scores, selection.bins)
     delta = (selection.thresholdMax - selection.thresholdMin) / (selection.thresholdSteps - 1)
     thresholds = [
@@ -486,7 +489,7 @@ def clinical_report(predictions, target, inference, selection):
         warnings.append(
             "Legacy predictions without log probabilities contain a zero-probability observed outcome. Log loss uses a documented floor of 1e-300."
         )
-    if len(set(scores)) > 2000:
+    if distinct_scores > 2000:
         warnings.append(
             "Ranking curves and their CSV exports are sampled to at most 2,001 points. ROC AUC and average precision use every distinct prediction score."
         )
@@ -498,8 +501,10 @@ def clinical_report(predictions, target, inference, selection):
         "multiclass": multiclass,
         "decisionThreshold": threshold,
         "frozenDecisionThreshold": inference["decisionThreshold"],
+        # Without an override the threshold is the frozen evaluation's; a multiclass
+        # report applies it one-versus-rest, which the warnings above explain.
         "thresholdSource": "frozen_evaluation"
-        if selection.threshold is None and not multiclass
+        if selection.threshold is None
         else "descriptive_override",
         "counts": {
             "total": len(rows),
@@ -550,10 +555,10 @@ def clinical_report(predictions, target, inference, selection):
         "rocCurve": roc,
         "precisionRecallCurve": pr,
         "curveSampling": {
-            "distinctScores": len(set(ranking_scores)),
+            "distinctScores": distinct_scores,
             "maximumPoints": 2001,
             "returnedPoints": len(roc),
-            "downsampled": len(set(ranking_scores)) > 2000,
+            "downsampled": distinct_scores > 2000,
             "summaryStatistics": "exact",
             "csv": "same_points_as_report",
         },

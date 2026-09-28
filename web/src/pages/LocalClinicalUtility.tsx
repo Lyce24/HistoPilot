@@ -154,13 +154,22 @@ function ClinicalWorkspace({ workspace, linkedEvaluation, linkedPredictor, linke
   </div>;
 }
 
+/** Where the report's threshold came from. Earlier multiclass reports marked the frozen threshold
+ * as an override even when nothing was overridden, so an unchanged value reads as frozen. */
+export function clinicalThresholdNote(r: Pick<ClinicalReport, 'thresholdSource' | 'decisionThreshold' | 'frozenDecisionThreshold' | 'multiclass' | 'positiveClass'>) {
+  if (r.thresholdSource === 'descriptive_override' && r.decisionThreshold !== r.frozenDecisionThreshold) return `Exploratory threshold; the frozen evaluation still uses ${formatStatistic(r.frozenDecisionThreshold)}.`;
+  return r.multiclass
+    ? `This is the frozen evaluation threshold, applied to ${r.positiveClass} versus the other classes; the evaluation's own decisions pick the most probable class.`
+    : 'This is the frozen evaluation threshold.';
+}
+
 export function ClinicalReportView({ report }: { report: ClinicalReport }) {
   const r = report, point = r.operatingPoint;
   const [fullDecisionRange, setFullDecisionRange] = useState(false);
   const curve = (key: keyof typeof point) => r.operatingCurve.map((item) => ({ x: item.threshold, y: item[key] }));
   return <>
     <p className="evidence-counts"><strong>{r.counts.labeled} labeled {r.unit} records</strong> · {r.counts.positive} positive · {r.counts.negative} negative · {r.counts.unlabeled} unlabeled excluded. Positive outcome: <strong>{r.positiveClass}</strong>{r.multiclass ? ' versus all other classes' : ''}.</p>
-    <p className="muted">Probability ≥ {formatStatistic(r.decisionThreshold)} predicts the positive outcome. {r.thresholdSource === 'descriptive_override' ? `Exploratory threshold; the frozen evaluation still uses ${formatStatistic(r.frozenDecisionThreshold)}.` : 'This is the frozen evaluation threshold.'} These descriptive estimates do not establish clinical validity or an optimal threshold.</p>
+    <p className="muted">Probability ≥ {formatStatistic(r.decisionThreshold)} predicts the positive outcome. {clinicalThresholdNote(r)} These descriptive estimates do not establish clinical validity or an optimal threshold.</p>
     {r.warnings.length ? <ul className="callout">{r.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
     {r.curveSampling?.downsampled ? <p className="muted">ROC and precision–recall curves show {r.curveSampling.returnedPoints} representative cutoffs from {r.curveSampling.distinctScores} distinct scores. Summary statistics use all predictions.</p> : null}
     <div className="chain-metrics">{([

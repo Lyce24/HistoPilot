@@ -251,9 +251,41 @@ def test_multiclass_requires_explicit_ovr_class_and_defines_full_brier_scaling()
     assert value["metrics"]["multiclassLogLoss"] == pytest.approx(
         -(math.log(0.7) + math.log(0.6)) / 2
     )
-    assert value["thresholdSource"] == "descriptive_override"
+    # Nothing was overridden: the threshold is the frozen evaluation's, applied one-versus-rest.
+    assert value["thresholdSource"] == "frozen_evaluation"
+    assert value["decisionThreshold"] == value["frozenDecisionThreshold"] == 0.5
+    changed = report(source, target=target, unit="slide", positiveClass="A", threshold=0.3)
+    assert changed["thresholdSource"] == "descriptive_override"
     with pytest.raises(StorageError, match="frozen positive class"):
         report(positiveClass="clear")
+
+
+def test_curve_sampling_warning_counts_the_ranking_scores_that_are_sampled():
+    # Probabilities of the positive class all round to 1.0, but the saved log
+    # probabilities keep 2,100 distinct ranking scores, so the curves are sampled.
+    records = []
+    for index in range(2100):
+        rest = math.exp(-40 - index / 100)
+        label = index % 2
+        records.append(
+            {
+                "slideId": f"s{index}",
+                "patientId": f"p{index}",
+                "labelIndex": label,
+                "label": TARGET["classes"][label],
+                "probabilities": [1.0, rest],
+                "logProbabilities": [math.log1p(-rest), math.log(rest)],
+            }
+        )
+    source = {"classOrder": TARGET["classes"], "records": records, "patientRecords": []}
+    value = report(source, unit="slide")
+    assert value["curveSampling"]["distinctScores"] == 2100
+    assert value["curveSampling"]["downsampled"]
+    assert value["curveSampling"]["returnedPoints"] == 2001
+    assert any("sampled to at most 2,001 points" in item for item in value["warnings"])
+    few = report(source | {"records": records[:100]}, unit="slide")
+    assert not few["curveSampling"]["downsampled"]
+    assert not any("sampled to at most" in item for item in few["warnings"])
 
 
 def test_extreme_finite_log_losses_and_legacy_zero_probabilities_are_explicit():

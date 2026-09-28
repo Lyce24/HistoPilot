@@ -5,7 +5,7 @@ import type { Workspace } from '../api/types';
 import type { ClinicalReport } from '../api/clinicalUtility';
 import type { FrozenPredictor, ModelEvaluation } from '../api/predictors';
 import { defaultRecipe } from '../api/development';
-import LocalClinicalUtility, { ClinicalReportView } from './LocalClinicalUtility';
+import LocalClinicalUtility, { ClinicalReportView, clinicalThresholdNote } from './LocalClinicalUtility';
 import LocalInterpretation from './LocalInterpretation';
 import CurveChart from '../components/CurveChart';
 const workspace = { mode: 'local', project: { id: 'p', name: 'Evidence project' } } as Workspace;
@@ -56,6 +56,16 @@ describe('clinical utility evidence selection', () => {
     expect(html).toContain('frozen evaluation still uses 0.400'); expect(html).toContain('Confidence intervals unavailable');
     expect(html).toContain('Unavailable'); expect(html).not.toMatch(/Infinity|NaN/);
     expect(html).toContain('values below −0.10 are clipped');
+  });
+  it('names the threshold source, including multiclass reports that override nothing', () => {
+    const base = { thresholdSource: 'frozen_evaluation' as const, decisionThreshold: .5, frozenDecisionThreshold: .5, multiclass: false, positiveClass: 'high' };
+    expect(clinicalThresholdNote(base)).toBe('This is the frozen evaluation threshold.');
+    expect(clinicalThresholdNote({ ...base, thresholdSource: 'descriptive_override', decisionThreshold: .3 })).toBe('Exploratory threshold; the frozen evaluation still uses 0.500.');
+    const multiclass = clinicalThresholdNote({ ...base, multiclass: true });
+    expect(multiclass).toContain('frozen evaluation threshold, applied to high versus the other classes');
+    expect(multiclass).not.toContain('Exploratory');
+    // Earlier multiclass reports were saved as overrides even though nothing was changed.
+    expect(clinicalThresholdNote({ ...base, multiclass: true, thresholdSource: 'descriptive_override' })).toBe(multiclass);
   });
   it('does not mount thousands of hidden curve-table rows', () => {
     const html = renderToStaticMarkup(<CurveChart title="Operating curve" description="Available test evidence" xLabel="Threshold" yLabel="Sensitivity" series={[{ label: 'Model', points: Array.from({ length: 1000 }, (_, i) => ({ x: i / 1000, y: .75 })) }]} />);
