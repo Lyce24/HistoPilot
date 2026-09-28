@@ -23,6 +23,10 @@ def is_inference_purpose(value):
     return value in INFERENCE_PURPOSES
 
 
+# Validation context for specs and selections read back from saved records.
+STORED = {"stored": True}
+
+
 class InferenceSettings(RequestModel):
     loadingPolicy: Literal["per_slide", "packed"] = "per_slide"
     packArtifactId: Annotated[str, Field(pattern=r"^pack-[a-f0-9]{64}$")] | None = None
@@ -30,10 +34,23 @@ class InferenceSettings(RequestModel):
     numWorkers: Annotated[StrictInt, Field(ge=0, le=64)] = 0
     device: Literal["auto", "cpu", "cuda"] = "auto"
     precision: Literal["float32", "float16", "bfloat16"] = "float32"
+    # "max" is retired: frozen predictors score patients by mean probabilities or mean
+    # logits. Test cohorts saved with it stay readable (their spec feeds their content
+    # hash), so only records read back with the STORED context may carry it.
     patientAggregation: Literal["mean", "mean_logits", "predictor", "max"] = "mean"
     decisionThreshold: (
         Annotated[float, Field(gt=0, lt=1, allow_inf_nan=False)] | Literal["predictor"]
     ) = 0.5
+
+    @field_validator("patientAggregation")
+    @classmethod
+    def maximum_is_retired(cls, value, info):
+        if value == "max" and not (info.context or {}).get("stored"):
+            raise ValueError(
+                "Maximum-probability patient aggregation is not supported. "
+                "Choose mean probabilities or mean logits, the rules frozen predictors use."
+            )
+        return value
 
     @model_validator(mode="after")
     def loading_contract(self):

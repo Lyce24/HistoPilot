@@ -11,7 +11,8 @@ from support.projects import TARGET, bundle, codes, dataset, draft, preview, set
 
 from histopilot.api import create_app
 from histopilot.config import Settings
-from histopilot.schemas.evaluations import EvaluationSpec, InferenceSettings
+from histopilot.schemas.evaluations import STORED, EvaluationSpec, InferenceSettings
+from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 
@@ -366,10 +367,24 @@ def test_cohort_blocks_dtype_mismatch_before_freezing(evaluation, tmp_path):
     assert "FEATURE_DTYPE_MISMATCH" in codes(result)
 
 
-def test_cohort_blocks_unsupported_patient_aggregation_before_freezing(evaluation):
+def test_maximum_patient_aggregation_is_refused_but_saved_cohorts_stay_readable(evaluation):
     service, spec, _source = evaluation
     spec["inference"] = {"patientAggregation": "max"}
-    result = preview(service, spec)
+    with pytest.raises(StorageError) as error:
+        preview(service, spec)
+    assert error.value.code == "INVALID_EVALUATION_SPEC"
+    assert "Maximum-probability patient aggregation is not supported" in str(error.value)
+    with pytest.raises(ValidationError, match="Choose mean probabilities or mean logits"):
+        EvaluationRunSelection(
+            predictorId="configuration-" + "a" * 64,
+            cohortId="configuration-" + "b" * 64,
+            name="Test",
+            inference={"patientAggregation": "max"},
+        )
+    # A cohort an earlier version saved with it keeps loading, and its review blocks it.
+    saved = EvaluationSpec.model_validate(spec, context=STORED)
+    assert saved.model_dump(mode="json")["inference"]["patientAggregation"] == "max"
+    result, _guards = service._prepare(saved)
     assert not result["canFreeze"]
     assert "PATIENT_AGGREGATION_UNSUPPORTED" in codes(result)
 

@@ -19,7 +19,7 @@ from histopilot.application.protocols import (
     name_key,
 )
 from histopilot.domain.features import representation_kind
-from histopilot.schemas.evaluations import EvaluationSpec, is_inference_purpose
+from histopilot.schemas.evaluations import STORED, EvaluationSpec, is_inference_purpose
 from histopilot.schemas.protocols import TargetSpec, iter_conditions
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.io import content_hash
@@ -828,7 +828,7 @@ class EvaluationService:
             raise StorageError("Test cohort not found.", "EVALUATION_NOT_FOUND", 404)
         try:
             preview, _guards = self._prepare(
-                EvaluationSpec.model_validate(document["manifest"]["spec"])
+                EvaluationSpec.model_validate(document["manifest"]["spec"], context=STORED)
             )
             current = preview_current(preview, document["manifest"])
             findings = preview["findings"]

@@ -18,6 +18,7 @@ from histopilot.domain.features import representation_kind
 from histopilot.schemas.analysis import PatientAnalysisSettings
 from histopilot.schemas.development import ResourcePolicy
 from histopilot.schemas.evaluations import (
+    STORED,
     EvaluationSpec,
     InferenceSettings,
     is_inference_purpose,
@@ -247,7 +248,7 @@ class EvaluationRunService:
                     409,
                 )
         inference = selection.inference or InferenceSettings.model_validate(
-            test["spec"].get("inference", {})
+            test["spec"].get("inference", {}), context=STORED
         )
         if inference.patientAggregation == "predictor" or (
             selection.inference is None and not test["spec"].get("protocolId")
@@ -274,7 +275,8 @@ class EvaluationRunService:
                 "inference": inference.model_dump(),
                 "patientIdentifiers": selection.patientIdentifiers
                 or test["spec"]["patientIdentifiers"],
-            }
+            },
+            context=STORED,
         )
         reviewed, _guards = self.cohorts._prepare_bound(spec)
         errors = [item for item in reviewed["findings"] if item["severity"] == "error"]
@@ -569,14 +571,16 @@ class EvaluationRunService:
     def _execution_plan(self, identity):
         document = self.get(identity)
         manifest = document["manifest"]
-        selection = EvaluationRunSelection.model_validate(manifest["selection"])
+        selection = EvaluationRunSelection.model_validate(manifest["selection"], context=STORED)
         if "coverage" in manifest:
             # Auto selection is resolved by the saved review. New inventories
             # must not silently replace it or make an existing plan ambiguous.
             selection = selection.model_copy(
                 update={
                     "featureBundleId": manifest["features"]["bundle"]["id"],
-                    "inference": InferenceSettings.model_validate(manifest["inference"]),
+                    "inference": InferenceSettings.model_validate(
+                        manifest["inference"], context=STORED
+                    ),
                 }
             )
         reviewed = self._prepare(selection)
