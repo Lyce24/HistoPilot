@@ -147,7 +147,8 @@ Historical protocol records from before Targets & splits (split versions 1–3) 
 | `GET model-experiments/{experiment_id}/results` | The Results summary: per fold, per seed, seed average with intervals, seed ensemble and batch comparisons. See [methods](methods.md#cross-validated-results). |
 | `POST model-experiments/{experiment_id}/predictors/resume`, `/predictors/cancel` | Resume or cancel automatic predictor work (202). |
 | `POST mil-experiments/preview`, `GET mil-experiments/runtime` | Model input compatibility and the training runtime probe. |
-| `POST mil-experiments/batches/preview`, `/batches/freeze`, `GET mil-experiments/batches` | Development batches. |
+| `GET mil-experiments/clinical-fields?protocolId=` | Dataset columns a batch may use as clinical inputs: owner, type, suggested kind, and why a field is refused (the target, the testing target, or a field that defines the split). |
+| `POST mil-experiments/batches/preview`, `/batches/freeze`, `GET mil-experiments/batches` | Development batches. A batch may declare a `comparison` (reference arm and primary metric); review blocks arms that differ in more than the model and its inputs. |
 | `GET mil-experiments/batches/{batch_id}/execution`, `/results`, `/runs/{run_id}/history`, `/resources/history` | Progress, results, one run's epoch history and recorded resource history. |
 | `GET mil-experiments/batches/{batch_id}/oof/{candidate_id}/{training_seed}/{split_seed}/{unit}.csv` | Out-of-fold predictions of one configuration and seed pair, per slide or patient. |
 | `POST mil-experiments/batches/{batch_id}/launch`, `/resume`, `/cancel` | Batch controls (202). An experiment's batches are launched by `submit`; use `resume` to continue one. |

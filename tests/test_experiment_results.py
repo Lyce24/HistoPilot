@@ -390,6 +390,15 @@ def test_declared_comparison_contrasts_every_arm_with_the_reference():
     assert weaker["pValue"] < 0.01
     for row in comparison["contrasts"]:
         assert row["pValueHolm"] >= row["pValue"]
+    # Reporting the reference is the design, not a missing validation choice.
+    assert "SELECTION_UNAVAILABLE" not in {finding["code"] for finding in batch["findings"]}
+
+
+def test_unfinished_arms_are_reported_as_unavailable_contrasts():
+    item = batch_files("partial", configurations=2, seeds=(42,), complete=False)
+    item["batch"]["manifest"]["spec"]["comparison"] = {"reference": 1}
+    (contrast,) = summarize(item)["batches"][0]["comparison"]["contrasts"]
+    assert not contrast["available"] and "Both arms" in contrast["reason"]
 
 
 def test_bootstrap_p_values_and_holm_adjustment():

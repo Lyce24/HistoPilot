@@ -316,7 +316,11 @@ def _arm_contrasts(summary, hidden, reference, comparison, policy) -> dict:
                 "inputMode": arm["inputMode"],
                 "difference": "reference_minus_arm",
                 "available": row["available"],
-                **({"reason": row["reason"]} if "reason" in row else {}),
+                **(
+                    {"reason": "Both arms need complete OOF results for every seed."}
+                    if "reason" in row
+                    else {}
+                ),
                 **{key: row[key] for key in ("oof", "oofInterval", "folds") if key in row},
                 "pValue": p_value,
             }
@@ -778,7 +782,11 @@ def _findings(
             f"{name}: half of the folds kept a checkpoint from epoch {EARLY_EPOCH_NOTE} or earlier "
             f"(median {statistics.median(epochs):g}). Validation folds may be too small to guide stopping.",
         )
-    if configuration_count > 1 and summary["selection"]["source"] != "validation":
+    # A declared comparison reports its reference arm by design, not for lack of a choice.
+    if configuration_count > 1 and summary["selection"]["source"] not in {
+        "validation",
+        "reference",
+    }:
         note(
             "warning",
             "SELECTION_UNAVAILABLE",
