@@ -102,6 +102,9 @@ ADDED_COLUMNS = (
 )
 # Automatic-retry budgets in a task's adapter data. A manual retry or resume starts over.
 RETRY_COUNTERS = ("oomRetries", "contentionRequeues", "deviceLossRequeues")
+# The runner writes a heartbeat every few seconds while the service reads constantly, so the
+# write-ahead log rarely restarts on its own; cap the file it leaves behind after a checkpoint.
+WAL_SIZE_LIMIT = 8 * 1024 * 1024
 
 JSON_COLUMNS = frozenset(
     {
@@ -257,6 +260,7 @@ class TaskStore:
                     503,
                 )
             connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute(f"PRAGMA journal_size_limit={WAL_SIZE_LIMIT}")
             return connection
         except BaseException:
             sqlite_connections.close(connection)
@@ -1276,6 +1280,12 @@ class TaskStore:
         value["codeFiles"] = _decode(value["codeFiles"])
         value["gpuFences"] = _decode(value["gpuFences"]) or {}
         return value
+
+    def checkpoint(self) -> bool:
+        """Copy the write-ahead log into the database and truncate it; False while readers block."""
+        with self._connection() as db:
+            busy, _log_frames, _copied = db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        return not busy
 
     def write_runner(self, **fields) -> None:
         values = {}

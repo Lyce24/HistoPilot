@@ -37,6 +37,8 @@ from histopilot.taskcenter.model import (
 from histopilot.taskcenter.store import MEASUREMENT_COLUMNS, TaskStore
 
 HEARTBEAT_SECONDS = 2.0
+# Truncate the store's write-ahead log this often; the heartbeat alone adds megabytes an hour.
+CHECKPOINT_SECONDS = 300.0
 DRAIN_SECONDS = 5.0
 OOM_VRAM_FACTOR = 1.5
 # An OOM on a GPU where memory this runner cannot account for is in use (another program,
@@ -343,6 +345,7 @@ class Runner:
         self._host: dict | None = None
         self._host_at: float | None = None
         self._heartbeat_at: float | None = None
+        self._checkpoint_at: float | None = None
         self._sample_at: float | None = None
         self._lock_descriptor: int | None = None
         self._stop = None
@@ -574,6 +577,13 @@ class Runner:
         self._exit_waits.pop(task["id"], None)
         return True, None
 
+    def _checkpoint(self, clock: float) -> None:
+        if self._checkpoint_at is not None and clock - self._checkpoint_at < CHECKPOINT_SECONDS:
+            return
+        self._checkpoint_at = clock
+        # A busy result leaves the log for the next attempt; nothing depends on it finishing.
+        self.store.checkpoint()
+
     # -- tick ----------------------------------------------------------------------------------
 
     def tick(self) -> dict:
@@ -592,6 +602,7 @@ class Runner:
             self._admit(ctx, result, registry)
         self._telemetry(ctx, clock)
         self._guard("code record", None, lambda: self._record_code(force=first))
+        self._guard("store checkpoint", None, self._checkpoint, clock)
         return result
 
     def _retry_bookkeeping(self, ctx: RunnerContext, result: dict, *, requeues_only=False) -> None:

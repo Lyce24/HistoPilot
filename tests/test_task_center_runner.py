@@ -1677,3 +1677,16 @@ def test_the_runner_records_every_histopilot_module_it_runs(center, monkeypatch)
     row = center.store.runner()
     assert row["codeHash"].startswith("changed-after-start-")
     assert runner_module.code_current(row) is False
+
+
+def test_the_runner_truncates_the_store_log_once_per_interval(center, monkeypatch):
+    calls = []
+    monkeypatch.setattr(center.store, "checkpoint", lambda: calls.append(1) or True)
+    clock = [0.0]
+    runner = center.runner(clock=lambda: clock[0])
+    runner.tick()
+    runner.tick()
+    assert len(calls) == 1
+    clock[0] += runner_module.CHECKPOINT_SECONDS + 1
+    runner.tick()
+    assert len(calls) == 2

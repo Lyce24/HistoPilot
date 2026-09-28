@@ -519,3 +519,18 @@ def test_the_runner_row_lists_its_code_files_and_old_stores_gain_the_column(tmp_
     store.write_runner(code_hash="new", code_files=files)
     assert store.runner()["codeFiles"] == files and store.runner()["codeHash"] == "new"
     TaskStore(path).initialize()  # idempotent on a migrated store
+
+
+def test_checkpoint_truncates_the_write_ahead_log_left_by_heartbeats(tmp_path):
+    store = TaskStore(tmp_path / "task-center.sqlite")
+    files = [f"/checkout/histopilot/module_{index}.py" for index in range(120)]
+    store.write_runner(pid=5, state="running", code_files=files)
+    for beat in range(200):
+        store.write_runner(heartbeat_at=str(beat), sample={"at": str(beat)})
+    wal = tmp_path / "task-center.sqlite-wal"
+    assert wal.stat().st_size > 0
+    with store._connection() as db:
+        assert db.execute("PRAGMA journal_size_limit").fetchone()[0] == 8 * 1024 * 1024
+    assert store.checkpoint() is True
+    assert wal.stat().st_size == 0
+    assert store.runner()["heartbeatAt"] == "199"
