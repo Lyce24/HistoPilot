@@ -1052,6 +1052,36 @@ def test_two_rows_naming_one_file_are_reported_as_an_alias(service):
     assert "DUPLICATE_SLIDE_ALIAS" in codes(reviewed)
 
 
+def test_a_mapped_slide_whose_file_name_differs_from_its_slide_id_blocks_freezing(service):
+    slides, _ = cohort_tree(service)
+    source = table(service, "Slide_ID,Slide_Path\nSL-1,rih/SL-1.svs\nSL-9,rih/SL-2.svs\n")
+    reviewed = preview(
+        service, draft(service, source, slideRoot=str(slides), slidePathColumn="Slide_Path")
+    )
+    [finding] = [
+        item for item in reviewed["findings"] if item["code"] == "SLIDE_ID_FILENAME_MISMATCH"
+    ]
+    assert finding["severity"] == "error" and finding["count"] == 1
+    assert finding["examples"] == ["SL-9: SL-2.svs"]
+    assert "TRIDENT names its outputs after the file" in finding["message"]
+    assert not reviewed["canFreeze"]
+
+
+def test_a_slide_id_repeated_with_mapped_paths_is_not_blamed_on_a_filename_stem(service):
+    slides, _ = cohort_tree(service)
+    source = table(
+        service, "Slide_ID,Slide_Path\nSL-1,rih/SL-1.svs\nSL-1,rih_quarantine/SL-1.svs\n"
+    )
+    reviewed = preview(
+        service, draft(service, source, slideRoot=str(slides), slidePathColumn="Slide_Path")
+    )
+    [finding] = [item for item in reviewed["findings"] if item["code"] == "SLIDE_MATCH_AMBIGUOUS"]
+    assert finding["message"] == (
+        "Several rows give this Slide_ID a path in Slide_Path; keep one row per slide."
+    )
+    assert "SLIDE_ID_DUPLICATE" in codes(reviewed)
+
+
 def test_an_absolute_mapped_path_needs_no_slide_folder(service):
     slides, _ = cohort_tree(service)
     source = table(service, f"Slide_ID,Slide_Path\nSL-1,{slides / 'rih' / 'SL-1.svs'}\n")

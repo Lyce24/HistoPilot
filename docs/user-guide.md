@@ -49,7 +49,7 @@ If the table already names exact files, map a **Slide file column** (detected wh
 | `CASE-001-A` | `development/CASE-001-A.svs` |
 | `CASE-002-A` | `test/CASE-002-A.svs` |
 
-Paths are relative to the slide folder. Absolute paths also work if they lie inside a data root. A column avoids scanning unrelated copies and the scan limit of 10,000 files. Keep `Slide_ID` equal to the file name without its extension, because TRIDENT names its outputs after the file. Two files with the same name in different subfolders are ambiguous: a slide in the table that matches both blocks freezing, so point the column at the right copy.
+Paths are relative to the slide folder. Absolute paths also work if they lie inside a data root. A column avoids scanning unrelated copies and the scan limit of 10,000 files. `Slide_ID` must equal the file name without its extension, because TRIDENT names its outputs after the file; a mapped file with another name blocks freezing. Two files with the same name in different subfolders are ambiguous: a slide in the table that matches both blocks freezing, so point the column at the right copy.
 
 **Patients.** Use real patient identifiers wherever you have them. If some slides have no patient ID, HistoPilot asks **Patient ID unresolved** and offers **Continue with Slide ID**. That treats each such slide as its own patient and is recorded as a fallback. Fallback groups are always reported separately, because they cannot show that two sets are patient-disjoint. Patient-level analyses refuse them.
 

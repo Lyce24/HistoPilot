@@ -518,6 +518,16 @@ class ImportService:
             return None
         if info.st_size == 0:
             findings.add("SLIDE_EMPTY", "A mapped slide file is empty.", example=value)
+        if resolved.stem != slide_id:
+            # Extraction refuses such a slide: TRIDENT names its outputs after the file, so
+            # its features could never bind to this Slide_ID.
+            findings.add(
+                "SLIDE_ID_FILENAME_MISMATCH",
+                "Slide_ID must equal the slide file name without its extension, because "
+                "TRIDENT names its outputs after the file. Rename the file or correct the "
+                "Slide_ID.",
+                example=f"{slide_id}: {resolved.name}",
+            )
         return {
             "slideId": slide_id,
             "path": str(resolved),
@@ -728,11 +738,17 @@ class ImportService:
         for item in inventory:
             matches[item["slideId"]].append(item)
             physical[(item["device"], item["inode"])].append(item)
+        ambiguous = (
+            f"Several rows give this Slide_ID a path in {spec.slidePathColumn}; keep one row "
+            "per slide."
+            if spec.slidePathColumn
+            else "A filename stem resolves to multiple slide files."
+        )
         for slide_id, items in matches.items():
             if len(items) > 1:
                 findings.add(
                     "SLIDE_MATCH_AMBIGUOUS",
-                    "A filename stem resolves to multiple slide files.",
+                    ambiguous,
                     severity="error" if slide_id in selected_ids else "warning",
                     example=slide_id,
                 )
