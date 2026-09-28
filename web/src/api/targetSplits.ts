@@ -183,7 +183,8 @@ export interface TargetSplit {
   evaluationCohortId?: string | null;
   /** Detail and freeze responses only. Freezing derives the testing cohort; reads never create it. */
   testCohort?: TargetSplitTestCohort;
-  /** Freeze only: the version is frozen, but its testing cohort still needs an explicit retry. */
+  /** Freeze only: the version is frozen, but its testing cohort still needs an explicit retry.
+   * Later reads report the same failure as `testCohort.state === 'failed'`. */
   testCohortError?: { code: string; message: string } | null;
   manifest: {
     kind: 'target-split';
@@ -198,11 +199,13 @@ export interface TargetSplit {
   };
 }
 
-/** `required` with no `id`: the testing set has no derived evaluation or inference cohort yet. */
+/** `required` with no `id`: the testing set has no derived evaluation or inference cohort yet.
+ * `failed`: the last attempt to create it (at freeze or a retry) failed with `error`. */
 export interface TargetSplitTestCohort {
   required: boolean;
   id: string | null;
-  state: 'active' | 'archived' | 'trashed' | null;
+  state: 'active' | 'archived' | 'trashed' | 'failed' | null;
+  error?: { code: string; message: string };
 }
 
 export type TargetSplitDraft = ScientificDraft<TargetSplitSpec>;

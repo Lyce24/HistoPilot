@@ -115,8 +115,8 @@ A target/split draft is an `experiment` draft whose payload is `{type: "target-s
 | `POST target-splits/partition-preview` | Live training/testing counts and distributions for an unsaved spec. Target problems are reported in place. |
 | `POST target-splits/{draft_id}/preview` | `{expectedRevision}`: exact memberships, distributions, findings, `canFreeze` and `previewHash`. |
 | `POST target-splits/{draft_id}/freeze` | `{expectedRevision, previewHash, operationId, versionLabel}`: publish the version (201), then derive its test cohort. The response carries `testCohort`; if the cohort could not be derived, it adds `testCohortError` instead of failing. |
-| `GET target-splits/{configuration_id}` | The frozen version, `evaluationCohortId` and `testCohort: {required, id, state}`. Reading never creates the cohort. |
-| `POST target-splits/{configuration_id}/test-cohort` | Derive the evaluation (labeled) or inference (no testing target) cohort, idempotently. |
+| `GET target-splits/{configuration_id}` | The frozen version, `evaluationCohortId` and `testCohort: {required, id, state}`. `state` is `failed`, with an `error`, when the last attempt to derive the cohort (at freeze or a retry) failed. Reading never creates the cohort. |
+| `POST target-splits/{configuration_id}/test-cohort` | Derive the evaluation (labeled) or inference (no testing target) cohort, idempotently. A success clears a saved failure; a failure replaces it. |
 | `GET configurations?kind=…`, `GET configurations/{configuration_id}` | Frozen configurations (`target-split`, `experiment-setup`, `feature`, `protocol`) and one checksum-verified envelope. |
 
 Historical protocol records from before Targets & splits (split versions 1–3) stay readable, but new work accepts only version 4. `protocols/explore` still accepts the old `rules` and `splitMode` fields; `rules` is ignored, and a non-empty split of another version returns eligibility and target counts with `INVALID_STRATEGY_CONFIG` and `partitions: null`.

@@ -247,27 +247,35 @@ def test_target_split_get_never_writes_and_freeze_reports_cohort_failure_as_warn
 ):
     store, service, _spec = construction
 
-    def blocked(_self, _identity):
+    def blocked(_self, _source, _identity, _operation):
         raise StorageError("The testing cohort cannot be prepared.", "TARGET_TESTING_BLOCKED", 422)
 
     with monkeypatch.context() as patch:
-        patch.setattr(TargetSplitService, "create_test_cohort", blocked)
+        patch.setattr(TargetSplitService, "_derive_test_cohort", blocked)
         target, retry = freeze(construction, replay=True)
         # A retried freeze replays the publication and repeats the same warning, not an error.
         assert retry() == target
-    assert target["testCohortError"]["code"] == "TARGET_TESTING_BLOCKED"
+    error = {"code": "TARGET_TESTING_BLOCKED", "message": "The testing cohort cannot be prepared."}
+    failed = {"required": True, "id": None, "state": "failed", "error": error}
+    assert target["testCohortError"] == error
     assert target["evaluationCohortId"] is None
-    assert target["testCohort"] == {"required": True, "id": None, "state": None}
+    assert target["testCohort"] == failed
+    # The failure is kept beside the frozen version, never in its content-addressed manifest.
+    assert "testCohort" not in target["manifest"]
+    record = store.folder / "target-splits" / target["id"] / "test-cohort-failure.json"
+    assert json.loads(record.read_text())["error"] == error
     before = store.list_configurations(include_inactive=True)
     with writer_holds_project(store.folder):
         detail = quickly(lambda: service.get(target["id"]))
+    # A reload still knows that freezing could not make the test cohort, so it offers the retry.
     assert "testCohortError" not in detail
-    assert detail["testCohort"] == {"required": True, "id": None, "state": None}
+    assert detail["testCohort"] == failed
     assert store.list_configurations(include_inactive=True) == before
     cohort = service.create_test_cohort(target["id"])
     detail = service.get(target["id"])
     assert detail["evaluationCohortId"] == cohort["id"]
     assert detail["testCohort"] == {"required": True, "id": cohort["id"], "state": "active"}
+    assert not record.exists()
 
 
 def test_target_split_get_reports_a_trashed_testing_cohort_instead_of_failing(construction):

@@ -16,6 +16,7 @@ PROTECTED_PROJECT_ENTRIES = (
     "compute-jobs",
     "predictor-builds",
     "evaluation-batches",
+    "target-splits",
     "jobs",
     "drafts",
     ".staging",

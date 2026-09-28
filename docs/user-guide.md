@@ -134,7 +134,7 @@ A slide or patient matching both sets, or one physical file in both, blocks free
 
 **Testing target.** Choose **Same field and mapping as training**, **Separate testing field and mapping** (it must keep the classes and positive class), or **None · Pure inference**, which keeps the testing slides without reading their labels.
 
-Freezing also creates the testing set's **test cohort**: an evaluation cohort when testing has a target, an inference cohort when it does not. If that step fails, the version stays frozen and offers **Retry test cohort** (or **Create test cohort**). The frozen version never changes when you later add features or design folds.
+Freezing also creates the testing set's **test cohort**: an evaluation cohort when testing has a target, an inference cohort when it does not. If that step fails, the version stays frozen and offers **Retry test cohort**, also after a reload, until a retry succeeds; versions from before test cohorts offer **Create test cohort**. The frozen version never changes when you later add features or design folds.
 
 ## 4. Experimental Setup
 

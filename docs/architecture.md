@@ -102,6 +102,7 @@ A project lives entirely in the folder chosen when it was created. Moving the wh
   packing/<run-id>/              # Validation and packing evidence
   interpretation-requests/<id>/  # Attention requests
   slide-reviews/                 # Per-slide review notes
+  target-splits/<id>/            # A failed test-cohort step, kept until a retry succeeds
 ```
 
 Default TRIDENT and pack outputs go to `trident/` and `feature-packs/` inside the project unless you choose another folder. Original slides and features stay where they are.

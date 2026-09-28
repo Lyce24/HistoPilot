@@ -80,6 +80,8 @@ export function TargetSplitTestCohort({ project, record }: { project: string; re
   const [error, setError] = useState<Error | null>(null);
   const status = record.testCohort;
   const id = status ? status.id : record.evaluationCohortId ?? null;
+  // The freeze response carries the error; a later read reports the saved failure.
+  const failure = record.testCohortError ?? (status?.state === 'failed' ? status.error ?? null : null);
   if (status ? !status.required : !id) return null;
   const inference = record.manifest.spec.testTarget === null;
   const kind = inference ? 'inference cohort' : 'evaluation cohort';
@@ -99,8 +101,8 @@ export function TargetSplitTestCohort({ project, record }: { project: string; re
     {id && status?.state !== 'trashed' ? <p>Freezing this version saved its testing set as an {kind}. <a href={`#${inference ? 'inference' : 'evaluation'}?${new URLSearchParams({ cohort: id })}`}>{inference ? 'Run inference on it' : 'Evaluate models on it'}</a> · <a href="#test-data">Open test cohorts</a></p>
       : id ? <p className="callout callout-warning">The {kind} made from this testing set is in Trash. Restore it to evaluate this testing set.</p>
         : <div className="callout callout-warning" role="status">
-          <p>{record.testCohortError ? `This version is frozen, but its testing set could not be saved as an ${kind}: ${record.testCohortError.message}` : `This version's testing set has no ${kind} yet.`}</p>
-          <button className="btn btn-secondary btn-small" disabled={pending} onClick={() => void create()}>{pending ? 'Creating test cohort…' : record.testCohortError ? 'Retry test cohort' : 'Create test cohort'}</button>
+          <p>{failure ? `This version is frozen, but its testing set could not be saved as an ${kind}: ${failure.message}` : `This version's testing set has no ${kind} yet.`}</p>
+          <button className="btn btn-secondary btn-small" disabled={pending} onClick={() => void create()}>{pending ? 'Creating test cohort…' : failure ? 'Retry test cohort' : 'Create test cohort'}</button>
         </div>}
     <ErrorNotice error={error} />
   </section>;

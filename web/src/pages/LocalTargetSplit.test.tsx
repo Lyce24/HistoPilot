@@ -79,6 +79,11 @@ describe('dataset target and train/test construction', () => {
       const failed = cohort({ testCohort: { required: true, id: null, state: null }, testCohortError: { code: 'TARGET_TESTING_BLOCKED', message: 'Labels are missing.' } });
       expect(failed).toContain('This version is frozen, but its testing set could not be saved as an evaluation cohort: Labels are missing.');
       expect(failed).toContain('Retry test cohort');
+      // After a reload the freeze response is gone; the saved failure still offers the retry.
+      const reloaded = cohort({ testCohort: { required: true, id: null, state: 'failed', error: { code: 'TARGET_TESTING_BLOCKED', message: 'Labels are missing.' } } });
+      expect(reloaded).toContain('This version is frozen, but its testing set could not be saved as an evaluation cohort: Labels are missing.');
+      expect(reloaded).toContain('Retry test cohort');
+      expect(reloaded).not.toContain('Create test cohort');
     });
     it('says when the cohort is in Trash, and stays silent without a testing set', () => {
       expect(cohort({ testCohort: { required: true, id: 'c', state: 'trashed' } })).toContain('is in Trash');

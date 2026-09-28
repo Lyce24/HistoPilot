@@ -21,10 +21,25 @@ from histopilot.application.protocols import (
 from histopilot.schemas.protocols import FixedRules, SplitSpec, TargetSpec, iter_conditions
 from histopilot.schemas.target_splits import TargetSplitPartitionPreviewRequest, TargetSplitSpec
 from histopilot.storage.filesystem import LocalFilesystem
-from histopilot.storage.io import canonical_json, content_hash
-from histopilot.storage.project_lock import StorageError
+from histopilot.storage.io import (
+    canonical_json,
+    content_hash,
+    read_json_bounded,
+    utc_now,
+    write_json_atomic,
+)
+from histopilot.storage.project_lock import (
+    StorageError,
+    ensure_managed_directory,
+    fsync_directory,
+    writer_lock,
+)
 
 ALGORITHM = "histopilot-target-training-testing-v2"
+# A failed test-cohort step is kept beside, never inside, the content-addressed version.
+TEST_COHORT_FAILURE = "test-cohort-failure.json"
+MAX_FAILURE_BYTES = 64 * 1024
+FAILURE_ERRORS = (StorageError, ValueError, KeyError, TypeError, OSError)
 SLIDE_ALGORITHM = "histopilot-target-training-testing-slide-v1"
 
 
@@ -795,11 +810,59 @@ class TargetSplitService:
             if cohort_id
             else None
         )
+        failure = self._test_cohort_failure(identity) if required and not cohort_id else None
+        test_cohort = {"required": required, "id": cohort_id, "state": state}
+        if failure:
+            test_cohort.update(state="failed", error=failure)
         return {
             **document,
             "evaluationCohortId": cohort_id if state != "trashed" else None,
-            "testCohort": {"required": required, "id": cohort_id, "state": state},
+            "testCohort": test_cohort,
         }
+
+    def _test_cohort_failure_path(self, target_split_id):
+        # ``target_split_id`` names a stored configuration, never a caller-supplied path.
+        return self.store.folder / "target-splits" / target_split_id / TEST_COHORT_FAILURE
+
+    def _test_cohort_failure(self, target_split_id):
+        """The error of the last attempt to derive the test cohort, until one succeeds."""
+        path = self._test_cohort_failure_path(target_split_id)
+        try:
+            if not path.exists():
+                return None
+            error = read_json_bounded(path, MAX_FAILURE_BYTES)["error"]
+            return {"code": str(error["code"]), "message": str(error["message"])}
+        except (StorageError, OSError, KeyError, TypeError):
+            return None
+
+    def _record_test_cohort_failure(self, target_split_id, error):
+        """Keep a failed attempt so a reload still offers the retry. Never raises: the
+        caller reports the original error."""
+        path = self._test_cohort_failure_path(target_split_id)
+        record = {
+            "state": "failed",
+            "at": utc_now(),
+            "error": {
+                "code": getattr(error, "code", "TARGET_TESTING_FAILED"),
+                "message": str(error)[:4000],
+            },
+        }
+        try:
+            with writer_lock(self.store.folder, timeout=2):
+                ensure_managed_directory(path.parent)
+                write_json_atomic(path, record, limit=MAX_FAILURE_BYTES)
+        except (StorageError, OSError):
+            pass
+
+    def _clear_test_cohort_failure(self, target_split_id):
+        path = self._test_cohort_failure_path(target_split_id)
+        try:
+            if path.exists():
+                with writer_lock(self.store.folder, timeout=2):
+                    path.unlink(missing_ok=True)
+                    fsync_directory(path.parent)
+        except (StorageError, OSError):
+            pass  # A stale record is ignored once the cohort exists.
 
     def freeze(
         self, draft_id, expected_revision, preview_hash, operation_id, *, version_label=None
@@ -839,9 +902,10 @@ class TargetSplitService:
         )
         try:
             self.create_test_cohort(document["id"])
-        except (StorageError, ValueError, KeyError, TypeError, OSError) as error:
+        except FAILURE_ERRORS as error:
             # The version is frozen whatever happens here. Report the testing cohort as a
             # warning with an explicit retry, never as a failed (and re-submitted) freeze.
+            # create_test_cohort saved the failure, so a later read offers the retry too.
             return {
                 **self.get(document["id"]),
                 "testCohortError": {
@@ -900,9 +964,7 @@ class TargetSplitService:
         return self.store.publish_configuration(manifest=manifest, operation_id=operation)
 
     def create_test_cohort(self, target_split_id):
-        from histopilot.application.evaluations import EvaluationService
-        from histopilot.schemas.evaluations import EvaluationSpec
-
+        """Derive the testing set's cohort once; a failure is kept until a retry succeeds."""
         source = self._document(target_split_id)
         if not any(row["partition"] == "test" for row in source["manifest"]["memberships"]):
             return None
@@ -910,6 +972,18 @@ class TargetSplitService:
         prior = self.store.configuration_publication(operation)
         if prior:
             return prior
+        try:
+            cohort = self._derive_test_cohort(source, target_split_id, operation)
+        except FAILURE_ERRORS as error:
+            self._record_test_cohort_failure(target_split_id, error)
+            raise
+        self._clear_test_cohort_failure(target_split_id)
+        return cohort
+
+    def _derive_test_cohort(self, source, target_split_id, operation):
+        from histopilot.application.evaluations import EvaluationService
+        from histopilot.schemas.evaluations import EvaluationSpec
+
         source_spec = source["manifest"]["spec"]
         target = source_spec.get("testTarget", source_spec["target"])
         spec = EvaluationSpec(
