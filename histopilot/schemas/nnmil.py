@@ -23,6 +23,13 @@ def _quantile(values, fraction):
     return values[low] + (values[high] - values[low]) * (position - low)
 
 
+def window_seed(recipe, training_seed):
+    """The seed of nnMIL's feature-window permutation for one training run."""
+    if recipe.get("nnmilWindowSeedFromTraining"):
+        return training_seed
+    return recipe.get("nnmilWindowSeed", 42)
+
+
 def resolve_nnmil_recipe(recipe, rows, feature_files):
     """Return the numeric recipe and fingerprint, leaving candidate intent intact."""
     is_nnmil = recipe.get("model", "abmil").lower() == "nnmil"

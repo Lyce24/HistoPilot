@@ -14,7 +14,7 @@ from lightning.pytorch.loggers import CSVLogger
 from histopilot.datasets.datamodule import MILDataModule, training_objective
 from histopilot.datasets.mil import MILDataError, SlideDataset
 from histopilot.schemas.development import TrainingRecipe
-from histopilot.schemas.nnmil import resolve_nnmil_plan
+from histopilot.schemas.nnmil import resolve_nnmil_plan, window_seed
 from histopilot.training.fold import _HistoryWriter, _write_json
 from histopilot.training.module import MILTrainModule
 
@@ -144,6 +144,7 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
         **recipe,
         "maxEpochs": schedule.get("scheduleHorizonEpochs", epochs),
         "warmupEpochs": schedule.get("scheduleWarmupEpochs", recipe["warmupEpochs"]),
+        "nnmilWindowSeed": window_seed(recipe, plan["trainingSeed"]),
     }
     model = MILTrainModule(
         plan["data"]["featureDim"],

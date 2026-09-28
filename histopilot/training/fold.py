@@ -15,7 +15,7 @@ from lightning.pytorch.utilities.exceptions import SIGTERMException
 from histopilot.datasets.datamodule import MILDataModule
 from histopilot.models import catalog
 from histopilot.schemas.development import TrainingRecipe
-from histopilot.schemas.nnmil import resolve_nnmil_plan
+from histopilot.schemas.nnmil import resolve_nnmil_plan, window_seed
 from histopilot.schemas.training_controls import resolve_stopping, validate_training_controls
 from histopilot.storage.project_lock import _reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
@@ -301,7 +301,11 @@ def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
     device_name = plan.get("device", "cpu")
     # OceanPath's fixed-budget fallback truncates training without speeding up
     # its original cosine trajectory. The trainer budget and LR horizon differ.
-    model_recipe = {**recipe, "maxEpochs": requested_recipe["maxEpochs"]}
+    model_recipe = {
+        **recipe,
+        "maxEpochs": requested_recipe["maxEpochs"],
+        "nnmilWindowSeed": window_seed(recipe, plan["trainingSeed"]),
+    }
     model = MILTrainModule(
         plan["data"]["featureDim"],
         target,

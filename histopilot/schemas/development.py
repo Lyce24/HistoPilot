@@ -32,7 +32,7 @@ EXPERIMENTAL_DEFAULTS = {
     "minValidationPositives": None, "fixedEpochBudget": None,
     "bagSizeMode": "fixed", "bagSizeFraction": 0.5,
     "nnmilFeatureSampling": True, "nnmilWindowStrideDivisor": 4,
-    "nnmilWindowShuffle": True, "nnmilWindowSeed": 42,
+    "nnmilWindowShuffle": True, "nnmilWindowSeed": 42, "nnmilWindowSeedFromTraining": False,
     "nnmilWindowAggregation": "mean_logits", "nnmilBatchSampler": "patient_weighted",
     "nnmilCheckpointSelection": "best_validation",
     "weightDecayPolicy": "all", "lrScheduleInterval": "epoch",
@@ -86,6 +86,9 @@ class TrainingRecipe(RequestModel):
     nnmilWindowStrideDivisor: Annotated[StrictInt, Field(ge=1, le=256)] = 4
     nnmilWindowShuffle: bool = True
     nnmilWindowSeed: Seed = 42
+    # When set, each training seed draws its own feature-window permutation, so seed
+    # spread reflects nnMIL's full variance; the fixed seed above is then unused.
+    nnmilWindowSeedFromTraining: bool = False
     nnmilWindowAggregation: Literal["mean_logits", "mean_probabilities"] = "mean_logits"
     nnmilBatchSampler: Literal[
         "patient_weighted", "class_balanced", "auc_stratified"
@@ -159,8 +162,11 @@ class TrainingRecipe(RequestModel):
         if not catalog.owns_options(self.model, "nnmil") and (
             self.nnmilBatchSampler != "patient_weighted"
             or self.nnmilCheckpointSelection != "best_validation"
+            or self.nnmilWindowSeedFromTraining
         ):
-            raise ValueError("nnMIL batch samplers and checkpoint selection require nnMIL.")
+            raise ValueError(
+                "nnMIL batch samplers, checkpoint selection and window seeds require nnMIL."
+            )
         if self.nnmilBatchSampler != "patient_weighted" and (
             self.samplingStrategy != "slide_uniform" or self.classWeightedSampling
         ):
