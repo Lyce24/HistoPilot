@@ -1,6 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { interpretations, type AttentionPatch, type Interpretation, type InterpretationSlide, type InterpretationSlideResult, type RankedAttentionPatch, type SlideRegion } from '../api/interpretation';
+import { predictors } from '../api/predictors';
+import { modelLabel } from '../lib/modelCapabilities';
 import { ErrorNotice } from './ui';
 import { attentionAt, boundedRegion, fitRegion, integerRegion, markerScale, patchIntersectsRegion, patchRegion, zoomRegion } from '../lib/slideGeometry';
 import { paintAttentionMap } from '../lib/attentionRaster';
@@ -29,6 +31,11 @@ export default function AttentionSlideViewer(props: ViewerProps) {
   return <AttentionSlideWorkspace key={`${props.project}:${props.record.id}:${props.slide.slideId}`} {...props} />;
 }
 function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps) {
+  // Attention records do not store the architecture; name it from the frozen predictor, and
+  // name no model until the predictor list has loaded.
+  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), staleTime: 60000 });
+  const model = modelLabel(registry.data?.items.find((item) => item.id === record.manifest.predictorId)?.manifest.recipe.model);
+  const attentionName = model ? `${model} pooling attention` : 'Pooling attention';
   const full = { x: 0, y: 0, width: slide.width, height: slide.height };
   const [view, setView] = useState<SlideRegion>(full);
   const panFrame = useSlideFrame(setView);
@@ -199,8 +206,8 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
     {top.isError ? <button className="btn btn-secondary" disabled={top.isFetching} onClick={() => void top.refetch()}>Retry top patch ranking</button> : null}
     <div className={`attention-stage ranked-viewer-layout ${railOpen ? '' : 'rail-hidden'}`} ref={viewerRef}>
       <div className="attention-canvas interpretation-viewer">
-        <svg ref={setSvgRef} viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`} preserveAspectRatio="xMidYMid meet" tabIndex={0} role="group" aria-label={`Slide ${slide.slideId} with ABMIL attention overlay and ranked patch buttons. Scroll or pinch to zoom, drag to pan, plus and minus to zoom, arrows to pan, Home to fit patch coverage.`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { panFrame.cancel(); drag.current = null; }} onLostPointerCapture={() => { panFrame.flush(); drag.current = null; }} onKeyDown={keyDown}>
-          <title>{`${slide.slideId} — ABMIL pooling attention`}</title><rect x="0" y="0" width={slide.width} height={slide.height} fill="#eee9e2" />
+        <svg ref={setSvgRef} viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`} preserveAspectRatio="xMidYMid meet" tabIndex={0} role="group" aria-label={`Slide ${slide.slideId} with ${model ? `${model} ` : ''}attention overlay and ranked patch buttons. Scroll or pinch to zoom, drag to pan, plus and minus to zoom, arrows to pan, Home to fit patch coverage.`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={() => { panFrame.cancel(); drag.current = null; }} onLostPointerCapture={() => { panFrame.flush(); drag.current = null; }} onKeyDown={keyDown}>
+          <title>{`${slide.slideId} — ${attentionName}`}</title><rect x="0" y="0" width={slide.width} height={slide.height} fill="#eee9e2" />
           {thumbnailURL ? <image href={thumbnailURL} x="0" y="0" width={slide.width} height={slide.height} preserveAspectRatio="none" /> : null}
           <SlideTileLayer sourceKey={`interpretation:${project}:${record.id}:${slide.slideId}`} width={slide.width} height={slide.height} view={view} enabled={zoomed} fetchRegion={fetchDetail} onStatus={setDetail} retry={detailRetry} />
           {heatmap?.context === heatmapContext && !attention.isError ? <image href={heatmap.url} x={heatmap.region.x} y={heatmap.region.y} width={heatmap.region.width} height={heatmap.region.height} preserveAspectRatio="none" opacity={opacity} /> : null}
@@ -220,6 +227,6 @@ function AttentionSlideWorkspace({ project, record, slide, result }: ViewerProps
     <p className="muted" role="status">{detail.preparing ? 'Preparing slide for smooth zooming. This may take a moment.' : detail.error ? 'Some slide detail could not be prepared. The overview remains available.' : 'Slide ready · Nearby zoom levels are cached; finer detail loads as needed.'}</p>
     <div className="attention-view-footer"><span className="interpretation-attention-scale">Lower <i aria-hidden="true" /> Higher attention percentile</span>{ranked.length && top.data ? <span title="Attention weights sum to 100% across the slide; a large share in few patches means focused attention.">Top {ranked.length} of {top.data.total.toLocaleString()} patches carry {formatStatistic(ranked.reduce((sum, patch) => sum + patch.weight, 0) * 100, 1)}% of attention</span> : null}<span>{attention.data ? `${attention.data.patches.length.toLocaleString()} / ${attention.data.total.toLocaleString()} patches in view` : 'Attention pending'}</span></div>
     {attention.data && attention.data.patches.length < attention.data.total ? <p className="callout" role="status">Partial overlay: this region exceeds the {MAX_VISIBLE_PATCHES.toLocaleString()}-patch display limit. Zoom in to see every patch. Top locations still rank the entire slide.</p> : null}
-    <details className="attention-view-details"><summary>About this view and slide predictions</summary><p>ABMIL pooling attention is class-independent relative weighting within a slide. It is not tumor probability, a segmentation mask or evidence of causality. Overlapping patches show the highest weight; numbered locations rank the whole slide.</p><p>{slide.width.toLocaleString()} × {slide.height.toLocaleString()} level-0 pixels · {slide.patchCount.toLocaleString()} patches · patch footprint {slide.patchWidthLevel0} × {slide.patchHeightLevel0} level-0 pixels. Original crops keep tissue colors; edge patches are clipped to the slide.</p>{attention.data ? <div className="interpretation-member-probabilities" aria-label="Slide predictions">{attention.data.classOrder.map((name, index) => <span key={name}><strong>{name}</strong>: {formatStatistic(attention.data?.probabilities[index])}</span>)}</div> : null}<button className="btn btn-secondary" onClick={() => void download()}>{record.manifest.memberCount > 1 ? 'Download full ensemble mean attention' : 'Download full attention data'}</button></details>
+    <details className="attention-view-details"><summary>About this view and slide predictions</summary><p>{attentionName} is class-independent relative weighting within a slide. It is not tumor probability, a segmentation mask or evidence of causality. Overlapping patches show the highest weight; numbered locations rank the whole slide.</p><p>{slide.width.toLocaleString()} × {slide.height.toLocaleString()} level-0 pixels · {slide.patchCount.toLocaleString()} patches · patch footprint {slide.patchWidthLevel0} × {slide.patchHeightLevel0} level-0 pixels. Original crops keep tissue colors; edge patches are clipped to the slide.</p>{attention.data ? <div className="interpretation-member-probabilities" aria-label="Slide predictions">{attention.data.classOrder.map((name, index) => <span key={name}><strong>{name}</strong>: {formatStatistic(attention.data?.probabilities[index])}</span>)}</div> : null}<button className="btn btn-secondary" onClick={() => void download()}>{record.manifest.memberCount > 1 ? 'Download full ensemble mean attention' : 'Download full attention data'}</button></details>
   </section>;
 }
