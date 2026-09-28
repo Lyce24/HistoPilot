@@ -1,6 +1,7 @@
 """Single-process local metadata service and packaged React static assets."""
 
 import shutil
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from secrets import token_urlsafe
@@ -236,7 +237,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "mode": "local-first",
             "workspace": str(settings.workspace),
             "storage": {"engine": "sqlite", "journalMode": "wal", "schemaVersion": SCHEMA_VERSION},
-            "control": {"cudaModelsLoaded": False, "process": "control-service"},
+            # Measured, not assumed: the service never imports Torch; workers load models.
+            "control": {"process": "control-service", "torchImported": "torch" in sys.modules},
             "workers": {
                 # Retained for old clients: this flag describes TRIDENT only.
                 "executionEnabled": extraction_ready,

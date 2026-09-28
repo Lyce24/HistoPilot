@@ -103,7 +103,8 @@ export interface SystemStatus {
   mode: string;
   workspace: string;
   storage: { engine: string; journalMode: string; schemaVersion: number };
-  control: { cudaModelsLoaded: boolean; process: string };
+  /** `torchImported` is measured in the control service, which never imports Torch itself. */
+  control: { torchImported: boolean; process: string };
   /** `tmuxAvailable`: tmux is available to host the Task Center runner. */
   workers: { executionEnabled: boolean; status: string; tmuxAvailable?: boolean; nativeExecutionImplemented?: boolean };
   sourcesReadOnly: boolean;

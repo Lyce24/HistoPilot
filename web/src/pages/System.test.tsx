@@ -10,7 +10,7 @@ afterEach(() => clients.splice(0).forEach((client) => client.clear()));
 function render(workers: SystemStatus['workers']) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   clients.push(client);
-  client.setQueryData(['system'], { mode: 'local', workspace: '/projects', storage: { engine: 'SQLite', journalMode: 'wal', schemaVersion: 1 }, control: { process: 'Control service', cudaModelsLoaded: false }, sourcesReadOnly: true, workers } satisfies SystemStatus);
+  client.setQueryData(['system'], { mode: 'local', workspace: '/projects', storage: { engine: 'SQLite', journalMode: 'wal', schemaVersion: 1 }, control: { process: 'Control service', torchImported: false }, sourcesReadOnly: true, workers } satisfies SystemStatus);
   return renderToStaticMarkup(<QueryClientProvider client={client}><System /></QueryClientProvider>);
 }
 

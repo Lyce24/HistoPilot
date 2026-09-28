@@ -91,7 +91,11 @@ def test_system_distinguishes_implemented_workers_from_trident_readiness(client,
     assert "check runtime readiness" in report["workers"]["status"]
     assert "not connected" not in report["workers"]["status"]
     assert report["diagnostics"]["compute"]["scope"] == "control-service"
-    assert report["control"]["cudaModelsLoaded"] is False
+    # Other tests in this process may import Torch; the field reports what is loaded.
+    assert report["control"] == {
+        "process": "control-service",
+        "torchImported": "torch" in sys.modules,
+    }
 
 
 def test_compute_telemetry_is_authenticated_and_separate_from_runtime_probes(client, monkeypatch):

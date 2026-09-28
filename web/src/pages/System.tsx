@@ -132,7 +132,7 @@ function ServiceDetails({ data, stale }: { data: SystemStatus; stale: boolean })
         <ul className="detail-list">
           <li><span>Application mode</span><strong>{data.mode}</strong></li>
           <li><span>Process role</span><strong>{data.control.process}</strong></li>
-          <li><span>CUDA models in control process</span><strong>{data.control.cudaModelsLoaded ? 'Loaded' : 'None'}</strong></li>
+          <li><span>Torch in control process</span><strong>{data.control.torchImported ? 'Imported' : 'Not imported'}</strong></li>
           <li><span>Browser connection</span><strong className="mono">{typeof window === 'undefined' ? 'Browser connection' : window.location.origin}</strong></li>
         </ul>
       </Panel>
