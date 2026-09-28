@@ -13,8 +13,8 @@ from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import checkpoint_snapshot
 from histopilot.models import catalog
 from histopilot.storage.attention_inputs import inspect_inputs, verify_sources
-from histopilot.storage.packed import _source
-from histopilot.storage.project_lock import _reject_symlink_components, ensure_managed_directory
+from histopilot.storage.packed import open_source
+from histopilot.storage.project_lock import ensure_managed_directory, reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 from histopilot.training.module import MILTrainModule, class_logits, window_uncertainty_rows
 from histopilot.workers.packing_process import write_json
@@ -30,7 +30,7 @@ MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
 
 def _write_attention_json(path, value):
     """Stream large maps atomically instead of using the 64-MiB metadata writer."""
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(name)
     size = 0
@@ -54,7 +54,7 @@ def _write_attention_json(path, value):
 
 def _write_attention_array(path, coords, weights):
     """A fixed N×4 float64 array supports bounded, memory-mapped viewport reads."""
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(name)
     try:
@@ -70,7 +70,7 @@ def _write_attention_array(path, coords, weights):
 
 
 def _receipt(path):
-    with _source(path) as (stream, stamp):
+    with open_source(path) as (stream, stamp):
         if not 0 < stamp["sizeBytes"] <= MAX_ARTIFACT_BYTES:
             raise ValueError("Attention artifact is empty or exceeds its byte budget.")
         digest = hashlib.sha256()

@@ -32,8 +32,8 @@ from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
+    reject_symlink_components,
     writer_lock,
 )
 from histopilot.storage.scientific import ScientificStore
@@ -130,7 +130,7 @@ class FeaturePackService:
     def _jobs(self) -> list[dict]:
         if not self.folder.exists():
             return []
-        _reject_symlink_components(self.folder)
+        reject_symlink_components(self.folder)
         paths = sorted(self.folder.glob("packing-*/job.json"))
         if len(paths) > 10000:
             raise StorageError("Too many packing jobs.", "PACKING_LIMIT", 413)
@@ -151,7 +151,7 @@ class FeaturePackService:
         path = Path(value)
         if not path.is_absolute() or "\x00" in value or ".." in path.parts:
             raise StorageError("Use an absolute path without traversal.", "INVALID_PATH", 422)
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         path = path.resolve()
         if not self.outputs._contains(path):
             raise StorageError("Output is outside configured data roots.", "INVALID_PATH", 403)
@@ -216,7 +216,7 @@ class FeaturePackService:
             raise StorageError(
                 "Use an absolute pack folder without traversal.", "INVALID_PATH", 422
             )
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         try:
             path = path.resolve(strict=True)
         except OSError as error:
@@ -756,7 +756,7 @@ class FeaturePackService:
         selections = {}
         selection_folder = self.folder / "selections"
         if selection_folder.exists():
-            _reject_symlink_components(selection_folder)
+            reject_symlink_components(selection_folder)
             for path in selection_folder.glob("*.json"):
                 selection = _read(path)
                 artifact_id = selection.get("artifactId")
@@ -875,7 +875,7 @@ class FeaturePackService:
         for value, expected in inputs:
             try:
                 path = Path(value)
-                _reject_symlink_components(path)
+                reject_symlink_components(path)
                 if not self.outputs._contains(path.resolve(strict=True)):
                     raise ValueError("Source moved outside configured roots")
                 info = path.stat()

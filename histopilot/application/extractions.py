@@ -41,9 +41,9 @@ from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
     fsync_directory,
+    reject_symlink_components,
     writer_lock,
 )
 from histopilot.storage.scientific import ScientificStore
@@ -80,7 +80,7 @@ def _read(path: Path) -> dict:
 
 
 def _write(path: Path, value: dict) -> None:
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     content = json.dumps(value, indent=2, allow_nan=False).encode() + b"\n"
     if len(content) > MAX_JSON:
         raise StorageError("Extraction metadata exceeds its size limit.", "EXTRACTION_LIMIT", 413)
@@ -98,7 +98,7 @@ def _write(path: Path, value: dict) -> None:
 
 def _log_tail(path: Path) -> tuple[str, str | None]:
     """Read one bounded snapshot for progress and optional troubleshooting output."""
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
@@ -142,7 +142,7 @@ class ExtractionService:
             raise StorageError(
                 "Use an absolute path without parent traversal.", "INVALID_PATH", 422
             )
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         resolved = path.resolve()
         if not self.outputs._contains(resolved):
             raise StorageError("The path is outside configured data roots.", "INVALID_PATH", 403)
@@ -153,7 +153,7 @@ class ExtractionService:
     def _jobs(self) -> list[dict]:
         if not self.folder.exists():
             return []
-        _reject_symlink_components(self.folder)
+        reject_symlink_components(self.folder)
         paths = sorted(self.folder.glob("extraction-*/job.json"))
         if len(paths) > 10000:
             raise StorageError("Too many extraction records.", "EXTRACTION_LIMIT", 413)

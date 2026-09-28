@@ -12,13 +12,13 @@ from histopilot.application.protocols import (
     FilterEvaluator,
     FilterFailure,
     ProtocolService,
-    _cohort_stats,
-    _development_selection_groups,
-    _fixed_assignments,
-    _forbidden_name,
     _json,
-    _key,
-    _valid_patient,
+    cohort_statistics,
+    development_selection_groups,
+    fixed_assignments,
+    forbidden_name,
+    name_key,
+    valid_patient,
 )
 from histopilot.schemas.protocols import FixedRules, SplitSpec, TargetSpec, iter_conditions
 from histopilot.schemas.target_splits import TargetSplitPartitionPreviewRequest, TargetSplitSpec
@@ -36,12 +36,12 @@ def _algorithm(spec):
 def _selection_groups(rows, unit):
     if unit == "slide":
         return {(1, row["slideId"]): [row] for row in rows}
-    return _development_selection_groups(rows)
+    return development_selection_groups(rows)
 
 
 def _selection_stats(rows, unit):
     if unit != "slide":
-        return _cohort_stats(rows)
+        return cohort_statistics(rows)
     return {
         "totalSlides": len(rows),
         "patientCount": 0,
@@ -125,7 +125,7 @@ def _target_distribution(rows, field, target, *, include_patients=True):
     values = Counter(evaluator.field(row, field) for row in rows)
     patients = defaultdict(list)
     for row in rows if include_patients else ():
-        if _valid_patient(row) and row.get("patientIdSource") != "slide_fallback":
+        if valid_patient(row) and row.get("patientIdSource") != "slide_fallback":
             patients[row["patientId"]].append(row)
     uniform_values, mixed_values = Counter(), 0
     class_counts, patient_counts = Counter(), Counter()
@@ -253,7 +253,7 @@ class TargetSplitService:
         if stratify_field and spec.split.method == "random":
             used.append(stratify_field)
             source = fields.get(stratify_field, {}).get("sourceColumn", stratify_field)
-            if stratify_field in CANONICAL or _forbidden_name(source, target=True):
+            if stratify_field in CANONICAL or forbidden_name(source, target=True):
                 finding(
                     "IDENTIFIER_STRATIFICATION",
                     "Choose a metadata attribute rather than an identifier for stratification.",
@@ -280,7 +280,7 @@ class TargetSplitService:
                         message = "The same slide matches both training and testing conditions."
                     finding(code, message, severity)
 
-                assignments, direct, expanded = _fixed_assignments(
+                assignments, direct, expanded = fixed_assignments(
                     groups,
                     FixedRules(train=spec.split.trainRules, test=spec.split.testRules),
                     evaluator,
@@ -367,7 +367,7 @@ class TargetSplitService:
         selected = partitions["train"] + partitions["test"]
         if spec.splitUnit == "patient":
             self.protocols._identity_findings(
-                selected, _development_selection_groups(selected), finding
+                selected, development_selection_groups(selected), finding
             )
         if not partitions["train"]:
             finding(
@@ -385,17 +385,17 @@ class TargetSplitService:
                 "warning",
             )
         # Check raw selected slides, including those later excluded by label rules.
-        from histopilot.application.evaluations import _duplicate_test_sources, _slide_sources
+        from histopilot.application.evaluations import duplicate_test_sources, slide_sources
 
         training_ids = {row["slideId"] for row in partitions["train"]}
         testing_ids = {row["slideId"] for row in partitions["test"]}
-        sources = _slide_sources(self.store, dataset, selected, training_ids | testing_ids)
-        _duplicate_test_sources(
+        sources = slide_sources(self.store, dataset, selected, training_ids | testing_ids)
+        duplicate_test_sources(
             {slide: identities for slide, identities in sources.items() if slide in testing_ids},
             finding,
         )
         if spec.splitUnit == "slide":
-            _duplicate_test_sources(
+            duplicate_test_sources(
                 {
                     slide: identities
                     for slide, identities in sources.items()
@@ -527,8 +527,8 @@ class TargetSplitService:
             }
         return {
             "algorithm": _algorithm(request),
-            "dataset": _cohort_stats(rows),
-            "cohort": _cohort_stats(eligible),
+            "dataset": cohort_statistics(rows),
+            "cohort": cohort_statistics(eligible),
             "summary": {
                 **self._selection_summary(rows, eligible, partitions, request.splitUnit),
                 **(
@@ -556,7 +556,7 @@ class TargetSplitService:
         _testing_target_findings(dataset, fields, spec.target, test_target, finding)
         mapping = dataset["manifest"].get("provenance", {}).get("mapping", {})
         identifiers = {
-            _key(mapping[key])
+            name_key(mapping[key])
             for key in (
                 "slideIdColumn",
                 "patientIdColumn",
@@ -578,15 +578,15 @@ class TargetSplitService:
                 )
             if (
                 target.field in CANONICAL
-                or _forbidden_name(target.field, target=True)
-                or _forbidden_name(source, target=True)
-                or _key(source) in identifiers
+                or forbidden_name(target.field, target=True)
+                or forbidden_name(source, target=True)
+                or name_key(source) in identifiers
             ):
                 finding(
                     "IDENTIFIER_TARGET",
                     "Identifiers and partition fields cannot serve as target labels.",
                 )
-            if partition_source and _key(source) == _key(partition_source):
+            if partition_source and name_key(source) == name_key(partition_source):
                 finding("SPLIT_TARGET_LEAKAGE", "The partition column cannot also be the target.")
         evaluator = FilterEvaluator()
         included, role_exclusions = {}, {}
@@ -614,7 +614,7 @@ class TargetSplitService:
                 and target.unit == "patient"
                 and any(
                     len({row["label"] for row in group}) > 1
-                    for group in _development_selection_groups(included[role]).values()
+                    for group in development_selection_groups(included[role]).values()
                 )
             ):
                 finding(

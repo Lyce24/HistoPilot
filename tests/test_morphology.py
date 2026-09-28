@@ -18,7 +18,7 @@ from histopilot.schemas.feature_packs import FeaturePackSpec
 from histopilot.schemas.features import FeatureSpec
 from histopilot.schemas.morphology import MorphologyIndexRequest, MorphologyNeighborsRequest
 from histopilot.storage.filesystem import LocalFilesystem
-from histopilot.storage.packed import _stamp
+from histopilot.storage.packed import stat_stamp
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 
@@ -51,7 +51,7 @@ def make_study(tmp_path, request, center):
                 "attributes": {"site": "A" if name != "c" else "B"},
             }
         )
-        inventory.append({"slideId": name, "path": str(path), **_stamp(path.stat())})
+        inventory.append({"slideId": name, "path": str(path), **stat_stamp(path.stat())})
         with h5py.File(sources / f"{name}.h5", "w") as handle:
             if feature_kind == "slide":
                 handle.create_dataset("features", data=np.array(vector, dtype=np.float32))

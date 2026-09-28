@@ -25,7 +25,7 @@ if __package__ in {None, ""}:
 
 from histopilot.application.features import FeatureService
 from histopilot.storage.filesystem import LocalFilesystem
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.packing_process import output_lock, process_metadata, write_json
 
@@ -59,7 +59,7 @@ def run_job(plan_path: Path) -> dict:
 def _run_job(plan_path: Path) -> dict:
     """Execute an immutable plan; always save a durable terminal result on normal errors."""
     plan_path = Path(plan_path)
-    _reject_symlink_components(plan_path)
+    reject_symlink_components(plan_path)
     plan = json.loads(ScientificStore._read_file(plan_path, 64 * 1024 * 1024))
     folder = plan_path.parent.resolve(strict=True)
     for key, name in {
@@ -70,7 +70,7 @@ def _run_job(plan_path: Path) -> dict:
         "cancelPath": "cancelled",
     }.items():
         path = Path(plan[key])
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         if path != folder / name:
             raise ValueError(f"{key} must be the managed file beside this plan.")
     result_path = Path(plan["resultPath"])
@@ -162,7 +162,7 @@ def _run_job(plan_path: Path) -> dict:
                 with ExitStack() as stack:
                     if plan["spec"]["action"] == "pack":
                         output = Path(plan["spec"]["outputPath"])
-                        _reject_symlink_components(output)
+                        reject_symlink_components(output)
                         # The process-held lock alone guards the output.
                         stack.enter_context(output_lock(output))
                         artifact = build_pack(
@@ -185,7 +185,7 @@ def _run_job(plan_path: Path) -> dict:
                         }
                     elif plan["spec"]["action"] == "attach":
                         existing = Path(plan["spec"]["existingPath"])
-                        _reject_symlink_components(existing)
+                        reject_symlink_components(existing)
                         if not roots._contains(existing.resolve(strict=True)):
                             raise ValueError("Existing pack is outside configured data roots.")
                         artifact = verify_existing_pack(

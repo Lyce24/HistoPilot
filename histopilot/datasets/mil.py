@@ -21,8 +21,13 @@ import torch
 from torch.utils.data import Dataset, Sampler
 
 from histopilot.models import catalog
-from histopilot.storage.pack_import import _layout, pack_file_stamps
-from histopilot.storage.packed import PackedFeatureStore, PackedStoreError, _dataset, _source
+from histopilot.storage.pack_import import pack_file_stamps, pack_layout
+from histopilot.storage.packed import (
+    PackedFeatureStore,
+    PackedStoreError,
+    embedded_dataset,
+    open_source,
+)
 
 
 class MILDataError(ValueError):
@@ -237,7 +242,7 @@ class SlideDataset(Dataset):
         self._pack_layout = None
         self.pack_stamps = None
         if self.policy == "mmap":
-            self._pack_layout = _layout(Path(self.pack_path))
+            self._pack_layout = pack_layout(Path(self.pack_path))
             self.pack_stamps = self._pack_layout["packStamps"]
             if plan.get("packStamps") is not None and plan["packStamps"] != self.pack_stamps:
                 raise MILDataError("The selected feature pack changed after run preflight.")
@@ -338,10 +343,10 @@ class SlideDataset(Dataset):
 
     def _native(self, entry, selection):
         path = Path(entry["path"])
-        with _source(path, entry) as (stream, _stamp):
+        with open_source(path, entry) as (stream, _stamp):
             if path.suffix.lower() in {".h5", ".hdf5"}:
                 with h5py.File(stream, "r") as handle:
-                    source = _dataset(handle, "features")
+                    source = embedded_dataset(handle, "features")
                     if len(source.shape) == 1:
                         # One slide embedding is the single instance of its bag.
                         # Read it whole and give it a row before any selection.

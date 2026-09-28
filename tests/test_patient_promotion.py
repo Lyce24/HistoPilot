@@ -12,7 +12,7 @@ from histopilot.application.feature_bundles import _hash
 from histopilot.application.model_experiments import execution_contract
 from histopilot.application.refits import RefitService
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _run_plan
+from histopilot.workers.train_batch import execute_plan
 from histopilot.workers.training_process import compute_snapshot, read_json
 
 
@@ -69,7 +69,7 @@ def selected_batch(registry):
                 "assessment": {"patient": {"auroc": 1 - score}},
             },
         )
-        write_json(run_folder / "plan.json", _run_plan(plan, run, None))
+        write_json(run_folder / "plan.json", execute_plan(plan, run, None))
         write_json(run_folder / "result.json", result)
         states.append({**run, "status": "completed", "result": result})
     state = {"batchId": batch["id"], "status": "completed", "planHash": _hash(plan), "runs": states}

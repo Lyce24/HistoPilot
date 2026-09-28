@@ -16,7 +16,7 @@ from histopilot.application.training_exports import training_oof_csv
 from histopilot.config import Settings
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _run_plan
+from histopilot.workers.train_batch import execute_plan
 from histopilot.workers.training_process import read_json
 
 __all__ = ["tc_execution"]
@@ -31,7 +31,7 @@ def _write_exports(service, frozen, split_unit=None):
     records = []
     for run in state["runs"]:
         run_folder = folder / "runs" / run["id"]
-        write_json(run_folder / "plan.json", _run_plan(plan, run, None))
+        write_json(run_folder / "plan.json", execute_plan(plan, run, None))
         path = Path(run["result"]["predictions"]["assessment"])
         prediction = read_json(path)
         run["result"]["bestCheckpointPath"] = str(run_folder / "best.ckpt")

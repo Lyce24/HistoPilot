@@ -34,7 +34,7 @@ from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.inference import evaluate  # noqa: E402
 from histopilot.training.refit import train_refit  # noqa: E402
 from histopilot.workers.packing_process import write_json  # noqa: E402
-from histopilot.workers.train_batch import _run_plan  # noqa: E402
+from histopilot.workers.train_batch import execute_plan  # noqa: E402
 
 
 @pytest.mark.slow
@@ -146,7 +146,7 @@ def test_matched_clinical_models_keep_frozen_covariates_through_publication(tmp_
     states = []
     folder = store.folder / "training" / batch["id"]
     for run in plan["runs"]:
-        selected = _run_plan(plan, run, None)
+        selected = execute_plan(plan, run, None)
         run_folder = folder / "runs" / run["id"]
         result = train_fold(selected, run_folder)
         write_json(run_folder / "plan.json", selected)

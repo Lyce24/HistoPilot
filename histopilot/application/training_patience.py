@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from histopilot.application.development import _hash, _plan_metadata
+from histopilot.application.development import _hash, plan_metadata
 from histopilot.schemas.training_controls import resolve_stopping
 from histopilot.storage.project_lock import StorageError
 
@@ -22,7 +22,7 @@ def stopping_recipe(store, manifest, run, recipe):
         rows = [
             row
             for row in protocol["memberships"]
-            if _hash(_plan_metadata(row)) == run["splitPlanId"]
+            if _hash(plan_metadata(row)) == run["splitPlanId"]
         ]
         if not rows:
             raise ValueError("The stopping policy requires its frozen fold membership.")

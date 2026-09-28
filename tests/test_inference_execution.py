@@ -13,7 +13,7 @@ pytest.importorskip("lightning")
 
 from histopilot.application.feature_bundles import _hash  # noqa: E402
 from histopilot.application.predictors import checkpoint_snapshot  # noqa: E402
-from histopilot.storage.packed import _stamp  # noqa: E402
+from histopilot.storage.packed import stat_stamp  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.inference import (  # noqa: E402
     MILTrainModule,
@@ -51,7 +51,7 @@ def _evaluation_plan(tmp_path, split_unit=None):
         key: row for key, row in data["featureFiles"].items() if key in selected
     }
     for entry in data["featureFiles"].values():
-        entry.update(_stamp(Path(entry["path"]).stat()))
+        entry.update(stat_stamp(Path(entry["path"]).stat()))
     data["sourceStamps"] = {row["path"]: row for row in data["featureFiles"].values()}
     data["memberships"][-1]["label"] = None
     return {

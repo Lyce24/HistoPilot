@@ -21,7 +21,7 @@ from test_worker_process_ownership import isolated_worker_tree as _worker_tree
 from histopilot.application.training import membership_plan_id
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _run_plan, collect_results
+from histopilot.workers.train_batch import collect_results, execute_plan
 from histopilot.workers.training_process import process_identity, read_json, save_state
 
 isolated_worker_tree = _worker_tree
@@ -71,7 +71,7 @@ def test_launch_freezes_exact_work_and_idempotent_receipt(tc_execution, task_cen
         "manifest"
     ]
     for run in plan["runs"]:
-        selected = _run_plan(plan, run, None)
+        selected = execute_plan(plan, run, None)
         expected = [
             row for row in protocol["memberships"] if membership_plan_id(row) == run["splitPlanId"]
         ]

@@ -15,7 +15,7 @@ import os
 import shutil
 from pathlib import Path
 
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 from histopilot.taskcenter.adapters.base import (
     Adapter,
     AdapterError,
@@ -78,7 +78,7 @@ def _cancel_marker(task: dict) -> dict | None:
     """The cancel request of this job, or None. Legacy markers are plain text."""
     path = _folder(task) / "cancelled"
     try:
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         if not path.is_file():
             return None
         content = path.read_bytes()[:65536]

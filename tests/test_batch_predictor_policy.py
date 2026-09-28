@@ -17,7 +17,7 @@ from histopilot.application.refits import RefitService
 from histopilot.schemas.development import DevelopmentBatchSpec, SearchGrid, TrainingRecipe
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _run_plan
+from histopilot.workers.train_batch import execute_plan
 from histopilot.workers.training_process import compute_snapshot, read_json
 
 
@@ -95,7 +95,7 @@ def new_batch(service, original_id, name, policy):
         run["result"]["bestCheckpointPath"] = str(checkpoint)
         write_json(folder / "result.json", run["result"])
         intent = next(row for row in plan["runs"] if row["id"] == run["id"])
-        write_json(folder / "plan.json", _run_plan(plan, intent, None))
+        write_json(folder / "plan.json", execute_plan(plan, intent, None))
     write_json(destination / "plan.json", plan)
     write_json(destination / "state.json", state)
     return batch

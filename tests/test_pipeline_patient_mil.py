@@ -23,7 +23,7 @@ from histopilot.storage.scientific import ScientificStore  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.module import aggregate_patients  # noqa: E402
 from histopilot.workers.packing_process import write_json  # noqa: E402
-from histopilot.workers.train_batch import _run_plan, collect_results  # noqa: E402
+from histopilot.workers.train_batch import collect_results, execute_plan  # noqa: E402
 from histopilot.workers.training_process import read_json  # noqa: E402
 
 
@@ -105,7 +105,7 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
     output.mkdir(parents=True)
     state = {"status": "completed", "runs": []}
     for run in plan["runs"]:
-        worker = _run_plan(plan, run, None)
+        worker = execute_plan(plan, run, None)
         run_folder = output / "runs" / run["id"]
         result = train_fold(worker, run_folder)
         assert result["state"] == "succeeded" and result["checkpointUnit"] == "patient"

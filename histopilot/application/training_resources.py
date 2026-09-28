@@ -7,7 +7,7 @@ import stat
 from collections import deque
 from datetime import datetime
 
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 
 MAX_RESOURCE_BYTES = 4 * 1024**2
@@ -148,7 +148,7 @@ def training_resources(store, batch_id: str) -> dict:
     response = {"batchId": batch_id, "rows": [], "totalRows": 0, "truncated": False}
     path = store.folder / "training" / batch_id / "telemetry.jsonl"
     try:
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         if not path.exists():
             return response
         content, byte_truncated = _tail(path)

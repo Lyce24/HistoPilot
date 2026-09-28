@@ -18,7 +18,7 @@ from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.compute_archive import prepare_compute_archive
 from histopilot.workers.packing_process import output_lock, write_json
-from histopilot.workers.train_batch import _check_inputs
+from histopilot.workers.train_batch import check_inputs
 from histopilot.workers.training_process import (
     now,
     process_identity,
@@ -173,7 +173,7 @@ def verify_plan_inputs(plan):
             actual = store.get_configuration(expected["id"])
             if actual["contentHash"] != expected["contentHash"]:
                 raise ValueError("A frozen compute input changed.")
-    _check_inputs(plan["data"])
+    check_inputs(plan["data"])
     if plan.get("checkpoints"):
         from histopilot.application.predictors import checkpoint_snapshot
 

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from histopilot.storage.project_lock import ensure_managed_directory
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _run_plan, run_fold_worker
+from histopilot.workers.train_batch import execute_plan, run_fold_worker
 from histopilot.workers.training_process import compute_snapshot, read_json
 
 
@@ -29,7 +29,7 @@ def run(plan_path: Path, run_id: str) -> None:
     ensure_managed_directory(folder)
     # Only the device kind enters the plan; the physical GPU is the runner's choice.
     gpu = 0 if batch["resources"].get("gpuIds") else None
-    write_json(folder / "plan.json", _run_plan(batch, run, gpu))
+    write_json(folder / "plan.json", execute_plan(batch, run, gpu))
     run_fold_worker(folder / "plan.json")
 
 

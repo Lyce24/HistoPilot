@@ -219,7 +219,7 @@ def test_completed_receipt_with_live_or_unverifiable_process_cannot_be_promoted(
     def unknown(_identity):
         raise StorageError("Unreadable process", "CLEANUP_PROCESS_UNKNOWN")
 
-    monkeypatch.setattr("histopilot.application.lifecycle._confirmed_live", unknown)
+    monkeypatch.setattr("histopilot.application.lifecycle.confirmed_live", unknown)
     assert service.preview(selection)["findings"][0]["code"] == "PREDICTOR_PROCESS_UNKNOWN"
 
 

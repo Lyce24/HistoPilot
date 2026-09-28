@@ -17,13 +17,13 @@ from histopilot.storage.packed import (
     FORMAT,
     PackedStoreError,
     _cancel,
-    _check_sources,
     _configuration,
     _digest,
     _no_links,
     _progress,
-    _read_json,
-    _source,
+    check_sources,
+    open_source,
+    read_pack_json,
     validate_features,
     validate_pack,
 )
@@ -48,12 +48,12 @@ def pack_file_stamps(path: Path) -> dict:
     for name in PACK_NAMES:
         target = path / name
         if target.exists() or target.is_symlink():
-            with _source(target) as (_, stamp):
+            with open_source(target) as (_, stamp):
                 result[name] = stamp
     return result
 
 
-def _layout(path: Path) -> dict:
+def pack_layout(path: Path) -> dict:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -65,7 +65,7 @@ def _layout(path: Path) -> dict:
             "HistoPilot packs require both manifest.json and checksums.json. "
             "This folder is incomplete; restore the missing file or create a new pack."
         )
-    meta = _read_json(path / "meta.json")
+    meta = read_pack_json(path / "meta.json")
     if not isinstance(meta, dict):
         raise PackedStoreError("Pack meta.json must contain a JSON object.")
     for key in ("schema_version", "feat_dim", "coord_dim", "n_slides", "total_patches"):
@@ -77,7 +77,7 @@ def _layout(path: Path) -> dict:
         raise PackedStoreError("Attaching a pack requires one int32 XY coordinate pair per patch.")
     if meta["n_slides"] > MAX_SLIDES or meta["feat_dim"] > 1000000:
         raise PackedStoreError("Pack dimensions or slide count exceed the supported limits.")
-    with _source(path / "index.parquet") as (stream, stamp):
+    with open_source(path / "index.parquet") as (stream, stamp):
         if stamp["sizeBytes"] > MAX_INDEX_BYTES:
             raise PackedStoreError("Pack index exceeds the metadata size limit.")
         parquet = pq.ParquetFile(stream)
@@ -143,7 +143,7 @@ def inspect_existing_pack(configuration: dict, path: Path) -> dict:
     """Compare metadata with the entire frozen inventory; do not read tensor data."""
     _configuration(configuration)
     try:
-        layout = _layout(path)
+        layout = pack_layout(path)
     except (AttributeError, KeyError, TypeError, ValueError, OSError) as error:
         if isinstance(error, PackedStoreError):
             raise
@@ -257,8 +257,8 @@ def verify_existing_pack(
     feature_digest, coord_digest = hashlib.sha256(), hashlib.sha256()
     completed = 0
     with (
-        _source(path / "features.bin", stamps["features.bin"]) as (features, _),
-        _source(path / "coords.bin", stamps["coords.bin"]) as (coords, _),
+        open_source(path / "features.bin", stamps["features.bin"]) as (features, _),
+        open_source(path / "coords.bin", stamps["coords.bin"]) as (coords, _),
     ):
         row_bytes = meta["feat_dim"] * np.dtype(meta["feat_dtype"]).itemsize
         rows = max(1, chunk_bytes // (row_bytes + 32))
@@ -313,7 +313,7 @@ def verify_existing_pack(
                 "payloads": hashes,
             }
         )
-    _check_sources(validation)
+    check_sources(validation)
     if stamps != pack_file_stamps(path):
         raise PackedStoreError("Pack files changed during content verification.")
     _cancel(cancelled)

@@ -21,8 +21,8 @@ from uuid import uuid4
 
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     fsync_directory,
+    reject_symlink_components,
 )
 
 LIFECYCLE_FILE = "histopilot-lifecycle.json"
@@ -66,7 +66,7 @@ def _time(value: object) -> None:
 
 
 def _regular(path: Path, *, missing_ok: bool = False) -> os.stat_result | None:
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     try:
         info = path.lstat()
     except FileNotFoundError:
@@ -88,7 +88,7 @@ def _regular(path: Path, *, missing_ok: bool = False) -> os.stat_result | None:
 def lifecycle_guard(folder: Path, *, timeout: float = 5) -> Iterator[None]:
     """Reentrant in one thread; coordinates all threads and POSIX processes."""
     folder = Path(folder).absolute()
-    _reject_symlink_components(folder)
+    reject_symlink_components(folder)
     if os.name != "posix":
         raise _error("Workspace lifecycle requires POSIX locking.", "STORAGE_UNSUPPORTED")
     import fcntl
@@ -403,7 +403,7 @@ class LifecycleStore:
         }
         if not blocked:
             return
-        _reject_symlink_components(folder)
+        reject_symlink_components(folder)
         paths = sorted(folder.glob("packing-*/result.json"))
         if len(paths) > 10000:
             raise _error(

@@ -8,7 +8,7 @@ from support.training import tc_execution
 from histopilot.application.development import DevelopmentService
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.train_batch import _run_plan
+from histopilot.workers.train_batch import execute_plan
 
 __all__ = ["tc_execution"]
 
@@ -31,7 +31,7 @@ def test_preview_freeze_and_launch_share_the_same_fold_fingerprint(tc_execution,
     plan, _guard = service._prepare(frozen)
     assert plan["nnmilPlanning"] == preview["nnmilPlanning"]
     for run in plan["runs"]:
-        worker = _run_plan(plan, run, None)
+        worker = execute_plan(plan, run, None)
         summary = next(item for item in plan["nnmilPlanning"]
                        if item["candidateId"] == run["candidateId"]
                        and item["splitPlanId"] == run["splitPlanId"])

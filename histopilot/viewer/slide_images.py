@@ -7,7 +7,7 @@ import warnings
 from contextlib import contextmanager
 from pathlib import Path
 
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 
 MAX_RASTER_PIXELS = 32_000_000
 MAX_RASTER_BYTES = 256 * 1024 * 1024
@@ -19,7 +19,7 @@ def allowed_file(filesystem, value):
     try:
         if not path.is_absolute() or ".." in path.parts or "\x00" in value:
             raise ValueError
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         resolved = path.resolve(strict=True)
         if not filesystem._contains(resolved) or not resolved.is_file():
             raise ValueError
@@ -48,7 +48,7 @@ def _pillow():
 @contextmanager
 def _open(path):
     """Open pyramidal WSI with OpenSlide; never fall back to decoding a huge raster."""
-    _reject_symlink_components(Path(path))
+    reject_symlink_components(Path(path))
     Image = _pillow()
     slide = None
     try:
@@ -160,7 +160,7 @@ def _inspect_open_slide(slide, backend):
 
 
 def inspect_slide(path):
-    _reject_symlink_components(Path(path))
+    reject_symlink_components(Path(path))
     if Path(path).suffix.lower() == ".sdpc":
         from histopilot.viewer.sdpc import read_sdpc
 
@@ -254,7 +254,7 @@ def _render_open_slide(slide, backend, *, max_size, region):
 
 
 def _source_identity(path):
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     try:
         value = path.stat()
         if not stat.S_ISREG(value.st_mode):

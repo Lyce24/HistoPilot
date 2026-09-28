@@ -11,9 +11,9 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
-from histopilot.application.clinical import _patient_records  # noqa: E402
+from histopilot.application.clinical import patient_records  # noqa: E402
 from histopilot.application.predictors import checkpoint_snapshot  # noqa: E402
-from histopilot.storage.packed import _stamp  # noqa: E402
+from histopilot.storage.packed import stat_stamp  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.inference import evaluate  # noqa: E402
 from histopilot.training.module import MILTrainModule  # noqa: E402
@@ -172,7 +172,7 @@ def test_bce_logit_ensemble_patient_scoring_cache_and_clinical_evidence(tmp_path
         key: row for key, row in data["featureFiles"].items() if key in selected
     }
     for entry in data["featureFiles"].values():
-        entry.update(_stamp(Path(entry["path"]).stat()))
+        entry.update(stat_stamp(Path(entry["path"]).stat()))
     data["sourceStamps"] = {row["path"]: row for row in data["featureFiles"].values()}
     evaluation = {
         "runId": "evaluation-logits",
@@ -196,7 +196,7 @@ def test_bce_logit_ensemble_patient_scoring_cache_and_clinical_evidence(tmp_path
     expected = 1 / (1 + np.exp(-2.0))
     assert artifact["records"][0]["probabilities"][0] == pytest.approx(expected)
     assert len(artifact["records"][0]["probabilities"]) == 2
-    _patient_records(
+    patient_records(
         artifact["records"], artifact["patientRecords"], plan["target"]["classes"], "mean_logits"
     )
     assert evaluate(evaluation, tmp_path / "evaluation")["artifacts"] == result["artifacts"]

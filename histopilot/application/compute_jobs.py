@@ -20,8 +20,8 @@ from histopilot.schemas.development import ResourcePolicy
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
+    reject_symlink_components,
     writer_lock,
 )
 from histopilot.taskcenter import ids
@@ -326,7 +326,7 @@ class ComputeJobService:
         if not re.fullmatch(r"configuration-[a-f0-9]{64}", identity):
             raise StorageError("Invalid compute record identity.", "COMPUTE_NOT_FOUND", 404)
         folder = self.store.folder / "compute-jobs" / identity
-        _reject_symlink_components(folder)
+        reject_symlink_components(folder)
         return folder
 
     def _record(self, identity, *, include_inactive=False):

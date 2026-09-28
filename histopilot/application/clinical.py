@@ -56,7 +56,7 @@ def _number(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
-def _validate_records(rows, classes, *, patient=False):
+def validate_records(rows, classes, *, patient=False):
     if not isinstance(rows, list):
         raise _invalid("Saved predictions must contain a list of records.")
     key = "patientId" if patient else "slideId"
@@ -97,8 +97,8 @@ def _validate_records(rows, classes, *, patient=False):
     return rows
 
 
-def _patient_records(slides, patients, classes, aggregation="mean"):
-    _validate_records(patients, classes, patient=True)
+def patient_records(slides, patients, classes, aggregation="mean"):
+    validate_records(patients, classes, patient=True)
     groups = defaultdict(list)
     for row in slides:
         if row.get("patientId"):
@@ -326,7 +326,7 @@ def clinical_report(predictions, target, inference, selection):
     classes = target["classes"]
     if not isinstance(predictions, dict) or predictions.get("classOrder") != classes:
         raise _invalid("Prediction class order differs from the frozen evaluation target.")
-    slides = _validate_records(predictions.get("records"), classes)
+    slides = validate_records(predictions.get("records"), classes)
     for row in slides:
         if row.get("patientId") is not None and (
             not isinstance(row["patientId"], str) or not row["patientId"]
@@ -354,7 +354,7 @@ def clinical_report(predictions, target, inference, selection):
         )
     positive_index = classes.index(positive_class)
     rows = (
-        _patient_records(
+        patient_records(
             slides,
             predictions.get("patientRecords"),
             classes,
@@ -660,7 +660,7 @@ class ClinicalService:
                 raise _invalid("Saved metrics differ from the frozen evaluation settings.")
             if not isinstance(predictions, dict):
                 raise ValueError
-            records = _validate_records(predictions.get("records"), manifest["target"]["classes"])
+            records = validate_records(predictions.get("records"), manifest["target"]["classes"])
             expected = {
                 row["slideId"]: (row.get("patientId"), row.get("label"))
                 for row in cohort["manifest"]["memberships"]

@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 
 if TYPE_CHECKING:
     from histopilot.taskcenter.store import TaskStore
@@ -60,7 +60,7 @@ def read_json_file(
         return None
     path = Path(path)
     try:
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(descriptor, "rb") as stream:
             mtime = os.fstat(stream.fileno()).st_mtime
@@ -83,7 +83,7 @@ def bind_cancel(path: str | Path, task: dict) -> None:
     """
     path = Path(path)
     try:
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         if not path.is_file():
             return
         content = path.read_bytes()[:65536]

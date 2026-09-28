@@ -26,7 +26,7 @@ from histopilot.schemas.evaluations import (
 from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.schemas.protocols import TargetSpec
 from histopilot.storage.lifecycle import lifecycle_guard
-from histopilot.storage.pack_import import _layout
+from histopilot.storage.pack_import import pack_layout
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.training_process import read_json
@@ -78,7 +78,7 @@ class EvaluationRunService:
 
     def patient_evidence(self, identity):
         """Read checksummed predictions and validate their frozen patient membership."""
-        from histopilot.application.clinical import _patient_records, _validate_records
+        from histopilot.application.clinical import patient_records, validate_records
 
         document = self.get(identity)
         manifest = document["manifest"]
@@ -110,7 +110,7 @@ class EvaluationRunService:
             classes = manifest["target"]["classes"]
             if predictions["classOrder"] != classes:
                 raise ValueError("Prediction class order differs from the frozen evaluation.")
-            slides = _validate_records(predictions["records"], classes)
+            slides = validate_records(predictions["records"], classes)
             memberships = {row["slideId"]: row for row in cohort["manifest"]["memberships"]}
             observed = {row["slideId"]: (row.get("patientId"), row.get("label")) for row in slides}
             expected = {
@@ -127,7 +127,7 @@ class EvaluationRunService:
                 if not row.get("patientId") or source == "slide_fallback":
                     raise ValueError("Patient comparisons require verified patient identities.")
                 row["patientIdSource"] = source
-            patients = _patient_records(
+            patients = patient_records(
                 slides,
                 predictions.get("patientRecords"),
                 classes,
@@ -640,7 +640,7 @@ class EvaluationRunService:
             if not resolved["current"]:
                 raise StorageError("The selected test pack changed.", "EVALUATION_PACK_CHANGED")
             pack_path = resolved["artifact"]["outputPath"]
-            pack_stamps = _layout(Path(pack_path))["packStamps"]
+            pack_stamps = pack_layout(Path(pack_path))["packStamps"]
         if document["execution"]["status"] != "not_started":
             # Device selection belongs to the first launch. Resume and request
             # replay must preserve it even if CUDA availability has changed.

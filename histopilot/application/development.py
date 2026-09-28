@@ -83,7 +83,7 @@ def _label_separation_findings(protocol, recipes, clinical_values):
     return findings
 
 
-def _plan_metadata(row):
+def plan_metadata(row):
     metadata = {
         key: row[key]
         for key in ("planId", "seed", "fold", "phase", "outerFold", "innerFold", "repeat", "domain")
@@ -98,7 +98,7 @@ def development_plans(protocol: dict) -> list[dict]:
     for row in protocol.get("memberships", []):
         if row.get("phase") == "final" or row.get("pool") == "external_test":
             continue
-        metadata = _plan_metadata(row)
+        metadata = plan_metadata(row)
         key = _hash(metadata)
         if key not in plans:
             plans[key] = {"id": key, **metadata, "slideIds": set(), "partitions": {}}
@@ -152,7 +152,7 @@ class DevelopmentService:
         for row in protocol["memberships"]:
             if row.get("phase") == "final" or row.get("pool") == "external_test":
                 continue
-            identity = _hash(_plan_metadata(row))
+            identity = _hash(plan_metadata(row))
             if identity in groups:
                 groups[identity].append(row)
         columns = {
@@ -289,7 +289,7 @@ class DevelopmentService:
                         for split in plans:
                             fitting = [row for row in protocol["memberships"]
                                        if row["partition"] == "train"
-                                       and _hash(_plan_metadata(row)) == split["id"]]
+                                       and _hash(plan_metadata(row)) == split["id"]]
                             fit_clinical_preprocessor(
                                 fitting,
                                 clinical_values,
@@ -390,7 +390,7 @@ class DevelopmentService:
             files = {row["slideId"]: row for row in feature["manifest"]["files"]}
             groups = {plan["id"]: [] for plan in plans}
             for row in protocol["memberships"]:
-                identity = _hash(_plan_metadata(row))
+                identity = _hash(plan_metadata(row))
                 if identity in groups:
                     groups[identity].append(row)
             try:

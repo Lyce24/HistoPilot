@@ -385,9 +385,9 @@ class RefitService:
             self.predictors.require_work_open(record["manifest"]["experimentId"])
             self._verify_sources(record)
             status = self.jobs.status(identity)
-            from histopilot.application.lifecycle import _confirmed_live
+            from histopilot.application.lifecycle import confirmed_live
 
-            if status.get("status") != "completed" or _confirmed_live(status.get("process")):
+            if status.get("status") != "completed" or confirmed_live(status.get("process")):
                 raise StorageError(
                     "The refit must complete and stop before publication.", "REFIT_INCOMPLETE", 409
                 )

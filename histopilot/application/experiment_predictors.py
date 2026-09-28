@@ -38,8 +38,8 @@ from histopilot.schemas.predictors import ApplyPredictorBuilds, LaunchRefit, Pre
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
+    reject_symlink_components,
 )
 from histopilot.taskcenter import ids
 from histopilot.taskcenter.model import LIVE
@@ -234,7 +234,7 @@ class ExperimentPredictorService:
             / "experiment-predictors"
             / hashlib.sha256(identity.encode()).hexdigest()
         )
-        _reject_symlink_components(folder)
+        reject_symlink_components(folder)
         return folder
 
     def _submission(self, identity, *, inactive=False):
@@ -352,7 +352,7 @@ class ExperimentPredictorService:
                     "error": {"code": LEGACY_CODE, "message": LEGACY_MESSAGE},
                 }
         elif state["status"] in ACTIVE:
-            from histopilot.application.lifecycle import _confirmed_live
+            from histopilot.application.lifecycle import confirmed_live
 
             task = self._task(state)
             if task:
@@ -367,7 +367,7 @@ class ExperimentPredictorService:
                         else "Queued in the Task Center."
                     ),
                 }
-            if not _confirmed_live(state.get("process")) and not self._coordinator_running(state):
+            if not confirmed_live(state.get("process")) and not self._coordinator_running(state):
                 if (folder / "cancel.requested").exists():
                     pending = False
                     for item in state["items"]:
@@ -512,9 +512,9 @@ class ExperimentPredictorService:
                 if not resume:
                     # An accepted launch must never implicitly resume failures.
                     return accepted_noop()
-                from histopilot.application.lifecycle import _confirmed_live
+                from histopilot.application.lifecycle import confirmed_live
 
-                if _confirmed_live(previous.get("process")) or self._coordinator_running(previous):
+                if confirmed_live(previous.get("process")) or self._coordinator_running(previous):
                     return accepted_noop()
             else:
                 previous = None

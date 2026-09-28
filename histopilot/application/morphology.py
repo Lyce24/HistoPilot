@@ -22,10 +22,10 @@ from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.slide_reviews import SlideReviewService, dataset_rows
 from histopilot.domain.features import representation_kind
 from histopilot.schemas.morphology import MorphologyIndexRequest
-from histopilot.storage.attention_inputs import _dataset, _geometry
+from histopilot.storage.attention_inputs import h5_dataset, patch_geometry
 from histopilot.storage.filesystem import LocalFilesystem
-from histopilot.storage.packed import PackedStoreError, _same_stamp, _source, _stamp
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.packed import PackedStoreError, open_source, require_same_stamp, stat_stamp
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 from histopilot.viewer.slide_images import allowed_file, inspect_slide, render_slide
 
 MAX_INDEX_VALUES = 8_000_000  # At most 32 MB of float32 patch features per index.
@@ -138,7 +138,7 @@ class MorphologyService:
             "items": items,
         }
 
-    def _source(self, request):
+    def open_source(self, request):
         rows = self.records(request.datasetId)
         bundle = self.bundles.get(request.featureBundleId)
         if not bundle["current"]:
@@ -176,9 +176,9 @@ class MorphologyService:
     def _features(self, item, indices, *, coordinates=False):
         """Read only selected rows, with recorded inode/size/time evidence on both ends."""
         path = allowed_file(self.filesystem, item["path"])
-        with _source(path, item) as (stream, _):
+        with open_source(path, item) as (stream, _):
             with h5py.File(stream, "r") as handle:
-                features = _dataset(handle, "features")
+                features = h5_dataset(handle, "features")
                 if features.shape != (item["patchCount"], item["dimensions"]):
                     raise _error("The saved feature dimensions changed.")
                 values = np.asarray(features[indices], dtype=np.float32)
@@ -186,16 +186,16 @@ class MorphologyService:
         if coordinates:
             coord_path = allowed_file(self.filesystem, item.get("coordinatePath", item["path"]))
             expected = item if coord_path == path else item.get("coordinateFile", {})
-            with _source(coord_path, expected) as (stream, _):
+            with open_source(coord_path, expected) as (stream, _):
                 with h5py.File(stream, "r") as handle:
-                    dataset = _dataset(handle, "coords")
+                    dataset = h5_dataset(handle, "coords")
                     if dataset.shape != (item["patchCount"], 2) or dataset.dtype.kind not in "iu":
                         raise _error("Coordinates no longer match the feature row order.")
                     coords = np.asarray(dataset[indices], dtype=np.int64)
         return values, coords
 
     def build(self, request):
-        rows, bundle, feature, files = self._source(request)
+        rows, bundle, feature, files = self.open_source(request)
         self._require_patch_features(feature)
         dataset = self.store.get_dataset(request.datasetId)
         identity = hashlib.sha256(
@@ -285,7 +285,7 @@ class MorphologyService:
             for point, location in zip(points, xy, strict=True):
                 point.update(x=location[0], y=location[1])
             # Re-run the exact binding check after reads, before publishing cached evidence.
-            self._source(request)
+            self.open_source(request)
             public = {
                 "indexId": identity,
                 "datasetId": request.datasetId,
@@ -342,7 +342,7 @@ class MorphologyService:
                 "MORPHOLOGY_INDEX_EXPIRED",
                 409,
             )
-        self._source(index["request"])
+        self.open_source(index["request"])
         public = index["public"]
         rows = public["points"] if request.mode == "slide" else public["patches"]
         positions = [
@@ -386,14 +386,14 @@ class MorphologyService:
         if not row.get("slidePath"):
             raise _error("This frozen slide has no linked image.")
         path = allowed_file(self.filesystem, row["slidePath"])
-        actual = _stamp(path.stat())
+        actual = stat_stamp(path.stat())
         authenticated = True
         try:
             inventory = json.loads(self.store.read_artifact(dataset_id, "inventory.json"))
             saved = [item for item in inventory if item.get("path") == str(path)]
             if len(saved) != 1:
                 raise _error("The image is not uniquely bound to the frozen slide inventory.")
-            _same_stamp(actual, saved[0], path)
+            require_same_stamp(actual, saved[0], path)
         except StorageError as error:
             if error.code != "ARTIFACT_NOT_FOUND":
                 raise
@@ -420,9 +420,9 @@ class MorphologyService:
 
     @staticmethod
     def _verify_image_source(path, before):
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         try:
-            _same_stamp(_stamp(path.stat()), before, path)
+            require_same_stamp(stat_stamp(path.stat()), before, path)
         except (PackedStoreError, OSError) as error:
             raise _error(
                 "The slide changed while it was read.", "MORPHOLOGY_SLIDE_CHANGED", 409
@@ -457,7 +457,7 @@ class MorphologyService:
             )
         if bundle_id:
             request = MorphologyIndexRequest(datasetId=dataset_id, featureBundleId=bundle_id)
-            _, _, feature, files = self._source(request)
+            _, _, feature, files = self.open_source(request)
             result["featureKind"] = representation_kind(feature["manifest"])
             item = files.get(slide_id)
             if item and result["featureKind"] == "slide":
@@ -473,9 +473,9 @@ class MorphologyService:
                 expected = (
                     item if str(coord_path) == item["path"] else item.get("coordinateFile", {})
                 )
-                with _source(coord_path, expected) as (stream, _):
+                with open_source(coord_path, expected) as (stream, _):
                     with h5py.File(stream, "r") as handle:
-                        coords = _dataset(handle, "coords")
+                        coords = h5_dataset(handle, "coords")
                         if coords.shape != (count, 2) or coords.dtype.kind not in "iu":
                             raise _error("Invalid patch coordinates.")
                         values = np.asarray(coords[:], dtype=np.int64)
@@ -496,7 +496,7 @@ class MorphologyService:
                             raise _error("Feature and coordinate geometry metadata conflict.")
                         attrs[name] = value
                 try:
-                    width, height = _geometry(attrs, {}, geometry)
+                    width, height = patch_geometry(attrs, {}, geometry)
                     result.update(patchWidth=width, patchHeight=height)
                     lower, upper = values.min(axis=0), values.max(axis=0)
                     result["coordinateBounds"] = {
@@ -534,7 +534,7 @@ class MorphologyService:
         if not result["tissueContours"]:
             result["warnings"].append("No usable recorded TRIDENT tissue contours are available.")
         try:
-            _same_stamp(_stamp(path.stat()), before, path)
+            require_same_stamp(stat_stamp(path.stat()), before, path)
         except PackedStoreError as error:
             raise _error(
                 "The slide changed while it was read.", "MORPHOLOGY_SLIDE_CHANGED", 409
@@ -559,7 +559,7 @@ class MorphologyService:
             if not path.exists():
                 return [], []
             path = allowed_file(self.filesystem, str(path))
-            with _source(path) as (stream, _):
+            with open_source(path) as (stream, _):
                 content = stream.read(8 * 1024 * 1024 + 1)
             if len(content) > 8 * 1024 * 1024:
                 return [], ["Tissue contours exceed the 8 MB display limit."]
@@ -619,7 +619,7 @@ class MorphologyService:
         path, before, _ = self._image_source(dataset_id, slide_id, source_fingerprint)
         geometry = inspect_slide(path)
         self._verify_image_source(path, before)
-        _, _, feature, files = self._source(
+        _, _, feature, files = self.open_source(
             MorphologyIndexRequest(datasetId=dataset_id, featureBundleId=bundle_id)
         )
         self._require_patch_features(feature)
@@ -637,7 +637,7 @@ class MorphologyService:
                     raise _error("Feature and coordinate geometry metadata conflict.")
                 attrs[name] = value
         try:
-            width, height = _geometry(attrs, {}, geometry)
+            width, height = patch_geometry(attrs, {}, geometry)
         except ValueError as error:
             raise _error(f"Exact patch geometry is unavailable: {error}") from error
         _, coords = self._features(item, np.array([patch_index]), coordinates=True)

@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from statistics import median
 
-from histopilot.storage.project_lock import _reject_symlink_components
+from histopilot.storage.project_lock import reject_symlink_components
 
 KEY_VERSION = 2
 SUGGESTION_VERSION = 2
@@ -433,7 +433,7 @@ def observations_from_training(
         # Normalized, not resolved: managed storage has no symlinks, so this equals the
         # resolved folder that Task Center ids are derived from.
         training = Path(os.path.abspath(project_folder)) / "training"
-        _reject_symlink_components(training)
+        reject_symlink_components(training)
         entries = []
         with os.scandir(training) as scan:
             for index, entry in enumerate(scan):

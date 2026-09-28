@@ -24,7 +24,7 @@ from histopilot.schemas.development import TrainingRecipe
 from histopilot.schemas.predictors import FreezePredictor, PredictorSelection
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _run_plan
+from histopilot.workers.train_batch import execute_plan
 from histopilot.workers.training_process import compute_snapshot, read_json
 from support.projects import draft, setup
 
@@ -168,7 +168,7 @@ def candidate(
             "epochsCompleted": 2,
         }
         write_json(run_folder / "result.json", result)
-        write_json(run_folder / "plan.json", _run_plan(plan, run, None))
+        write_json(run_folder / "plan.json", execute_plan(plan, run, None))
         states.append({**run, "status": "completed", "result": result})
     state = {"batchId": batch["id"], "status": "completed", "planHash": _hash(plan), "runs": states}
     write_json(folder / "plan.json", plan)
@@ -310,7 +310,7 @@ def two_seeds(service):
             "bestCheckpointPath": str(checkpoint),
         }
         write_json(run_folder / "result.json", result)
-        write_json(run_folder / "plan.json", _run_plan(plan, run, None))
+        write_json(run_folder / "plan.json", execute_plan(plan, run, None))
         states.append({**run, "status": "completed", "result": result})
     write_json(folder / "plan.json", plan)
     write_json(

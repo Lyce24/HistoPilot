@@ -3,7 +3,7 @@
 import ast
 from pathlib import Path
 
-from histopilot.application.development import _hash, _plan_metadata
+from histopilot.application.development import _hash, plan_metadata
 from histopilot.application.training_patience import stopping_recipe
 
 PACKAGE = Path(__file__).resolve().parents[1] / "histopilot"
@@ -51,7 +51,7 @@ def test_fallback_replay_counts_slides_for_slide_level_designs():
     manifest = {"spec": {"inputs": {"protocolId": "protocol"}}}
     for split_unit, fallback in (("slide", False), ("patient", True)):
         protocol = membership(split_unit)
-        run = {"splitPlanId": _hash(_plan_metadata(protocol["memberships"][0]))}
+        run = {"splitPlanId": _hash(plan_metadata(protocol["memberships"][0]))}
         effective = stopping_recipe(Store(protocol), manifest, run, recipe)
         # Four positive slides meet a minimum of three; two positive patients do not.
         assert (effective["maxEpochs"] == 10) is fallback

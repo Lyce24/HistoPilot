@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from histopilot.application.extraction_artifacts import complete_coverage, inspect_outputs
-from histopilot.storage.project_lock import _reject_symlink_components, fsync_directory
+from histopilot.storage.project_lock import fsync_directory, reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 
 CHUNK_SIZE = 16
@@ -23,7 +23,7 @@ MAX_FINDINGS = 1000
 
 
 def _write_validation(path: Path, value: dict) -> None:
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     content = json.dumps(value, allow_nan=False, indent=2).encode() + b"\n"
     if len(content) > MAX_JSON_BYTES:
         raise ValueError("Extraction validation exceeds its storage limit.")
@@ -64,7 +64,7 @@ def validate_job(job_path: Path, validation_path: Path, progress_path: Path | No
         or not job["slides"]
     ):
         raise ValueError("Extraction job must identify a nonempty frozen slide list.")
-    _reject_symlink_components(validation_path)
+    reject_symlink_components(validation_path)
     if (
         validation_path.parent.resolve() != job_path.parent.resolve()
         or validation_path.resolve() == job_path.resolve()

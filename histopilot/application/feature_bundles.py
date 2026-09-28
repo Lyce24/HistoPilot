@@ -164,7 +164,7 @@ class FeatureBundleService:
     def _freshness_guard(self, configuration: dict, preview: dict):
         """Pin external files for the final check; the callback never re-enters the store."""
         from histopilot.storage.pack_import import pack_file_stamps
-        from histopilot.storage.packed import PackedStoreError, _check_sources
+        from histopilot.storage.packed import PackedStoreError, check_sources
 
         manifest = configuration["manifest"]
         sources = {item["path"]: item for item in manifest["files"]}
@@ -191,7 +191,7 @@ class FeatureBundleService:
 
         def check():
             try:
-                _check_sources({"sourceStamps": sources})
+                check_sources({"sourceStamps": sources})
                 # Extraction receipts are separate from feature/container stamps. This
                 # helper only reads files, so it does not re-enter the project lock.
                 if manifest.get("sourceExtraction") and self.packing._source_findings(

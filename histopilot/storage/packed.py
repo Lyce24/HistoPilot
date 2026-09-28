@@ -141,7 +141,7 @@ def _progress(callback, stage, completed, total, slide=None, unit="patches"):
         )
 
 
-def _stamp(info) -> dict:
+def stat_stamp(info) -> dict:
     return dict(
         zip(
             STAMP_KEYS,
@@ -156,13 +156,13 @@ def _no_links(path: Path):
         raise PackedStoreError(f"Feature paths must not traverse symbolic links: {path}")
 
 
-def _same_stamp(actual: dict, expected: dict, path: Path):
+def require_same_stamp(actual: dict, expected: dict, path: Path):
     if any(actual[key] != expected[key] for key in STAMP_KEYS if key in expected):
         raise PackedStoreError(f"Feature source changed since it was saved: {path}")
 
 
 @contextmanager
-def _source(path: Path, expected: dict | None = None):
+def open_source(path: Path, expected: dict | None = None):
     _no_links(path)
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -170,14 +170,14 @@ def _source(path: Path, expected: dict | None = None):
             info = os.fstat(stream.fileno())
             if not stat.S_ISREG(info.st_mode):
                 raise PackedStoreError(f"Feature input must be a regular file: {path}")
-            before = _stamp(info)
-            _same_stamp(before, expected or {}, path)
+            before = stat_stamp(info)
+            require_same_stamp(before, expected or {}, path)
             yield stream, before
-            _same_stamp(_stamp(os.fstat(stream.fileno())), before, path)
+            require_same_stamp(stat_stamp(os.fstat(stream.fileno())), before, path)
         after = path.lstat()
         if not stat.S_ISREG(after.st_mode):
             raise PackedStoreError(f"Feature source changed during validation: {path}")
-        _same_stamp(_stamp(after), before, path)
+        require_same_stamp(stat_stamp(after), before, path)
     except OSError as error:
         raise PackedStoreError(f"Cannot read feature source {path}: {error}") from error
 
@@ -194,7 +194,7 @@ def _stream_hash(stream, cancelled=None, chunk_bytes=CHUNK_BYTES) -> str:
 
 
 def _file_evidence(path, cancelled=None, chunk_bytes=CHUNK_BYTES):
-    with _source(path) as (stream, stamp):
+    with open_source(path) as (stream, stamp):
         return {"path": str(path), **stamp, "sha256": _stream_hash(stream, cancelled, chunk_bytes)}
 
 
@@ -244,7 +244,7 @@ def _semantic(value):
     return value
 
 
-def _dataset(handle, key):
+def embedded_dataset(handle, key):
     h5py = _h5py()
     if not isinstance(handle.get(key, getlink=True), h5py.HardLink):
         raise PackedStoreError(f"{key} must be an embedded HDF5 dataset.")
@@ -337,13 +337,13 @@ def _scan(
         path = Path(entry["path"])
         coords_path = Path(entry.get("coordinatePath") or path)
         with ExitStack() as stack:
-            stream, stamp = stack.enter_context(_source(path, entry))
+            stream, stamp = stack.enter_context(open_source(path, entry))
             identity = stamp["deviceId"], stamp["inode"]
             if identity in seen_inodes:
                 raise PackedStoreError("Different slide IDs reference the same feature file.")
             seen_inodes.add(identity)
             feature_handle = stack.enter_context(_h5py().File(stream, "r"))
-            features = _dataset(feature_handle, "features")
+            features = embedded_dataset(feature_handle, "features")
             if len(features.shape) != 2 or not all(features.shape) or features.dtype.kind != "f":
                 raise PackedStoreError(f"{slide}: features must be nonempty floating [N,D].")
             count, dim = features.shape
@@ -372,10 +372,10 @@ def _scan(
                 coords_handle, coords_stream, coords_stamp = feature_handle, stream, stamp
             else:
                 coords_stream, coords_stamp = stack.enter_context(
-                    _source(coords_path, entry.get("coordinateFile", {}))
+                    open_source(coords_path, entry.get("coordinateFile", {}))
                 )
                 coords_handle = stack.enter_context(_h5py().File(coords_stream, "r"))
-            coords = _dataset(coords_handle, "coords")
+            coords = embedded_dataset(coords_handle, "coords")
             if coords.shape != (count, 2) or coords.dtype.kind not in {"i", "u"}:
                 raise PackedStoreError(f"{slide}: coords must have one integer XY pair per row.")
             coordinate_dtype = coords.dtype.name
@@ -497,7 +497,7 @@ def _scan(
     for item in manifest.get("provenance", []):
         _cancel(cancelled)
         path = Path(item["path"])
-        with _source(path, item) as (stream, stamp):
+        with open_source(path, item) as (stream, stamp):
             if stamp["sizeBytes"] > MAX_METADATA_BYTES:
                 raise PackedStoreError("Source provenance exceeds the metadata limit.")
             raw = stream.read(MAX_METADATA_BYTES + 1)
@@ -552,17 +552,17 @@ def _scan(
         # The frozen application snapshot is evidence, not a claim that a checkpoint
         # has been authenticated. Job IDs/commands/locators do not identify tensors.
         result["sourceExtraction"] = manifest["sourceExtraction"]
-    _check_sources(result)
+    check_sources(result)
     _cancel(cancelled)
     return result, output_dtype, conversion
 
 
-def _check_sources(report):
+def check_sources(report):
     for locator, stamp in report["sourceStamps"].items():
         path = Path(locator)
         _no_links(path)
         try:
-            _same_stamp(_stamp(path.stat()), stamp, path)
+            require_same_stamp(stat_stamp(path.stat()), stamp, path)
         except OSError as error:
             raise PackedStoreError(f"Feature source changed during validation: {path}") from error
 
@@ -588,13 +588,13 @@ def _scan_slide_features(configuration, *, progress=None, cancelled=None, chunk_
         slide, path = entry["slideId"], Path(entry["path"])
         if entry.get("coordinatePath") or entry.get("coordinateFile"):
             raise PackedStoreError(f"{slide}: slide embeddings cannot declare patch coordinates.")
-        with _source(path, entry) as (stream, stamp):
+        with open_source(path, entry) as (stream, stamp):
             identity = stamp["deviceId"], stamp["inode"]
             if identity in seen_inodes:
                 raise PackedStoreError("Different slide IDs reference the same feature file.")
             seen_inodes.add(identity)
             with _h5py().File(stream, "r") as handle:
-                features = _dataset(handle, "features")
+                features = embedded_dataset(handle, "features")
                 shape = features.shape
                 if (
                     len(shape) not in {1, 2}
@@ -675,7 +675,7 @@ def _scan_slide_features(configuration, *, progress=None, cancelled=None, chunk_
     for item in manifest.get("provenance", []):
         _cancel(cancelled)
         path = Path(item["path"])
-        with _source(path, item) as (stream, stamp):
+        with open_source(path, item) as (stream, stamp):
             if stamp["sizeBytes"] > MAX_METADATA_BYTES:
                 raise PackedStoreError("Source provenance exceeds the metadata limit.")
             raw = stream.read(MAX_METADATA_BYTES + 1)
@@ -761,7 +761,7 @@ def validate_features(
         report["totalPatches"],
         unit="slides" if report["featureKind"] == "slide" else "patches",
     )
-    _check_sources(report)
+    check_sources(report)
     _cancel(cancelled)
     return report
 
@@ -961,7 +961,7 @@ def build_pack(
         _write_json(staging / "checksums.json", {"algorithm": "sha256", "files": checksum_entries})
         validate_pack(staging, full=False)
         _progress(progress, "publishing", offset, offset)
-        _check_sources(validation)
+        check_sources(validation)
         _cancel(cancelled)
         _safe_destination(configuration, destination)
         _fsync_dir(staging)
@@ -980,9 +980,9 @@ def build_pack(
             shutil.rmtree(staging)
 
 
-def _read_json(path):
+def read_pack_json(path):
     try:
-        with _source(path) as (stream, stamp):
+        with open_source(path) as (stream, stamp):
             if stamp["sizeBytes"] > 128 * 1024 * 1024:
                 raise PackedStoreError(f"Pack metadata is unreasonably large: {path.name}")
             return json.load(stream)
@@ -1002,7 +1002,7 @@ def validate_pack(path: Path, *, full=True) -> dict:
     path = Path(path)
     _no_links(path)
     try:
-        manifest = _read_json(path / "manifest.json")
+        manifest = read_pack_json(path / "manifest.json")
         saved_hash = manifest.get("manifestContentHash")
         if saved_hash != _digest(
             {key: value for key, value in manifest.items() if key != "manifestContentHash"}
@@ -1029,7 +1029,7 @@ def validate_pack(path: Path, *, full=True) -> dict:
             or not validation["tensorValidationComplete"]
         ):
             raise PackedStoreError("Pack source content identity is invalid.")
-        checksums = _read_json(path / "checksums.json")
+        checksums = read_pack_json(path / "checksums.json")
         if checksums["algorithm"] != "sha256" or set(checksums["files"]) != {
             *PAYLOADS,
             "manifest.json",
@@ -1051,7 +1051,7 @@ def validate_pack(path: Path, *, full=True) -> dict:
             if full or name in {"manifest.json", "meta.json", "index.parquet"}:
                 if _file_evidence(payload)["sha256"] != checksums["files"][name]:
                     raise PackedStoreError(f"Pack payload checksum mismatch: {name}")
-        meta = _read_json(path / "meta.json")
+        meta = read_pack_json(path / "meta.json")
         expected_meta = {
             "schema_version": 1,
             "feat_dim": manifest["dimensions"],

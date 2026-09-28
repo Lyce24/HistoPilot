@@ -8,8 +8,8 @@ from copy import deepcopy
 from pathlib import Path
 from threading import Lock
 
-from histopilot.storage.pack_import import _layout, pack_file_stamps
-from histopilot.storage.packed import PackedFeatureStore, _source
+from histopilot.storage.pack_import import pack_file_stamps, pack_layout
+from histopilot.storage.packed import PackedFeatureStore, open_source
 
 _LAYOUTS = OrderedDict()
 _LAYOUT_LOCK = Lock()
@@ -35,7 +35,7 @@ def _cached_layout(path):
         if cached is not None:
             _LAYOUTS.move_to_end(key)
             return cached
-    value = _layout(path)
+    value = pack_layout(path)
     if value["packStamps"] != stamps:
         raise ValueError("Feature pack changed while its index was opened.")
     # Large metadata remains bounded by the existing reader, but is not retained
@@ -65,7 +65,7 @@ def _verify_payloads(path, stamps, expected, *, deadline=None):
             if key in _PAYLOADS_VERIFIED:
                 _PAYLOADS_VERIFIED.move_to_end(key)
                 continue
-        with _source(path / name, stamps[name]) as (stream, _):
+        with open_source(path / name, stamps[name]) as (stream, _):
             actual = hashlib.sha256()
             while block := stream.read(1024 * 1024):
                 _deadline(deadline)
@@ -169,7 +169,7 @@ def inspect_packed_inputs(selection, slide, contract, *, load=False, deadline=No
         CHUNK_ROWS,
         MAX_FEATURE_BYTES,
         MAX_PATCHES,
-        _geometry,
+        patch_geometry,
     )
 
     _deadline(deadline)
@@ -243,7 +243,7 @@ def inspect_packed_inputs(selection, slide, contract, *, load=False, deadline=No
         raise ValueError(
             "Legacy attention packs require exact-source-values, same-precision verification."
         )
-    width, height = _geometry(coordinate_attrs, selection, slide)
+    width, height = patch_geometry(coordinate_attrs, selection, slide)
     payload_hashes = proof.get("payloadHashes") or {
         name: item["sha256"]
         for name, item in (native or proof).get("files", {}).items()
@@ -291,7 +291,7 @@ def inspect_packed_inputs(selection, slide, contract, *, load=False, deadline=No
     with ExitStack() as stack:
         # Pin all metadata and both payloads while the independent reader maps them.
         for name, stamp in stamps.items():
-            stack.enter_context(_source(path / name, stamp))
+            stack.enter_context(open_source(path / name, stamp))
         reader = _VerifiedRows(path, layout)
         stack.callback(reader.close)
         for start in range(0, count, CHUNK_ROWS):

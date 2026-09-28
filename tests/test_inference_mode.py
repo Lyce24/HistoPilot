@@ -708,7 +708,7 @@ def test_explicit_slide_run_blocks_patient_review_analysis_and_exports(inference
     )
     inference_run.install(evaluation, json.loads(inference_run.payload))
     monkeypatch.setattr(
-        "histopilot.application.case_review._patient_records",
+        "histopilot.application.case_review.patient_records",
         lambda *_: pytest.fail("Slide experiments must never aggregate patient predictions"),
     )
     result = service.summary(evaluation["id"], InferenceSummaryQuery())

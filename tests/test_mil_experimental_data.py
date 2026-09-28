@@ -12,7 +12,7 @@ pytest.importorskip("lightning")
 
 from histopilot.datasets.datamodule import MILDataModule
 from histopilot.datasets.mil import MILDataError
-from histopilot.storage.packed import _stamp
+from histopilot.storage.packed import stat_stamp
 
 
 @pytest.fixture
@@ -48,7 +48,7 @@ def experimental_plan(tmp_path):
                     "patchCount": 40,
                     "dimensions": 4,
                     "dtype": "float32",
-                    **_stamp(path.stat()),
+                    **stat_stamp(path.stat()),
                 }
                 rows.append(
                     {

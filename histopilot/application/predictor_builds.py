@@ -15,8 +15,8 @@ from histopilot.schemas.predictors import PredictorBuildSelection, PredictorSele
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
+    reject_symlink_components,
 )
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import now, read_json
@@ -33,7 +33,7 @@ class PredictorBuildService:
             / "predictor-builds"
             / hashlib.sha256(operation_id.encode()).hexdigest()
         )
-        _reject_symlink_components(folder)
+        reject_symlink_components(folder)
         return folder
 
     def _existing_plan(self, selection):

@@ -19,8 +19,8 @@ from histopilot.application.operations import _archive_manifest, _now, permitted
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
+    reject_symlink_components,
     writer_lock,
 )
 from histopilot.storage.scientific import ScientificStore
@@ -180,7 +180,7 @@ class PortabilityJobs:
         if not re.fullmatch(r"portability-[a-f0-9]{64}", job_id):
             raise StorageError("Archive operation not found.", "PORTABILITY_NOT_FOUND", 404)
         folder = self.folder / job_id
-        _reject_symlink_components(folder)
+        reject_symlink_components(folder)
         return folder
 
     def submit(self, identity, request):
@@ -335,7 +335,7 @@ class PortabilityJobs:
         self.projects._load(identity)
         if not self.folder.exists():
             return {"jobs": []}
-        _reject_symlink_components(self.folder)
+        reject_symlink_components(self.folder)
         jobs = []
         for path in sorted(self.folder.glob("portability-*/state.json"), reverse=True):
             state = json.loads(ScientificStore._read_file(path, 64 * 1024 * 1024))

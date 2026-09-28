@@ -13,7 +13,7 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
 from histopilot.application.predictors import checkpoint_snapshot  # noqa: E402
-from histopilot.storage.packed import _stamp  # noqa: E402
+from histopilot.storage.packed import stat_stamp  # noqa: E402
 from histopilot.training.attention import interpret  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.inference import evaluate  # noqa: E402
@@ -29,7 +29,7 @@ def inference_plan(training, checkpoint):
     ids = {row["slideId"] for row in data["memberships"]}
     data["featureFiles"] = {key: row for key, row in data["featureFiles"].items() if key in ids}
     for entry in data["featureFiles"].values():
-        entry.update(_stamp(Path(entry["path"]).stat()))
+        entry.update(stat_stamp(Path(entry["path"]).stat()))
     data["sourceStamps"] = {row["path"]: row for row in data["featureFiles"].values()}
     return {
         "kind": "evaluation",

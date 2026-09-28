@@ -18,8 +18,8 @@ from pathlib import Path
 from histopilot.storage import sqlite_connections
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
+    reject_symlink_components,
 )
 from histopilot.taskcenter import ids, paths
 from histopilot.taskcenter.model import (
@@ -271,7 +271,7 @@ class TaskStore:
             if self._ready:
                 return
             try:
-                _reject_symlink_components(self.path)
+                reject_symlink_components(self.path)
                 if not self.path.parent.is_dir():
                     ensure_managed_directory(self.path.parent)
                 connection = self._open()

@@ -17,7 +17,7 @@ from threading import BoundedSemaphore, Event, Lock, Thread
 
 from histopilot.adapters.trident.runner import _worker_environment
 from histopilot.adapters.trident.runtime import discover_runtime
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 
 # Bound both native concurrency and accumulated allocations in vendor decoders.
 _READERS = BoundedSemaphore(2)
@@ -72,7 +72,7 @@ def _openslide_python():
 
 
 def _source_stamp(path):
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     try:
         info = path.stat()
         if not path.is_file():

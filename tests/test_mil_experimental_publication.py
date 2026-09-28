@@ -14,7 +14,7 @@ from histopilot.schemas.evaluations import InferenceSettings
 from histopilot.schemas.predictors import EvaluationRunSelection, SaveEvaluationRun
 from histopilot.schemas.training_controls import resolve_stopping
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _run_plan
+from histopilot.workers.train_batch import execute_plan
 
 
 def candidate(service, monkeypatch, **recipe):
@@ -87,7 +87,7 @@ def test_cohort_enriched_worker_memberships_publish_and_refit(registry, monkeypa
         "site": {identity: "TCGA" for identity in plan["data"]["featureFiles"]}
     }
     for run in state["runs"]:
-        write_json(folder / "runs" / run["id"] / "plan.json", _run_plan(plan, run, None))
+        write_json(folder / "runs" / run["id"] / "plan.json", execute_plan(plan, run, None))
         run["result"]["bestEpoch"] = 2
     state["planHash"] = _hash(plan)
     write_json(folder / "plan.json", plan)

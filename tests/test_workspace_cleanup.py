@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from histopilot.api import create_app
-from histopilot.application.lifecycle import CleanupService, _confirmed_live
+from histopilot.application.lifecycle import CleanupService, confirmed_live
 from histopilot.config import Settings
 from histopilot.schemas.lifecycle import ApplyCleanup, CancelCleanupJob, CleanupSelection
 from histopilot.storage.filesystem import LocalFilesystem
@@ -299,7 +299,7 @@ def test_process_permission_failure_is_not_treated_as_stopped(monkeypatch):
 
     monkeypatch.setattr(Path, "read_text", denied)
     with pytest.raises(StorageError) as error:
-        _confirmed_live({"pid": 9876, "startTicks": 1, "bootId": "fixture"})
+        confirmed_live({"pid": 9876, "startTicks": 1, "bootId": "fixture"})
     assert error.value.code == "CLEANUP_PROCESS_UNKNOWN"
 
 

@@ -7,7 +7,7 @@ import json
 import math
 from collections import Counter
 
-from histopilot.application.clinical import _patient_records, _validate_records
+from histopilot.application.clinical import patient_records, validate_records
 from histopilot.application.evaluation_runs import EvaluationRunService, run_purpose
 from histopilot.application.predictors import reference
 from histopilot.application.slide_reviews import SlideReviewService, dataset_rows
@@ -162,7 +162,7 @@ class CaseReviewService:
             target = manifest["target"]
             if source["classOrder"] != target["classes"]:
                 raise ValueError("Saved class order differs from the evaluation.")
-            slides = _validate_records(source["records"], target["classes"])
+            slides = validate_records(source["records"], target["classes"])
             membership = {row["slideId"]: row for row in cohort["manifest"]["memberships"]}
             if len(membership) != len(cohort["manifest"]["memberships"]):
                 raise ValueError("The cohort contains duplicate slide membership.")
@@ -193,7 +193,7 @@ class CaseReviewService:
                 if any(not row.get("patientId") or row.get("patientIdSource") == "slide_fallback" for row in membership.values()):
                     raise ValueError("Patient review requires verified patient identities. Choose slide review for this cohort.")
                 aggregation = manifest["inference"]["patientAggregation"]
-                records = _patient_records(slides, source["patientRecords"], target["classes"], aggregation)
+                records = patient_records(slides, source["patientRecords"], target["classes"], aggregation)
                 groups = {}
                 for row in slides:
                     groups.setdefault(row.get("patientId"), []).append(row)

@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import Lock
 
 from histopilot.storage.attention_inputs import file_stamp
-from histopilot.storage.packed import _source
+from histopilot.storage.packed import open_source
 from histopilot.storage.project_lock import StorageError
 
 _VERIFIED = OrderedDict()
@@ -40,7 +40,7 @@ def _attention_array(path, expected, slide):
     try:
         if expected.get("path") != str(path) or not 0 < expected.get("bytes", 0) <= MAX_ARRAY_BYTES:
             raise ValueError("Attention array receipt is invalid.")
-        with _source(path) as (stream, stamp):
+        with open_source(path) as (stream, stamp):
             if stamp["sizeBytes"] != expected["bytes"]:
                 raise ValueError("Attention array size changed.")
             signature = (str(path), expected["sha256"], tuple(sorted(stamp.items())))

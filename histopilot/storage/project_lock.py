@@ -21,7 +21,7 @@ class StorageError(ValueError):
         self.status_code = status_code
 
 
-def _reject_symlink_components(path: Path) -> None:
+def reject_symlink_components(path: Path) -> None:
     for component in (path, *path.parents):
         if component.is_symlink():
             raise StorageError(
@@ -31,7 +31,7 @@ def _reject_symlink_components(path: Path) -> None:
 
 def fsync_directory(path: Path) -> None:
     """Persist directory-entry changes, failing if this filesystem cannot do so."""
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     if os.name != "posix":
         raise StorageError(
             "Scientific storage currently requires POSIX directory synchronization support.",
@@ -53,7 +53,7 @@ def fsync_directory(path: Path) -> None:
 
 def ensure_managed_directory(path: Path) -> None:
     """Create a managed directory durably without following symbolic links."""
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     try:
         if path.exists():
             if not path.is_dir():
@@ -70,7 +70,7 @@ def ensure_managed_directory(path: Path) -> None:
         except FileExistsError:
             # Independent workers may initialize a shared registry concurrently.
             # Accept only a real directory, applying the same path checks again.
-            _reject_symlink_components(path)
+            reject_symlink_components(path)
             if not path.is_dir():
                 raise StorageError(
                     "A managed storage directory is occupied by another file type.",
@@ -87,7 +87,7 @@ def ensure_managed_directory(path: Path) -> None:
 @contextmanager
 def writer_lock(folder: Path, *, timeout: float = 0) -> Iterator[None]:
     """Acquire a shared process lock; reads may wait briefly, mutations fail fast."""
-    _reject_symlink_components(folder)
+    reject_symlink_components(folder)
     if os.name != "posix":
         raise StorageError(
             "Scientific storage currently requires POSIX project locking support.",

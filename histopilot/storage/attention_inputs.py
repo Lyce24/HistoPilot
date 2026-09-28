@@ -6,8 +6,8 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 
-from histopilot.storage.packed import _source, _stamp
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.packed import open_source, stat_stamp
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 
 MAX_PATCHES = 2_000_000
 MAX_FEATURE_BYTES = 8 * 1024**3
@@ -16,13 +16,13 @@ CHUNK_ROWS = 8192
 
 def file_stamp(path):
     path = Path(path)
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     if not path.is_file():
         raise ValueError("An interpretation source is missing or no longer a regular file.")
-    return {"path": str(path), **_stamp(path.stat())}
+    return {"path": str(path), **stat_stamp(path.stat())}
 
 
-def _dataset(handle, key):
+def h5_dataset(handle, key):
     import h5py
 
     if not isinstance(handle.get(key, getlink=True), h5py.HardLink):
@@ -68,7 +68,7 @@ def _metadata(handle, dataset):
     return result
 
 
-def _geometry(attributes, selection, slide):
+def patch_geometry(attributes, selection, slide):
     for key in ("coordinate_space", "coordinateSpace"):
         if key in attributes and attributes[key] not in {
             "level0",
@@ -142,12 +142,12 @@ def inspect_inputs(selection, slide, contract, *, load=False, deadline=None):
                 raise ValueError(
                     "A feature or coordinate extraction lock remains; wait for extraction to complete."
                 )
-            streams[path] = stack.enter_context(_source(path))
+            streams[path] = stack.enter_context(open_source(path))
         handles = {
             path: stack.enter_context(h5py.File(stream[0], "r")) for path, stream in streams.items()
         }
-        features = _dataset(handles[feature_path], selection["featureKey"])
-        coordinates = _dataset(handles[coordinate_path], selection["coordinatesKey"])
+        features = h5_dataset(handles[feature_path], selection["featureKey"])
+        coordinates = h5_dataset(handles[coordinate_path], selection["coordinatesKey"])
         if (
             features.ndim != 2
             or not 0 < features.shape[0] <= MAX_PATCHES
@@ -178,13 +178,13 @@ def inspect_inputs(selection, slide, contract, *, load=False, deadline=None):
                     Path(selection["slidePath"]).stem,
                 }:
                     raise ValueError("HDF5 slide identity differs from the selected slide.")
-        width, height = _geometry(coordinate_attributes, selection, slide)
+        width, height = patch_geometry(coordinate_attributes, selection, slide)
         copied = None
         if (
             feature_path != coordinate_path
             and handles[feature_path].get(selection["coordinatesKey"], getlink=True) is not None
         ):
-            copied = _dataset(handles[feature_path], selection["coordinatesKey"])
+            copied = h5_dataset(handles[feature_path], selection["coordinatesKey"])
             if copied.shape != coordinates.shape or copied.dtype.kind not in {"i", "u"}:
                 raise ValueError(
                     "Embedded feature coordinates differ from the selected coordinate rows."

@@ -13,7 +13,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components  # noqa: E402
+from histopilot.storage.project_lock import StorageError, reject_symlink_components  # noqa: E402
 from histopilot.viewer.slide_images import (  # noqa: E402
     _inspect_open_slide,
     _open,
@@ -22,7 +22,7 @@ from histopilot.viewer.slide_images import (  # noqa: E402
 
 
 def _stamp(path):
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     try:
         info = path.stat()
         if not path.is_file():

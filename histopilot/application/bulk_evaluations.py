@@ -19,8 +19,8 @@ from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
+    reject_symlink_components,
     writer_lock,
 )
 from histopilot.storage.scientific import MAX_CONFIGURATION_BYTES, _json
@@ -61,7 +61,7 @@ class BulkEvaluationService:
     def _folder(self, identity):
         # identity originates from a validated scientific record, never a path.
         folder = self.store.folder / "evaluation-batches" / identity
-        _reject_symlink_components(folder)
+        reject_symlink_components(folder)
         return folder
 
     def _prepare(self, selection, *, reviewed=None):

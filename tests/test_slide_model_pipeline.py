@@ -42,7 +42,7 @@ from histopilot.training.inference import evaluate  # noqa: E402
 from histopilot.training.module import MILTrainModule  # noqa: E402
 from histopilot.training.refit import train_refit  # noqa: E402
 from histopilot.workers.packing_process import write_json  # noqa: E402
-from histopilot.workers.train_batch import _run_plan  # noqa: E402
+from histopilot.workers.train_batch import execute_plan  # noqa: E402
 
 
 def slide_bundle(store, filesystem, root, dataset, rows, name):
@@ -199,7 +199,7 @@ def test_slide_probes_complete_image_clinical_and_combined_studies(
     states = []
     folder = store.folder / "training" / batch["id"]
     for run in plan["runs"]:
-        selected = _run_plan(plan, run, None)
+        selected = execute_plan(plan, run, None)
         run_folder = folder / "runs" / run["id"]
         result = train_fold(selected, run_folder)
         loaded = MILTrainModule.load_from_checkpoint(

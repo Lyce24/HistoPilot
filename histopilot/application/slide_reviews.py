@@ -14,8 +14,8 @@ from histopilot.schemas.slide_reviews import (
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
+    reject_symlink_components,
     writer_lock,
 )
 from histopilot.storage.scientific import ScientificStore
@@ -53,7 +53,7 @@ class SlideReviewService:
         # Dataset lookup validates the identity; both components are still hashed.
         digest = hashlib.sha256(dataset_id.encode()).hexdigest()
         path = self.store.folder / "slide-reviews" / digest
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         return path
 
     def _path(self, dataset_id, slide_id):
@@ -61,7 +61,7 @@ class SlideReviewService:
 
     def _read(self, dataset_id, slide_id):
         path = self._path(dataset_id, slide_id)
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         if not path.exists():
             return SlideReviewDocument(datasetId=dataset_id, slideId=slide_id).model_dump()
         try:

@@ -18,7 +18,7 @@ pytest.importorskip("lightning")
 from histopilot.datasets.datamodule import MILDataModule
 from histopilot.datasets.mil import MILDataError, SlideDataset, collate_mil, validate_memberships
 from histopilot.storage.pack_import import pack_file_stamps
-from histopilot.storage.packed import _stamp, build_pack
+from histopilot.storage.packed import build_pack, stat_stamp
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def plan(tmp_path):
             "patchCount": count,
             "dimensions": 4,
             "dtype": "float32",
-            **_stamp(path.stat()),
+            **stat_stamp(path.stat()),
         }
         memberships.append(
             {
@@ -302,7 +302,7 @@ def test_invalid_feature_content_is_not_used(plan, tmp_path, corruption):
             if corruption == "nonfinite":
                 values[:] = float("nan")
             handle.create_dataset("features", data=values)
-    entry.update(_stamp(path.stat()))
+    entry.update(stat_stamp(path.stat()))
     module = MILDataModule(plan)
     module.setup()
     with pytest.raises(MILDataError):
@@ -320,7 +320,7 @@ def test_safe_native_tensor_formats_match_hdf5(plan, tmp_path, suffix):
             np.save(path, values)
         else:
             torch.save({"features": torch.from_numpy(values)}, path)
-        entry.update(path=str(path), **_stamp(path.stat()))
+        entry.update(path=str(path), **stat_stamp(path.stat()))
     loaded = bags(MILDataModule(plan).train_dataloader())
     assert all(torch.equal(loaded[identity], values) for identity, values in original.items())
 

@@ -14,7 +14,7 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.packing_process import write_json
 
@@ -97,7 +97,7 @@ def cpu_slots_per_run(resources: dict) -> int:
 
 def append_event(path: Path, event: dict) -> None:
     """Flush each observation so an abrupt host loss leaves useful evidence."""
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(event, allow_nan=False) + "\n")
         stream.flush()
@@ -221,7 +221,7 @@ def read_json(path: Path) -> dict:
 def read_progress(path: Path) -> tuple[dict | None, str | None]:
     """Optional telemetry must not hide a job's durable state or prevent cancellation."""
     try:
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         if not path.exists():
             return None, None
         value = read_json(path)

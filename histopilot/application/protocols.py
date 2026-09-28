@@ -89,12 +89,12 @@ def _failure(message, code, status=409):
     return StorageError(message, code, status)
 
 
-def _key(value):
+def name_key(value):
     return re.sub(r"[^a-z0-9]", "", value.casefold())
 
 
-def _forbidden_name(value, *, target=False):
-    name = _key(value)
+def forbidden_name(value, *, target=False):
+    name = name_key(value)
     if target and name in {"label", "labels", "target", "outcome", "y", "ytrue", "groundtruth"}:
         return False
     if name in {
@@ -239,12 +239,12 @@ class FilterEvaluator:
         return all([self.matches(row, condition) for condition in conditions])
 
 
-def _valid_patient(row):
+def valid_patient(row):
     patient = row.get("patientId")
     return isinstance(patient, str) and bool(patient) and patient == patient.strip()
 
 
-def _development_selection_groups(rows):
+def development_selection_groups(rows):
     """Keep unresolved rows selectable without inventing patient identities.
 
     Temporary tuple keys cannot collide with supplied patient IDs. A selected
@@ -253,16 +253,16 @@ def _development_selection_groups(rows):
     """
     groups = defaultdict(list)
     for row in rows:
-        key = (0, row["patientId"]) if _valid_patient(row) else (1, row["slideId"])
+        key = (0, row["patientId"]) if valid_patient(row) else (1, row["slideId"])
         groups[key].append(row)
     return groups
 
 
-def _cohort_stats(rows):
+def cohort_statistics(rows):
     verified = {
         row["patientId"]
         for row in rows
-        if _valid_patient(row) and row.get("patientIdSource") != "slide_fallback"
+        if valid_patient(row) and row.get("patientIdSource") != "slide_fallback"
     }
     fallback = [row for row in rows if row.get("patientIdSource") == "slide_fallback"]
     return {
@@ -270,8 +270,8 @@ def _cohort_stats(rows):
         "patientCount": len(verified),
         "fallbackSlideCount": len(fallback),
         "groupCount": len(verified)
-        + len({row["patientId"] for row in fallback if _valid_patient(row)}),
-        "unlinkedSlideCount": sum(not _valid_patient(row) for row in rows),
+        + len({row["patientId"] for row in fallback if valid_patient(row)}),
+        "unlinkedSlideCount": sum(not valid_patient(row) for row in rows),
         "sample": [
             {
                 "slideId": row["slideId"],
@@ -284,7 +284,7 @@ def _cohort_stats(rows):
     }
 
 
-def _fixed_assignments(groups, rules, evaluator, finding):
+def fixed_assignments(groups, rules, evaluator, finding):
     """Shared rule evaluation for live feedback and authoritative protocol preview."""
     direct = {partition: [] for partition in PARTITIONS}
     expanded = {partition: [] for partition in PARTITIONS}
@@ -491,7 +491,7 @@ class ProtocolService:
         result = {
             "datasetId": request.datasetId,
             "splitMode": mode,
-            "dataset": _cohort_stats(rows),
+            "dataset": cohort_statistics(rows),
             "cohort": None,
             "partitions": None,
             "unassigned": None,
@@ -515,7 +515,7 @@ class ProtocolService:
         except FilterFailure as error:
             finding(error.code, str(error))
             return {**result, "valid": False}
-        result["cohort"] = _cohort_stats(eligible)
+        result["cohort"] = cohort_statistics(eligible)
         if request.cohortOnly:
             # Unresolved patient identities can be filtered out when assigning
             # training/testing groups later. They do not invalidate this count.
@@ -540,11 +540,11 @@ class ProtocolService:
                 }
         development = split.get("version") == 4
         if development:
-            groups = _development_selection_groups(eligible)
+            groups = development_selection_groups(eligible)
         else:
             groups = defaultdict(list)
             for row in eligible:
-                if _valid_patient(row):
+                if valid_patient(row):
                     groups[row["patientId"]].append(row)
             self._identity_findings(eligible, groups, finding)
         if (not development and result["cohort"]["unlinkedSlideCount"]) or any(
@@ -568,7 +568,7 @@ class ProtocolService:
                     "UNKNOWN_FIELD", "The predefined pool column is not in the frozen dataset."
                 )
             _assignments, direct, expanded, remaining = select_development_pools(
-                groups, pools, evaluator, finding, _fixed_assignments
+                groups, pools, evaluator, finding, fixed_assignments
             )
             selected_rows = expanded["train"] + expanded["val"]
             self._identity_findings(
@@ -605,14 +605,16 @@ class ProtocolService:
                 else "rules"
                 if direct[role]
                 else "none",
-                "directMatches": _cohort_stats(
+                "directMatches": cohort_statistics(
                     sorted(direct[role], key=lambda row: row["slideId"])
                 ),
-                "expanded": _cohort_stats(sorted(expanded[role], key=lambda row: row["slideId"])),
+                "expanded": cohort_statistics(
+                    sorted(expanded[role], key=lambda row: row["slideId"])
+                ),
             }
             for role in PARTITIONS
         }
-        result["unassigned"] = _cohort_stats(remaining)
+        result["unassigned"] = cohort_statistics(remaining)
         if result["target"]:
             counts = Counter(evaluator.field(row, request.targetField) for row in selected_rows)
             result["target"] = {
@@ -635,7 +637,7 @@ class ProtocolService:
 
     @staticmethod
     def _identity_findings(rows, groups, finding):
-        if any(not _valid_patient(row) for row in rows):
+        if any(not valid_patient(row) for row in rows):
             finding(
                 "MISSING_PATIENT_ID",
                 "Some slides have unresolved Patient_ID. Revise the dataset to map patients or explicitly confirm Slide_ID fallback.",
@@ -688,7 +690,7 @@ class ProtocolService:
 
         provenance_mapping = dataset["manifest"].get("provenance", {}).get("mapping", {})
         source_identifiers = {
-            _key(provenance_mapping[name])
+            name_key(provenance_mapping[name])
             for name in (
                 "slideIdColumn",
                 "patientIdColumn",
@@ -700,9 +702,9 @@ class ProtocolService:
         target_source = source(spec.target.field)
         if (
             spec.target.field in CANONICAL
-            or _forbidden_name(spec.target.field, target=True)
-            or _forbidden_name(target_source, target=True)
-            or _key(target_source) in source_identifiers
+            or forbidden_name(spec.target.field, target=True)
+            or forbidden_name(target_source, target=True)
+            or name_key(target_source) in source_identifiers
         ):
             finding(
                 "IDENTIFIER_TARGET", "Identifiers and partition fields cannot serve as the target."
@@ -711,26 +713,28 @@ class ProtocolService:
             domain_source = source(split.domainField)
             if (
                 split.domainField in CANONICAL
-                or _forbidden_name(split.domainField)
-                or _forbidden_name(domain_source)
+                or forbidden_name(split.domainField)
+                or forbidden_name(domain_source)
             ):
                 finding(
                     "INVALID_DOMAIN_FIELD",
                     "Choose a site or cohort attribute, rather than an identifier or partition column.",
                 )
-            if spec.target.field == split.domainField or _key(target_source) == _key(domain_source):
+            if spec.target.field == split.domainField or name_key(target_source) == name_key(
+                domain_source
+            ):
                 finding(
                     "DOMAIN_TARGET_LEAKAGE",
                     "The held-out site or cohort column cannot also be the prediction target.",
                 )
-            if _key(domain_source) in source_identifiers:
+            if name_key(domain_source) in source_identifiers:
                 finding(
                     "INVALID_DOMAIN_FIELD",
                     "The site or cohort column cannot be an identity mapping source.",
                 )
-        split_sources = {_key(source(field)) for field in split_fields}
-        if spec.target.field in assignment_fields or _key(target_source) in {
-            _key(source(field)) for field in assignment_fields
+        split_sources = {name_key(source(field)) for field in split_fields}
+        if spec.target.field in assignment_fields or name_key(target_source) in {
+            name_key(source(field)) for field in assignment_fields
         }:
             finding(
                 "SPLIT_TARGET_LEAKAGE",
@@ -738,7 +742,7 @@ class ProtocolService:
             )
         for field in spec.predictors:
             predictor_source = source(field)
-            if field == spec.target.field or _key(predictor_source) == _key(target_source):
+            if field == spec.target.field or name_key(predictor_source) == name_key(target_source):
                 finding(
                     "TARGET_PREDICTOR_LEAKAGE",
                     f"Predictor '{field}' is the target or a target alias.",
@@ -746,10 +750,10 @@ class ProtocolService:
             elif (
                 field in CANONICAL
                 or field in split_fields
-                or _key(predictor_source) in split_sources
-                or _key(predictor_source) in source_identifiers
-                or _forbidden_name(field)
-                or _forbidden_name(predictor_source)
+                or name_key(predictor_source) in split_sources
+                or name_key(predictor_source) in source_identifiers
+                or forbidden_name(field)
+                or forbidden_name(predictor_source)
             ):
                 finding(
                     "FORBIDDEN_PREDICTOR",
@@ -885,13 +889,13 @@ class ProtocolService:
             # Select development sources before interpreting their labels. A
             # combined metadata file can contain unrelated, unlabeled rows.
             source_groups = (
-                _development_selection_groups(eligible)
+                development_selection_groups(eligible)
                 if patient_folds
                 else {(0, row["slideId"]): [row] for row in eligible}
             )
             try:
                 selected, _direct, expanded, _remaining = select_development_pools(
-                    source_groups, pools, evaluator, finding, _fixed_assignments
+                    source_groups, pools, evaluator, finding, fixed_assignments
                 )
                 eligible = expanded["train"] + expanded["val"]
                 if patient_folds:
@@ -910,7 +914,7 @@ class ProtocolService:
         for row in included:
             if not patient_folds:
                 groups[row["slideId"]].append(row)
-            elif _valid_patient(row):
+            elif valid_patient(row):
                 groups[row["patientId"]].append(row)
         if patient_folds:
             self._identity_findings(included, groups, finding)
@@ -963,7 +967,7 @@ class ProtocolService:
                 )
         findings.sort(key=lambda item: (item["severity"], item["code"], item["message"]))
         algorithm = ALGORITHM_V4_MIXED if mixed_slide_target else ALGORITHM_V4
-        cohort_stats = _cohort_stats(included)
+        cohort_stats = cohort_statistics(included)
         class_counts = Counter(row["label"] for row in included)
         summary = {
             "datasetId": spec.datasetId,

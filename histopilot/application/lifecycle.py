@@ -72,7 +72,7 @@ def _closure(keys, items, field):
     return found
 
 
-def _confirmed_live(process):
+def confirmed_live(process):
     """A missing process is stopped; unreadable evidence is never proof of that."""
     if process is None:
         return False
@@ -183,7 +183,7 @@ class CleanupService:
                     execution = coordinator.status(record["id"], summary=True)
                     if execution:
                         _plan, coordinator_state = coordinator._read(record["id"])
-                        alive = _confirmed_live(
+                        alive = confirmed_live(
                             coordinator_state.get("process")
                         ) or coordinator._coordinator_running(coordinator_state)
                         status = {
@@ -226,7 +226,7 @@ class CleanupService:
                     folder = self.store.folder / "training" / record["id"]
                     # A terminal state can precede final process cleanup. Confirm
                     # that neither scheduler nor any child still owns work.
-                    alive = _confirmed_live(execution.get("process")) or any(
+                    alive = confirmed_live(execution.get("process")) or any(
                         run_processes(run) for run in execution.get("runs", [])
                     )
                     self._job(
@@ -249,7 +249,7 @@ class CleanupService:
                         items[key],
                         execution["status"],
                         bool(execution.get("liveProcesses"))
-                        or _confirmed_live(execution.get("process")),
+                        or confirmed_live(execution.get("process")),
                         execution.get("cancellationRequested", False),
                         legacy=execution.get("executor") != "task-center",
                     )
@@ -290,7 +290,7 @@ class CleanupService:
                     if artifact and isinstance(artifact.get("id"), str):
                         aliases.setdefault(artifact["id"], set()).add(key)
                 # Probe live identity even after a terminal result was written.
-                alive = _confirmed_live(_read_optional(folder / "process.json"))
+                alive = confirmed_live(_read_optional(folder / "process.json"))
                 self._job(
                     items[key],
                     presented["state"],

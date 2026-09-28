@@ -190,13 +190,13 @@ def test_evaluation_selects_packed_loading_and_checks_exact_pack_membership(
     preview = service.preview(choice)
     assert preview["canSave"], preview
     assert preview["manifest"]["coverage"]["packChecked"]
-    original = module._layout
+    original = module.pack_layout
 
     def missing_slide(path):
         layout = original(path)
         return {**layout, "slides": [row for row in layout["slides"] if row["slideId"] != "s3"]}
 
-    monkeypatch.setattr(module, "_layout", missing_slide)
+    monkeypatch.setattr(module, "pack_layout", missing_slide)
     preview = service.preview(choice)
     assert not preview["canSave"]
     assert "MISSING_TEST_PACK_SLIDES" in projects.codes(preview)

@@ -10,7 +10,7 @@ from test_mil_experimental_publication import candidate, save_results
 
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.schemas.predictors import EvaluationRunSelection
-from histopilot.workers.train_batch import _run_plan
+from histopilot.workers.train_batch import execute_plan
 
 
 def completed_nnmil(service, monkeypatch, selection="best_validation"):
@@ -21,7 +21,7 @@ def completed_nnmil(service, monkeypatch, selection="best_validation"):
     )
     plan = json.loads((folder / "plan.json").read_text())
     for run in state["runs"]:
-        run_plan = _run_plan(plan, run, None)
+        run_plan = execute_plan(plan, run, None)
         result = run["result"]
         result.update(effectiveRecipe=run_plan["effectiveRecipe"],
                       nnmilPlanning=run_plan["nnmilPlanning"], bestEpoch=1,

@@ -913,7 +913,7 @@ def test_a_result_the_worker_later_failed_is_never_success(tmp_path, monkeypatch
         write_json(output_dir / "result.json", result)
         return result
 
-    monkeypatch.setattr(train_batch, "_check_inputs", check_inputs)
+    monkeypatch.setattr(train_batch, "check_inputs", check_inputs)
     monkeypatch.setitem(
         sys.modules, "histopilot.training.fold", SimpleNamespace(train_fold=train_fold)
     )

@@ -12,7 +12,7 @@ from histopilot.application.predictors import feature_contract, reference
 from histopilot.schemas.feature_bundles import FeatureBundleSpec
 from histopilot.schemas.feature_packs import FeaturePackSpec
 from histopilot.storage.filesystem import LocalFilesystem
-from histopilot.storage.pack_import import _layout
+from histopilot.storage.pack_import import pack_layout
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.compute_job import verify_plan_inputs
 
@@ -72,7 +72,7 @@ def packed_evaluation(tmp_path):
                 "data": {"memberships": memberships, "featureDim": 4, "featureFiles": files,
                          "sourceStamps": {row["path"]: row for row in files.values()},
                          "loadingPolicy": "mmap", "packPath": selected["outputPath"],
-                         "packStamps": _layout(Path(selected["outputPath"]))["packStamps"]}}
+                         "packStamps": pack_layout(Path(selected["outputPath"]))["packStamps"]}}
 
     return make_plan, packing.artifact(first_id)
 
@@ -87,7 +87,7 @@ def test_other_valid_pack_cannot_replace_reviewed_evaluation_selection(packed_ev
     make_plan, other = packed_evaluation
     plan = make_plan(historical=True)
     plan["data"].update(packPath=other["outputPath"],
-                        packStamps=_layout(Path(other["outputPath"]))["packStamps"])
+                        packStamps=pack_layout(Path(other["outputPath"]))["packStamps"])
     with pytest.raises(ValueError, match="loading contract changed"):
         verify_plan_inputs(plan)
 

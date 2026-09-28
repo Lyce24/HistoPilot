@@ -7,7 +7,7 @@ from support.training import rewrite_batch, tc_execution
 
 from histopilot.schemas.training_controls import validate_training_controls
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.train_batch import _run_plan
+from histopilot.workers.train_batch import execute_plan
 
 __all__ = ["tc_execution"]
 
@@ -34,7 +34,7 @@ def test_cohort_plan_pins_dataset_values_and_worker_binds_selected_column(
     assert set(pinned.values()) == {"development"}
     before = deepcopy(plan)
     for run in plan["runs"]:
-        selected = _run_plan(plan, run, None)
+        selected = execute_plan(plan, run, None)
         assert selected["data"]["memberships"]
         assert all(row["cohort"] == "development" for row in selected["data"]["memberships"])
     assert plan == before
@@ -45,7 +45,7 @@ def test_default_recipe_keeps_legacy_plan_without_cohort_metadata(tc_execution):
     service, batch, _ = tc_execution
     plan, _ = service._prepare(batch)
     assert "cohortValues" not in plan["data"]
-    selected = _run_plan(plan, plan["runs"][0], None)
+    selected = execute_plan(plan, plan["runs"][0], None)
     assert all("cohort" not in row for row in selected["data"]["memberships"])
 
 

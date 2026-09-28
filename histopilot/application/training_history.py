@@ -4,7 +4,7 @@ import json
 import math
 
 from histopilot.application.training_patience import patience_summary
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 
 MAX_HISTORY_BYTES = 32 * 1024**2
@@ -60,7 +60,7 @@ def training_history(store, batch_id: str, run_id: str) -> dict:
     if report_stopping:
         response["stopping"] = patience_summary(store, manifest, run, recipe)
     try:
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         if not path.exists():
             return response
         rows = json.loads(

@@ -22,7 +22,7 @@ from histopilot.workers.training_process import (
 )
 
 
-def _run_plan(batch: dict, run: dict, gpu: int | None) -> dict:
+def execute_plan(batch: dict, run: dict, gpu: int | None) -> dict:
     from histopilot.schemas.nnmil import resolve_nnmil_plan
     from histopilot.schemas.training_controls import sampling_memberships
 
@@ -54,11 +54,11 @@ def _run_plan(batch: dict, run: dict, gpu: int | None) -> dict:
     return resolve_nnmil_plan(plan)
 
 
-def _check_inputs(data):
+def check_inputs(data):
     from histopilot.storage.pack_import import pack_file_stamps
-    from histopilot.storage.packed import _check_sources
+    from histopilot.storage.packed import check_sources
 
-    _check_sources({"sourceStamps": data["sourceStamps"]})
+    check_sources({"sourceStamps": data["sourceStamps"]})
     if data.get("packPath") and pack_file_stamps(Path(data["packPath"])) != data["packStamps"]:
         raise ValueError("The verified feature pack changed after the batch was launched.")
 
@@ -245,14 +245,14 @@ def run_fold_worker(plan_path: Path):
             raise ValueError(
                 "Training code changed after this execution was prepared. Clone a new batch."
             )
-        _check_inputs(plan["data"])
+        check_inputs(plan["data"])
         from histopilot.training.fold import train_fold
 
         checkpoint = folder / "last.ckpt"
         result = train_fold(
             plan, folder, checkpoint_path=checkpoint if checkpoint.exists() else None
         )
-        _check_inputs(plan["data"])
+        check_inputs(plan["data"])
         write_json(folder / "result.json", result)
     except BaseException as error:
         write_json(

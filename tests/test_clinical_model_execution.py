@@ -13,7 +13,7 @@ pytest.importorskip("lightning")
 from histopilot.application.predictors import checkpoint_snapshot  # noqa: E402
 from histopilot.datasets.datamodule import MILDataModule  # noqa: E402
 from histopilot.datasets.mil import SlideDataset  # noqa: E402
-from histopilot.storage.packed import _stamp  # noqa: E402
+from histopilot.storage.packed import stat_stamp  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.inference import evaluate  # noqa: E402
 from histopilot.training.module import MILTrainModule  # noqa: E402
@@ -34,7 +34,7 @@ def clinical_plan(tmp_path, mode, model="abmil"):
         for i, row in enumerate(plan["data"]["memberships"])
     }
     for entry in plan["data"]["featureFiles"].values():
-        entry.update(_stamp(Path(entry["path"]).stat()))
+        entry.update(stat_stamp(Path(entry["path"]).stat()))
     return plan
 
 

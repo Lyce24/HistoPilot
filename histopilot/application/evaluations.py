@@ -15,14 +15,14 @@ from histopilot.application.protocols import (
     FilterEvaluator,
     FilterFailure,
     ProtocolService,
-    _forbidden_name,
-    _key,
+    forbidden_name,
+    name_key,
 )
 from histopilot.domain.features import representation_kind
 from histopilot.schemas.evaluations import EvaluationSpec, is_inference_purpose
 from histopilot.schemas.protocols import TargetSpec, iter_conditions
 from histopilot.storage.filesystem import LocalFilesystem
-from histopilot.storage.pack_import import _layout
+from histopilot.storage.pack_import import pack_layout
 from histopilot.storage.packed import PackedStoreError
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
@@ -43,7 +43,7 @@ def _representation(feature):
     }
 
 
-def _slide_sources(store, dataset, rows, selected):
+def slide_sources(store, dataset, rows, selected):
     """Use immutable import evidence to recognize renamed/symlinked/hardlinked WSIs.
 
     No live WSI reads are needed. Feature-only datasets can lack this evidence;
@@ -85,12 +85,12 @@ def _slide_sources(store, dataset, rows, selected):
 def _selected_slide_sources(store, datasets, selected):
     sources = defaultdict(set)
     for dataset, _dictionary, rows in datasets:
-        for slide, identities in _slide_sources(store, dataset, rows, selected).items():
+        for slide, identities in slide_sources(store, dataset, rows, selected).items():
             sources[slide].update(identities)
     return sources
 
 
-def _duplicate_test_sources(sources, finding):
+def duplicate_test_sources(sources, finding):
     slides_by_source = defaultdict(set)
     for slide, identities in sources.items():
         for identity in identities:
@@ -137,7 +137,7 @@ def _target_field_findings(datasets, fields, target, finding):
         source = dictionary.get(target.field, {}).get("sourceColumn", target.field)
         mapping = dataset["manifest"].get("provenance", {}).get("mapping", {})
         identities = {
-            _key(mapping[key])
+            name_key(mapping[key])
             for key in (
                 "slideIdColumn",
                 "patientIdColumn",
@@ -148,8 +148,8 @@ def _target_field_findings(datasets, fields, target, finding):
         }
         if (
             target.field in CANONICAL
-            or _forbidden_name(source, target=True)
-            or _key(source) in identities
+            or forbidden_name(source, target=True)
+            or name_key(source) in identities
         ):
             finding(
                 "IDENTIFIER_TARGET",
@@ -308,7 +308,7 @@ class EvaluationService:
                 "DUPLICATE_SLIDE_ID",
                 "Selected test slides have duplicate slide identifiers across the selected datasets.",
             )
-        duplicate_sources = _duplicate_test_sources(
+        duplicate_sources = duplicate_test_sources(
             _selected_slide_sources(self.store, datasets, selected), finding
         )
         groups = defaultdict(list)
@@ -575,14 +575,14 @@ class EvaluationService:
         development_dataset, _fields, development_rows = self.protocols._load_dataset(
             protocol_manifest["datasetId"]
         )
-        development_sources = _slide_sources(
+        development_sources = slide_sources(
             self.store, development_dataset, development_rows, development_slides
         )
         source_identities = (
             set().union(*development_sources.values()) if development_sources else set()
         )
         selected_sources = _selected_slide_sources(self.store, datasets, selected_ids)
-        duplicate_sources = _duplicate_test_sources(selected_sources, finding)
+        duplicate_sources = duplicate_test_sources(selected_sources, finding)
         source_overlap = sorted(
             slide
             for slide, sources in selected_sources.items()
@@ -700,7 +700,7 @@ class EvaluationService:
                         finding("STALE_TEST_PACK", "The selected test pack is no longer current.")
                     for item in resolved["findings"]:
                         finding(item["code"], item["message"], item["severity"])
-                    layout = _layout(Path(resolved["artifact"]["outputPath"]))
+                    layout = pack_layout(Path(resolved["artifact"]["outputPath"]))
                     packed_ids = {item["slideId"] for item in layout["slides"]}
                     missing_pack = sorted(selected_ids - packed_ids)
                     pack_checked = True

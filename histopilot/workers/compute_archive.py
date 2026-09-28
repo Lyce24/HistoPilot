@@ -6,7 +6,7 @@ import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 
 
 def _digest(files: dict[str, str]) -> str:
@@ -14,13 +14,13 @@ def _digest(files: dict[str, str]) -> str:
 
 
 def _inventory(package: Path) -> dict[str, str]:
-    _reject_symlink_components(package)
+    reject_symlink_components(package)
     if not package.is_dir():
         raise ValueError("The archived worker package is missing.")
     files = {}
     size = 0
     for path in sorted(package.rglob("*.py")):
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         size += path.stat().st_size
         if size > 64 * 1024 * 1024 or len(files) >= 10000:
             raise ValueError("Worker source archive exceeds its size limit.")
@@ -59,10 +59,10 @@ def prepare_compute_archive(
     """
     archive = Path(folder) / "compute"
     try:
-        _reject_symlink_components(archive)
+        reject_symlink_components(archive)
         if archive.exists():
             metadata = archive / "snapshot.json"
-            _reject_symlink_components(metadata)
+            reject_symlink_components(metadata)
             if metadata.stat().st_size > 4 * 1024 * 1024:
                 raise ValueError("Worker archive manifest exceeds its size limit.")
             manifest = json.loads(metadata.read_text())

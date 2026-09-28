@@ -17,7 +17,7 @@ from histopilot.models import catalog
 from histopilot.schemas.development import TrainingRecipe
 from histopilot.schemas.nnmil import resolve_nnmil_plan, window_seed
 from histopilot.schemas.training_controls import resolve_stopping, validate_training_controls
-from histopilot.storage.project_lock import _reject_symlink_components
+from histopilot.storage.project_lock import reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 from histopilot.training.module import (
     MILTrainModule,
@@ -42,7 +42,7 @@ def _receipt_hash(value):
 
 def _checkpoint_evidence(path, output_dir):
     path = Path(path).absolute()
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     if path.parent != output_dir.absolute() or path.suffix != ".ckpt":
         raise ValueError("A completed fit checkpoint must remain in its original run directory.")
     before = path.stat()

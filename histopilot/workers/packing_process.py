@@ -13,9 +13,9 @@ from pathlib import Path
 
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
     fsync_directory,
+    reject_symlink_components,
     writer_lock,
 )
 
@@ -48,7 +48,7 @@ def output_lock(output: str | Path):
     that locked such an unlinked file owns nothing, so it checks the path afterwards.
     """
     path = registry_directory() / f"{output_key(output)}.lock"
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(descriptor)
@@ -88,7 +88,7 @@ def live_process(folder: Path) -> dict | None:
     path = folder / "process.json"
     if not path.exists():
         return None
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     try:
         from histopilot.storage.scientific import ScientificStore
 
@@ -253,7 +253,7 @@ def maybe_sweep_registry(folder: Path | None = None, *, interval=SWEEP_INTERVAL_
 
 
 def write_json(path: Path, value: dict) -> None:
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     content = json.dumps(value, indent=2, allow_nan=False).encode() + b"\n"
     if len(content) > 64 * 1024 * 1024:
         raise StorageError("Packing metadata exceeds its size limit.", "PACKING_LIMIT", 413)

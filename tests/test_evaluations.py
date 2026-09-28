@@ -404,13 +404,13 @@ def test_pack_index_is_verified_for_selected_cohort(tmp_path, monkeypatch):
     assert result["coverage"]["packChecked"]
     import histopilot.application.evaluations as module
 
-    real_layout = module._layout
+    real_layout = module.pack_layout
 
     def incomplete_index(path):
         layout = real_layout(path)
         return {**layout, "slides": [item for item in layout["slides"] if item["slideId"] != "s3"]}
 
-    monkeypatch.setattr(module, "_layout", incomplete_index)
+    monkeypatch.setattr(module, "pack_layout", incomplete_index)
     result = preview(service, spec)
     assert result["coverage"]["missingPackSlideIds"] == ["s3"]
     assert "MISSING_TEST_PACK_SLIDES" in codes(result)

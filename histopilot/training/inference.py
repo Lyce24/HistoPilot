@@ -17,7 +17,7 @@ from histopilot.datasets.datamodule import _worker_init
 from histopilot.datasets.mil import SlideDataset, collate_mil
 from histopilot.inference_summary import describe, patient_member_probabilities, summarize
 from histopilot.scoring import patient_predictions
-from histopilot.storage.project_lock import _reject_symlink_components, ensure_managed_directory
+from histopilot.storage.project_lock import ensure_managed_directory, reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 from histopilot.training.module import (
     MILTrainModule,
@@ -26,7 +26,7 @@ from histopilot.training.module import (
     window_uncertainty_rows,
 )
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _check_inputs
+from histopilot.workers.train_batch import check_inputs
 
 
 def _decisions(records, target, threshold):
@@ -62,7 +62,7 @@ INFERENCE_COLUMNS = ("predictedLabel", "confidence", "margin", "membersAgreeing"
 def _write_csv(path, rows, classes, *, patient=False, columns=EVALUATION_COLUMNS):
     identity = ["patientId", "slideIds"] if patient else ["slideId", "patientId"]
     fields = identity + list(columns) + [f"probability:{label}" for label in classes]
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
     with os.fdopen(descriptor, "w", newline="", encoding="utf-8") as stream:
@@ -367,7 +367,7 @@ def evaluate(plan, output_dir):
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     torch.set_num_threads(plan["resources"]["cpuThreadsPerRun"])
     torch.use_deterministic_algorithms(True)
-    _check_inputs(data)
+    check_inputs(data)
     memberships = [
         {**row, "labelIndex": classes.index(row["label"]) if row.get("label") is not None else -1}
         for row in rows
@@ -547,7 +547,7 @@ def evaluate(plan, output_dir):
             )
     finally:
         dataset.close()
-    _check_inputs(data)
+    check_inputs(data)
     if aggregation == "mean_logit":
         log_totals = logit_totals - np.logaddexp.reduce(logit_totals, axis=1, keepdims=True)
         totals = np.exp(log_totals)

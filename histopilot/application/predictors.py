@@ -22,7 +22,7 @@ from histopilot.domain.features import representation_kind
 from histopilot.models import catalog
 from histopilot.schemas.predictors import PredictorSelection
 from histopilot.storage.lifecycle import lifecycle_guard
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 
 
@@ -43,7 +43,7 @@ def _file_path(path, root):
     path, root = Path(path), Path(root)
     try:
         path.absolute().relative_to(root.absolute())
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         path.resolve(strict=True).relative_to(root.resolve(strict=True))
         if not stat.S_ISREG(path.stat().st_mode):
             raise ValueError
@@ -526,10 +526,10 @@ class PredictorService:
         checkpoints = []
         for run in sorted(selected, key=lambda item: item["id"]):
             status = states.get(run["id"], {})
-            from histopilot.application.lifecycle import _confirmed_live
+            from histopilot.application.lifecycle import confirmed_live
 
             try:
-                live = _confirmed_live(status.get("process"))
+                live = confirmed_live(status.get("process"))
             except StorageError as error:
                 raise StorageError(
                     "Cannot confirm whether a selected training process has stopped.",

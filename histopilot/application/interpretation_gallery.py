@@ -12,7 +12,7 @@ from histopilot.application.imports import SLIDE_EXTENSIONS
 from histopilot.application.predictors import PredictorService, reference
 from histopilot.schemas.interpretation import InterpretationSlide
 from histopilot.storage.filesystem import FilesystemError
-from histopilot.storage.project_lock import StorageError, _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
 from histopilot.viewer.slide_images import allowed_file
 
 MAX_ENTRIES = 20000
@@ -55,7 +55,7 @@ def allowed_folder(filesystem, value):
         path = Path(value)
         if not path.is_absolute() or ".." in path.parts or "\x00" in value:
             raise ValueError
-        _reject_symlink_components(path)
+        reject_symlink_components(path)
         return filesystem.directory(value)
     except (FilesystemError, OSError, ValueError, RuntimeError) as error:
         raise StorageError(
@@ -122,7 +122,7 @@ class InterpretationGalleryService:
                     or path.suffix.lower() not in IMAGE_EXTENSIONS
                 ):
                     raise ValueError("The dataset contains an invalid recorded slide path.")
-                _reject_symlink_components(path)
+                reject_symlink_components(path)
                 if not self.filesystem._contains(path):
                     raise ValueError(
                         "The dataset's recorded slides are outside configured data roots."
@@ -315,7 +315,7 @@ class InterpretationGalleryService:
         while pending:
             directory, depth = pending.pop()
             try:
-                _reject_symlink_components(directory)
+                reject_symlink_components(directory)
                 with directory_entries(directory) as listing:
                     children = []
                     for entry in listing:

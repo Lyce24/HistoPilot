@@ -28,8 +28,8 @@ from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     LOCK_FILE,
     StorageError,
-    _reject_symlink_components,
     fsync_directory,
+    reject_symlink_components,
     writer_lock,
 )
 from histopilot.storage.scientific import DATABASE_FILE, ScientificStore
@@ -58,7 +58,7 @@ def permitted_path(filesystem, value, *, existing=False):
     path = Path(value)
     if not path.is_absolute() or ".." in path.parts or "\x00" in value:
         raise _error("Choose an absolute path without parent traversal.", status=422)
-    _reject_symlink_components(path)
+    reject_symlink_components(path)
     if not filesystem._contains(path.resolve()):
         raise _error("The path is outside configured storage roots.", status=403)
     if existing and not path.exists():
@@ -277,7 +277,7 @@ class StudyPortability:
                 files = []
                 for current, directories, names in os.walk(folder, followlinks=False):
                     for name in directories:
-                        _reject_symlink_components(Path(current) / name)
+                        reject_symlink_components(Path(current) / name)
                     for name in sorted(names):
                         path = Path(current) / name
                         relative = path.relative_to(folder).as_posix()
@@ -365,7 +365,7 @@ class StudyPortability:
                             "file": str(archive),
                         }
                     )
-                _reject_symlink_components(archive)
+                reject_symlink_components(archive)
                 try:
                     os.link(staged, archive)
                 except FileExistsError:
@@ -573,7 +573,7 @@ def restore_archive(archive, destination, filesystem, *, progress=None, operatio
                         "file": str(destination),
                     }
                 )
-            _reject_symlink_components(destination)
+            reject_symlink_components(destination)
             destination.mkdir(mode=0o700)
             try:
                 os.rename(staging, destination)
@@ -595,7 +595,7 @@ def restore_archive(archive, destination, filesystem, *, progress=None, operatio
 def relink_source(projects, identity, payload):
     """Compare-and-swap a source registration, never editing immutable versions."""
     replacement = projects.filesystem.directory(payload.replacementPath)
-    _reject_symlink_components(replacement)
+    reject_symlink_components(replacement)
     with projects.lock:
         _, folder = projects._load(identity)
         with lifecycle_guard(folder), writer_lock(folder):

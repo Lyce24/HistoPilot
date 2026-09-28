@@ -11,8 +11,8 @@ from pathlib import Path
 
 from histopilot.storage.project_lock import (
     StorageError,
-    _reject_symlink_components,
     ensure_managed_directory,
+    reject_symlink_components,
 )
 from histopilot.workers.training_process import (
     confirmed_process_alive,
@@ -36,7 +36,7 @@ def spawn(command: dict, *, lane: str, gpu: int | None, task: dict, journal: dic
     returns a ``Spawned`` handle; without it the task is a plain child ``Popen``.
     """
     log = Path(command["log"])
-    _reject_symlink_components(log)
+    reject_symlink_components(log)
     ensure_managed_directory(log.parent)
     env = {
         **os.environ,
@@ -67,7 +67,7 @@ def spawn(command: dict, *, lane: str, gpu: int | None, task: dict, journal: dic
 
 def _spawn_wrapped(command: dict, env: dict, log: int, journal: dict) -> "Spawned":
     for path in (journal["spawn"], journal["exit"]):
-        _reject_symlink_components(Path(path))
+        reject_symlink_components(Path(path))
         ensure_managed_directory(Path(path).parent)
         Path(path).unlink(missing_ok=True)  # never read an earlier attempt's record
     read_end, write_end = os.pipe()
