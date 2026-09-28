@@ -118,11 +118,6 @@ class SlideInspection(RequestModel):
     path: PathText
 
 
-class AttentionQuery(RequestModel):
-    offset: Annotated[StrictInt, Field(ge=0)] = 0
-    limit: Annotated[StrictInt, Field(ge=1, le=50000)] = 10000
-
-
 class InterpretationGallerySource(RequestModel):
     slideFolder: PathText | None = None
     featureBundleId: ConfigurationId

@@ -27,18 +27,6 @@ TERMINAL = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 LANES = ("gpu", "cpu")
 PRIORITIES = ("interactive", "normal")  # interactive is admitted first
 STOP_REASONS = ("cancel", "pause")
-EXIT_REASONS = (
-    "ok",
-    "error",
-    "oom",
-    "cuda_failure",
-    "cancelled",
-    "paused",
-    "interrupted",
-    "lost",
-    "already-complete",
-    "busy",
-)
 CONDITIONS = ("succeeded", "terminal")
 # Bookkeeping hooks of a concluded task that may still run again: an automatic requeue
 # still being decided ("requeue_intent") or decided but not yet carried out ("on_requeue").

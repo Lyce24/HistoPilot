@@ -81,7 +81,6 @@ CODE_CHECK_SECONDS = 10.0
 # Machine- and project-wide rollups report failures from this window, so an old failure
 # does not keep a stage chip or the job tray asking for attention forever.
 RECENT_FAILURE_SECONDS = 24 * 3600.0
-HISTORY_PAGE_LIMIT = 200
 EVENT_LIMIT = 200
 # Record kinds as the science pages name them, and the owner, compute and group kinds the
 # task store uses for the same records.

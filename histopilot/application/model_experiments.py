@@ -36,12 +36,6 @@ def legacy_experiment_id(identity):
     return f"legacy-{identity}"
 
 
-def experiment_id_for_batch(record):
-    return record["manifest"].get("spec", {}).get("experimentId") or legacy_experiment_id(
-        record["id"]
-    )
-
-
 def presented_batch_plans(payload):
     """Use the submitted recipe when its publication resolved an old default."""
     submission = payload.get("submission") or {}

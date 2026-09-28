@@ -46,10 +46,6 @@ def runner_lock_path() -> Path:
     return state_dir() / "runner.lock"
 
 
-def runner_log_path() -> Path:
-    return state_dir() / "runner.log"
-
-
 def execution_mode() -> str:
     """How new work launches: always as Task Center tasks."""
     return "task-center"
