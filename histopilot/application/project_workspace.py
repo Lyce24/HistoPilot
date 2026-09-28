@@ -354,7 +354,6 @@ class ProjectWorkspace:
         ]
         latest = max(datasets, key=lambda value: value["createdAt"], default=None)
         summary = latest["manifest"].get("summary", {}) if latest else {}
-        configurations = scientific.list_configurations()
         return {
             "mode": "local",
             "executionEnabled": False,
@@ -381,12 +380,8 @@ class ProjectWorkspace:
             },
             "scientificSummary": {
                 "datasetCount": len(datasets),
-                "protocolCount": sum(
-                    item["manifest"].get("kind") == "protocol" for item in configurations
-                ),
-                "featureCount": sum(
-                    item["manifest"].get("kind") == "feature" for item in configurations
-                ),
+                "protocolCount": len(scientific.list_configurations("protocol")),
+                "featureCount": len(scientific.list_configurations("feature")),
             },
             "patients": [],
             "slides": [],

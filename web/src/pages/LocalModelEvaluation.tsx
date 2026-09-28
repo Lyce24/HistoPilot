@@ -10,7 +10,7 @@ import PublicationConfirmation from '../components/PublicationConfirmation';
 import { useReviewedPublication } from '../components/useReviewedPublication';
 import { useHashParameters } from '../lib/hashRoute';
 import { versionLabelText } from '../lib/versionLabels';
-import ComputeJobControls from '../components/ComputeJobControls';
+import ComputeJobControls, { computeExecutionQuery } from '../components/ComputeJobControls';
 import { shortRecordId } from '../lib/recordLabels';
 import { downloadJSON } from '../lib/download';
 import BulkEvaluationRunner, { EvaluationBatchStatus } from '../components/BulkEvaluationRunner';
@@ -33,21 +33,23 @@ export default function LocalModelEvaluation({ workspace }: { workspace: Workspa
   const linkedPredictor = parameters.get('predictor') ?? '';
   const linkedCohort = parameters.get('cohort') ?? '';
   const linkedEvaluation = parameters.get('evaluation') ?? '';
-  return <EvaluationWorkspace key={`${workspace.project.id}:${linkedPredictor}:${linkedCohort}:${linkedEvaluation}:${linkedExperiment}`} workspace={workspace} linkedPredictor={linkedPredictor} linkedCohort={linkedCohort} linkedEvaluation={linkedEvaluation} linkedExperiment={linkedExperiment} />;
+  // `batch=` opens one evaluation batch (the Task Center links batch owners here).
+  const linkedBatch = parameters.get('batch') ?? '';
+  return <EvaluationWorkspace key={`${workspace.project.id}:${linkedPredictor}:${linkedCohort}:${linkedEvaluation}:${linkedExperiment}:${linkedBatch}`} workspace={workspace} linkedPredictor={linkedPredictor} linkedCohort={linkedCohort} linkedEvaluation={linkedEvaluation} linkedExperiment={linkedExperiment} linkedBatch={linkedBatch} />;
 }
 
-function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedEvaluation, linkedExperiment }: { workspace: Workspace; linkedPredictor: string; linkedCohort: string; linkedEvaluation: string; linkedExperiment: string }) {
+function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedEvaluation, linkedExperiment, linkedBatch = '' }: { workspace: Workspace; linkedPredictor: string; linkedCohort: string; linkedEvaluation: string; linkedExperiment: string; linkedBatch?: string }) {
   const project = workspace.project.id;
   const client = useQueryClient();
   // Every list refreshes quickly while its own jobs are running and slowly once
   // they finish, so an open results page does not keep re-reading saved records.
   const batches = useQuery({ queryKey: ['evaluation-batches', project], queryFn: () => bulkEvaluations.list(project, true), refetchIntervalInBackground: false, refetchInterval: (query) => bulkEvaluationPollInterval(query.state.data) });
   const running = Boolean(batches.data?.items.some(bulkEvaluationActive));
-  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchIntervalInBackground: false, refetchInterval: () => running ? 5000 : 60000 });
+  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchIntervalInBackground: false, refetchInterval: () => running ? 30000 : 120000 });
   const experimentRegistry = useQuery({ queryKey: ['model-experiment-summaries', project], queryFn: () => experiments.summaries(project), refetchIntervalInBackground: false, refetchInterval: (query) => experimentPollInterval(query.state.data) });
   const cohorts = useQuery({ queryKey: ['evaluation-cohorts', project], queryFn: () => evaluation.list(project) });
   const records = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), refetchIntervalInBackground: false, refetchInterval: (query) => computePollInterval(query.state.data?.items) });
-  const [view, setView] = useState<'library' | 'setup' | 'detail' | 'batch' | 'comparison'>(linkedEvaluation ? 'detail' : linkedPredictor || linkedCohort || linkedExperiment ? 'setup' : 'library');
+  const [view, setView] = useState<'library' | 'setup' | 'detail' | 'batch' | 'comparison'>(linkedEvaluation ? 'detail' : linkedBatch ? 'batch' : linkedPredictor || linkedCohort || linkedExperiment ? 'setup' : 'library');
   const [setupStarted, setSetupStarted] = useState(Boolean(linkedPredictor || linkedCohort || linkedExperiment));
   const [setupKey, setSetupKey] = useState(0);
   const [libraryTab, setLibraryTab] = useState<'records' | 'batches'>('records');
@@ -56,7 +58,7 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
   const [batchState, setBatchState] = useState('active');
   const [batchStatus, setBatchStatus] = useState('all');
   const [batchSort, setBatchSort] = useState('recent');
-  const [batchId, setBatchId] = useState('');
+  const [batchId, setBatchId] = useState(linkedBatch);
   const [experimentIds, setExperimentIds] = useState<string[]>(() => linkedExperiment ? [linkedExperiment] : []);
   const experimentId = experimentIds.length === 1 ? experimentIds[0] : '';
   const setExperimentId = (id: string) => setExperimentIds(id ? [id] : []);
@@ -113,7 +115,7 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
   function resetBatchFilters() { setBatchSearch(''); setBatchState('active'); setBatchStatus('all'); setBatchSort('recent'); }
   const libraryActions = <><button type="button" className="btn btn-secondary btn-small" disabled={records.isFetching || batches.isFetching} onClick={() => void Promise.all([records.refetch(), batches.refetch(), cohorts.refetch(), registry.refetch(), experimentRegistry.refetch()])}>Refresh</button>{setupStarted ? <button type="button" className="btn btn-secondary btn-small" onClick={() => setView('setup')}>Resume evaluation setup</button> : null}<button type="button" className="btn btn-secondary btn-small" onClick={() => setView('comparison')}>Compare methods</button>{experimentIds.length || chosenPredictor ? <button type="button" className="text-button" onClick={() => { setExperimentIds([]); setPredictorId(''); publication.reset(); }}>Show all experiments and predictors</button> : null}</>;
   return <div className="clinical-workspace model-chains">
-    <PageHeader eyebrow="03 EVALUATE" title={view === 'library' ? 'Model evaluations' : view === 'detail' ? detail?.manifest.name ?? 'Evaluation results' : view === 'batch' ? 'Evaluation batch' : view === 'comparison' ? 'Compare evaluation methods' : 'Evaluate models'} description={view === 'library' ? 'Open evaluation results or create an evaluation for your models.' : 'Select development models and a frozen test cohort, review compatibility, then run evaluation.'} actions={<div className="inline-actions">{view === 'library' ? <StageCreateButton onClick={create}>Create evaluation</StageCreateButton> : <StageBackButton disabled={locked} onClick={openLibrary}>Back to evaluations</StageBackButton>}{view !== 'library' ? <a className="btn btn-secondary" href="#test-data">Test cohorts</a> : null}</div>} />
+    <PageHeader eyebrow="05 EVALUATE" title={view === 'library' ? 'Evaluate models' : view === 'detail' ? detail?.manifest.name ?? 'Evaluation results' : view === 'batch' ? 'Evaluation batch' : view === 'comparison' ? 'Compare evaluation methods' : 'Evaluate models'} description={view === 'library' ? 'Open evaluation results or create an evaluation for your models.' : 'Select development models and a frozen test cohort, review compatibility, then run evaluation.'} actions={<div className="inline-actions">{view === 'library' ? <StageCreateButton onClick={create}>Create evaluation</StageCreateButton> : <StageBackButton disabled={locked} onClick={openLibrary}>Back to evaluations</StageBackButton>}{view !== 'library' ? <a className="btn btn-secondary" href="#test-data">Additional test cohorts</a> : null}</div>} />
     {view !== 'library' ? <EvidenceChain current="evaluation" experimentId={detail?.manifest.experimentId ?? predictor?.manifest.experimentId ?? experimentId} predictorId={detail?.manifest.predictorId ?? chosenPredictor} evaluationId={selectedRecord} /> : null}
     <ErrorNotice error={publication.error ?? records.error ?? registry.error ?? cohorts.error ?? experimentRegistry.error ?? batches.error} />
     <StagePage pageKey={`${view}:${mode}:${view === 'setup' ? singlePage : selectedRecord || batchId}`}>
@@ -134,7 +136,7 @@ function EvaluationWorkspace({ workspace, linkedPredictor, linkedCohort, linkedE
       </fieldset>
       {predictor ? <p className="muted">Source: <a href={experimentPredictorLink(predictor.manifest.experimentId, predictor.id)}>{predictor.manifest.experiment?.name ?? shortRecordId(predictor.manifest.experimentId)}</a> · {predictorMethodLabel(predictor.manifest.method)} · {predictor.manifest.checkpoints.length} checkpoints · class target {predictor.manifest.target.field}</p> : <p>Choose a ready predictor from <a href="#experiments">Experiments</a>. Predictors appear automatically when the selected ensemble or refit work finishes. Batches using Skip have no predictors; use one as a template to choose a different policy.</p>}
       {predictor?.lifecycleState === 'archived' ? <p className="callout">This predictor is archived. Restore it to Active using <StageRecordManageButton type="configuration" id={predictor.id} name={predictor.manifest.name} /> before creating another evaluation; existing results remain available in the evaluation library.</p> : null}
-      {!availableCohorts.length ? <p className="callout">Create and freeze a cohort in <a href="#test-data">Test cohorts</a>. Its prediction targets and feature readiness are checked here for each model.</p> : null}
+      {!availableCohorts.length ? <p className="callout">Freeze <a href="#cohort">Targets &amp; splits</a> to make its testing population available here, or prepare an <a href="#test-data">additional test cohort</a>. Targets and feature readiness are checked for each model.</p> : null}
       <div className="stage-actions"><StageContinueButton disabled={publication.locked || !canReview} onClick={() => { if (canReview && reportEditorValidity(editor.current)) void publication.preview({ predictorId: chosenPredictor, cohortId, name: name.trim(), ...evaluationExecutionSelection(inputs) }); }}>Review evaluation</StageContinueButton></div>
     </Panel> : null}
     {publication.review ? <Panel title="Review evaluation inputs">
@@ -171,7 +173,8 @@ function EvaluationDetail({ project, record, comparisons }: { project: string; r
   const [downloading, setDownloading] = useState(false);
   const trashed = record.lifecycleState === 'trashed';
   const shouldPoll = !trashed || computeActive(record.execution);
-  const execution = useQuery({ queryKey: ['compute-job', project, 'evaluation', record.id], queryFn: () => modelEvaluations.execution(project, record.id), initialData: record.execution, enabled: shouldPoll, refetchInterval: (query) => shouldPoll && computeActive(query.state.data) ? 3000 : false });
+  // Shared with the controls below; read on mount, since the list may predate a change made in the Task Center.
+  const execution = useQuery(computeExecutionQuery(project, 'evaluation', record.id, record.execution, shouldPoll));
   const current = shouldPoll ? execution.data : record.execution;
   const result = !execution.isError && current?.status === 'completed' ? current.result : null;
   const metrics = result?.metrics;

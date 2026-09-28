@@ -53,9 +53,9 @@ class Jobs(FakeJobs):
         self.runtime = lambda: runtime
         self.launches, self.cancels = [], []
 
-    def launch(self, identity, plan, operation_id, resume=False):
+    def launch(self, identity, plan, operation_id, resume=False, **task):
         self.launches.append((identity, operation_id, resume))
-        return super().launch(identity, plan, operation_id, resume)
+        return super().launch(identity, plan, operation_id, resume, **task)
 
     def cancel(self, identity, operation_id=None):
         self.cancels.append(identity)
@@ -173,20 +173,21 @@ def test_get_never_dispatches_and_cv_finished_waits_for_predictors(integrated):
     assert len(executor.launches) == 1
 
 
-def test_both_automatically_publishes_ensembles_and_sequential_refits(integrated):
+def test_both_automatically_publishes_ensembles_and_launches_every_ready_refit(integrated):
     service, identity, jobs, executor, _ = integrated
     launched = service.launch(identity, "start")
     assert launched["counts"]["total"] == 4
     assert service.launch(identity, "start") == launched
     assert len(executor.launches) == 1
     first = service.advance(identity)
-    assert first["counts"]["completed"] == 2 and first["counts"]["active"] == 1
-    assert len(jobs.launches) == 1
+    # Every ready refit is its own task; the Task Center, not the coordinator, admits them.
+    assert first["counts"]["completed"] == 2 and first["counts"]["active"] == 2
+    assert len(jobs.launches) == 2
     assert {
         item["epochBudget"]["epochs"] for item in first["items"] if item["method"] == "refit"
     } == {4}
     service.advance(identity)
-    assert len(jobs.launches) == 1
+    assert len(jobs.launches) == 2
     jobs.complete(jobs.launches[0][0])
     second = service.advance(identity)
     assert second["counts"]["completed"] == 3 and len(jobs.launches) == 2
@@ -236,15 +237,41 @@ def test_lost_coordinator_acknowledgement_keeps_worker_ownership(integrated):
     assert len(executor.launches) == 1
 
 
-def test_cancel_stops_active_refit_and_never_launches_remaining_items(integrated):
+def test_cancel_stops_active_refits_and_never_launches_them_again(integrated):
     service, identity, jobs, _executor, _ = integrated
     service.launch(identity, "start")
     service.advance(identity)
     result = service.cancel(identity, "cancel")
     assert result["status"] == "cancelled" and result["counts"]["completed"] == 2
-    assert result["counts"]["cancelled"] == 2 and len(jobs.cancels) == 1
+    assert result["counts"]["cancelled"] == 2 and len(jobs.cancels) == 2
     assert service.advance(identity)["status"] == "cancelled"
-    assert len(jobs.launches) == 1
+    assert len(jobs.launches) == 2
+
+
+def test_a_busy_project_leaves_an_item_waiting_instead_of_failing_it(integrated, monkeypatch):
+    service, identity, jobs, _executor, _ = integrated
+    service.launch(identity, "start")
+    original = service.builds.apply
+    busy = []
+
+    def contended(request):
+        if not busy:
+            busy.append(request)
+            raise StorageError(
+                "Another operation is writing this project. Retry after it finishes.",
+                "PROJECT_BUSY",
+            )
+        return original(request)
+
+    monkeypatch.setattr(service.builds, "apply", contended)
+    first = service.advance(identity)
+    assert busy and first["counts"]["failed"] == 0 and first["status"] != "attention"
+    assert first["counts"]["waiting"] >= 1
+    service.advance(identity)
+    for launch in jobs.launches:
+        jobs.complete(launch[0])
+    final = service.advance(identity)
+    assert final["status"] == "completed" and final["counts"]["completed"] == 4
 
 
 def test_failed_refit_waits_for_explicit_resume(integrated):
@@ -393,7 +420,8 @@ def test_overall_status_includes_predictor_work(integrated):
     models = ModelExperimentService(
         service.store, service.filesystem, training=service.training, predictor_execution=service
     )
-    assert models.get(identity)["status"] == "interrupted"
+    # A coordinator that never started needs attention; it is not a failed experiment.
+    assert models.get(identity)["status"] == "needs-attention"
     service.launch(identity, "start")
     assert models.get(identity)["status"] == "queued"
     service.advance(identity)
@@ -460,7 +488,7 @@ def test_manual_refit_cannot_reopen_cancelled_experiment_predictor_work(integrat
     with pytest.raises(StorageError) as error:
         service.refits.launch(refit_id, LaunchRefit(operationId="manual-reopen"), resume=True)
     assert error.value.code == "EXPERIMENT_PREDICTORS_LOCKED"
-    assert len(jobs.launches) == 1
+    assert len(jobs.launches) == 2  # both refits launched together; neither reopened
 
 
 def test_cancelled_intent_blocks_manual_creation_but_not_existing_evidence(integrated):
@@ -497,3 +525,52 @@ def test_cancelled_intent_blocks_late_refit_publication(integrated):
     assert error.value.code == "EXPERIMENT_PREDICTORS_LOCKED"
     for predictor in retained:
         service.builds.predictors.verify_checkpoints(predictor)
+
+
+def test_the_coordinator_loops_through_a_busy_project_then_yields_its_slot(tmp_path):
+    from types import SimpleNamespace
+
+    from histopilot.workers import experiment_predictors as worker
+
+    busy = StorageError("Another operation is changing this workspace.", "PROJECT_BUSY")
+
+    class Service:
+        def __init__(self, answers):
+            self.answers, self.calls = list(answers), 0
+
+        def _read(self, _identity):
+            return {}, {"status": "queued"}
+
+        def advance(self, _identity):
+            self.calls += 1
+            answer = self.answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return {"status": answer}
+
+    store, clock = SimpleNamespace(folder=tmp_path), [0.0]
+
+    def run(service):
+        return worker._coordinate(
+            service,
+            store,
+            "experiment",
+            tmp_path,
+            sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+            clock=lambda: clock[0],
+        )
+
+    # Busy passes are retried, never recorded as attention.
+    service = Service([busy, busy, "running", busy, "completed"])
+    assert run(service) == 0 and service.calls == 5
+    assert read_json(tmp_path / "state.json")["status"] == "queued"
+    # A project that stays busy: the worker gives its slot back (run() exits 75) and leaves
+    # the saved state as it was.
+    with pytest.raises(StorageError) as caught:
+        run(Service([busy] * 1000))
+    assert caught.value.code == "PROJECT_BUSY"
+    assert read_json(tmp_path / "state.json")["status"] == "queued"
+    # A real failure still asks for attention.
+    assert run(Service([StorageError("Refit stopped.", "EXPERIMENT_REFIT_STOPPED")])) == 0
+    state = read_json(tmp_path / "state.json")
+    assert (state["status"], state["error"]["code"]) == ("attention", "EXPERIMENT_REFIT_STOPPED")

@@ -22,11 +22,15 @@ def interpretation_router(projects, filesystem):
 
     @router.get("")
     def list_interpretations(identity: str, include_inactive: bool = False):
-        return service(identity).list(include_inactive=include_inactive)
+        return service(identity).presented_list(include_inactive=include_inactive)
 
     @router.get("/sources")
     def sources(identity: str):
         return service(identity).gallery.sources()
+
+    @router.get("/datasets")
+    def dataset_sources(identity: str):
+        return service(identity).gallery.dataset_sources()
 
     @router.post("/gallery")
     def gallery(identity: str, payload: InterpretationGalleryQuery):
@@ -46,7 +50,7 @@ def interpretation_router(projects, filesystem):
 
     @router.post("/visualize", status_code=202)
     def visualize(identity: str, payload: VisualizeInterpretation):
-        return service(identity).visualize(payload)
+        return service(identity).presented_visualization(payload)
 
     @router.post("/slide-inspection")
     def inspect_slide(identity: str, payload: SlideInspection):
@@ -62,11 +66,13 @@ def interpretation_router(projects, filesystem):
 
     @router.get("/{interpretation_id}")
     def get(identity: str, interpretation_id: str):
-        return service(identity).get(interpretation_id)
+        current = service(identity)
+        return current.presented(current.get(interpretation_id))
 
     @router.get("/{interpretation_id}/execution")
     def execution(identity: str, interpretation_id: str):
-        return service(identity).execution(interpretation_id)
+        current = service(identity)
+        return current.presented(current.get(interpretation_id))["execution"]
 
     @router.post("/{interpretation_id}/launch", status_code=202)
     def launch(identity: str, interpretation_id: str, payload: PredictorAction):

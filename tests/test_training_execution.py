@@ -10,7 +10,7 @@ import pytest
 from test_worker_process_ownership import isolated_worker_tree as _worker_tree
 
 from histopilot.application.training import TrainingService, membership_plan_id
-from histopilot.schemas.development import DevelopmentBatchSpec
+from histopilot.schemas.development import DevelopmentBatchSpec, ResourcePolicy
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import _run_plan, available_device, collect_results, run_batch
@@ -58,7 +58,14 @@ def execution(tmp_path, monkeypatch):
     values = spec.model_dump()
     values.update(mode="single", trainingSeeds=[11])
     values["recipe"].update(maxEpochs=1, bagSize=2, batchSize=2)
-    values["resources"].update(gpuIds=[], cpuThreadsPerRun=1, dataLoaderWorkers=0, ramGbPerRun=0.01)
+    # New specs omit resources; these legacy-path tests pin explicit tiny CPU settings.
+    values["resources"] = {
+        **ResourcePolicy().model_dump(),
+        "gpuIds": [],
+        "cpuThreadsPerRun": 1,
+        "dataLoaderWorkers": 0,
+        "ramGbPerRun": 0.01,
+    }
     spec = DevelopmentBatchSpec.model_validate(values)
     preview = development.preview(spec)
     frozen = development.freeze(
@@ -252,6 +259,19 @@ def test_cancel_is_durable_and_idempotent(execution):
     assert service.cancel(frozen["id"], "cancel-once")["cancelRequested"]
     assert request_path.read_bytes() == original
     assert len(executor.launches) == 1
+
+
+def test_single_run_cancel_is_unsupported_for_legacy_batches(execution):
+    service, frozen, executor, _source = execution
+    state = service.launch(frozen["id"], "first")
+    with pytest.raises(StorageError) as unsupported:
+        service.cancel_runs(frozen["id"], [state["runs"][0]["id"]], "cancel-run")
+    assert (unsupported.value.code, unsupported.value.status_code) == (
+        "TRAINING_ACTION_UNSUPPORTED",
+        409,
+    )
+    assert not (Path(state["outputPath"]) / "cancel.json").exists()
+    assert read_json(Path(state["outputPath"]) / "state.json")["runs"] == state["runs"]
 
 
 def test_orphan_cancellation_signals_only_verified_child_identity(execution, monkeypatch):

@@ -1,0 +1,30 @@
+/* One run status for a stage page: dot, words, the page's action, a Task Center link. */
+.run-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--theme-muted); }
+.run-status-text { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 0; min-width: 0; }
+.run-status-text > * + *::before { content: '·'; margin: 0 6px; color: var(--theme-line-strong); }
+.run-status-label { color: var(--theme-ink); font-weight: 600; }
+.run-status-headline { color: var(--theme-ink); font-weight: 550; }
+.run-status-part { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.run-status-link { color: var(--brand-primary); font-weight: 550; white-space: nowrap; }
+.run-status-link:hover { text-decoration: underline; }
+.run-status-action { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.run-status-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--theme-line-strong); }
+.run-status-active .run-status-dot { background: var(--brand-primary); box-shadow: 0 0 0 3px var(--theme-next-soft); }
+.run-status-waiting .run-status-dot { background: var(--theme-status-warning); }
+.run-status-attention .run-status-dot { background: var(--theme-alert-mark); }
+.run-status-attention .run-status-headline { color: var(--theme-alert-ink); }
+.run-status-done .run-status-dot { background: var(--theme-next-ink); }
+
+/* A one-line chip is a pill (15px is half its height); a chip that wraps on a narrow screen
+   keeps modest corners instead of a lozenge. */
+.run-status-chip { display: inline-flex; padding: 5px 12px; border: 1px solid var(--theme-line); border-radius: 15px; background: var(--theme-surface); }
+.run-status-row { padding: 10px 14px; border: 1px solid var(--theme-line); border-radius: 10px; background: var(--theme-surface); }
+.run-status-row .run-status-link { margin-left: auto; }
+.run-status-banner { padding: 12px 16px; border: 1px solid var(--theme-line); border-radius: 10px; background: var(--theme-surface); font-size: 13px; }
+.run-status-banner.run-status-attention { border-color: var(--theme-alert-line); background: var(--theme-alert-soft); }
+.run-status-banner.run-status-active { border-color: var(--theme-next-line); background: var(--theme-next-soft); }
+.run-status-banner .run-status-link { margin-left: auto; }
+.run-status-list { display: grid; gap: 8px; margin: 0 0 18px; }
+@media (max-width: 720px) {
+  .run-status-row .run-status-link, .run-status-banner .run-status-link { margin-left: 0; }
+}

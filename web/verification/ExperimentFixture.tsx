@@ -112,6 +112,9 @@ window.fetch = async (input, init) => {
     records[id] = { ...make(id, body.name, 'planning'), notes: body.notes ?? '', tags: body.tags ?? [], inputs: source ? structuredClone(source.inputs) : null, batchPlans: source ? structuredClone(source.batchPlans ?? []) : [], predictorPolicy: source ? structuredClone(source.predictorPolicy) : { method: 'ensemble', refitPercentile: null } };
     return response(records[id]);
   }
+  if (path === `${base}/model-experiments/headlines`) return response({ items: [] });
+  const summary = new RegExp(`^${base}/model-experiments/([^/]+)/results$`).exec(path);
+  if (summary) return response({ experimentId: decodeURIComponent(summary[1]), target: null, design: null, policy: { resamples: 2000, seed: 42, confidenceLevel: 0.95, method: 'fixture' }, primaryMetric: 'auroc', batches: [], comparisons: [], findings: [] });
   const selected = new RegExp(`^${base}/model-experiments/([^/]+)(/submit)?$`).exec(path);
   if (selected) {
     const record = records[decodeURIComponent(selected[1])];
@@ -154,6 +157,8 @@ window.fetch = async (input, init) => {
     if (run[2] === 'results') return response({ batchId: item.id, status: item.status, oof: [], findings: [], candidates: [{ candidateId: 'candidate-1', trainingSeed: 42, splitSeed: 42, complete: true, completedRuns: 5, totalRuns: 5, metrics: { available: true, auroc: 0.891, accuracy: 0.822 } }] });
     return response({ runId: run[2].split('/')[1], totalRows: 8, truncated: false, rows: Array.from({ length: 8 }, (_, i) => ({ epoch: i + 1, trainingLoss: 0.88 - i * 0.06, validation: { loss: 0.9 - i * 0.055, accuracy: 0.6 + i * 0.025, auroc: 0.65 + i * 0.025 }, learningRate: 0.0003, checkpointUnit: 'patient' })) });
   }
+  if (path.startsWith('/task-center/owners')) return response({ owners: [] });
+  if (path.startsWith('/task-center/rollup')) return response({ scope: {}, state: 'not-started', counts: {}, byKind: {}, progress: null, live: 0, active: 0, pending: 0, held: false, position: null, queuePosition: null, waitingReason: null, eta: null, runnerAlive: true, paused: false, stopRequest: null, lastFailure: null, recentFailures: 0, current: null, startedAt: null, finishedAt: null, ownerKey: null, ownerKind: null, ownerId: null, title: null, projectId: null, projectName: null, href: '#task-center', updatedAt: '2026-09-25T10:05:00Z' });
   request.matched = false;
   return response({ detail: `Unmocked fixture request: ${method} ${path}` }, 404);
 };

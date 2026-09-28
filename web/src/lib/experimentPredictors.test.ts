@@ -35,6 +35,10 @@ describe('experiment predictor planning counts', () => {
     const { dropout: _dropout, ...implicit } = defaultRecipe();
     expect(plannedConfigurationCount({ ...spec, mode: 'explicit', configurations: [defaultRecipe(), implicit, { ...defaultRecipe(), learningRate: 0.0002 }] })).toBe(2);
   });
+  it('counts a frozen setup before any execution batches have been published', () => {
+    const frozen = { ...record, configurationLocked: true, frozenSetupId: 'setup', stage: 'planning' as const, status: 'ready' };
+    expect(experimentPredictorCount(frozen, { method: 'both', refitPercentile: 75 }, protocol)).toEqual({ groups: 45, foldRuns: 225, ensembles: 45, refits: 45, total: 90 });
+  });
   it('counts the frozen manifest once even when submission retains editable recipe history', () => {
     const submitted = { ...record, configurationLocked: true, submission: {}, batches: [{ state: 'active', manifest: { summary: { configurationCount: 15, trainingSeedCount: 3, runCount: 225 }, splitPlans: Array.from({ length: 5 }, (_, fold) => ({ fold, seed: 42 })) } }] } as unknown as ModelExperiment;
     expect(experimentPredictorCount(submitted, { method: 'both', refitPercentile: 75 }, protocol)?.total).toBe(90);

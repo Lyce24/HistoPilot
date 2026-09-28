@@ -15,14 +15,15 @@ function render(workers: SystemStatus['workers']) {
 }
 
 describe('system capability reporting', () => {
-  it('distinguishes missing extraction runtime from implemented native execution', () => {
+  it('reports the Task Center runner and links there instead of a separate worker card', () => {
     const html = render({ executionEnabled: false, nativeExecutionImplemented: true, tmuxAvailable: true, status: 'TRIDENT runtime unavailable.' });
-    expect(html).toContain('Native execution implemented');
-    expect(html).toContain('TRIDENT feature extraction');
+    expect(html).not.toContain('Native execution implemented');
+    expect(html).not.toContain('Compute workers');
+    expect(html).toContain('<h2>Task Center</h2>');
+    expect(html).toContain('TRIDENT feature extraction runtime');
     expect(html).toContain('Extraction runtime setup required');
     expect(html).toContain('tmux available');
-    expect(html).toContain('href="#experiments"');
-    expect(html).toContain('href="#features"');
+    expect(html).toContain('href="#task-center"');
     expect(html).not.toContain('future isolated workers');
     expect(html).not.toContain('Planned');
     expect(html).not.toContain('DuckDB');

@@ -36,7 +36,7 @@ class RefitDataModule(MILDataModule):
                 row.get("partition") != "train"
                 or row.get("pool") != "development"
                 or row.get("phase") != "refit"
-                or not row.get("patientId")
+                or (self.plan.get("splitUnit") != "slide" and not row.get("patientId"))
                 or row.get("label") not in classes
             ):
                 raise MILDataError("Refit accepts only frozen development training memberships.")
@@ -51,7 +51,8 @@ class RefitDataModule(MILDataModule):
                 and patient_labels[row["patientId"]] != row["label"]
             ):
                 raise MILDataError("Patient labels conflict in the development refit pool.")
-            patient_labels[row["patientId"]] = row["label"]
+            if self.plan.get("splitUnit") != "slide":
+                patient_labels[row["patientId"]] = row["label"]
             row["labelIndex"] = classes.index(row["label"])
         if {row["label"] for row in rows} != set(classes):
             raise MILDataError("Every frozen target class must appear in refit training.")
@@ -144,6 +145,7 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
         class_weights=datamodule.training_class_weights(),
         class_weight_unit=datamodule.training_class_weight_unit(),
         clinical_preprocessor=datamodule.clinical_preprocessor,
+        split_unit=plan.get("splitUnit"),
     )
     checkpoint = ModelCheckpoint(
         dirpath=output_dir,
@@ -191,7 +193,7 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
             "epochBudget": plan["epochBudget"],
             "historyPath": str(output_dir / "history.json"),
             "trainingSlideCount": len(datamodule.memberships["train"]),
-            "trainingPatientCount": len(
+            "trainingPatientCount": 0 if plan.get("splitUnit") == "slide" else len(
                 {row["patientId"] for row in datamodule.memberships["train"]}
             ),
             "trainingObjective": datamodule.trainingObjective,

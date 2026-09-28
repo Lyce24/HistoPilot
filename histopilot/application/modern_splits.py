@@ -212,7 +212,7 @@ def modern_assignments(
                     "innerFold": 9,
                     "partition": "train",
                     "slideId": row["slideId"],
-                    "patientId": patient,
+                    "patientId": row.get("patientId") if spec.splitUnit == "slide" else patient,
                     "patientIdSource": row.get("patientIdSource", "source"),
                     "label": row["label"],
                     **({"pool": "training"} if split.version == 3 else {}),
@@ -429,7 +429,9 @@ def check_modern_plan(spec, groups, metadata, assignment, finding):
         rows = [row for patient in patients for row in groups[patient]]
         classes = group_class_counts(groups, set(patients))
         result[role] = {
-            "patients": sum(
+            "patients": 0
+            if spec.splitUnit == "slide"
+            else sum(
                 groups[patient][0].get("patientIdSource") != "slide_fallback"
                 for patient in patients
             ),

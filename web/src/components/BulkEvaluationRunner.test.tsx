@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fixturePredictor } from '../testFixtures/predictors';
 import { fixtureExperiment } from '../testFixtures/evaluations';
-import BulkEvaluationRunner from './BulkEvaluationRunner';
+import BulkEvaluationRunner, { EvaluationBatchStatus, batchMemberStatus, legacyBatchCancellable } from './BulkEvaluationRunner';
+import { taskCenterKeys } from '../api/taskCenter';
+import { fixtureRollup } from '../testFixtures/taskCenter';
 import type { EvaluationCohort } from '../api/evaluation';
 import { initialEvaluationInputs } from './EvaluationInputSettings';
 
@@ -64,5 +66,40 @@ describe('evaluation source selection', () => {
     expect(html).not.toContain('Test features and inference');
     expect(html).not.toContain('Test cohort for selected experiments');
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*><span>Continue to evaluation inputs/);
+  });
+});
+
+describe('evaluation batch status', () => {
+  it('shows the batch owner status line and member results, with no cancel or raw statuses', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['evaluation-batch', 'p', 'batch'], { id: 'batch', status: 'running', cohortId: 'c', items: [{ predictorId: 'p1', predictorName: 'Ensemble · seed 42', method: 'ensemble', status: 'not_started' }, { predictorId: 'p2', predictorName: 'Refit · seed 42', method: 'refit', status: 'running', evaluationId: 'e2' }] });
+    client.setQueryData(taskCenterKeys.rollup({ ownerKind: 'evaluation-batch', ownerId: 'batch', project: 'p' }), fixtureRollup({ counts: { running: 1, queued: 1 }, active: 1, pending: 1, live: 2, href: '#task-center?owner=o&project=p' }));
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><EvaluationBatchStatus project="p" id="batch" onOpen={() => {}} kind="inference" /></QueryClientProvider>);
+      expect(html).toContain('href="#task-center?owner=o&amp;project=p"');
+      expect(html).toContain('>Not started<');
+      expect(html).toContain('>Running<');
+      expect(html).toContain('Open predictions');
+      expect(html).not.toContain('Cancel inference batch');
+      expect(batchMemberStatus('not_started')).toBe('Not started');
+      expect(batchMemberStatus('something_new')).toBe('Something new');
+    } finally { client.clear(); }
+  });
+
+  it('keeps Cancel for a batch whose members run in tmux, which the Task Center cannot reach', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const batch = { id: 'batch', status: 'running', cohortId: 'c', items: [{ predictorId: 'p1', predictorName: 'Ensemble · seed 42', method: 'ensemble' as const, status: 'running', evaluationId: 'e1' }] };
+    client.setQueryData(['evaluation-batch', 'p', 'batch'], batch);
+    client.setQueryData(taskCenterKeys.rollup({ ownerKind: 'evaluation-batch', ownerId: 'batch', project: 'p' }), fixtureRollup({ state: 'not-started', counts: {}, byKind: {}, live: 0, active: 0, pending: 0 }));
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><EvaluationBatchStatus project="p" id="batch" onOpen={() => {}} /></QueryClientProvider>);
+      expect(html).toContain('>Cancel evaluation batch<');
+    } finally { client.clear(); }
+    const notStarted = { state: 'not-started' };
+    expect(legacyBatchCancellable(batch, notStarted)).toBe(true);
+    expect(legacyBatchCancellable(batch, { state: 'running' })).toBe(false);
+    expect(legacyBatchCancellable(batch, undefined)).toBe(false);
+    expect(legacyBatchCancellable({ ...batch, status: 'completed', items: [{ ...batch.items[0], status: 'completed' }] }, notStarted)).toBe(false);
+    expect(legacyBatchCancellable({ ...batch, lifecycleState: 'trashed' }, notStarted)).toBe(false);
   });
 });

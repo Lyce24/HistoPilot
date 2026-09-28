@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { experimentPollInterval, experimentStage, experimentStatusLabel } from './experiments';
+import { experimentExecutionStatus, experimentPollInterval, experimentStage, experimentStatusFilters, experimentStatusLabel, experimentStatusTone } from './experiments';
 import type { ModelExperiment } from './experiments';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
@@ -32,8 +32,8 @@ describe('model experiment identity contracts', () => {
   });
 
   it('keeps queue scheduling and cancellation truthful and polls active work', () => {
-    expect(experimentStatusLabel('queued')).toBe('Scheduled (queued)');
-    expect(experimentStatusLabel('completed')).toBe('Finished');
+    expect(experimentStatusLabel('queued')).toBe('Queued');
+    expect(experimentStatusLabel('completed')).toBe('Completed');
     for (const status of ['queued', 'running', 'cancelling']) expect(experimentPollInterval({ items: [{ status } as ModelExperiment] })).toBe(3000);
     expect(experimentPollInterval({ items: [{ status: 'completed' } as ModelExperiment] })).toBe(15000);
   });
@@ -63,5 +63,32 @@ describe('model experiment identity contracts', () => {
     for (const status of ['queued', 'running', 'failed', 'interrupted']) expect(experimentStage({ status })).toBe('running');
     for (const status of ['completed', 'cancelled']) expect(experimentStage({ status })).toBe('finished');
     expect(experimentStage({ status: 'failed', stage: 'finished' })).toBe('finished');
+    for (const status of ['waiting', 'held', 'needs-attention']) expect(experimentStage({ status })).toBe('running');
+  });
+
+  it('names one execution status and reads older services in the same vocabulary', () => {
+    const labels = { queued: 'Queued', running: 'Running', waiting: 'Waiting', held: 'Held', 'needs-attention': 'Needs attention', cancelled: 'Cancelled', completed: 'Completed', ready: 'Ready to run' };
+    for (const [status, label] of Object.entries(labels)) expect(experimentStatusLabel(status)).toBe(label);
+    // A coordinator attention or a failed fold is not a failed experiment.
+    for (const status of ['failed', 'interrupted', 'unknown', 'attention']) {
+      expect(experimentExecutionStatus(status)).toBe('needs-attention');
+      expect(experimentStatusLabel(status)).toBe('Needs attention');
+    }
+    expect(experimentExecutionStatus('scheduled')).toBe('queued');
+    expect(experimentExecutionStatus('cancelling')).toBe('running');
+    expect(experimentExecutionStatus('created')).toBe('created');
+    expect(experimentStatusTone('needs-attention')).toBe('orange');
+    expect(experimentStatusTone('running')).toBe('green');
+    expect(experimentStatusTone('completed')).toBe('success');
+    for (const status of ['queued', 'waiting', 'cancelled']) expect(experimentStatusTone(status)).toBe('neutral');
+    expect(experimentPollInterval({ items: [{ status: 'waiting' } as ModelExperiment] })).toBe(3000);
+    expect(experimentPollInterval({ items: [{ status: 'held' } as ModelExperiment] })).toBe(5000);
+    expect(experimentPollInterval({ items: [{ status: 'needs-attention' } as ModelExperiment] })).toBe(15000);
+    // A stopped runner changes only when someone starts it: back off, unless other work runs.
+    const stopped = { status: 'waiting', statusReason: 'The Task Center runner is stopped; queued work starts once it runs.' } as ModelExperiment;
+    expect(experimentPollInterval({ items: [stopped] })).toBe(20000);
+    expect(experimentPollInterval({ items: [stopped, { status: 'running' } as ModelExperiment] })).toBe(3000);
+    expect(experimentPollInterval({ items: [] })).toBe(15000);
+    expect(Object.keys(experimentStatusFilters)).toEqual(['ready', 'queued', 'running', 'waiting', 'held', 'needs-attention', 'cancelled', 'completed']);
   });
 });

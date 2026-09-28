@@ -245,7 +245,7 @@ def _training(version: int, cases: list[dict]) -> tuple[dict, list[dict]]:
         "ramGbPerRun": 8,
     }
     inputs = {
-        "protocolId": "blca-protocol",
+        "protocolId": "blca-training-protocol",
         "featureBundleId": "blca-features",
         "loadingPolicy": "native",
         "packArtifactId": None,
@@ -303,7 +303,7 @@ def _training(version: int, cases: list[dict]) -> tuple[dict, list[dict]]:
         split_plans.append(
             {
                 "id": split_id,
-                "planId": "blca-protocol",
+                "planId": "blca-training-protocol",
                 "seed": 42,
                 "fold": fold,
                 "phase": "development",
@@ -489,7 +489,117 @@ def _training(version: int, cases: list[dict]) -> tuple[dict, list[dict]]:
     }, predictions_all
 
 
-def _experiment(version: int, cases: list[dict]) -> dict:
+def _setup(version: int, cases: list[dict], training: dict) -> dict:
+    membership = assessment_folds(cases)
+    return record(
+        f"blca-setup-v{version}",
+        "experimental-setup",
+        f"BLCA baseline v{version} setup",
+        "Combine the saved dataset, targets/splits and features, then freeze the training design.",
+        [
+            {
+                "id": "inputs",
+                "title": "Inputs",
+                "description": "Bind the dataset and its fixed training/testing split to the feature bundle.",
+                "facts": facts(
+                    Dataset="BLCA synthetic slides",
+                    Targets_and_splits="Grade 1/3 training · Grade 2 testing",
+                    Features="UNI v1 · 1024 dimensions",
+                    Training_slides=62,
+                    Reserved_testing_slides=76,
+                    Target="low / high · high is positive",
+                ),
+                "notice": GROUPING_NOTICE,
+            },
+            {
+                "id": "compatibility",
+                "title": "Compatibility",
+                "description": "Experimental Setup checks the bound features against every frozen training slide before freezing the design.",
+                "table": table(
+                    ["Check", "Illustrative requirement"],
+                    [
+                        ["Dataset", "Matches the dataset used by Targets & splits"],
+                        [
+                            "Training coverage",
+                            "All 62 frozen training slides; never shrink membership",
+                        ],
+                        ["Feature integrity", "Current verified source, UNI v1, 1024 dimensions"],
+                        ["Loading", "Native representation; no packed artifact selected"],
+                        [
+                            "Testing coverage",
+                            "Checked separately when evaluating the 76 reserved slides",
+                        ],
+                    ],
+                ),
+                "notice": "These checks explain the real workflow. No tensors are included, so this synthetic example cannot verify features or freeze an executable setup.",
+            },
+            {
+                "id": "splits",
+                "title": "Training folds",
+                "description": "Divide only the 62 training slides into five assessment folds and separate checkpoint-validation subsets.",
+                "facts": facts(
+                    Training_slides=62,
+                    Low=33,
+                    High=29,
+                    Folds=5,
+                    Split_seed=42,
+                    Grouping="slide_id fallback",
+                    Reserved_testing_overlap=0,
+                ),
+                "notice": GROUPING_NOTICE,
+                "table": table(
+                    ["Synthetic slide", "Label", "Assessment fold"],
+                    [[case["id"], case["label"], membership[case["id"]] + 1] for case in cases],
+                ),
+            },
+            {
+                "id": "batches",
+                "title": "Training recipe",
+                "description": "Plan the five-fold ABMIL batch and predictor policy before any run is submitted.",
+                "facts": facts(
+                    Model="Gated ABMIL",
+                    Optimizer="AdamW",
+                    Learning_rate="0.0003",
+                    Maximum_epochs=40,
+                    Bag_size=4096,
+                    Dropout=0.25,
+                    Training_seed=42,
+                    Predictor_policy="Ensemble + P75 refit" if version == 2 else "P50 refit",
+                ),
+                "table": table(
+                    ["Fold", "Train", "Validation", "Assessment"],
+                    [
+                        [
+                            index + 1,
+                            *[
+                                plan["partitions"][part]
+                                for part in ("train", "validation", "assessment")
+                            ],
+                        ]
+                        for index, plan in enumerate(training["batch"]["manifest"]["splitPlans"])
+                    ],
+                ),
+                "notice": SYNTHETIC_NOTICE,
+            },
+            {
+                "id": "frozen",
+                "title": "Freeze setup",
+                "description": "A frozen setup locks the inputs, training folds, batch recipes and predictor policy. Execution is a separate action in Experiments.",
+                "facts": facts(
+                    Setup=f"BLCA baseline v{version} setup",
+                    Status="Illustrative frozen setup",
+                    Planned_runs=5,
+                    Runs_started_by_freezing=0,
+                    Next_stage="Experiments · submit the frozen setup",
+                ),
+                "notice": "The demo is read-only. Its frozen state is an illustration, not a stored scientific configuration or a runnable job.",
+            },
+        ],
+        ["Synthetic", "Frozen setup", "5 folds", "ABMIL"],
+    )
+
+
+def _experiment_records(version: int, cases: list[dict]) -> list[dict]:
     training, oof = _training(version, cases)
     result = metrics(oof)
     epochs = [
@@ -510,51 +620,23 @@ def _experiment(version: int, cases: list[dict]) -> dict:
             "No artifact files",
         ]
     )
-    return record(
+    experiment = record(
         f"blca-baseline-v{version}",
         "experiments",
         f"BLCA baseline v{version}",
-        "Inspect a five-fold ABMIL plan, synthetic run curves and predictor creation.",
+        "Follow a frozen setup through explicit submission, synthetic run monitoring and results.",
         [
             {
-                "id": "inputs",
-                "title": "Inputs",
-                "description": "Protocol and slide feature bundle stay linked to the batch.",
+                "id": "submission",
+                "title": "Submit frozen setup",
+                "description": "Experiments uses the exact saved setup, rechecks current features and runtime availability, then starts work only after explicit submission.",
                 "facts": facts(
-                    Protocol="Grade 1/3 development",
-                    Features="UNI v1 · 1024 dimensions",
-                    Development="62 synthetic slides",
-                    Target="low / high · high is positive",
-                ),
-                "notice": GROUPING_NOTICE,
-            },
-            {
-                "id": "batches",
-                "title": "Batches",
-                "description": "The plan mirrors the Bladder baseline recipe; no compute is launched.",
-                "facts": facts(
-                    Model="Gated ABMIL",
-                    Optimizer="AdamW",
-                    Learning_rate="0.0003",
-                    Maximum_epochs=40,
-                    Bag_size=4096,
-                    Dropout=0.25,
-                    Folds=5,
-                    Training_seed=42,
-                    Split_seed=42,
-                ),
-                "table": table(
-                    ["Fold", "Train", "Validation", "Assessment"],
-                    [
-                        [
-                            index + 1,
-                            *[
-                                plan["partitions"][part]
-                                for part in ("train", "validation", "assessment")
-                            ],
-                        ]
-                        for index, plan in enumerate(training["batch"]["manifest"]["splitPlans"])
-                    ],
+                    Frozen_setup=f"BLCA baseline v{version} setup",
+                    Training_slides=62,
+                    Reserved_testing_slides=76,
+                    Planned_runs=5,
+                    Scientific_design="Locked; copy the setup to change it",
+                    Execution="Illustrative completed runs; no actual compute",
                 ),
                 "notice": SYNTHETIC_NOTICE,
             },
@@ -573,7 +655,7 @@ def _experiment(version: int, cases: list[dict]) -> dict:
             {
                 "id": "results",
                 "title": "Results",
-                "description": "Out-of-fold assessment summarizes synthetic held-out slides, separate from checkpoint validation.",
+                "description": "Out-of-fold assessment summarizes synthetic training slides held out by each fold, separate from checkpoint validation and the reserved testing set.",
                 "facts": facts(
                     Assessment_unit="Slide",
                     OOF_slides=result["count"],
@@ -589,6 +671,7 @@ def _experiment(version: int, cases: list[dict]) -> dict:
         ],
         ["Synthetic", "ABMIL", "5 folds", "Ensemble + P75 refit" if version == 2 else "P50 refit"],
     )
+    return [_setup(version, cases, training), experiment]
 
 
 def generate_demo() -> dict:
@@ -664,61 +747,64 @@ def generate_demo() -> dict:
         record(
             "blca-protocol",
             "cohort",
-            "Grade 1/3 development protocol",
-            "Freeze the binary target, eligible development slides and five assessment folds.",
+            "Grade 1/3 training · Grade 2 testing",
+            "Freeze the binary target and fixed training/testing membership using dataset records only.",
             [
                 {
                     "id": "target",
                     "title": "Target",
                     "description": "Predict low versus high grade; high is the positive class.",
                     "facts": facts(
+                        Dataset="BLCA synthetic slides",
                         Target_column="grade_binary",
                         Class_order="low, high",
                         Positive_class="high",
                         Unit="Slide",
-                        Development="Grade 1 and Grade 3",
                     ),
-                    "notice": "Grade 2 slides are reserved for the later test cohort. Their binary labels are supplied separately in this synthetic example.",
+                    "notice": "This construction needs the dataset and labels only. Features and training-fold choices belong to Experimental Setup.",
                 },
                 {
                     "id": "splits",
-                    "title": "Splits",
-                    "description": "Five slide-disjoint assessment folds with separate checkpoint-validation subsets.",
+                    "title": "Training and testing sets",
+                    "description": "Use the dataset grade column to assign Grade 1/3 to training and reserve Grade 2 for testing.",
                     "facts": facts(
-                        Eligible_slides=62,
-                        Low=33,
-                        High=29,
-                        Folds=5,
-                        Split_seed=42,
+                        Training_slides=62,
+                        Training_low=33,
+                        Training_high=29,
+                        Testing_slides=76,
+                        Testing_low=54,
+                        Testing_high=22,
+                        Overlap=0,
                         Grouping="slide_id fallback",
                     ),
                     "notice": GROUPING_NOTICE,
                     "table": table(
-                        ["Synthetic slide", "Label", "Assessment fold"],
+                        ["Synthetic slide", "Label", "Grade", "Fixed set"],
                         [
                             [
                                 case["id"],
                                 case["label"],
-                                assessment_folds(development)[case["id"]] + 1,
+                                case["grade"],
+                                "training" if case["partition"] == "development" else "testing",
                             ]
-                            for case in development
+                            for case in cases
                         ],
                     ),
                 },
                 {
                     "id": "frozen",
-                    "title": "Frozen protocol",
-                    "description": "The example protocol fixes memberships before comparing baseline configurations.",
+                    "title": "Frozen targets and splits",
+                    "description": "Both sets stay fixed across baseline setups. Training folds are designed later, using only the training set.",
                     "table": table(
                         ["Input", "Rule"],
                         [
-                            ["Development", "Grade 1/3 only"],
-                            ["Assessment", "Each eligible slide appears in exactly one fold"],
+                            ["Training", "62 Grade 1/3 slides"],
+                            ["Testing", "76 Grade 2 slides reserved for later evaluation"],
+                            ["Features", "Not required to construct or freeze these memberships"],
                             [
-                                "Validation",
-                                "Checkpoint selection inside the remaining development slides",
+                                "Next stage",
+                                "Experimental Setup adds features, training folds and recipes",
                             ],
-                            ["Test", "Grade 2 held aside"],
                             ["Patient independence", "Not established"],
                         ],
                     ),
@@ -772,30 +858,31 @@ def generate_demo() -> dict:
             ],
         )
     )
-    records.extend([_experiment(2, development), _experiment(3, development)])
+    for version in (2, 3):
+        records.extend(_experiment_records(version, development))
     records.append(
         record(
             "blca-test-cohort",
-            "test-data",
+            "evaluation",
             "Grade 2 test cohort",
-            "A separate set of 76 synthetic slides illustrates later evaluation.",
+            "Use the 76 testing slides already reserved by Targets & splits for model evaluation.",
             [
                 {
                     "id": "selection",
                     "title": "Selection",
-                    "description": "Keep Grade 2 slides outside baseline development and checkpoint selection.",
+                    "description": "Load the exact frozen testing membership; Grade 2 never enters training folds or checkpoint selection.",
                     "facts": facts(Test_slides=76, Low=54, High=22, Development_overlap=0),
                     "notice": GROUPING_NOTICE,
                 },
                 {
                     "id": "labels",
                     "title": "Labels",
-                    "description": "Map the binary target and freeze slide membership independently of feature preparation.",
+                    "description": "Inspect the frozen labels and membership inherited from Targets & splits.",
                     "table": table(
                         ["Synthetic slide", "Binary label", "Grade"],
                         [[case["id"], case["label"], 2] for case in test],
                     ),
-                    "notice": "A test cohort can be prepared before features or predictors are ready. Evaluation checks feature compatibility later.",
+                    "notice": "Targets & splits already froze these testing slides without features. Evaluation now checks complete testing coverage and a compatible predictor.",
                 },
                 {
                     "id": "frozen",
@@ -821,7 +908,7 @@ def generate_demo() -> dict:
                 {
                     "id": "plan",
                     "title": "Plan",
-                    "description": "Pair the baseline v2 P75 refit example with the Grade 2 test cohort.",
+                    "description": "Pair the baseline v2 P75 refit with the frozen Grade 2 testing set, then check target and feature compatibility before scoring.",
                     "facts": facts(
                         Predictor="Baseline v2 · P75 refit",
                         Cohort="Grade 2 · 76 slides",
@@ -875,6 +962,38 @@ def generate_demo() -> dict:
             ],
         )
     )
+    records.append(
+        record(
+            "blca-inference",
+            "inference",
+            "Label-free predictor application",
+            "Inspect prediction-only outputs without targets or evaluation metrics.",
+            [
+                {
+                    "id": "inputs",
+                    "title": "Inference inputs",
+                    "description": "Apply a ready predictor to compatible slide features without requiring a target column or a testing split.",
+                    "facts": facts(
+                        Predictor="Baseline v2 · P75 refit",
+                        Features="UNI v1 · 1024 dimensions · metadata only",
+                        Synthetic_slides=76,
+                        Labels="Not supplied to inference",
+                    ),
+                    "notice": "This guide reuses the same 76 invented Grade 2 slide scores with their labels omitted. It introduces no new subjects or model execution.",
+                },
+                {
+                    "id": "predictions",
+                    "title": "Predictions",
+                    "description": "Export slide probabilities and predicted classes. Without labels, inference does not report accuracy, AUROC or calibration.",
+                    "table": table(
+                        ["Synthetic slide", "P(high)", "Predicted at 0.5"],
+                        [[row[0], row[2], row[3]] for row in score_rows(test_scores)],
+                    ),
+                    "notice": SYNTHETIC_NOTICE,
+                },
+            ],
+        )
+    )
     prevalence = sum(row["label"] for row in test_scores) / len(test_scores)
     thresholds = [index / 20 for index in range(1, 20)]
     utility, treat_all, utility_rows = [], [], []
@@ -900,7 +1019,9 @@ def generate_demo() -> dict:
                     sum(row["label"] for row in selected) / len(selected),
                 ]
             )
-    brier = math.fsum((row["probability"] - row["label"]) ** 2 for row in test_scores) / len(test_scores)
+    brier = math.fsum((row["probability"] - row["label"]) ** 2 for row in test_scores) / len(
+        test_scores
+    )
     records.append(
         record(
             "blca-clinical-utility",

@@ -1,4 +1,4 @@
-/** Verify the compact workflow launcher offline; starts no server. */
+/** Verify the seven-stage pipeline roadmap offline; starts no server. */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
@@ -11,7 +11,7 @@ import react from '@vitejs/plugin-react';
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = await mkdtemp(join(tmpdir(), 'histopilot-roadmap-'));
 const fixture = join(output, 'fixture.tsx');
-const artifacts = resolve(web, '../docs/dev-review/2026-09-13-interface-consistency-assets');
+const artifacts = join(output, 'artifacts');
 await mkdir(artifacts, { recursive: true });
 const source = (path) => JSON.stringify(join(web, 'src', path));
 const icon = 'data:image/svg+xml;base64,' + Buffer.from(await readFile(join(web, 'public/favicon.svg'))).toString('base64');
@@ -23,12 +23,15 @@ import App from ${source('App.tsx')};
 import { api } from ${source('api/client.ts')};
 import { scientific } from ${source('api/scientific.ts')};
 import { bundles } from ${source('api/bundles.ts')};
+import { targetSplits } from ${source('api/targetSplits.ts')};
+import { trident } from ${source('api/trident.ts')};
 import { development } from ${source('api/development.ts')};
 import { evaluation } from ${source('api/evaluation.ts')};
 import { modelEvaluations, predictors } from ${source('api/predictors.ts')};
 import { clinicalAnalyses } from ${source('api/clinicalUtility.ts')};
 import { interpretations } from ${source('api/interpretation.ts')};
 import { experiments } from ${source('api/experiments.ts')};
+import { taskCenter } from ${source('api/taskCenter.ts')};
 import ${source('styles.css')};
 import ${source('local-workspace.css')};
 import ${source('scientific.css')};
@@ -46,21 +49,26 @@ api.openProject = async () => project;
 scientific.datasets = async () => ({ datasets: [] });
 scientific.drafts = async () => ({ drafts: [] });
 scientific.configurations = async () => ({ configurations: [] });
+targetSplits.list = async () => ({ configurations: [] });
+trident.jobs = async () => ({ jobs: [] });
 for (const api of [bundles, evaluation, predictors, modelEvaluations, clinicalAnalyses, interpretations]) api.list = async () => ({ items: [] });
 development.list = async () => ({ items: [], executions: [] });
 predictors.refits = async () => ({ items: [] });
 experiments.summaries = async () => ({ items: [] });
+taskCenter.rollup = async (scope) => ({ scope: scope ?? {}, state: 'not-started', counts: {}, byKind: {}, progress: null, live: 0, active: 0, pending: 0, held: false, position: null, queuePosition: null, waitingReason: null, eta: null, runnerAlive: true, paused: false, stopRequest: null, lastFailure: null, recentFailures: 0, current: null, startedAt: null, finishedAt: null, ownerKey: null, ownerKind: null, ownerId: null, title: null, projectId: null, projectName: null, href: '#task-center', updatedAt: '2026-09-25T10:05:00Z' });
 
 const dataset = { id: 'dataset', projectId: 'project', contentHash: 'fixture', createdAt: '', manifest: {}, artifacts: {} };
 scientific.datasets = async () => ({ datasets: [dataset] });
-scientific.configurations = async (_, kind) => ({ configurations: kind === 'protocol' ? [{ id: 'protocol', manifest: { kind: 'protocol', datasetId: 'dataset', spec: { datasetId: 'dataset' } } }] : [] });
+targetSplits.list = async () => ({ configurations: [{ id: 'target-split', manifest: { kind: 'target-split', datasetId: 'dataset', spec: { datasetId: 'dataset' }, summary: { trainingSlides: 80, testingSlides: 20 } } }] });
 bundles.list = async () => ({ items: [{ id: 'bundle', current: true, findings: [], manifest: { datasetId: 'dataset', spec: { featureSetId: 'features', packArtifactIds: [] }, feature: { validation: { tensorValidationComplete: true } }, packs: [] } }] });
-predictors.list = async () => ({ items: [{ id: 'predictor', lifecycleState: 'active', manifest: { recipe: { model: 'ABMIL' } } }] });
-scientific.drafts = async () => ({ drafts: [{ id: 'draft', payload: { type: 'evaluation-cohort' } }] });
+evaluation.list = async () => ({ items: [{ id: 'testing-cohort', current: true, manifest: { spec: { datasetId: 'dataset' } } }] });
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 window.showEmptyRoadmap = () => {
   client.setQueryData(['scientific', 'project', 'datasets'], { datasets: [] });
-  client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: [] });
+  client.setQueryData(['scientific', 'project', 'configurations', 'target-split'], { configurations: [] });
+  client.setQueryData(['scientific', 'project', 'configurations', 'experiment-setup'], { configurations: [] });
+  client.setQueryData(['scientific', 'project', 'drafts'], { drafts: [] });
+  client.setQueryData(['evaluation-cohorts', 'project'], { items: [] });
   client.setQueryData(['feature-bundles', 'project'], { items: [] });
   client.setQueryData(['predictors', 'project'], { items: [] });
 };
@@ -141,12 +149,13 @@ try {
   await cdp('Page.enable'); await cdp('Runtime.enable'); await cdp('Network.enable');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: pathToFileURL(join(dist, 'index.html')).href + '?project=project#overview' });
-  await waitFor('document.querySelectorAll(".project-roadmap [data-module]").length === 8');
+  await waitFor('document.querySelectorAll(".project-roadmap [data-module]").length === 9');
   await screenshot('roadmap-desktop');
   const layout = () => evaluate(`({
     width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
     phases: [...document.querySelectorAll('.roadmap-launcher [data-phase]')].map(section => ({name: section.querySelector('h2').textContent, modules: [...section.querySelectorAll('[data-module]')].map(item => item.dataset.module)})),
-    optionalModules: [...document.querySelectorAll('.roadmap-analysis [data-module]')].map(item => item.dataset.module),
+    stages: [...document.querySelectorAll('.roadmap-launcher [data-phase]')].map(section => ({id: section.dataset.phase, top: section.getBoundingClientRect().top, bottom: section.getBoundingClientRect().bottom, width: section.getBoundingClientRect().width})),
+    positions: Object.fromEntries([...document.querySelectorAll('.project-roadmap [data-module]')].map(item => {const rect=item.getBoundingClientRect(); return [item.dataset.module,{top:rect.top,bottom:rect.bottom,left:rect.left,right:rect.right}]})),
     actions: [...document.querySelectorAll('.project-roadmap a[data-module]')].map(item => ({text: item.querySelector('.roadmap-item-action').textContent, height: item.getBoundingClientRect().height, href: item.getAttribute('href')})),
     explanationParagraphs: document.querySelectorAll('.roadmap-launcher p, .roadmap-analysis p').length,
     // Charts and legends stay off this page. A module row's own icon and the
@@ -160,20 +169,36 @@ try {
     navInert: document.querySelector('.sidebar').inert
   })`);
   const desktop = await layout();
-  assert.deepEqual(desktop.phases, [{name:'Prepare', modules:['dataset','cohort','features']}, {name:'Develop', modules:['experiments']}, {name:'Evaluate', modules:['test-data','evaluation']}]);
-  assert.deepEqual(desktop.optionalModules, ['clinical-utility','interpretation']);
+  assert.deepEqual(desktop.phases, [
+    {name:'Datasets', modules:['dataset']},
+    {name:'Prepare in parallel', modules:['features','cohort']},
+    {name:'Experimental Setup', modules:['experimental-setup']},
+    {name:'Experiments', modules:['experiments']},
+    {name:'Evaluate models & run inference', modules:['evaluation','inference']},
+    {name:'Clinical utility', modules:['clinical-utility']},
+    {name:'Interpretation', modules:['interpretation']},
+  ]);
+  for (let index=1; index<desktop.stages.length; index+=1) {
+    assert.ok(desktop.stages[index].top >= desktop.stages[index-1].bottom, 'Stages follow a vertical sequence');
+    assert.equal(desktop.stages[index].width, desktop.stages[0].width, 'Stage cards share a consistent width');
+  }
+  for (const [first, second] of [['features','cohort'],['evaluation','inference']]) {
+    assert.equal(desktop.positions[first].top, desktop.positions[second].top, 'Parallel modules share a desktop row');
+    assert.ok(desktop.positions[first].right <= desktop.positions[second].left, 'Parallel desktop modules do not overlap');
+  }
   assert.equal(desktop.graphCount, 0);
-  assert.equal(desktop.moduleIcons, 8, 'Every module row carries exactly one icon');
+  assert.equal(desktop.moduleIcons, 9, 'Every module row carries exactly one icon');
   assert.match(desktop.progress, /^[0-6] of 6 required steps complete$/, 'Progress counts required modules only');
   // At most one suggested step, and the card and the marked row always agree.
   assert.deepEqual(desktop.markedNext, desktop.nextCard ? [desktop.nextCard] : [], 'The suggested step is marked where it sits in the sequence');
-  assert.equal(desktop.explanationParagraphs, 0);
+  assert.equal(desktop.explanationParagraphs, 1, 'Parallel preparation has one short explanation');
+  assert.equal(desktop.nextCard, 'experimental-setup', 'Frozen targets and ready features lead to Experimental Setup');
   assert.ok(desktop.scrollWidth <= desktop.width + 1, 'Launcher overflows desktop viewport');
   assert.ok(desktop.actions.every(item => item.height >= 44 && item.text === 'Open'));
   await evaluate('document.querySelector(".project-roadmap a[data-module]").focus()');
   await cdp('Input.dispatchKeyEvent', {type:'keyDown', key:'Tab', code:'Tab', windowsVirtualKeyCode:9});
   await cdp('Input.dispatchKeyEvent', {type:'keyUp', key:'Tab', code:'Tab', windowsVirtualKeyCode:9});
-  assert.equal(await evaluate('document.activeElement?.getAttribute("href")'), '#cohort', 'Module links must follow phase order by keyboard');
+  assert.equal(await evaluate('document.activeElement?.getAttribute("href")'), '#features', 'Module links must follow phase order by keyboard');
   await evaluate('document.activeElement.blur()');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await screenshot('roadmap-mobile');
@@ -181,17 +206,25 @@ try {
   assert.ok(mobile.scrollWidth <= mobile.width + 1, 'Launcher overflows mobile viewport');
   assert.ok(mobile.actions.every(item => item.height >= 44), 'Module touch target smaller than 44px');
   assert.ok(mobile.navInert);
+  for (const [first, second] of [['features','cohort'],['evaluation','inference']]) {
+    assert.ok(mobile.positions[second].top >= mobile.positions[first].bottom, 'Parallel modules stack on mobile');
+    assert.equal(mobile.positions[first].left, mobile.positions[second].left);
+  }
   await evaluate('window.showEmptyRoadmap()');
-  await waitFor('document.querySelector(".project-roadmap [data-module=cohort]")?.getAttribute("aria-disabled") === "true"');
+  await waitFor('document.querySelector(".project-roadmap [data-module=cohort] .roadmap-item-status")?.textContent === "Needs Datasets"');
   await screenshot('roadmap-empty-mobile');
-  const gates = await evaluate(`({blocked: [...document.querySelectorAll('.project-roadmap [aria-disabled=true][data-module]')].map(item=>item.dataset.module), open: [...document.querySelectorAll('.project-roadmap a[data-module]')].map(item=>item.dataset.module), scrollWidth:document.documentElement.scrollWidth})`);
-  assert.deepEqual(gates.blocked,['cohort','features']);
-  for(const id of ['dataset','experiments','test-data','evaluation','clinical-utility','interpretation']) assert.ok(gates.open.includes(id));
+  const gates = await evaluate(`({statuses: Object.fromEntries([...document.querySelectorAll('.project-roadmap [data-module]')].map(item=>[item.dataset.module,item.querySelector('.roadmap-item-status').textContent])), blocked: [...document.querySelectorAll('.project-roadmap [aria-disabled=true][data-module]')].map(item=>item.dataset.module), open: [...document.querySelectorAll('.project-roadmap a[data-module]')].map(item=>item.dataset.module), scrollWidth:document.documentElement.scrollWidth})`);
+  assert.deepEqual(gates.blocked, [], 'Local module libraries stay accessible without required creation inputs');
+  assert.deepEqual(gates.open, ['dataset','features','cohort','experimental-setup','experiments','evaluation','inference','clinical-utility','interpretation']);
+  assert.equal(gates.statuses.features, 'Needs Datasets');
+  assert.equal(gates.statuses.cohort, 'Needs Datasets');
+  assert.match(gates.statuses['experimental-setup'], /Needs Targets & splits and Slide features/);
+  assert.equal(gates.statuses.experiments, 'Needs Experimental Setup');
   assert.ok(gates.scrollWidth <=390);
   assert.deepEqual(await evaluate('window.workflow.errors'), []);
   assert.deepEqual(exceptions, [], 'Unexpected browser errors');
-  await writeFile(join(artifacts, 'roadmap-verification.json'), JSON.stringify({passed: true, scope: 'Actual App with compact workflow launcher; in-memory records, Chromium file://, no server.', desktop, mobile, gates, exceptions}, null, 2));
-  console.log('PASS: compact phases, consistent Open actions, keyboard navigation, touch targets, input gates, desktop/mobile overflow.');
+  await writeFile(join(artifacts, 'roadmap-verification.json'), JSON.stringify({passed: true, scope: 'Actual App with seven-stage pipeline roadmap; in-memory records, Chromium file://, no server.', desktop, mobile, gates, exceptions}, null, 2));
+  console.log('PASS: seven vertical stages, parallel desktop rows and mobile stacking, setup handoff, keyboard navigation, accessible empty libraries, touch targets, and desktop/mobile overflow.');
   console.log('Artifacts: ' + artifacts);
 } catch(error) {
   try { await writeFile(join(artifacts, 'roadmap-failure.txt'), await evaluate('document.body.innerText')); await screenshot('roadmap-failure'); } catch {}

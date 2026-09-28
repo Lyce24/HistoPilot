@@ -7,6 +7,7 @@ import { featurePackActive, featurePackSpecKey, packing } from '../api/packing';
 import type { FeaturePackArtifact, FeaturePackJob, FeaturePackJobs, FeaturePackPreview, FeaturePackSpec, FeaturePackState, FeatureValidationReport } from '../api/packing';
 import { configurationVersionLabel } from '../lib/versionLabels';
 import { Findings } from './ScientificUI';
+import RunStatusChip from './RunStatusChip';
 import { Badge, ErrorNotice, Icon, Metric } from './ui';
 import ServerFolderPicker from './ServerFolderPicker';
 import PackFolderExamples from './PackFolderExamples';
@@ -67,6 +68,26 @@ export function FeatureValidationSummary({ report, slideFeatures = false }: { re
       {report?.findings?.length ? <Findings findings={report.findings} /> : null}
     </div>
   );
+}
+
+/** A packing job still running in its own tmux session (submitted before the Task Center ran packing). */
+export const legacyPackActive = (job?: FeaturePackJob) => Boolean(job && featurePackActive(job) && job.executor !== 'task-center');
+
+/**
+ * Task Center packing jobs: what the job means for the bundle (science), with its run status
+ * as one chip; stages, cancel, logs and attempts are in the Task Center.
+ */
+export function ManagedFeatureJob({ job, project }: { job: FeaturePackJob; project: string }) {
+  const action = job.spec.action === 'pack' ? 'Packing' : job.spec.action === 'attach' ? 'Pack verification' : 'Validation';
+  const succeeded = job.state === 'succeeded';
+  return <section className={`feature-pack-progress feature-pack-progress-${job.state}`} aria-label={`${action} status`}>
+    {succeeded ? <div className="feature-pack-progress-heading"><Icon name="check" size={22} /><div>
+      <h4>{job.spec.action === 'pack' ? 'Training pack created' : job.spec.action === 'attach' ? 'Existing pack verified' : 'Content validation complete'}</h4>
+      <p>{job.spec.action === 'pack' ? 'The pack was built and verified. Add it to this bundle draft, then freeze the bundle to preserve its feature and pack identities.' : job.spec.action === 'attach' ? 'Every feature value and coordinate matches this feature version. Add the verified pack to this bundle draft.' : 'Content checks completed for this frozen feature inventory.'}</p>
+    </div></div> : null}
+    <RunStatusChip scope={job.ownerKey ? { owner: job.ownerKey } : { ownerKind: 'feature-pack', ownerId: job.id, project }} variant="row" label={action} />
+    {job.outputPath ? <p className="muted">Pack folder <code className="mono">{job.outputPath}</code></p> : null}
+  </section>;
 }
 
 export function FeaturePackProgress({ job }: { job: FeaturePackJob }) {
@@ -188,10 +209,13 @@ function FeatureJobDetails({ job }: { job: FeaturePackJob }) {
 
 function PreviousFeatureJob({ project, summary }: { project: string; summary: FeaturePackJob }) {
   const detail = useQuery({ queryKey: ['feature-packs', project, 'job', summary.id], queryFn: () => packing.job(project, summary.id) });
-  return <div className="stack"><ErrorNotice error={detail.error} /><FeaturePackProgress job={detail.data ?? summary} /><FeatureJobDetails job={detail.data ?? summary} /></div>;
+  const job = detail.data ?? summary;
+  return <div className="stack"><ErrorNotice error={detail.error} />{job.executor === 'task-center' ? <ManagedFeatureJob job={job} project={project} /> : <><FeaturePackProgress job={job} /><FeatureJobDetails job={job} /></>}</div>;
 }
 
-export default function FeaturePacking({ project, configuration, configurations, onSelectVersion, selectedPackIds, onSelectedPackIdsChange, onBusyChange }: {
+export default function FeaturePacking({ project, configuration, configurations, onSelectVersion, selectedPackIds, onSelectedPackIdsChange, onBusyChange, requestedJob }: {
+  /** Open this job's activity (a Task Center back-link). */
+  requestedJob?: string;
   project: string;
   configuration: Configuration;
   configurations: Configuration[];
@@ -209,18 +233,19 @@ export default function FeaturePacking({ project, configuration, configurations,
   const [outputPath, setOutputPath] = useState('');
   const [existingPath, setExistingPath] = useState('');
   const [review, setReview] = useState<{ preview: FeaturePackPreview; inputKey: string } | null>(null);
-  const [selectedJob, setSelectedJob] = useState('');
-  const [historyJob, setHistoryJob] = useState('');
+  const [selectedJob, setSelectedJob] = useState(requestedJob ?? '');
+  const [historyJob, setHistoryJob] = useState(requestedJob ?? '');
   const [busy, setBusy] = useState<'preview' | 'start' | 'cancel' | null>(null);
   const [error, setError] = useState<Error | null>(null);
   useEffect(() => { onBusyChange?.(busy !== null); }, [busy, onBusyChange]);
   const operationId = useRef<string | null>(null);
-  const [selectedPage, setPage] = useState<'settings' | 'review' | 'activity' | null>(null);
+  const [selectedPage, setPage] = useState<'settings' | 'review' | 'activity' | null>(requestedJob ? 'activity' : null);
   const key = ['feature-packs', project];
   const jobs = useQuery({
     queryKey: key,
     queryFn: () => packing.jobs(project),
-    refetchInterval: (query) => query.state.data?.jobs.some(featurePackActive) ? 2500 : false,
+    // Task Center jobs are followed by their status chip; tmux jobs keep fast polling.
+    refetchInterval: (query) => query.state.data?.jobs.some(featurePackActive) ? query.state.data.jobs.some(legacyPackActive) ? 2500 : 10_000 : false,
     refetchIntervalInBackground: true,
   });
   const versionJobs = jobs.data?.jobs.filter((job) => job.featureSetId === featureSetId) ?? [];
@@ -231,12 +256,12 @@ export default function FeaturePacking({ project, configuration, configurations,
   const selectedSummary = versionJobs.find((job) => job.id === selectedId);
   const detail = useQuery({
     queryKey: [...key, 'job', selectedId], queryFn: () => packing.job(project, selectedId), enabled: Boolean(selectedId),
-    refetchInterval: (query) => featurePackActive(query.state.data) || featurePackActive(selectedSummary) ? 2500 : false,
+    refetchInterval: (query) => featurePackActive(query.state.data) || featurePackActive(selectedSummary) ? legacyPackActive(query.state.data ?? selectedSummary) ? 2500 : 10_000 : false,
     refetchIntervalInBackground: true,
   });
   const validation = useQuery({
     queryKey: [...key, 'validation', featureSetId], queryFn: () => packing.validation(project, featureSetId),
-    refetchInterval: activeJobs.length ? 3000 : false,
+    refetchInterval: activeJobs.length ? activeJobs.some(legacyPackActive) ? 3000 : 10_000 : false,
   });
   const latestCompletion = completedJobs[0];
   const completionKey = latestCompletion ? `${latestCompletion.id}:${latestCompletion.updatedAt}` : '';
@@ -392,10 +417,10 @@ export default function FeaturePacking({ project, configuration, configurations,
     {page === 'activity' ? <div className="feature-pack-jobs stack">
       <StageBackButton type="button" className="science-fit" disabled={busy !== null} onClick={() => setPage('settings')}>Back to bundle contents</StageBackButton>
       {!versionJobs.length ? <p className="muted">No validation or packing jobs for this source yet. Choose bundle contents to review a job.</p> : null}
-      {job && (featurePackActive(job) || job.spec.action === action) ? <section className="stack" aria-label="Current feature job"><ErrorNotice error={detail.error} /><FeaturePackProgress job={job} />
-        {featurePackActive(job) ? <button type="button" className="btn btn-secondary science-fit" disabled={busy !== null || job.state === 'cancelling'} onClick={() => void run('cancel', async () => { await recordJob(await packing.cancel(project, job.id)); })}>{job.state === 'cancelling' || busy === 'cancel' ? 'Stopping…' : 'Cancel job'}</button> : null}
+      {job && (featurePackActive(job) || job.spec.action === action) ? <section className="stack" aria-label="Current feature job"><ErrorNotice error={detail.error} />{job.executor === 'task-center' ? <ManagedFeatureJob job={job} project={project} /> : <FeaturePackProgress job={job} />}
+        {featurePackActive(job) && job.executor !== 'task-center' ? <button type="button" className="btn btn-secondary science-fit" disabled={busy !== null || job.state === 'cancelling'} onClick={() => void run('cancel', async () => { await recordJob(await packing.cancel(project, job.id)); })}>{job.state === 'cancelling' || busy === 'cancel' ? 'Stopping…' : 'Cancel job'}</button> : null}
         {completedArtifact ? <SavedPackChoice artifact={completedArtifact} included={selectedPackIds.includes(completedArtifact.id)} busy={busy !== null} onToggle={() => togglePack(completedArtifact)} /> : null}
-        <FeatureJobDetails job={job} />
+        {job.executor === 'task-center' ? null : <FeatureJobDetails job={job} />}
       </section> : null}
       {completedJobs.length ? <details className="feature-pack-history"><summary>Previous validation &amp; packing jobs ({completedJobs.length})</summary><div className="stack">
         <div className="feature-pack-job-list" aria-label="Saved feature jobs">{completedJobs.map((item) => <button key={item.id} type="button" className={`feature-pack-job ${historyJob === item.id ? 'is-selected' : ''}`} aria-pressed={historyJob === item.id} onClick={() => setHistoryJob(item.id)}><span><strong>{actionLabel(item.spec.action)}</strong><small>{new Date(item.createdAt).toLocaleString()}</small></span><Badge tone={jobTone(item)}>{stateLabel[item.state]}</Badge></button>)}</div>

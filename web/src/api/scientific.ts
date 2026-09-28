@@ -58,7 +58,7 @@ export interface ScientificDraft<T = ImportSpec | ProtocolSpec> {
   projectId: string;
   kind: 'import' | 'experiment';
   name: string;
-  payload: { type: 'dataset-import' | 'analysis-protocol' | 'mil-experiment' | 'development-batch' | 'evaluation-cohort'; experimentId?: string; spec: T };
+  payload: { type: 'dataset-import' | 'analysis-protocol' | 'target-split' | 'mil-experiment' | 'development-batch' | 'evaluation-cohort'; experimentId?: string; spec: T };
   revision: number;
   status: 'editable' | 'frozen';
   createdAt: string;
@@ -201,6 +201,8 @@ export interface ProtocolPartitionStats {
 }
 export interface ProtocolExploreRequest {
   datasetId: string;
+  /** Dataset/cohort filtering only; skips patient grouping and split validation. */
+  cohortOnly?: boolean;
   targetField?: string;
   eligibility: Condition[];
   rules: { train: Condition[]; val: Condition[]; test: Condition[] };
@@ -236,6 +238,8 @@ export interface ProtocolExploration {
   findings: Finding[];
 }
 export interface ProtocolSpec {
+  /** Absent on historical artifacts, which retain patient grouping. */
+  splitUnit?: 'slide' | 'patient';
   datasetId: string;
   target: {
     field: string;
@@ -273,6 +277,8 @@ export interface ProtocolSpec {
     outerFolds?: number;
     innerFolds?: number;
     stratify?: boolean;
+    /** Development slide targets: keep each patient's (case's) slides in one fold and one validation side. */
+    groupByPatient?: boolean;
     domainField?: string;
     domainPolicy?: 'all' | 'selected';
     heldOutDomains?: string[];
@@ -364,15 +370,6 @@ export interface ProtocolPreview {
   }[];
   spec: ProtocolSpec;
   executionEnabled: false;
-}
-export interface ExecutionPreflight {
-  protocolId: string;
-  scope: 'protocol';
-  protocolReady: true;
-  scientificReady: false;
-  executionEnabled: false;
-  executionReady: false;
-  findings: Finding[];
 }
 export interface FeatureSpec {
   /** Optional wsi[,mpp] list naming the slides this feature set covers. */
@@ -518,36 +515,9 @@ export const scientific = {
       }),
       'taggedFreeze',
     ),
-  protocolPreflight: (project: string, id: string) =>
-    request<ExecutionPreflight>(
-      `${prefix(project)}/protocols/${encodeURIComponent(id)}/preflight`,
-    ),
   exploreProtocol: (project: string, input: ProtocolExploreRequest) =>
     request<ProtocolExploration>(`${prefix(project)}/protocols/explore`, body(input)),
-  protocolPreview: (project: string, id: string, expectedRevision: number) =>
-    request<ProtocolPreview>(
-      `${prefix(project)}/protocols/${encodeURIComponent(id)}/preview`,
-      body({ expectedRevision }),
-    ),
-  protocolFreeze: (
-    project: string,
-    id: string,
-    expectedRevision: number,
-    previewHash: string,
-    versionLabel: VersionLabelInput,
-    operationId: string,
-  ) =>
-    requestScientificSave<Configuration>(
-      `${prefix(project)}/protocols/${encodeURIComponent(id)}/freeze`,
-      body({
-        expectedRevision,
-        previewHash,
-        versionLabel,
-        operationId,
-      }),
-      'taggedFreeze',
-    ),
-  configurations: (project: string, kind: 'protocol' | 'feature') =>
+  configurations: (project: string, kind: 'protocol' | 'feature' | 'experiment-setup') =>
     request<{ configurations: Configuration[] }>(
       `${prefix(project)}/configurations?kind=${kind}`,
     ),

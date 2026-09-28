@@ -6,9 +6,8 @@ import type {
   DataRecord,
   ProtocolCohortStats,
   ProtocolExploreRequest,
-  ProtocolPartitionStats,
 } from '../api/scientific';
-import { Badge, ErrorNotice, Metric } from './ui';
+import { ErrorNotice, Metric } from './ui';
 import { scienceKey } from './ScientificUI';
 import './ProtocolExploration.css';
 
@@ -165,7 +164,7 @@ export function DistributionBars({
   );
 }
 
-export function CohortStats({ stats, total }: { stats: ProtocolCohortStats; total?: number }) {
+export function CohortStats({ stats, total, splitUnit = 'patient' }: { stats: ProtocolCohortStats; total?: number; splitUnit?: 'slide' | 'patient' }) {
   return (
     <div className="protocol-population">
       <div className="protocol-population-heading">
@@ -178,19 +177,19 @@ export function CohortStats({ stats, total }: { stats: ProtocolCohortStats; tota
           value={stats.totalSlides.toLocaleString()}
           note={total === undefined ? undefined : `of ${total.toLocaleString()} dataset slides`}
         />
-        <Metric
+        {splitUnit === 'patient' ? <Metric
           label="Verified patients"
           value={stats.patientCount.toLocaleString()}
           note="Distinct supplied patient IDs"
-        />
-        {stats.fallbackSlideCount > 0 ? (
+        /> : null}
+        {splitUnit === 'patient' && stats.fallbackSlideCount > 0 ? (
           <Metric
             label="Slide ID fallback groups"
             value={stats.fallbackSlideCount.toLocaleString()}
             note="One group per unresolved slide; not verified patients"
           />
         ) : null}
-        {stats.unlinkedSlideCount > 0 ? (
+        {splitUnit === 'patient' && stats.unlinkedSlideCount > 0 ? (
           <Metric
             label="Unresolved slides"
             value={stats.unlinkedSlideCount.toLocaleString()}
@@ -219,18 +218,16 @@ function SampleRows({
   rows,
   fields,
   label,
-  expanded = false,
 }: {
   rows: DataRecord[];
   fields: string[];
   label: string;
-  expanded?: boolean;
 }) {
   const attributes = [...new Set(fields)]
     .filter((field) => field && !['Slide_ID', 'Patient_ID'].includes(field))
     .slice(0, 4);
   return rows.length ? (
-    <details className="protocol-sample" open={expanded}>
+    <details className="protocol-sample">
       <summary>
         Typical rows in {label} ({rows.length} examples)
       </summary>
@@ -282,53 +279,4 @@ export function CohortSample({
   fields: string[];
 }) {
   return <SampleRows rows={stats.sample} fields={fields} label="the eligible cohort" />;
-}
-
-export function PartitionLive({
-  development = false,
-  partition,
-  label,
-  fields,
-  total,
-}: {
-  partition: ProtocolPartitionStats;
-  label: string;
-  development?: boolean;
-  fields: string[];
-  total: number;
-}) {
-  const stats = partition.expanded;
-  return (
-    <div className="protocol-partition-live">
-      <div className="science-filter-chips">
-        <Badge tone="purple">{stats.totalSlides.toLocaleString()} slides</Badge>
-        <Badge>{stats.patientCount.toLocaleString()} verified patients</Badge>
-        {stats.fallbackSlideCount > 0 ? (
-          <Badge>{stats.fallbackSlideCount.toLocaleString()} Slide ID fallback groups</Badge>
-        ) : null}
-        {stats.unlinkedSlideCount > 0 ? (
-          <Badge tone="orange">
-            {stats.unlinkedSlideCount.toLocaleString()} unresolved slides
-          </Badge>
-        ) : null}
-      </div>
-      {total > 0 ? (
-        <progress
-          aria-label={`${label} share of eligible slides`}
-          max={total}
-          value={stats.totalSlides}
-        />
-      ) : null}
-      <p className="muted">
-        {partition.selection === 'remaining'
-          ? development
-            ? 'All eligible groups outside fixed development validation.'
-            : 'All eligible groups remaining after the test and validation selections.'
-          : partition.selection === 'none'
-            ? 'No fixed selection for this set.'
-            : `${partition.directMatches.totalSlides.toLocaleString()} slides match these conditions directly. The set includes all eligible slides from their groups.`}
-      </p>
-      <SampleRows rows={stats.sample} fields={fields} label={label} expanded />
-    </div>
-  );
 }

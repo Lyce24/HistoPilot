@@ -103,7 +103,10 @@ def evaluation_run_router(projects, filesystem):
         return EvaluationRunService(projects.scientific_store(identity), filesystem)
 
     def bulk(identity):
-        return BulkEvaluationService(projects.scientific_store(identity), filesystem)
+        # Member submission runs as a Task Center task; the request returns once published.
+        return BulkEvaluationService(
+            projects.scientific_store(identity), filesystem, background=True
+        )
 
     @router.get("/evaluation-runs/bulk")
     def list_batches(identity: str, include_inactive: bool = False):

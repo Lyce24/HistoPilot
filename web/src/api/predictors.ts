@@ -1,4 +1,5 @@
 import { downloadArtifact, request } from './client';
+import type { TaskState } from './taskCenter';
 import type { ResourcePolicy, TrainingRecipe, TrainingMetricDetails, TrainingMetrics } from './development';
 import type { LifecycleState } from './lifecycle';
 import type { Finding, ProtocolSpec } from './scientific';
@@ -51,6 +52,11 @@ export interface ComputeExecution {
   progressWarning?: string | null;
   status: 'not_started' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   cancellationRequested?: boolean; error?: string | null; sessionName?: string; logPath?: string; updatedAt?: string;
+  /** Jobs run by the Task Center report their queue state instead of a tmux session. */
+  executor?: 'task-center' | 'tmux';
+  /** `runnerAlive` is null when the service cannot tell; false means queued work cannot start. */
+  task?: { id: string; state: TaskState; attempt: number; waitingReason: string | null; held: boolean; ownerKey?: string; runnerAlive?: boolean | null } | null;
+  waitingReason?: string | null;
   result?: { metrics?: EvaluationMetrics; purpose?: 'inference'; summary?: InferenceResultSummary; [key: string]: unknown } | null;
   progress?: { epoch?: number; maxEpochs?: number; trainingLoss?: number | null; completedModels?: number; totalModels?: number; slideCount?: number; completedPairs?: number; totalPairs?: number; currentSlide?: string; completedSlides?: number; totalSlides?: number } | null;
 }

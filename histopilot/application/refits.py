@@ -182,7 +182,7 @@ def prepare_refit(evidence, plan, folder):
         "epochBudget": budget,
         **({"recipeAdjustments": adjustments} if adjustments else {}),
         "trainingSlideCount": len(rows),
-        "trainingPatientCount": len({row["patientId"] for row in rows}),
+        "trainingPatientCount": 0 if plan.get("splitUnit") == "slide" else len({row["patientId"] for row in rows}),
         "resources": ResourcePolicy.model_validate(
             {
                 "dataLoaderWorkers": 0,
@@ -204,6 +204,7 @@ def prepare_refit(evidence, plan, folder):
             ],
             "checkpoints": evidence["checkpoints"],
             "target": evidence["target"],
+            **({"splitUnit": plan["splitUnit"]} if "splitUnit" in plan else {}),
             "recipe": recipe,
             **resolution,
             "trainingSeed": evidence["trainingSeed"],
@@ -331,7 +332,24 @@ class RefitService:
                 "resources": resources,
                 "device": "cuda" if resources["gpuIds"] else "cpu",
             }
-            return self.jobs.launch(identity, plan, request.operationId, resume=resume)
+            return self.jobs.launch(
+                identity,
+                plan,
+                request.operationId,
+                resume=resume,
+                task_owner=self._task_owner(record),
+            )
+
+    def _task_owner(self, record):
+        """Experiment refits queue under their experiment; other refits own their task."""
+        experiment = record["manifest"].get("experimentId") or ""
+        if not experiment or experiment.startswith("legacy-"):
+            return None
+        try:
+            draft = self.store.get_draft(experiment, include_inactive=True)
+        except StorageError:
+            return None
+        return {"kind": "experiment", "id": experiment, "title": draft.get("name") or experiment}
 
     def execution(self, identity):
         self.get(identity)

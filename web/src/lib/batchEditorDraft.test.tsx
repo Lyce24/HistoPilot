@@ -10,9 +10,9 @@ import { sessionDraftKey } from './sessionDraft';
 const inputs = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native' as const, packArtifactId: null };
 const draft = (): BatchEditorDraft => ({
   version: 1, editorRevision: 1, inputs, workingPlan: null, name: 'Unfinished recipe', editorOpen: true, batchPage: 2,
-  templateId: 'blank', predictorPolicy: { method: 'ensemble', refitPercentile: null }, recipe: defaultRecipe(), resources: defaultResources(),
+  templateId: 'blank', predictorPolicy: { method: 'ensemble', refitPercentile: null }, recipe: defaultRecipe(),
   mode: 'single', rows: [{ id: 0, recipe: defaultRecipe() }], explicitInitialized: false,
-  seeds: '42,', lrs: '1e-', wds: '0', epochs: '40', gpus: '', notes: 'Keep this question',
+  seeds: '42,', lrs: '1e-', wds: '0', epochs: '40', notes: 'Keep this question',
   numericDrafts: { 'shared:Learning rate': { source: defaultRecipe().learningRate, text: '1e-' } },
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -25,7 +25,7 @@ describe('batch editor recovery', () => {
   });
 
   it.each([
-    { version: 2 }, { inputs: null }, { resources: { gpuIds: '0' } },
+    { version: 2 }, { inputs: null }, { resources: { gpuIds: '0' } }, { resources: null }, { gpus: 0 },
     { rows: [{ id: 0, recipe: defaultRecipe() }, { id: 0, recipe: defaultRecipe() }] },
     { recipe: { ...defaultRecipe(), maxEpochs: '40' } },
     { numericDrafts: { field: { source: null, text: '1e-' } } },
@@ -42,6 +42,12 @@ describe('batch editor recovery', () => {
     { recipe: { ...nnmilRecipe(), lrScheduleInterval: 'batch_or_epoch' } },
   ])('rejects malformed recovery state: %j', (patch) => {
     expect(isBatchEditorDraft({ ...draft(), ...patch })).toBe(false);
+  });
+
+  it('accepts drafts without compute settings and older recovery copies that still carry them', () => {
+    expect(draft()).not.toHaveProperty('resources');
+    expect(isBatchEditorDraft(draft())).toBe(true);
+    expect(isBatchEditorDraft({ ...draft(), resources: defaultResources(), gpus: '0, 1' })).toBe(true);
   });
 
   it('retains optional experimental controls while accepting older copies without them', () => {

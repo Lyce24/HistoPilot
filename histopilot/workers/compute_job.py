@@ -1,4 +1,8 @@
-"""One persistent refit/evaluation worker, sharing training resource reservations."""
+"""One persistent refit/evaluation worker, sharing training resource reservations.
+
+Under the Task Center (``HISTOPILOT_TASK_MANAGED=1``) the runner owns admission and the
+resource lease; the worker only checks that the record is still assigned to its task.
+"""
 
 import os
 import signal
@@ -9,6 +13,7 @@ from pathlib import Path
 
 from histopilot.application.feature_bundles import _hash
 from histopilot.storage.lifecycle import lifecycle_guard
+from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.compute_archive import prepare_compute_archive
 from histopilot.workers.packing_process import output_lock, write_json
@@ -20,6 +25,44 @@ from histopilot.workers.training_process import (
     read_json,
     stop_owned_processes,
 )
+
+# Archives whose worker defines this constant can run under the Task Center runner.
+TASK_CENTER_PROTOCOL = 1
+MANAGED_STATUSES = {"queued", "running", "interrupted"}
+# The Task Center busy contract: a managed worker that cannot get the workspace or its
+# output lock within a short wait exits with EX_TEMPFAIL and leaves its record untouched;
+# the runner frees the slot and requeues the task with a backoff.
+BUSY_EXIT = 75
+BUSY_CODES = {"PROJECT_BUSY", "OUTPUT_BUSY"}
+BUSY_WAIT_SECONDS = 60
+# The check after compute guards finished work; losing it costs a full rerun, so it waits
+# longer before giving the slot back.
+FINISHED_BUSY_WAIT_SECONDS = 15 * 60
+
+
+class Busy(Exception):
+    """The workspace stayed busy; the managed worker yields its slot (exit 75)."""
+
+
+def _managed():
+    return os.environ.get("HISTOPILOT_TASK_MANAGED") == "1"
+
+
+def _verify_inputs(plan, folder, *, managed, wait=BUSY_WAIT_SECONDS):
+    """``verify_plan_inputs``; a managed worker retries while the workspace is busy, then
+    raises ``Busy``."""
+    deadline = time.monotonic() + (wait if managed else 0)
+    while True:
+        try:
+            return verify_plan_inputs(plan)
+        except StorageError as error:
+            if error.code != "PROJECT_BUSY" or not managed:
+                raise
+            if time.monotonic() >= deadline:
+                raise Busy(str(error)) from error
+        if (folder / "cancel.requested").exists():
+            raise KeyboardInterrupt("Compute cancellation requested.")
+        time.sleep(1)
 
 
 def verify_plan_inputs(plan):
@@ -79,7 +122,8 @@ def verify_plan_inputs(plan):
                 binding = manifest["features"]["bundle"]
                 bundle = store.get_configuration(binding["id"])
                 packs = [
-                    item for item in bundle["manifest"].get("packs", [])
+                    item
+                    for item in bundle["manifest"].get("packs", [])
                     if item["id"] == manifest["inference"]["packArtifactId"]
                 ]
                 if (
@@ -143,6 +187,7 @@ def execute(path):
     path = Path(path).absolute()
     folder = path.parent
     lease_path = None
+    managed = _managed()
     state = read_json(folder / "state.json")
     plan = read_json(path)
     # All loader children inherit this private session; cancellation and cleanup
@@ -155,7 +200,24 @@ def execute(path):
 
     signal.signal(signal.SIGTERM, stopped)
     signal.signal(signal.SIGINT, stopped)
+    busy = False
     with output_lock(folder):
+        if managed:
+            # Fence: another launch may have reassigned or finished this record since
+            # the task was queued. Never touch a state that belongs to someone else.
+            state = read_json(folder / "state.json")
+            task = os.environ.get("HISTOPILOT_TASK_ID")
+            if (
+                not task
+                or state.get("taskId") != task
+                or state.get("status") not in MANAGED_STATUSES
+            ):
+                print(
+                    "This compute record is not assigned to Task Center task "
+                    f"{task or '(none)'} in a runnable state; nothing to do.",
+                    flush=True,
+                )
+                return state
         try:
             if _hash(plan) != state["planHash"]:
                 raise ValueError("The immutable execution plan changed.")
@@ -168,40 +230,53 @@ def execute(path):
             )
             write_json(folder / "state.json", state)
             resources = plan["resources"]
-            while True:
+            if managed:
+                # The runner admitted this task and holds its lease; it chose the device.
                 if (folder / "cancel.requested").exists():
                     raise KeyboardInterrupt("Compute cancellation requested.")
-                with _leases() as (registry, active):
-                    available, gpu = available_device(resources, active, _capacity())
-                    if available:
-                        lease_path = registry / f"lease-{os.getpid()}.json"
-                        write_json(
-                            lease_path,
-                            {
-                                "process": state["process"],
-                                "processGroupId": os.getpid(),
-                                "gpu": gpu,
-                                "cpus": cpu_slots_per_run(resources),
-                                "ramGb": resources["ramGbPerRun"],
-                                "runsPerGpu": resources["runsPerGpu"],
-                                "batchId": plan["recordId"],
-                                "runId": plan["recordId"],
-                            },
-                        )
-                        break
-                state.update(
-                    waitingReason="Waiting for requested CPU, RAM, or GPU capacity.",
-                    updatedAt=now(),
-                )
-                write_json(folder / "state.json", state)
-                time.sleep(1)
+                assigned = os.environ.get("HISTOPILOT_TASK_GPU", "")
+                gpu = int(assigned) if assigned else None
+            else:
+                while True:
+                    if (folder / "cancel.requested").exists():
+                        raise KeyboardInterrupt("Compute cancellation requested.")
+                    with _leases() as (registry, active):
+                        available, gpu = available_device(resources, active, _capacity())
+                        if available:
+                            lease_path = registry / f"lease-{os.getpid()}.json"
+                            write_json(
+                                lease_path,
+                                {
+                                    "process": state["process"],
+                                    "processGroupId": os.getpid(),
+                                    "gpu": gpu,
+                                    "cpus": cpu_slots_per_run(resources),
+                                    "ramGb": resources["ramGbPerRun"],
+                                    "runsPerGpu": resources["runsPerGpu"],
+                                    "batchId": plan["recordId"],
+                                    "runId": plan["recordId"],
+                                },
+                            )
+                            break
+                    state.update(
+                        waitingReason="Waiting for requested CPU, RAM, or GPU capacity.",
+                        updatedAt=now(),
+                    )
+                    write_json(folder / "state.json", state)
+                    time.sleep(1)
             os.environ.update(
                 CUDA_VISIBLE_DEVICES="" if gpu is None else str(gpu),
                 OMP_NUM_THREADS=str(resources["cpuThreadsPerRun"]),
                 MKL_NUM_THREADS=str(resources["cpuThreadsPerRun"]),
                 OPENBLAS_NUM_THREADS=str(resources["cpuThreadsPerRun"]),
             )
-            verify_plan_inputs(plan)
+            try:
+                _verify_inputs(plan, folder, managed=managed)
+            except Busy:
+                # Nothing ran yet: the record stays queued for the requeued attempt.
+                state.update(status="queued", updatedAt=now())
+                write_json(folder / "state.json", state)
+                raise
             state.pop("waitingReason", None)
             state.update(status="running", gpu=gpu, updatedAt=now())
             write_json(folder / "state.json", state)
@@ -225,9 +300,12 @@ def execute(path):
                 raise ValueError("Unsupported compute job kind.")
             if (folder / "cancel.requested").exists():
                 raise KeyboardInterrupt("Compute cancellation requested.")
-            verify_plan_inputs(plan)
+            _verify_inputs(plan, folder, managed=managed, wait=FINISHED_BUSY_WAIT_SECONDS)
             write_json(folder / "result.json", result)
             state.update(status="completed", result=result, error=None)
+        except Busy:
+            busy = True
+            raise
         except (KeyboardInterrupt, SystemExit) as error:
             state.update(
                 status="cancelled" if (folder / "cancel.requested").exists() else "interrupted",
@@ -250,13 +328,30 @@ def execute(path):
             except Exception as error:
                 traceback.print_exc()
                 state.update(status="failed", error=str(error), result=None)
-            state.update(updatedAt=now())
-            write_json(folder / "state.json", state)
+            if not busy:
+                state.update(updatedAt=now())
+                write_json(folder / "state.json", state)
             if lease_path and cleaned:
                 with _leases():
                     lease_path.unlink(missing_ok=True)
     return state
 
 
+def main(path) -> int:
+    try:
+        execute(path)
+    except Busy as error:
+        print(f"{now()} PROJECT_BUSY: {error} The Task Center retries later.", flush=True)
+        return BUSY_EXIT
+    except StorageError as error:
+        if not _managed():
+            raise
+        traceback.print_exc()
+        print(f"{error.code}: {error}", file=sys.stderr, flush=True)
+        # An output held by another worker is the busy contract; anything else failed.
+        return BUSY_EXIT if error.code in BUSY_CODES else 1
+    return 0
+
+
 if __name__ == "__main__":
-    execute(sys.argv[1])
+    sys.exit(main(sys.argv[1]))

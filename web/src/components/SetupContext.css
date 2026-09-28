@@ -3,10 +3,6 @@
 .setup-context-flow strong { margin-right: 5px; color: var(--ink); font-weight: 600; }
 .setup-context-flow > svg { flex-shrink: 0; }
 .setup-context > p { margin: 6px 0 0; font-size: 11.5px; }
-.setup-details { margin: 0 0 20px; padding: 0 18px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
-.setup-details > summary { padding: 14px 0; cursor: pointer; font-size: 13px; font-weight: 600; }
-.setup-details > .science-toolbar { margin: 0 0 18px; }
-.setup-details > .stack { padding-bottom: 18px; }
 .setup-step-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
 .setup-step-actions > p { flex: 1 1 200px; margin: 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
 .setup-next-actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 20px 0; }

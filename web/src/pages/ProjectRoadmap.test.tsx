@@ -14,18 +14,20 @@ function roadmap(overrides: Partial<Roadmap> = {}): Roadmap {
 }
 
 describe('compact project workflow launcher', () => {
-  it('groups six primary modules and optional inference into three phases with two separate optional analyses', () => {
+  it('groups the pipeline into seven ordered stages with parallel preparation', () => {
     const html = renderToStaticMarkup(<RoadmapLauncher modules={buildRoadmap(workspace)} />);
     expect(html.match(/data-module="/g)).toHaveLength(9);
     const section = (phase: string) => html.match(new RegExp(`data-phase="${phase}"[^>]*>(.*?)</section>`))?.[1] ?? '';
-    expect(section('prepare')).toContain('data-module="dataset"');
+    expect(section('datasets')).toContain('data-module="dataset"');
+    expect([...html.matchAll(/data-phase="([^"]+)"/g)].map((match) => match[1])).toEqual(['datasets', 'prepare', 'setup', 'develop', 'evaluate', 'clinical', 'interpret']);
     expect(section('prepare')).toContain('data-module="cohort"');
     expect(section('prepare')).toContain('data-module="features"');
     expect(section('develop')).toContain('data-module="experiments"');
-    expect(section('evaluate')).toContain('data-module="test-data"');
+    expect(section('setup')).toContain('data-module="experimental-setup"');
+    expect(html).not.toContain('data-module="test-data"');
     expect(section('evaluate')).toContain('data-module="evaluation"');
     expect(section('evaluate')).toContain('data-module="inference"');
-    expect(html).toContain('Optional analyses');
+    expect(html).toContain('Slide features and Targets &amp; splits are independent.');
     expect(html).toContain('data-module="clinical-utility"');
     expect(html).toContain('data-module="interpretation"');
     // A module icon anchors each row; arrows, legends and counts stay off the page.
@@ -38,9 +40,10 @@ describe('compact project workflow launcher', () => {
     expect(html).toContain('data-module="cohort" href="#cohort"');
     expect(html).toContain('Needs Datasets');
     expect(html).not.toContain('Needs Datasets and Slide features');
+    expect(html).toContain('Needs Datasets, Slide features and Experiments');
     expect(html).toContain('Needs Targets &amp; splits and Slide features');
     // Slide features depend on slide files, so they open with no dataset in the project.
-    for (const id of ['dataset', 'features', 'experiments', 'test-data', 'evaluation', 'clinical-utility', 'interpretation']) expect(html).toContain(`href="#${id}"`);
+    for (const id of ['dataset', 'features', 'experimental-setup', 'experiments', 'evaluation', 'clinical-utility', 'interpretation']) expect(html).toContain(`href="#${id}"`);
   });
 
   it('uses the same Open action for saved results and drafts without claiming execution readiness', () => {
@@ -63,7 +66,7 @@ describe('compact project workflow launcher', () => {
     const modules = buildRoadmap(workspace).map((module) => module.id === 'experiments'
       ? { ...module, status: 'draft' as const, evidence: '1 saved development plan' } : module);
     const html = renderToStaticMarkup(<RoadmapLauncher modules={modules} />);
-    expect(html).toContain('1 saved development plan · needs Targets &amp; splits and Slide features');
+    expect(html).toContain('1 saved development plan · needs Experimental Setup');
     // A row with nothing saved names only what it is waiting for.
     expect(html).toContain('>Needs Datasets<');
     expect(html).toContain('roadmap-item-status is-blocked');

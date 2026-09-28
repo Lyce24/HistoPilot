@@ -24,7 +24,9 @@ import { bundles } from ${source('api/bundles.ts')};
 import { mil } from ${source('api/mil.ts')};
 import { development } from ${source('api/development.ts')};
 import { predictors } from ${source('api/predictors.ts')};
+import { experimentResults, experimentHeadlines } from ${source('api/experimentResults.ts')};
 import { lifecycle } from ${source('api/lifecycle.ts')};
+import { taskCenter } from ${source('api/taskCenter.ts')};
 import ${source('styles.css')};
 import ${source('local-workspace.css')};
 import ${source('scientific.css')};
@@ -56,6 +58,24 @@ development.results = async () => ({ batchId: 'batch', status: 'completed', find
 development.history = async (_, __, runId) => ({runId,rows:Array.from({length:9},(_,i)=>({epoch:i+1,trainingLoss:0.7/(i+1),validation:{loss:0.9/(i+1)},learningRate:0.0003,checkpointUnit:'patient'})),totalRows:9,truncated:false});
 development.resourceHistory = async () => { state.resourceCalls++; if(state.resourceFailure) throw new Error('Fixture resource refresh unavailable'); return {batchId:'batch',rows:copy(state.resourceRows),totalRows:state.resourceRows.length,truncated:false}; };
 predictors.list = async () => ({ items: [] });
+const stats = (mean, sd, n = 2) => ({ mean, sd, min: mean - (sd ?? 0), max: mean + (sd ?? 0), n });
+const metricBlock = (auroc) => ({ auroc, auprc: stats(0.8, 0.02), balancedAccuracy: stats(0.78, 0.03), macroF1: stats(0.77, 0.03), accuracy: stats(0.8, 0.02), loss: stats(0.45, 0.03) });
+const foldRow = (fold, auroc) => ({ fold, splitPlanId: 'split-' + fold, runId: 'run-' + fold, status: 'completed', testCount: 2, metrics: { auroc, auprc: 0.8, balancedAccuracy: 0.78, macroF1: 0.77, accuracy: 0.8, loss: 0.45, count: 2 }, bestEpoch: 6 + fold, epochsCompleted: 9 + fold, validationScore: 0.9, checkpointMetric: 'validation_auroc' });
+const seedRow = (trainingSeed, oof) => ({ trainingSeed, splitSeed: 21, complete: true, completedRuns: 2, totalRuns: 2, oof: { auroc: oof, auprc: 0.8, balancedAccuracy: 0.78, macroF1: 0.77, accuracy: 0.8, loss: 0.45, count: 10 }, folds: [foldRow(0, oof + 0.02), foldRow(1, oof - 0.02)], foldStats: metricBlock(stats(oof, 0.028)) });
+experimentResults.get = async () => { state.calls.push({ method: 'results' }); return {
+  experimentId: 'experiment', target: { task: 'binary_classification', unit: 'slide', classes: ['low', 'high'], positiveClass: 'high', field: 'grade' },
+  design: { splitUnit: 'slide', groupByPatient: false, folds: 2, splitSeeds: [21], slideCount: 10, resamplingUnit: 'slide' },
+  policy: { resamples: 2000, seed: 42, confidenceLevel: 0.95, method: 'unit_percentile_bootstrap_seed_mean_v1' }, primaryMetric: 'auroc', comparisons: [], findings: [],
+  batches: [{ batchId: 'batch', name: state.records[0]?.batches[0]?.name ?? 'Batch', state: 'active', status: 'completed', progress: { completedRuns: 4, totalRuns: 4 }, selection: { source: 'single', metric: 'validation_auroc', ready: true, scores: {} }, selectedCandidateId: 'configuration', findings: [],
+    configurations: [{ candidateId: 'configuration', number: 1, model: 'abmil', inputMode: 'image', selected: true, validationScore: 0.9,
+      splitSeeds: [{ splitSeed: 21, folds: [{ fold: 0, splitPlanId: 'split-0', testCount: 2 }, { fold: 1, splitPlanId: 'split-1', testCount: 2 }], seeds: [seedRow(42, 0.84), seedRow(43, 0.86)] }],
+      seedCount: 2, plannedSeedCount: 2, seedAverage: metricBlock(stats(0.85, 0.014)), foldAverage: metricBlock(stats(0.85, 0.025, 4)), foldCount: 4, plannedFoldCount: 4,
+      perClass: ['low', 'high'].map(label => ({ label, support: 5, recall: stats(0.8, 0.05), precision: stats(0.8, 0.05), f1: stats(0.8, 0.05), auroc: stats(0.85, 0.014), auprc: stats(0.8, 0.02) })),
+      confusion: { meanCounts: [[4, 1], [1, 4]], rowRates: [[0.8, 0.2], [0.2, 0.8]], seeds: 2 }, ensemble: { auroc: 0.86, auprc: 0.81, balancedAccuracy: 0.8, macroF1: 0.79, accuracy: 0.8, loss: 0.44, count: 10 },
+      intervals: { unit: 'slide', resamples: 2000, seed: 42, note: 'fixture', available: true, units: 10, seedAverage: { available: true, intervals: { auroc: { lower: 0.7, upper: 0.95 } } } }, complete: true }] }] }; };
+experimentHeadlines.list = async () => ({ items: state.records.filter(record => record.stage === 'finished').map(record => ({ experimentId: record.id, batches: [{ batchId: 'batch', name: record.batches[0]?.name ?? 'Batch', status: 'completed', seeds: 2, plannedSeeds: 2, configurations: 1, task: 'binary_classification', metrics: { auroc: stats(0.85, 0.014) } }] })) });
+taskCenter.rollup = async (scope) => { state.calls.push({ method: 'rollup', scope }); const running = state.records[0]?.stage === 'running'; return { scope, state: running ? 'running' : 'not-started', counts: running ? { running: 1, queued: 3 } : {}, byKind: running ? { 'mil-fold': { counts: { running: 1, queued: 3 }, completed: 0, total: 4 } } : {}, progress: running ? { completed: 0, total: 4 } : { completed: 0, total: 0 }, live: running ? 4 : 0, active: running ? 1 : 0, pending: running ? 3 : 0, held: false, position: running ? 1 : null, queuePosition: running ? 1 : null, waitingReason: null, eta: running ? { seconds: 1800, basis: 'measured' } : null, runnerAlive: true, paused: false, stopRequest: null, lastFailure: null, recentFailures: null, current: null, startedAt: null, finishedAt: null, ownerKey: running ? 'owner-experiment' : null, ownerKind: 'experiment', ownerId: 'experiment', title: 'Fixture', projectId: 'project', projectName: 'Fixture project', href: '#task-center?owner=owner-experiment&project=project', updatedAt: '2026-09-12T00:00:01Z' }; };
+taskCenter.owners = async () => { state.calls.push({ method: 'owners' }); return { owners: state.records[0]?.stage === 'running' ? [{ key: 'owner-experiment', kind: 'experiment', id: 'experiment', title: 'Fixture', projectId: 'project', projectFolder: '/project', sameWorkspace: true, held: false, queueSeq: 1, position: 1, counts: { running: 1, queued: 3 }, lanes: { gpu: 4 }, createdAt: '2026-09-12T00:00:01Z', etaSeconds: 1800, link: '?project=project#experiments?experiment=experiment&tab=runs', actions: { hold: true, release: false, stop: true, cancel: true, retry: false, moveUp: false, moveDown: false } }] : [] }; };
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 window.refreshExperimentFixture = () => client.invalidateQueries();
 window.finishExperiment = async () => { state.execution.status = 'completed'; state.execution.updatedAt = '2026-09-12T00:00:03Z'; state.execution.runCounts = { ...state.execution.runCounts, completed: state.execution.runCounts.total, running: 0, queued: 0 }; state.execution.runs.forEach(run => run.status = 'completed'); state.records[0].stage = 'finished'; state.records[0].status = 'completed'; state.records[0].batches[0].status = 'completed'; state.records[0].batches[0].execution = copy(state.execution); await client.invalidateQueries(); };
@@ -208,7 +228,7 @@ try {
   await waitFor('[...document.querySelectorAll("[data-batch-step]")].find(el => el.dataset.batchStep === "2")?.hidden === false');
   assert.equal(await evaluate('document.body.innerText.includes("Training seeds")'), false);
   await fill('Maximum epochs', '0');
-  await click('Continue to compute & predictors');
+  await click('Continue to predictors');
   await waitFor('document.body.innerText.includes("Maximum epochs must be at least 1")');
   assert.equal(await evaluate('[...document.querySelectorAll("[data-batch-step]")].find(el => el.dataset.batchStep === "2").hidden'), false, 'Invalid epoch value allowed next page');
   await evaluate('window.location.hash = "features"');
@@ -222,7 +242,7 @@ try {
   await waitFor('window.__beforeReload === undefined && document.readyState === "complete"');
   await waitFor('document.body.innerText.includes("Recovered unsaved batch edits")');
   assert.equal(await evaluate(field('Maximum epochs') + '.value'), '0', 'Numeric editing text lost on reload');
-  await click('Continue to compute & predictors');
+  await click('Continue to predictors');
   await waitFor('document.body.innerText.includes("Maximum epochs must be at least 1")');
   await screenshot('01-recovered-invalid-number');
   await evaluate('window.workflow.records[0].revision += 1; window.workflow.records[0].notes = "Edited in another tab"; window.refreshExperimentFixture()');
@@ -267,17 +287,17 @@ try {
   assert.equal(await evaluate(field('Training seeds') + '.value'), '42, 43');
   await click('Continue to training settings');
   assert.equal(await evaluate(field('Maximum epochs') + '.value'), '17');
-  await click('Continue to compute & predictors');
-  await waitFor('document.body.innerText.includes("Compute & parallelism")');
+  await click('Continue to predictors');
+  await waitFor('document.body.innerText.includes("Configuration selection metric")');
   assert.equal(await evaluate('document.body.innerText.includes("Maximum epochs")'), false);
-  await fill('Run on', 'cpu', 'select');
+  assert.equal(await evaluate('document.body.innerText.includes("Run on")'), false, 'Compute settings left the batch editor');
   await click('Continue to batch review');
   await waitFor('document.body.innerText.includes("Review Two-seed baseline")');
   assert.equal(await evaluate('document.body.innerText.includes("Compute & parallelism")'), false);
   await click('Check batch');
   await waitFor('document.body.innerText.includes("Resolved batch")');
   const spec = await evaluate('window.workflow.calls.find(call => call.method === "batchPreview").spec');
-  assert.equal(spec.recipe.maxEpochs, 17); assert.deepEqual(spec.trainingSeeds, [42, 43]); assert.deepEqual(spec.resources.gpuIds, []);
+  assert.equal(spec.recipe.maxEpochs, 17); assert.deepEqual(spec.trainingSeeds, [42, 43]); assert.equal('resources' in spec, false, 'New batch plans leave parallelism to the Task Center');
   await screenshot('01-batch-review');
   await click('Add batch to plan');
   await waitFor('document.body.innerText.includes("Batch plans (1)")');
@@ -298,7 +318,9 @@ try {
   assert.equal(submitCalls[0].input.operationId, submitCalls[1].input.operationId);
   assert.equal(submitCalls[1].input.operationId, submissionRecovery.operationId);
   await waitFor('document.body.innerText.includes("Training and predictor progress is in Runs.")');
-  assert.equal(await evaluate('document.querySelector("#development-tab-results").disabled'), true);
+  assert.equal(await evaluate('document.querySelector("#development-tab-results").disabled'), false, 'Partial results open while the experiment runs');
+  await waitFor('document.querySelector(".experiment-queue-bar")?.innerText.includes("Training 0/4") && document.querySelector(".experiment-queue-bar a")?.getAttribute("href") === "#task-center?owner=owner-experiment&project=project"', 'experiment status line');
+  assert.equal(await evaluate('[...document.querySelectorAll(".experiment-queue-bar button")].some(el => ["Hold", "Cancel", "Top", "Stop & hold"].includes(el.textContent))'), false, 'Queue controls belong to the Task Center');
   assert.equal(await evaluate('document.body.innerText.includes("Freeze & submit experiment")'), false);
   await step('Experiment views', 'Inputs');
   assert.equal(await evaluate('document.querySelector(".mil-plan-fields").disabled'), true);
@@ -344,8 +366,13 @@ try {
   await evaluate('window.finishExperiment()');
   await waitFor('document.querySelector("#development-tab-results").disabled === false');
   await step('Experiment views', 'Results');
-  await waitFor('document.body.innerText.includes("OOF AUROC")');
-  assert.equal(await evaluate('document.body.innerText.includes("2 complete configuration / seed groups")'), true);
+  await waitFor('document.body.innerText.includes("Headline results")');
+  for (const text of ['Training seeds (OOF)', 'Seed 42', 'Seed 43', 'Mean ± SD', 'Test folds · AUROC', '0.850 ± 0.014', '95% CI 0.700–0.950', '2 of 2 seeds']) {
+    assert.equal(await evaluate('document.body.innerText.includes(' + JSON.stringify(text) + ')'), true, 'Results view is missing ' + text);
+  }
+  assert.equal(await evaluate('document.body.innerText.includes("Choose a batch in this experiment")'), false, 'Results must open on the metrics, not a batch picker');
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false });
+  await screenshot('04-results');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await screenshot('04-results-mobile');
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true, 'Finished record overflows mobile viewport');
@@ -375,14 +402,14 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false });
   assert.equal(await evaluate('document.body.innerText.includes("Compare selected experiments")'), false, 'Comparison controls should appear only when records are selected');
   await fill('Search', 'no-such-experiment');
-  await waitFor('document.body.innerText.includes("No experiments match this view")');
+  await waitFor('document.body.innerText.includes("No records match this view")');
   await click('Clear filters');
   await waitFor('document.querySelectorAll(".experiment-record-table tbody tr").length === 2');
   await fill('State', 'archived', 'select');
-  await waitFor('document.body.innerText.includes("No experiments match this view")');
+  await waitFor('document.body.innerText.includes("No records match this view")');
   await click('Clear filters');
   await fill('Stage', 'running', 'select');
-  await waitFor('document.body.innerText.includes("No experiments match this view")');
+  await waitFor('document.body.innerText.includes("No records match this view")');
   await click('Clear filters');
   await fill('Sort', 'name', 'select');
   await waitFor('document.querySelector(".experiment-record-table tbody .stage-record-name")?.textContent === "Comparison experiment"');

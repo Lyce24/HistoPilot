@@ -1,15 +1,5 @@
-import type { ProtocolSpec } from '../api/scientific';
+import type { Configuration, ProtocolSpec, ScientificDraft } from '../api/scientific';
 import { DEFAULT_VALIDATION_FRACTION } from './split';
-
-/** New and resumed construction uses dataset records; frozen originals keep their provenance. */
-export function datasetProtocolSpec(spec: ProtocolSpec): ProtocolSpec {
-  const next = { ...spec };
-  delete next.featureBundleId;
-  delete next.featureSetId;
-  delete next.featurePackId;
-  delete next.featureCoverage;
-  return next;
-}
 
 export function newDevelopmentSplit(seeds: number[] = [42], folds = 5): ProtocolSpec['split'] {
   return {
@@ -66,5 +56,19 @@ export function inferTargetSettings(values: (string | null)[], truncated = false
     labels: Object.fromEntries(classes.map((value) => [value, value])),
     // Value ordering is not evidence of which clinical outcome is positive.
     positiveClass: undefined as string | undefined,
+  };
+}
+
+/** Training designs derived in Experimental Setup belong to their experiments, not to history. */
+export function setupDerivedProtocol(configuration: Pick<Configuration, 'manifest'>): boolean {
+  const { manifest } = configuration;
+  return Boolean(manifest.sourceTargetSplit || (manifest.spec as { sourceTargetSplitId?: string | null } | undefined)?.sourceTargetSplitId);
+}
+
+/** Combined target/split protocols saved before Targets & Splits and Experimental Setup existed. */
+export function historicalProtocols(configurations: readonly Configuration[], drafts: readonly ScientificDraft[]) {
+  return {
+    versions: configurations.filter((item) => !setupDerivedProtocol(item)),
+    drafts: drafts.filter((item) => item.payload.type === 'analysis-protocol' && item.status === 'editable'),
   };
 }

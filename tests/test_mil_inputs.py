@@ -321,6 +321,10 @@ def test_mil_api_uses_immutable_bundles_and_does_not_change_old_preferences(tmp_
     monkeypatch.setattr(
         "histopilot.application.feature_packs.TmuxPackingExecutor", lambda: executor
     )
+    # Packs are built inline through the legacy launch path (Area D kept it for tests).
+    monkeypatch.setattr(
+        "histopilot.application.task_records.default_execution_mode", lambda: "tmux"
+    )
     settings = Settings(workspace=tmp_path / "registry", data_roots=(tmp_path,))
     app = create_app(settings)
     with TestClient(app, base_url="http://127.0.0.1:8787") as client:

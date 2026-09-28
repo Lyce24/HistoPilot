@@ -206,7 +206,7 @@ def test_completed_runs_keep_incomplete_submission_recoverable(experiment, monke
     partial = submit(service, record)
     assert partial["submission"]["status"] == "attention"
     assert partial["stage"] == "running"
-    assert partial["status"] == "failed"
+    assert partial["status"] == "needs-attention"
     assert partial["submission"]["retryable"]
     recovered = submit(service, record)
     assert recovered["submission"]["status"] == "submitted"

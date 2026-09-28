@@ -106,11 +106,23 @@ function sessionDetails(): Promise<Session> {
   }
   return session;
 }
+/** Waits before re-reading while another operation briefly holds the project (about 3.75 s in all). */
+export const BUSY_READ_RETRY_DELAYS_MS = [250, 500, 1000, 2000] as const;
+const readOnly = (init: RequestInit) => ['GET', 'HEAD'].includes((init.method ?? 'GET').toUpperCase());
+function pause(milliseconds: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
+    const abort = () => { clearTimeout(timer); reject(signal?.reason); };
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, milliseconds);
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
 async function authenticatedResponse(
   path: string,
   init: RequestInit = {},
   retrySession = true,
   scientificCapability?: ScientificCapability,
+  busyAttempt = 0,
 ): Promise<Response> {
   init.signal?.throwIfAborted();
   const pending = sessionDetails();
@@ -127,9 +139,19 @@ async function authenticatedResponse(
   if (response.status === 401 && retrySession) {
     // A late 401 from another request must not discard an already renewed session.
     if (session === pending) session = null;
-    return authenticatedResponse(path, init, false, scientificCapability);
+    return authenticatedResponse(path, init, false, scientificCapability, busyAttempt);
   }
-  if (!response.ok) throw await responseError(response);
+  if (!response.ok) {
+    const error = await responseError(response);
+    // A read that meets a busy project waits and reads again. Mutations never
+    // replay automatically: they keep their reviewed operation-ID retry flow.
+    if (error.status === 409 && error.code === 'PROJECT_BUSY' && readOnly(init)
+      && busyAttempt < BUSY_READ_RETRY_DELAYS_MS.length) {
+      await pause(BUSY_READ_RETRY_DELAYS_MS[busyAttempt], init.signal);
+      return authenticatedResponse(path, init, retrySession, scientificCapability, busyAttempt + 1);
+    }
+    throw error;
+  }
   return response;
 }
 /** Always use the service session; no scientific fallback data lives in the browser. */

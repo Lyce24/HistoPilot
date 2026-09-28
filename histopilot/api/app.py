@@ -338,7 +338,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from histopilot.api.operations import operations_router
     from histopilot.api.predictors import evaluation_run_router, predictor_router
     from histopilot.api.slide_reviews import slide_review_router
+    from histopilot.api.task_center import task_center_router
+    from histopilot.taskcenter.service import TaskCenterService
 
+    # Machine-wide queue: the store is opened lazily on the first request.
+    task_center = TaskCenterService(projects, filesystem, settings.workspace)
+    app.state.task_center = task_center
+    app.include_router(task_center_router(task_center))
     app.include_router(mil_router(projects, filesystem))
     app.include_router(evaluation_router(projects, filesystem))
     app.include_router(model_experiments_router(projects, filesystem))

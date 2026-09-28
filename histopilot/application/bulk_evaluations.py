@@ -1,7 +1,15 @@
-"""Reviewed cohort evaluation batches with durable, independently tracked jobs."""
+"""Reviewed cohort evaluation batches with durable, independently tracked jobs.
+
+The API may hand member submission to a Task Center task (``background=True``): the
+request then returns once the batch record is published, and the task submits members
+with the same per-member operations a synchronous submission would use.
+"""
 
 import hashlib
+import sys
+from pathlib import Path
 
+from histopilot.application.compute_jobs import host_gpu_argv, wake_runner
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictors import finding, lifecycle_document, reference
@@ -15,14 +23,33 @@ from histopilot.storage.project_lock import (
     writer_lock,
 )
 from histopilot.storage.scientific import MAX_CONFIGURATION_BYTES, _json
+from histopilot.taskcenter import ids, paths
+from histopilot.taskcenter.model import LIVE, TERMINAL
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import now, read_json
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
 
 class BulkEvaluationService:
-    def __init__(self, store, filesystem, evaluations=None):
+    def __init__(self, store, filesystem, evaluations=None, *, background=False, task_center=None):
         self.store, self.filesystem = store, filesystem
         self.evaluations = evaluations or EvaluationRunService(store, filesystem)
+        # Background submission needs the Task Center runner; tmux mode keeps it inline.
+        self.background = background
+        self._task_center = task_center
+        self._default_task_center = task_center is None
+
+    @property
+    def task_center(self):
+        if self._task_center is None:
+            from histopilot.taskcenter.client import default_client
+
+            self._task_center = default_client()
+        return self._task_center
+
+    def _submission_task_id(self, identity):
+        return ids.bulk_submit_task_id(str(self.store.folder), identity)
 
     def _record(self, identity, *, include_inactive=False):
         value = self.store.get_configuration(identity, include_inactive=include_inactive)
@@ -214,8 +241,84 @@ class BulkEvaluationService:
                     },
                     operation_id=request.operationId,
                 )
-        self._submit(batch)
+        if self.background and paths.execution_mode() == "task-center":
+            self._enqueue_submission(batch)
+        else:
+            self._submit(batch)
         return self.get(batch["id"])
+
+    def _enqueue_submission(self, batch):
+        """Queue member submission; an exact retry re-queues a submission that stopped early."""
+        folder = self._folder(batch["id"])
+        ensure_managed_directory(folder)
+        path = folder / "state.json"
+        state = read_json(path) if path.exists() else {}
+        if state.get("submitted") or state.get("cancelRequested"):
+            return
+        name = batch["manifest"]["name"]
+        task_id = self._submission_task_id(batch["id"])
+        client = self.task_center
+        existing = client.task(task_id)
+        if existing is not None:
+            if existing["state"] in TERMINAL:
+                client.store.requeue([task_id], reason="retry", include_succeeded=True)
+            wake_runner(self._default_task_center)
+            return
+        roots = [value for root in self.filesystem.roots for value in ("--data-root", str(root))]
+        client.enqueue(
+            {
+                "kind": "evaluation-batch",
+                "id": batch["id"],
+                "title": name,
+                "projectId": self.store.project_id,
+                "projectFolder": str(self.store.folder),
+            },
+            [
+                {
+                    "id": task_id,
+                    "kind": "bulk-submit",
+                    "adapter": "bulk-submit",
+                    "title": f"Submit evaluations · {name}"[:200],
+                    "group": {"kind": "evaluation-batch", "id": batch["id"]},
+                    "priority": "interactive",
+                    "labels": {"batchId": batch["id"]},
+                    "request": {"lane": "cpu", "cpuThreads": 1, "dataWorkers": 0, "ramGb": 2.0},
+                    "command": {
+                        # Member review probes CUDA to choose each evaluation's device.
+                        "argv": host_gpu_argv(
+                            [
+                                sys.executable,
+                                "-u",
+                                "-m",
+                                "histopilot.taskcenter.jobs",
+                                "bulk-submit",
+                                "--project-folder",
+                                str(self.store.folder),
+                                "--project-id",
+                                self.store.project_id,
+                                "--batch",
+                                batch["id"],
+                                *roots,
+                            ]
+                        ),
+                        "cwd": str(REPOSITORY_ROOT),
+                        "env": {"PYTHONUNBUFFERED": "1"},
+                        "log": str(folder / "submit.log"),
+                    },
+                    # Submission replays skip members that already have a job.
+                    "adapterData": {"requeueSafe": True},
+                }
+            ],
+        )
+        wake_runner(self._default_task_center)
+
+    def _submission_pending(self, identity):
+        """Whether a Task Center task will still submit this batch's planned members."""
+        try:
+            task = self.task_center.task(self._submission_task_id(identity))
+        except (StorageError, OSError):
+            return False
+        return bool(task and task["state"] in LIVE)
 
     def _submit(self, batch):
         folder = self._folder(batch["id"])
@@ -259,7 +362,15 @@ class BulkEvaluationService:
                     )
                 current = self.evaluations.jobs.status(document["id"])
                 if current["status"] == "not_started":
-                    self.evaluations.launch(document["id"], member["launchOperation"])
+                    self.evaluations.launch(
+                        document["id"],
+                        member["launchOperation"],
+                        task_owner={
+                            "kind": "evaluation-batch",
+                            "id": batch["id"],
+                            "title": batch["manifest"]["name"],
+                        },
+                    )
                 # A batch replay submits missing jobs, but never implicitly
                 # restarts completed, failed, cancelled or interrupted compute.
                 state["items"][identity] = {"submitted": True, "error": None}
@@ -327,6 +438,15 @@ class BulkEvaluationService:
                     "error": submission.get("error") or (execution or {}).get("error"),
                 }
             )
+        if (
+            not state["submitted"]
+            and not state["cancelRequested"]
+            and any(row["status"] == "planned" for row in items)
+            and self._submission_pending(identity)
+        ):
+            for row in items:
+                if row["status"] == "planned":
+                    row["status"] = "queued"
         statuses = [row["status"] for row in items if row["eligible"]]
         if "running" in statuses:
             status = "running"
@@ -396,4 +516,12 @@ class BulkEvaluationService:
                         if error.code != "CONFIGURATION_NOT_FOUND":
                             state["items"][member["predictorId"]] = {"error": str(error)}
                             write_json(path, state)
+            # A queued submission never needs to start; a running one stops at its next
+            # member because cancelRequested is already saved.
+            try:
+                task = self.task_center.task(self._submission_task_id(identity))
+                if task and task["state"] in {"blocked", "queued"}:
+                    self.task_center.store.cancel_pending([task["id"]])
+            except (StorageError, OSError):
+                pass
             return self.get(identity, include_inactive=True)

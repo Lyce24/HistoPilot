@@ -39,7 +39,6 @@ from histopilot.application.modern_splits import (
 from histopilot.schemas.protocols import (
     Condition,
     ConditionGroup,
-    FixedRules,
     PoolSpec,
     ProtocolExploreRequest,
     ProtocolSpec,
@@ -72,6 +71,8 @@ def _json(value) -> bytes:
 
 def _serialized_spec(spec):
     value = spec.model_dump(mode="json")
+    if spec.sourceTargetSplitId is None:
+        value.pop("sourceTargetSplitId", None)
     if spec.split.version == 1:
         # Retain the original six-field representation for legacy split strategies.
         value["split"] = {
@@ -371,6 +372,18 @@ class ProtocolService:
                 422,
             ) from error
         dataset, fields, records = self._load_dataset(spec.datasetId)
+        if spec.sourceTargetSplitId:
+            from histopilot.application.target_split_source import restrict_target_split_rows
+
+            records = restrict_target_split_rows(
+                self.store,
+                spec.sourceTargetSplitId,
+                spec.datasetId,
+                spec.target,
+                records,
+                "train",
+                split_unit=spec.splitUnit,
+            )
         return spec, dataset, fields, records
 
     def _load_dataset(self, dataset_id):
@@ -426,7 +439,7 @@ class ProtocolService:
             if value not in findings:
                 findings.append(value)
 
-        split = request.split or {}
+        split = {} if request.cohortOnly else request.split or {}
         mode = split.get("mode", request.splitMode)
         if not isinstance(mode, str) or mode not in {
             "rules",
@@ -442,24 +455,12 @@ class ProtocolService:
                 "INVALID_STRATEGY_CONFIG", "Choose a valid split strategy to preview assignments."
             )
             mode = request.splitMode
-        if "version" in split and (
-            type(split["version"]) is not int or split["version"] not in (1, 2, 3, 4)
-        ):
-            finding("INVALID_STRATEGY_CONFIG", "The split version must be 1, 2, 3 or 4.")
-        if "heldOutSource" in split and (
-            not isinstance(split["heldOutSource"], str)
-            or split["heldOutSource"] not in {"fractions", "rules", "imported"}
-        ):
-            finding("INVALID_STRATEGY_CONFIG", "Choose fractions, rules or predefined partitions.")
-        modern = split.get("version") in (2, 3, 4) or mode in {
-            "monte_carlo",
-            "leave_one_domain_out",
-            "nested_kfold",
-            "held_out",
-        }
-        uses_rules = mode == "rules" or (
-            modern and mode == "held_out" and split.get("heldOutSource") == "rules"
-        )
+        if split and split.get("version") != 4:
+            # Split versions 1-3 are frozen history: read and evaluated, never designed again.
+            finding(
+                "INVALID_STRATEGY_CONFIG",
+                "Live counts are available for development (version 4) splits only.",
+            )
         result = {
             "datasetId": request.datasetId,
             "splitMode": mode,
@@ -488,6 +489,10 @@ class ProtocolService:
             finding(error.code, str(error))
             return {**result, "valid": False}
         result["cohort"] = _cohort_stats(eligible)
+        if request.cohortOnly:
+            # Unresolved patient identities can be filtered out when assigning
+            # training/testing groups later. They do not invalidate this count.
+            return {**result, "valid": True}
         if request.targetField:
             if request.targetField not in fields and request.targetField not in CANONICAL:
                 finding(
@@ -507,10 +512,10 @@ class ProtocolService:
                     "distinctCount": len(counts),
                 }
         development = split.get("version") == 4
-        groups = defaultdict(list)
         if development:
             groups = _development_selection_groups(eligible)
         else:
+            groups = defaultdict(list)
             for row in eligible:
                 if _valid_patient(row):
                     groups[row["patientId"]].append(row)
@@ -521,134 +526,57 @@ class ProtocolService:
             # Eligibility counts remain useful; unresolved identities cannot be
             # silently treated as acknowledged independent groups in partition counts.
             return {**result, "valid": False}
-        if split.get("version") in (3, 4):
-            development = split.get("version") == 4
-            try:
-                pools = PoolSpec.model_validate(split.get("pools", {}))
-                validate(
-                    [condition for role in PARTITIONS for condition in getattr(pools.rules, role)]
-                )
-                if (
-                    pools.imported
-                    and pools.imported.partitionField not in fields
-                    and pools.imported.partitionField not in CANONICAL
-                ):
-                    raise FilterFailure(
-                        "UNKNOWN_FIELD", "The predefined pool column is not in the frozen dataset."
-                    )
-                selector = select_development_pools if development else select_pools
-                _assignments, direct, expanded, remaining = selector(
-                    groups, pools, evaluator, finding, _fixed_assignments
-                )
-                if development:
-                    selected_rows = expanded["train"] + expanded["val"]
-                    self._identity_findings(
-                        selected_rows,
-                        {key: rows for key, rows in groups.items() if key in _assignments},
-                        finding,
-                    )
-            except ValidationError:
-                finding(
-                    "INVALID_POOL_SETTINGS",
-                    "Complete the development source settings to see matching counts."
-                    if development
-                    else "Complete the training and test pool settings to see matching counts.",
-                )
-                return {**result, "valid": False, "selectionBasis": "pools"}
-            except FilterFailure as error:
-                finding(error.code, str(error))
-                return {**result, "valid": False, "selectionBasis": "pools"}
-            if any(
-                item["code"]
-                in {
-                    "OVERLAPPING_PATIENT_RULES",
-                    "IMPORTED_PATIENT_LEAKAGE",
-                    "MISSING_PATIENT_ID",
-                    "FALLBACK_PATIENT_ID_COLLISION",
-                }
-                for item in findings
-            ):
-                return {**result, "valid": False, "selectionBasis": "pools"}
-            result["partitions"] = {
-                role: {
-                    "selection": "remaining"
-                    if role == "train"
-                    and pools.source == "rules"
-                    and pools.trainSelection == "remaining"
-                    else "rules"
-                    if direct[role]
-                    else "none",
-                    "directMatches": _cohort_stats(
-                        sorted(direct[role], key=lambda row: row["slideId"])
-                    ),
-                    "expanded": _cohort_stats(
-                        sorted(expanded[role], key=lambda row: row["slideId"])
-                    ),
-                }
-                for role in PARTITIONS
-            }
-            result["unassigned"] = _cohort_stats(remaining)
-            if development and result["target"]:
-                selected_rows = expanded["train"] + expanded["val"]
-                counts = Counter(evaluator.field(row, request.targetField) for row in selected_rows)
-                result["target"] = {
-                    "field": request.targetField,
-                    "values": [
-                        {"value": value, "slides": count}
-                        for value, count in sorted(
-                            counts.items(),
-                            key=lambda item: (-item[1], item[0] is None, item[0] or ""),
-                        )[:20]
-                    ],
-                    "distinctCount": len(counts),
-                }
-            return {
-                **result,
-                "selectionBasis": "pools",
-                "message": "Development plans use the selected training groups and early-stop validation. Unmatched rows stay outside this protocol."
-                if development
-                else "Cross-validation uses the selected training pool. The external test pool is reserved for final evaluation. Validation comes from training unless a fixed validation pool is selected.",
-                "valid": not any(item["severity"] == "error" for item in findings),
-            }
-        if modern and not uses_rules:
-            return {
-                **result,
-                "message": "Preview the complete strategy to see training, early-stop validation and test assignments.",
-                "valid": not any(item["severity"] == "error" for item in findings),
-            }
+        if not development:
+            # Without a development split, live feedback covers the cohort and target only.
+            return {**result, "valid": not any(item["severity"] == "error" for item in findings)}
         try:
-            rules = FixedRules.model_validate(split["rules"]) if "rules" in split else request.rules
-            validate([condition for role in PARTITIONS for condition in getattr(rules, role)])
-            assignments, direct, expanded = _fixed_assignments(groups, rules, evaluator, finding)
+            pools = PoolSpec.model_validate(split.get("pools", {}))
+            validate([condition for role in PARTITIONS for condition in getattr(pools.rules, role)])
+            if (
+                pools.imported
+                and pools.imported.partitionField not in fields
+                and pools.imported.partitionField not in CANONICAL
+            ):
+                raise FilterFailure(
+                    "UNKNOWN_FIELD", "The predefined pool column is not in the frozen dataset."
+                )
+            _assignments, direct, expanded, remaining = select_development_pools(
+                groups, pools, evaluator, finding, _fixed_assignments
+            )
+            selected_rows = expanded["train"] + expanded["val"]
+            self._identity_findings(
+                selected_rows,
+                {key: rows for key, rows in groups.items() if key in _assignments},
+                finding,
+            )
         except ValidationError:
-            finding("INVALID_FIXED_RULES", "Complete the fixed rules to see set counts.")
-            return {**result, "valid": False}
+            finding(
+                "INVALID_POOL_SETTINGS",
+                "Complete the development source settings to see matching counts.",
+            )
+            return {**result, "valid": False, "selectionBasis": "pools"}
         except FilterFailure as error:
             finding(error.code, str(error))
-            return {**result, "valid": False}
-        if any(item["severity"] == "error" for item in findings):
-            return {**result, "valid": False}
-        for role in PARTITIONS:
-            if getattr(rules, role) and not expanded[role]:
-                finding(
-                    "EMPTY_FIXED_RULE",
-                    f"The fixed {role} rule does not select any eligible groups.",
-                )
-        remaining = [row for row in eligible if row["patientId"] not in assignments]
-        if uses_rules and not rules.train:
-            expanded["train"] = remaining
-            remaining = []
-        elif uses_rules and remaining:
-            finding(
-                "UNASSIGNED_RULE_GROUPS",
-                "Some eligible groups match no partition. Change the rules or leave training rules empty to use the remaining cohort.",
-            )
+            return {**result, "valid": False, "selectionBasis": "pools"}
+        if any(
+            item["code"]
+            in {
+                "OVERLAPPING_PATIENT_RULES",
+                "IMPORTED_PATIENT_LEAKAGE",
+                "MISSING_PATIENT_ID",
+                "FALLBACK_PATIENT_ID_COLLISION",
+            }
+            for item in findings
+        ):
+            return {**result, "valid": False, "selectionBasis": "pools"}
         result["partitions"] = {
             role: {
-                "selection": "rules"
-                if getattr(rules, role)
-                else "remaining"
-                if role == "train" and uses_rules
+                "selection": "remaining"
+                if role == "train"
+                and pools.source == "rules"
+                and pools.trainSelection == "remaining"
+                else "rules"
+                if direct[role]
                 else "none",
                 "directMatches": _cohort_stats(
                     sorted(direct[role], key=lambda row: row["slideId"])
@@ -658,11 +586,25 @@ class ProtocolService:
             for role in PARTITIONS
         }
         result["unassigned"] = _cohort_stats(remaining)
-        if modern and not rules.val:
-            result["message"] = (
-                "Training counts show the development pool. Preview reserves the selected percentage for early stopping."
-            )
-        return {**result, "valid": not any(item["severity"] == "error" for item in findings)}
+        if result["target"]:
+            counts = Counter(evaluator.field(row, request.targetField) for row in selected_rows)
+            result["target"] = {
+                "field": request.targetField,
+                "values": [
+                    {"value": value, "slides": count}
+                    for value, count in sorted(
+                        counts.items(),
+                        key=lambda item: (-item[1], item[0] is None, item[0] or ""),
+                    )[:20]
+                ],
+                "distinctCount": len(counts),
+            }
+        return {
+            **result,
+            "selectionBasis": "pools",
+            "message": "Development plans use the selected training groups and early-stop validation. Unmatched rows stay outside this protocol.",
+            "valid": not any(item["severity"] == "error" for item in findings),
+        }
 
     @staticmethod
     def _identity_findings(rows, groups, finding):
@@ -693,6 +635,10 @@ class ProtocolService:
 
     def _preview(self, draft_id, expected_revision, *, allow_frozen):
         spec, dataset, fields, rows = self._load(draft_id, expected_revision, allow_frozen)
+        slide_unit = spec.splitUnit == "slide"
+        # Folds and early-stop validation use patient groups unless a slide design
+        # assigns slides independently. Slide targets keep per-slide labels either way.
+        patient_folds = not slide_unit or spec.split.groupByPatient
         modern = spec.split.version >= 2
         explicit = spec.split.version >= 3
         development = spec.split.version == 4
@@ -859,17 +805,22 @@ class ProtocolService:
         if development and not any(item["severity"] == "error" for item in findings):
             # Select development sources before interpreting their labels. A
             # combined metadata file can contain unrelated, unlabeled rows.
-            source_groups = _development_selection_groups(eligible)
+            source_groups = (
+                _development_selection_groups(eligible)
+                if patient_folds
+                else {(0, row["slideId"]): [row] for row in eligible}
+            )
             try:
                 selected, _direct, _expanded, _remaining = select_development_pools(
                     source_groups, spec.split.pools, evaluator, finding, _fixed_assignments
                 )
                 eligible = _expanded["train"] + _expanded["val"]
-                self._identity_findings(
-                    eligible,
-                    {key: rows for key, rows in source_groups.items() if key in selected},
-                    finding,
-                )
+                if patient_folds:
+                    self._identity_findings(
+                        eligible,
+                        {key: rows for key, rows in source_groups.items() if key in selected},
+                        finding,
+                    )
                 development_pool_assignments = {
                     key[1]: role for key, role in selected.items() if key[0] == 0
                 }
@@ -925,9 +876,12 @@ class ProtocolService:
                 )
         groups = defaultdict(list)
         for row in included:
-            if _valid_patient(row):
+            if not patient_folds:
+                groups[row["slideId"]].append(row)
+            elif _valid_patient(row):
                 groups[row["patientId"]].append(row)
-        self._identity_findings(included, groups, finding)
+        if patient_folds:
+            self._identity_findings(included, groups, finding)
         mixed_groups = sum(len({row["label"] for row in group}) > 1 for group in groups.values())
         mixed_slide_target = development and spec.target.unit == "slide" and mixed_groups > 0
         if mixed_slide_target:
@@ -982,7 +936,7 @@ class ProtocolService:
             if patient_counts[label] < spec.constraints.minPatientsPerClass:
                 finding(
                     "INSUFFICIENT_CLASS_PATIENTS",
-                    f"Class '{label}' has fewer than {spec.constraints.minPatientsPerClass} independent patients.",
+                    f"Class '{label}' has fewer than {spec.constraints.minPatientsPerClass} independent {'patients' if patient_folds else 'slides'}.",
                 )
         fixed = {}
         try:
@@ -1058,7 +1012,7 @@ class ProtocolService:
                                 },
                                 "partition": partition,
                                 "slideId": row["slideId"],
-                                "patientId": patient,
+                                "patientId": row.get("patientId") if slide_unit else patient,
                                 **(
                                     {"patientIdSource": row["patientIdSource"]}
                                     if "patientIdSource" in row
@@ -1123,7 +1077,7 @@ class ProtocolService:
                                     "fold": fold,
                                     "partition": partition,
                                     "slideId": row["slideId"],
-                                    "patientId": patient,
+                                    "patientId": row.get("patientId") if slide_unit else patient,
                                     **(
                                         {"patientIdSource": row["patientIdSource"]}
                                         if "patientIdSource" in row
@@ -1135,13 +1089,23 @@ class ProtocolService:
                     partitions.append(
                         self._check_partition(spec, groups, seed, fold, assignment, finding)
                     )
+        if spec.sourceTargetSplitId and not any(item["severity"] == "error" for item in findings):
+            # _load already restricted rows to the exact frozen training set.
+            # CV roles may vary across plans; selection or eligibility must not
+            # silently discard part of that population while retaining its source.
+            if {row["slideId"] for row in memberships} != {row["slideId"] for row in rows}:
+                finding(
+                    "TARGET_SPLIT_TRAINING_MEMBERSHIP_CHANGED",
+                    "Training design must preserve every frozen training slide. "
+                    "Change the training/testing selection in Targets & Splits instead.",
+                )
         memberships.sort(
             key=lambda item: (
                 item["seed"],
                 item.get("planId", ""),
                 -1 if item["fold"] is None else item["fold"],
                 item["partition"],
-                item["patientId"],
+                item["patientId"] or "",
                 item["slideId"],
             )
         )
@@ -1152,27 +1116,35 @@ class ProtocolService:
             "totalSlides": len(rows),
             "eligibleSlides": len(eligible),
             "includedSlides": len(included),
-            "includedPatients": cohort_stats["patientCount"],
+            "includedPatients": 0 if slide_unit else cohort_stats["patientCount"],
             "includedGroups": len(groups),
             "fallbackSlideCount": cohort_stats["fallbackSlideCount"],
             "unlinkedSlideCount": cohort_stats["unlinkedSlideCount"],
             "excludedSlides": len(rows) - len(included),
             "labelExclusions": dict(exclusion_counts),
             "classCounts": {label: class_counts[label] for label in spec.target.classes},
-            "patientClassCounts": {label: patient_counts[label] for label in spec.target.classes},
-            "grouping": "patient_with_slide_fallback"
-            if cohort_stats["fallbackSlideCount"]
+            "patientClassCounts": {}
+            if slide_unit
+            else {label: patient_counts[label] for label in spec.target.classes},
+            "grouping": "slide_labels_patient_folds"
+            if slide_unit and patient_folds
+            else "slide"
+            if slide_unit
+            else "patient_with_slide_fallback"
+            if (slide_unit or cohort_stats["fallbackSlideCount"])
             else "patient",
             "targetUnit": spec.target.unit,
             "algorithm": algorithm,
             "fixedPatients": {
-                partition: sum(value == partition for value in fixed.values())
+                partition: 0 if slide_unit else sum(value == partition for value in fixed.values())
                 for partition in PARTITIONS
             },
             **(modern_summary(spec, training_groups, plans) if modern else {}),
             **(
                 {
-                    "poolCounts": pool_counts(groups, pool_assignments, spec.target.classes),
+                    "poolCounts": pool_counts(
+                        groups, pool_assignments, spec.target.classes, split_unit=spec.splitUnit
+                    ),
                     "finalPlanCount": sum(
                         metadata["phase"] == "final" for metadata, _assignment in plans
                     ),
@@ -1191,7 +1163,9 @@ class ProtocolService:
             ),
             **(
                 {
-                    "poolCounts": pool_counts(groups, pool_assignments, spec.target.classes),
+                    "poolCounts": pool_counts(
+                        groups, pool_assignments, spec.target.classes, split_unit=spec.splitUnit
+                    ),
                     **development_summary(spec),
                 }
                 if development
@@ -1441,7 +1415,7 @@ class ProtocolService:
             classes = Counter(groups[patient][0]["label"] for patient in patients)
             stats = _cohort_stats([row for patient in patients for row in groups[patient]])
             result[partition] = {
-                "patients": stats["patientCount"],
+                "patients": 0 if spec.splitUnit == "slide" else stats["patientCount"],
                 "groups": len(patients),
                 "fallbackSlides": stats["fallbackSlideCount"],
                 "slides": sum(len(groups[patient]) for patient in patients),

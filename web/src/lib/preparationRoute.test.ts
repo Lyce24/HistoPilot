@@ -3,7 +3,7 @@ import { preparationContext, preparationLink } from './preparationRoute';
 
 describe('prepared input navigation', () => {
   it('keeps exact prepared IDs when opening an experiment or selecting a tab', () => {
-    const context = { datasetId: 'older dataset', protocolId: 'protocol/one', bundleId: 'bundle&two', saved: 'bundle' as const };
+    const context = { datasetId: 'older dataset', protocolId: 'protocol/one', targetSplitId: 'target/one', bundleId: 'bundle&two', saved: 'bundle' as const };
     const link = preparationLink('experiments', context, { experiment: 'question/one', tab: 'inputs' });
     const parameters = new URLSearchParams(link.split('?')[1]);
     expect(preparationContext(parameters)).toEqual(context);
@@ -13,6 +13,6 @@ describe('prepared input navigation', () => {
 
   it('keeps plain navigation plain and ignores unrecognized save notices', () => {
     expect(preparationLink('features', {})).toBe('#features');
-    expect(preparationContext(new URLSearchParams('dataset=&saved=anything'))).toEqual({ datasetId: undefined, protocolId: undefined, bundleId: undefined, saved: undefined });
+    expect(preparationContext(new URLSearchParams('dataset=&saved=anything'))).toEqual({ datasetId: undefined, protocolId: undefined, targetSplitId: undefined, bundleId: undefined, saved: undefined });
   });
 });

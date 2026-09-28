@@ -203,7 +203,9 @@ Concept count drops from ~30 to 9; saves from 10 to 5; no navigation to a roadma
    reference shape; delete the six copies.
 10. **Remove dead layers**: `domain/`, `ports/`, `application/{datasets,experiments,audits,jobs}.py`,
     `workers/supervisor.py`, `contracts.experiment`, synthetic `/workspace` routes, 501 stubs;
-    rewrite `ARCHITECTURE.md` from the real flow.
+    rewrite `ARCHITECTURE.md` from the real flow. (2026-09-27 on `pipeline-redesign`:
+    `workers/supervisor.py` and the project-scoped `POST /jobs` stub were removed; the
+    global `/api/v1/jobs` stubs remain. See [pipeline hardening](PIPELINE_HARDENING.md).)
 11. **Training**: `fit-complete.json` marker → prediction-only resume; hash `schemas/` and
     record histopilot version / git SHA / CUDA / cuDNN; read contiguous bags and index in NumPy
     instead of h5py point selection; per-fold and across-seed mean ± SD next to pooled OOF;

@@ -5,13 +5,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import h5py
 import numpy as np
 import pytest
 
-from histopilot.api.scientific import scientific_router
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.features import FeatureService
 from histopilot.schemas.feature_packs import FeaturePackSpec
@@ -572,86 +570,6 @@ def test_artifact_and_job_reads_reject_inconsistent_completion_receipts(packing,
         with pytest.raises(StorageError) as caught:
             read()
         assert caught.value.code == "PACKING_CORRUPT"
-
-
-@pytest.mark.parametrize(
-    "validation,complete,warning",
-    [
-        (None, False, "FULL_FEATURE_VALIDATION_PENDING"),
-        (
-            {
-                "valid": True,
-                "current": False,
-                "tensorValidationComplete": True,
-                "provenanceComplete": True,
-            },
-            False,
-            "FULL_FEATURE_VALIDATION_PENDING",
-        ),
-        (
-            {
-                "valid": False,
-                "current": True,
-                "tensorValidationComplete": True,
-                "provenanceComplete": True,
-            },
-            False,
-            "FULL_FEATURE_VALIDATION_PENDING",
-        ),
-        (
-            {
-                "valid": True,
-                "current": True,
-                "tensorValidationComplete": True,
-                "provenanceComplete": False,
-            },
-            True,
-            "ENCODER_PROVENANCE_UNVERIFIED",
-        ),
-        (
-            {
-                "valid": True,
-                "current": True,
-                "tensorValidationComplete": True,
-                "provenanceComplete": True,
-            },
-            True,
-            None,
-        ),
-    ],
-)
-def test_protocol_preflight_does_not_check_feature_validation(
-    packing, monkeypatch, validation, complete, warning
-):
-    service, spec, executor, source = packing
-    configuration = service.store.get_configuration(spec.featureSetId)
-    protocol = service.store.publish_configuration(
-        manifest={
-            "kind": "protocol",
-            "datasetId": configuration["manifest"]["datasetId"],
-            "spec": {"featureSetId": spec.featureSetId},
-            "memberships": [{"slideId": "001.A"}, {"slideId": "002"}],
-        },
-        operation_id="protocol",
-    )
-    monkeypatch.setattr(
-        FeaturePackService, "validation_for", lambda *args: pytest.fail("Protocol checked features")
-    )
-    router = scientific_router(
-        SimpleNamespace(scientific_store=lambda identity: service.store), service.filesystem
-    )
-    endpoint = next(
-        route.endpoint
-        for route in router.routes
-        if route.path.endswith("/protocols/{configuration_id}/preflight")
-    )
-    report = endpoint("project", protocol["id"])
-    assert report["scope"] == "protocol"
-    assert report["protocolReady"]
-    assert "tensorValidationComplete" not in report
-    assert not report["scientificReady"]
-    assert not report["executionReady"]
-    assert report["findings"] == []
 
 
 def test_reduced_precision_pack_verifies_against_the_cast_source(packing, tmp_path):

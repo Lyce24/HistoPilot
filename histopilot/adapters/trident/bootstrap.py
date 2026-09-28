@@ -126,12 +126,65 @@ def optimize_sdpc():
     return {"status": "applied" if applied else "unsupported", "applied": applied}
 
 
+def _peak_reserved_bytes():
+    """Peak CUDA memory reserved by this process, without importing or initializing torch."""
+    torch = sys.modules.get("torch")
+    try:
+        if torch is None or not torch.cuda.is_initialized():
+            return None
+        return max(
+            int(torch.cuda.max_memory_reserved(device))
+            for device in range(torch.cuda.device_count())
+        )
+    except Exception:  # telemetry never disturbs extraction
+        return None
+
+
+def report_peak_memory(path, interval=20.0):
+    """Keep ``path`` holding this process's peak reserved CUDA memory (Task Center sizing).
+
+    A daemon thread samples the counter while TRIDENT runs and once more at exit, so the
+    supervisor can record the measured VRAM of an extraction for later requests.
+    """
+    import atexit
+    import tempfile
+    import threading
+
+    target = Path(path)
+    state = {"peak": 0}
+
+    def write():
+        peak = _peak_reserved_bytes()
+        if not peak or peak <= state["peak"]:
+            return
+        state["peak"] = peak
+        try:
+            descriptor, temporary = tempfile.mkstemp(prefix=".peak-", dir=target.parent)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump({"cudaPeakReservedBytes": peak}, stream)
+            os.replace(temporary, target)
+        except OSError:
+            pass
+
+    stop = threading.Event()
+
+    def loop():
+        while not stop.wait(interval):
+            write()
+
+    threading.Thread(target=loop, name="histopilot-peak-memory", daemon=True).start()
+    atexit.register(write)
+    return stop
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or Path(argv[0]).name != "run_batch_of_slides.py":
         raise SystemExit("Usage: bootstrap.py /path/to/run_batch_of_slides.py [TRIDENT arguments]")
     script = Path(argv[0]).resolve(strict=True)
     sys.path.insert(0, str(script.parent))
+    if os.environ.get("HISTOPILOT_TRIDENT_PEAK_PATH"):
+        report_peak_memory(os.environ["HISTOPILOT_TRIDENT_PEAK_PATH"])
     print("[HistoPilot] SDPC optimization: " + json.dumps(optimize_sdpc()), flush=True)
     sys.argv = [str(script), *argv[1:]]
     runpy.run_path(str(script), run_name="__main__")

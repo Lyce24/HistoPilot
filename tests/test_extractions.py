@@ -63,6 +63,11 @@ def extraction(tmp_path, monkeypatch):
             "tridentRoot": str(tmp_path / "runtime"),
         },
     )
+    # Reader dependencies are probed in TRIDENT's interpreter; fixtures have none.
+    monkeypatch.setattr(
+        "histopilot.adapters.trident.probe_reader_modules",
+        lambda _python, modules, **_: {"modules": dict.fromkeys(modules)},
+    )
     # Command generation is separately tested against the real upstream option catalog.
     monkeypatch.setattr(
         "histopilot.adapters.trident.build_command",
@@ -616,6 +621,10 @@ def test_authenticated_project_extraction_api_roundtrip(extraction, monkeypatch,
     monkeypatch.setattr(
         "histopilot.application.extractions.TmuxExtractionExecutor", lambda: executor
     )
+    # This round trip exercises the legacy tmux launch path of the API.
+    monkeypatch.setattr(
+        "histopilot.application.task_records.default_execution_mode", lambda: "tmux"
+    )
     settings = Settings(workspace=tmp_path / "registry", data_roots=(tmp_path,))
     app = create_app(settings)
     with TestClient(app, base_url="http://127.0.0.1:8787") as client:
@@ -807,7 +816,12 @@ def test_legacy_extraction_preview_and_retry_keep_their_hashes(extraction):
     assert "slideList" not in preview["spec"]
     legacy_preview_hash = _hash(
         {
-            **{key: value for key, value in preview.items() if key != "previewHash"},
+            # Free space may change between requests; it is reported, never hashed.
+            **{
+                key: value
+                for key, value in preview.items()
+                if key not in {"previewHash", "availableBytes"}
+            },
             "spec": {key: value for key, value in preview["spec"].items() if key != "slideList"},
             "slides": slides,
         }

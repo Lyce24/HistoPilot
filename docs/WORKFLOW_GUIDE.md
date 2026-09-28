@@ -49,23 +49,40 @@ Small detail tiles appear progressively and are reused when neighboring views ov
 
 Choose **Draw review region** to select tissue for a review. Navigation pauses while drawing; drag a rectangle, or press Escape to cancel. **Zoom to selection** focuses on the selected patch or review region. If sharper detail fails to load, the overview stays available and **Retry slide detail** retries the request. These gestures apply inside the slide canvas; trackpad support depends on the browser and operating system delivering pinch gestures.
 
-## Define development targets and splits
+## Define targets and training/testing sets
 
-**Targets & splits** selects development records from a frozen dataset, defines labels and the positive class, and freezes patient-grouped assignments. Features and bundles are not required. Split seeds control those assignments; training seeds belong to Experiments and never redraw them.
+After saving a dataset, prepare **Slide features** and **Targets & splits** independently. Either can be completed first.
 
-Current development protocols contain fitting, early-stop validation and development assessment roles. They do not reserve a final test cohort. Five split designs are available: k-fold, Monte Carlo, leave-one-site/cohort-out, nested k-fold and development holdout. Native training currently executes development-only k-fold protocols; the other designs remain available for study-design review. Nested-CV execution still needs its configuration-selection dependencies connected. See [development targets and split strategies](split-strategies.md) for exact semantics, fixed validation and legacy protocol compatibility.
+**Targets & splits** follows four steps:
 
-**Experiments → Inputs** selects the feature bundle and checks compatibility with the frozen development protocol. Every selected development slide must have features; incomplete coverage blocks experiment preparation without changing the protocol population. Packing does not repair missing coverage.
+1. **Dataset & cohort:** select the dataset, the **Split unit** and eligibility conditions. The cohort summary updates beside the filters, showing remaining slides/cases, verified patients, and an included/excluded progress bar. Training and testing details appear in the next step.
+2. **Training & Testing split:** configure Training first, then Testing. Each filter shows its own live counts and share of the eligible cohort directly beneath it. Under patient grouping, direct rule matches are distinguished from extra slides included to keep patients together; conflicting assignments block review.
+3. **Prediction Targets:** map training labels and inspect the mapped distributions for slides (and verified patients under patient grouping). Testing can use the training mapping, its own compatible label mapping, or **None · Pure inference**. The testing distribution is hidden for pure inference.
+4. **Review & Freeze:** review final membership, label exclusions and distributions, then save an immutable version.
 
-Test cohorts are defined separately in **Test cohorts**, and require a dataset but no development model or features. Choose records, then pick the cohort type: a labeled **evaluation cohort** (define prediction targets) or an unlabeled **inference cohort** (no target). Review and freeze it. Model, feature and inference compatibility are checked later, in **Evaluate models** or **Run inference**.
+Features, folds, validation settings and training hyperparameters are not inputs to this stage. Its library lists each saved version's dataset, training slides, testing slides, target and labels.
+
+The **Split unit** decides what is assigned. **Slide** (the default for new versions) selects and splits each slide on its own. **Patient** keeps every selected slide of a patient in one set. Versions saved before the option existed are patient-grouped.
+
+Choose one of three methods:
+
+- **Random split:** choose the testing percentage and split seed, optionally balancing a metadata field chosen at this step. Target mapping later does not reshuffle the partition. The remaining slides or patient groups form the training set. Use 0% testing when a separate test cohort will be supplied later.
+- **Metadata conditions:** select testing slides or patients using conditions. Empty training conditions use the remaining eligible slides or groups; explicit training conditions exclude unmatched ones. With training conditions set, **Use all eligible … outside the training set** makes testing take everything training does not select. A slide or patient matching both sets blocks freezing.
+- **Predefined partition values:** select a metadata column and assign its values to Training, Testing or Exclude. Under patient grouping, a patient whose slides carry values of both sets blocks freezing.
+
+Under patient grouping, known patients stay in one set. Review actual counts before freezing: whole patient groups, and small strata when balancing a field, can change the requested percentage (see [split strategies](split-strategies.md#random-split-rounding)). The saved target/split version fixes membership independently of any feature bundle. Labeled testing membership becomes a reusable evaluation cohort with its selected mapping and exact slide IDs. Selecting **None · Pure inference** keeps testing slides without reading or excluding them by labels, and publishes a cohort for **Run inference**, without model-evaluation metrics. Training labels remain required. Freezing creates that cohort; if this step fails, the version stays frozen and its detail view offers **Retry test cohort** (a version without one offers **Create test cohort**). Counts distinguish the selected populations from any later, explicit label exclusions; accepted slide-ID fallback groups are not reported as verified patients.
+
+Continue to **Experimental Setup** to combine this version with a dataset and feature bundle. Feature coverage and compatibility are checked there against the training set; missing features never silently remove training records. Folds, early-stop validation, training seeds and hyperparameters are configured in that stage. See [targets and split strategies](split-strategies.md) for the separation between the fixed testing set and development assessment folds.
+
+Additional labeled test cohorts and unlabeled inference cohorts can still be prepared through the existing **Test cohorts** route. Model and feature compatibility are checked in **Evaluate models** or **Run inference** when those inputs are selected.
 
 ## Name frozen versions
 
-Choose **Name & freeze version** for a dataset or target/split protocol, or **Name & freeze bundle** for features. Supply a required **Version tag** and optional **Commit note**. Tags appear in saved-record selectors and experiment inputs; they are unique within the same record kind and project, ignoring case.
+Choose **Name & freeze version** for a dataset or target/split version, or **Name & freeze bundle** for features. Supply a required **Version tag** and optional **Commit note**. Tags appear in saved-record selectors and experiment inputs; they are unique within the same record kind and project, ignoring case.
 
-After a dataset or development protocol is frozen, the naming dialog closes and the saved version stays open in its current module. A success message confirms the save. Use the next-step links when ready; freezing does not automatically move to another module. Background library refreshes do not delay the save confirmation.
+After a dataset or target/split version is frozen, the naming dialog closes and the saved version stays open in its current module. A success message confirms the save. Use the next-step links when ready; freezing does not automatically move to another module. Background library refreshes do not delay the save confirmation.
 
-Tags can contain up to 80 characters and notes up to 2,000. Renaming a saved tag changes its display metadata while preserving its scientific ID, memberships, feature bindings and existing references. Clearing both fields removes the label and note. A cohort's target and split protocol share its version tag.
+Tags can contain up to 80 characters and notes up to 2,000. Renaming a saved tag changes its display metadata while preserving its scientific ID, memberships, feature bindings and existing references. Clearing both fields removes the label and note. A target/split version's target and training/testing membership share its version tag.
 
 Freezing identical scientific content reuses the existing version. Edit that version's label to rename it; change the underlying data or settings to create a distinct scientific version. Concurrent label edits are detected, and interrupted saves retain their operation identity and requested label.
 
@@ -99,7 +116,7 @@ export HISTOPILOT_TRIDENT_ROOT=/path/to/TRIDENT
 uv run histopilot serve --data-root /path/to/research-data --no-browser
 ```
 
-The usual `~/miniconda3/envs/trident` environment and a checkout at `.local/TRIDENT` are also discovered automatically. Model dependencies, checkpoint access and gated-model authentication must be available in that environment. Runtime discovery does not import Torch into the control service.
+The usual `~/miniconda3/envs/trident` environment and a checkout at `.local/TRIDENT` are also discovered automatically. A checkout without `.local/TRIDENT`, such as a git worktree, needs `HISTOPILOT_TRIDENT_ROOT`; until then the extraction preview and the System page report TRIDENT as unavailable and list the folders searched and any sibling checkout that has one. Model dependencies, checkpoint access and gated-model authentication must be available in that environment. Runtime discovery does not import Torch into the control service.
 
 For SDPC slides, install OpenSDPC into the **TRIDENT interpreter shown in the extraction preview**. Installing it only in HistoPilot's `.venv` does not install it in a separate TRIDENT environment. The pinned source below is also used by HistoPilot's optional `sdpc` extra:
 
@@ -110,7 +127,7 @@ uv pip install --python "$HISTOPILOT_TRIDENT_PYTHON" --reinstall-package opensdp
 
 Set `HISTOPILOT_TRIDENT_PYTHON` first using the path above, or replace it with the interpreter path shown in the preview. Reinstalling repairs stale editable installations whose source folder was moved or removed. On Linux, the isolated runner discovers OpenSDPC in that selected interpreter and adds its bundled `LINUX` and `LINUX/ffmpeg` directories to the TRIDENT child's `LD_LIBRARY_PATH`, preserving existing paths. No global library-path export is needed. To also install the optional dependency in HistoPilot's own uv environment, use `uv sync --locked --extra sdpc` when rebuilding.
 
-Extraction workers use `histopilot-pfm-<run-id>` tmux sessions. The job panel shows stages, current slide, progress and available timing estimates. **Troubleshooting** provides raw logs and the reconnect command. `<project>/extractions/<run-id>/` retains the command, selected-slide CSV, input evidence, settings, process records and `worker.log`. Successful process exit is followed by artifact validation; missing/corrupt outputs and unfinished locks fail the run. Failed or cancelled outputs remain available for compatible resume.
+Extraction runs as a [Task Center](TASK_CENTER_DESIGN.md) task on the GPU. It requests only the GPU memory it needs, so it can share the GPU with training. The run shows one status line (**Extraction · <encoder>**) that links to its task; the log, command, measured resources and attempts are in the Task Center's task details. `<project>/extractions/<run-id>/` retains the command, selected-slide CSV, input evidence, settings, process records, `progress.json` and `worker.log`. After TRIDENT exits, a separate CPU task validates the artifacts; missing/corrupt outputs and unfinished locks fail the run. **Resume extraction** on a failed, cancelled or interrupted run starts TRIDENT again on the same output. Finished slides are skipped. Locks left by dead writers are cleared first, and their partial outputs are renamed to `<name>.stale-<epoch>` (nothing is deleted), so those slides are redone. Runs started before the Task Center keep their `histopilot-pfm-<run-id>` tmux session, **Troubleshooting** panel and reconnect command, and resume through a new preview on the same output folder.
 
 ### Tune extraction throughput
 
@@ -169,9 +186,9 @@ feature-pack/
 
 Packed coordinates must be nonnegative integers representable as int32. Native validation can accept int64 coordinates without that packed limit. Packing preserves tensor contents and recorded metadata, not the original HDF5 containers byte for byte.
 
-**Experiments → Inputs** owns loading policy: **Auto**, original per-slide files, or an explicit bundled pack. Auto uses native files for features-only bundles and a sole precision-preserving pack when present. Multiple packs or precision changes require a deliberate choice. Memory mapping does not preload the whole pack into RAM or GPU memory.
+**Experimental Setup → Inputs** owns loading policy: **Auto**, original per-slide files, or an explicit bundled pack. Auto uses native files for features-only bundles and a sole precision-preserving pack when present. Multiple packs or precision changes require a deliberate choice. Memory mapping does not preload the whole pack into RAM or GPU memory.
 
-Packing/validation jobs use `histopilot-pack-<run-id>` tmux sessions and save evidence under `<project>/packing/<run-id>/`. They publish only after validation and checksum readback, into a new or empty destination; completed packs are not overwritten. Cancelled or failed jobs can be retried as new jobs.
+Packing and validation jobs run as Task Center CPU tasks, one at a time per feature source, and save evidence under `<project>/packing/<run-id>/`. The page shows the outcome and a status line linking to the task. They publish only after validation and checksum readback, into a new or empty destination; completed packs are not overwritten. Cancelled or failed jobs can be retried from the Task Center or submitted again as new jobs. Jobs started before the Task Center keep their `histopilot-pack-<run-id>` tmux session.
 
 Use IDs from saved-version details for the CLI:
 
@@ -185,23 +202,25 @@ uv run histopilot feature-jobs --project PROJECT_ID --job PACKING_JOB_ID --cance
 uv run histopilot verify-feature-pack /path/to/relocated-pack
 ```
 
-Add `--dtype float16` when deliberately creating a reduced-precision pack. Submission requires the running local service and tmux; `verify-feature-pack` is standalone. A HistoPilot pack remains independently verifiable after relocation or loss of its source, while a live source binding still requires current source evidence.
+Add `--dtype float16` when deliberately creating a reduced-precision pack. Submission requires the running local service, whose Task Center runner runs in tmux; `verify-feature-pack` is standalone. A HistoPilot pack remains independently verifiable after relocation or loss of its source, while a live source binding still requires current source evidence.
 
 ## Plan and run development experiments
 
 An **experiment** owns named **batches**. Each batch expands its configurations across training seeds and frozen split plans. A 3-learning-rate × 2-weight-decay grid, repeated over 3 training seeds and 5 folds, produces 6 configurations and 90 runs. Explicit recipe rows preserve parameter pairings instead of forming a grid.
 
-The workspace follows **Planning → Running → Finished**:
+Preparation and execution use separate modules:
 
-1. Create an experiment, or use an existing experiment as a template for an independent editable plan.
-2. In **Inputs**, select and check the development protocol, compatible feature bundle and loading policy.
-3. In **Batches**, configure models, recipes, training seeds and compute resources. Save each batch and its **Skip**, **Refit**, **Ensemble** or **Both** predictor choice.
-4. Choose **Review & submit → Freeze & submit experiment**. Submission locks scientific inputs, recipes and predictor choices.
-5. Follow **Runs** for progress, losses, checkpoints and resource samples. **Results** presents completed development results and ready predictors when submitted work reaches its terminal state.
+1. In **Experimental Setup**, create a setup or copy an existing one.
+2. In **Inputs**, select the dataset, frozen targets/splits and a compatible feature bundle. Choose the K-fold count, early-stop validation fraction, split seeds and loading policy, then check compatibility. K-fold is the currently executable strategy; other training designs are disabled in the setup editor.
+3. In **Hyperparameters**, configure model batches, recipes and training seeds. Save each batch and its **Skip**, **Refit**, **Ensemble** or **Both** predictor choice.
+4. In **Review & freeze**, freeze the complete setup. This fixes the design without launching training. Copy the setup to change its scientific settings.
+5. In **Experiments**, open the frozen setup and choose **Start experiment**. Current feature and runtime checks run before work is queued in the [Task Center](TASK_CENTER_DESIGN.md). Follow **Runs** for progress and **Results** for development scores and ready predictors.
+
+The fixed testing set is excluded from fitting, early-stop validation, development assessment folds and refitting. Development split seeds redraw only the training-side fold design; they never redraw the reserved testing membership.
 
 ABMIL, nnMIL, mean-pooling MIL and max-pooling MIL consume patch bags. Linear and MLP probes consume slide embeddings. Clinical-only and combined clinical/image arms also have explicit recipes. Model and representation compatibility is checked before execution; attention interpretation is supported for image-bearing ABMIL and nnMIL predictors.
 
-For clinical comparisons, declare clinical fields in **Targets & splits**, then choose their numeric or categorical types in the batch editor. Verified patient identities and consistent clinical values across each patient's slides are required. Matched clinical-only, image-only and combined arms share the same frozen, feature-covered population. Clinical-only fitting does not read image embeddings; imputation, scaling and category encoding are fitted on training patients only.
+For clinical comparisons using records with declared clinical fields, choose their numeric or categorical types in the batch editor. Verified patient identities and consistent clinical values across each patient's slides are required. Matched clinical-only, image-only and combined arms share the same frozen, feature-covered population. Clinical-only fitting does not read image embeddings; imputation, scaling and category encoding are fitted on training patients only.
 
 ### Prepare the training runtime
 
@@ -216,15 +235,15 @@ The checkout discovers `.venv-training/bin/python`. For another environment, set
 
 ### ABMIL batch settings
 
-For a baseline, freeze a development-only k-fold protocol and a verified patch-feature bundle. Set dimensions, attention, dropout, optimizer, training bag, epoch budget and seeds. **Sample patches per bag** uses a positive patch limit; **Use whole bag for training** retains all patches and needs more memory for large slides. ABMIL sampling is deterministic by slide, training seed and epoch. Validation and assessment use full bags by default; explicit evaluation caps are frozen with the recipe.
+For a baseline, freeze a target/split version and a verified patch-feature bundle, then choose k-fold training in Experimental Setup. Set dimensions, attention, dropout, optimizer, training bag, epoch budget and seeds. **Sample patches per bag** uses a positive patch limit; **Use whole bag for training** retains all patches and needs more memory for large slides. ABMIL sampling is deterministic by slide, training seed and epoch. Validation and assessment use full bags by default; explicit evaluation caps are frozen with the recipe.
 
 New standard recipes use learning rate `3e-4`, weight decay `1e-4`, 40 maximum epochs and patience 8. Advanced controls include FP32/FP16/BF16, gradient accumulation/clipping, schedulers and warmup, minimum training epochs and minimum validation improvement. Saved recipes retain their original settings. nnMIL adds its own feature-window sampling and checkpoint policy; do not assume ABMIL's full-bag evaluation behavior applies to every architecture.
 
 For patient targets, the default training policy gives patients equal expected weight and the default validation aggregation averages slide probabilities within each patient. Validation selects checkpoints and controls early stopping; development assessment folds are predicted afterward. OOF exports require exact held-out coverage for their configuration and seed group. Choosing configurations from OOF results does not make those results an independent final-test estimate.
 
-Choose CPU or GPU, concurrent runs and runs per GPU. Advanced settings include GPU IDs, CPU threads, loader workers and RAM reservations. With one GPU, **Concurrent runs = 6** and **Runs per GPU = 1** still allow only one GPU run at a time. Configured slots do not establish VRAM capacity. Suggested runtime settings distinguish measurements from estimates and remain editable.
+Batches carry no compute settings. The Task Center decides how many runs share a GPU (**Parallel GPU tasks**, with a measured suggestion) and admits each run against free VRAM, RAM and CPU threads; device, CPU threads and loader workers come from this machine and the Task Center defaults when the batch launches. A batch saved earlier with compute settings shows them as legacy; saving it again removes them, and the Task Center ignores them in frozen setups.
 
-Training batches run in `hp-train-*` tmux sessions, with logs, `best.ckpt`, `last.ckpt`, progress, predictions and OOF outputs under `<project>/training/<batch-id>/`. Resource reservations coordinate HistoPilot training across projects; RAM reservations are scheduling allowances, not operating-system limits. Resource charts show recorded measurements, including gaps; an updated UI cannot recreate telemetry an older worker did not collect.
+Each fold runs as a Task Center task, followed by a result-collection task for the batch; logs, `best.ckpt`, `last.ckpt`, progress, predictions and OOF outputs stay under `<project>/training/<batch-id>/`. The Task Center admits work across projects and workspaces on this machine; RAM requests are scheduling allowances, not operating-system limits. Measured GPU memory, RAM, attempts and logs of a run are in its Task Center task details. Batches launched before the Task Center keep their `hp-train-*` tmux sessions and resource charts; the charts show recorded measurements, including gaps, and an updated UI cannot recreate telemetry an older worker did not collect.
 
 ```bash
 uv run histopilot train-batch BATCH_ID --project PROJECT_ID
@@ -278,8 +297,8 @@ See [experiment lifecycle](EXPERIMENT_LIFECYCLE.md) for submission and tracking,
 
 Unsaved inputs in **Datasets**, **Targets & splits** and **Test cohorts** are retained for the browser tab. Returning or reloading opens the module library with a recovery action. Review/freeze steps require fresh server checks; a recovered dataset import rereads its source. Opening another record or creating one saves current input as a project draft first. Browser recovery copies do not replace saved project records. Slide-feature acquisition settings do not yet have the same recovery support.
 
-**Cancel** stops pending work and requests active workers to exit while retaining logs, completed work and available checkpoints. **Resume unfinished runs** preserves completed folds and restores the last completed epoch, replaying an interrupted epoch. Current executions archive their Python worker code and verify original inputs, plans, runtime dependencies and execution location before resuming. If that setup has changed incompatibly, create a new batch. Updating the application does not change already-running worker code.
+**Cancel** stops pending work and requests active workers to exit while retaining logs, completed work and available checkpoints. For Task Center work, cancel, hold, reorder and retry are in the Task Center; an experiment that needs attention also offers **Resume** on its Runs tab. Resuming preserves completed folds and restores the last completed epoch, replaying an interrupted epoch. Batches launched before the Task Center keep **Cancel batch** and **Resume unfinished runs**. Current executions archive their Python worker code and verify original inputs, plans, runtime dependencies and execution location before resuming. If that setup has changed incompatibly, create a new batch. Updating the application does not change already-running worker code.
 
-Long-running extraction, packing and training workers survive browser or service disconnection through tmux. Use the session name and `tmux attach -t SESSION_NAME` shown in the job details to reconnect. Check `tmux ls` before manually launching compute so an existing job is not duplicated. tmux does not survive a workstation reboot; durable logs and checkpoints provide the available recovery boundary. The **HistoPilot server is always started and restarted manually in your terminal, never hosted in tmux**.
+Task Center tasks run in their own process groups and survive browser disconnection and restarts of the service or the runner. `histopilot serve` starts the runner in the `hp-runner-<uid>` tmux session. After a workstation reboot, the runner marks tasks that were running as interrupted and, with auto-resume on (the default), queues them again to resume from their checkpoints once the service is started; durable logs and checkpoints remain the recovery boundary. Workers launched before the Task Center still run in their own tmux sessions; their job details show `tmux attach -t SESSION_NAME`, and `tmux ls` before manually launching compute avoids duplicating one. The **HistoPilot server is always started and restarted manually in your terminal, never hosted in tmux**.
 
 Use a record's **Manage** action for archive, recoverable Trash or restore, or **Project tools → Workspace cleanup** to review related records. Dependencies and active jobs are checked again at confirmation. Record cleanup preserves source files, slides, features, packs, checkpoints and logs; it does not reclaim their disk space. Whole-project cleanup changes project visibility while retaining child states. See [workspace cleanup rules](WORKSPACE_CLEANUP.md).

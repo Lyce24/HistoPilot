@@ -1,7 +1,9 @@
 """Validate extraction artifacts in bounded chunks inside the durable worker session.
 
 Run with the HistoPilot service interpreter, which owns h5py independently of the
-TRIDENT environment: python -m histopilot.workers.verify_extraction JOB VALIDATION.
+TRIDENT environment: python -m histopilot.workers.verify_extraction JOB VALIDATION
+[PROGRESS]. As a Task Center task (``extraction-validation``) it also records its task
+attempt in the report and writes PROGRESS after every chunk.
 """
 
 import json
@@ -11,7 +13,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from histopilot.application.extraction_artifacts import inspect_outputs
+from histopilot.application.extraction_artifacts import complete_coverage, inspect_outputs
 from histopilot.storage.project_lock import _reject_symlink_components, fsync_directory
 from histopilot.storage.scientific import ScientificStore
 
@@ -37,7 +39,22 @@ def _write_validation(path: Path, value: dict) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def validate_job(job_path: Path, validation_path: Path) -> dict:
+def _task_identity() -> dict:
+    """The Task Center attempt this process runs, so a report is never mistaken for another's."""
+    attempt = os.environ.get("HISTOPILOT_TASK_ATTEMPT", "")
+    if not os.environ.get("HISTOPILOT_TASK_ID"):
+        return {}
+    return {
+        "taskId": os.environ["HISTOPILOT_TASK_ID"],
+        "taskAttempt": int(attempt) if attempt.isdecimal() else None,
+    }
+
+
+def _stamp() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def validate_job(job_path: Path, validation_path: Path, progress_path: Path | None = None) -> dict:
     """Persist one completion inspection; status polling only needs the resulting JSON."""
     job = json.loads(ScientificStore._read_file(job_path, MAX_JSON_BYTES))
     if (
@@ -54,8 +71,13 @@ def validate_job(job_path: Path, validation_path: Path) -> dict:
     ):
         raise ValueError("Validation must be a separate file beside the immutable job record.")
     slides = job["slides"]
+    identity = _task_identity()
+    if identity:
+        # The job log is shared with the extraction task; mark where this phase starts.
+        print(f"[{_stamp()}] Starting Artifact validation worker", flush=True)
     result = {
         "jobId": job["id"],
+        **identity,
         "startedAt": datetime.now(UTC).isoformat(),
         "completedSlides": 0,
         "missingSlides": 0,
@@ -92,29 +114,55 @@ def validate_job(job_path: Path, validation_path: Path) -> dict:
         available = MAX_FINDINGS - len(result["findings"])
         result["findings"].extend(findings[:available])
         result["findingsTruncated"] += max(0, len(findings) - available)
+        inspected = min(start + CHUNK_SIZE, len(slides))
         print(
-            f"[validation] Inspected {min(start + CHUNK_SIZE, len(slides))}/{len(slides)} slides: "
+            f"[validation] Inspected {inspected}/{len(slides)} slides: "
             f"{result['completedSlides']} complete, {result['missingSlides']} invalid or missing, "
             f"{result['unvalidatedSlides']} unvalidated.",
             flush=True,
         )
+        if progress_path is not None:
+            _write_validation(
+                progress_path,
+                {
+                    "stage": "validation",
+                    "phase": "Output validation",
+                    "completed": inspected,
+                    "total": len(slides),
+                    "completedSlides": inspected,
+                    "totalSlides": len(slides),
+                    "unit": "slides",
+                    "message": f"{inspected} of {len(slides)} slides inspected.",
+                },
+            )
     result["finishedAt"] = datetime.now(UTC).isoformat()
+    result["expectedSlides"] = len(slides)
+    result["complete"] = complete_coverage(result, len(slides))
     _write_validation(validation_path, result)
     return result
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in {3, 4}:
         print(
-            "Usage: python -m histopilot.workers.verify_extraction JOB VALIDATION", file=sys.stderr
+            "Usage: python -m histopilot.workers.verify_extraction JOB VALIDATION [PROGRESS]",
+            file=sys.stderr,
         )
         return 2
+    progress = Path(sys.argv[3]) if len(sys.argv) == 4 else None
+    managed = bool(_task_identity())
     try:
-        result = validate_job(Path(sys.argv[1]), Path(sys.argv[2]))
+        result = validate_job(Path(sys.argv[1]), Path(sys.argv[2]), progress)
     except Exception as error:
         print(f"[validation] Failed to validate extraction: {error}", file=sys.stderr)
+        if managed:
+            print(f"[{_stamp()}] Artifact validation failed (exit 1)", flush=True)
         return 1
-    return 0 if result["inspectionComplete"] and not result["missingSlides"] else 1
+    code = 0 if result["inspectionComplete"] and not result["missingSlides"] else 1
+    if managed:
+        state = "succeeded" if code == 0 else "failed"
+        print(f"[{_stamp()}] Artifact validation {state} (exit {code})", flush=True)
+    return code
 
 
 if __name__ == "__main__":

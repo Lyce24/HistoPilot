@@ -207,18 +207,24 @@ def aggregate_patients(rows, aggregation="mean_probabilities"):
 
 def classification_metrics(
     rows, target, aggregation="mean_probabilities", *, analysis=None, decision_threshold=None,
+    split_unit=None,
 ):
     if aggregation not in {"mean_probabilities", "mean_logits"}:
         raise ValueError(f"Unsupported patient aggregation: {aggregation}")
+    if split_unit == "slide" and target["unit"] != "slide":
+        raise ValueError("Slide-level experiments require slide-level scoring.")
     slide_metrics = _metrics(rows, target, decision_threshold=decision_threshold)
-    try:
-        patient_metrics = _metrics(
-            aggregate_patients(rows, aggregation), target, decision_threshold=decision_threshold
-        )
-    except ValueError as error:
-        if target["unit"] == "patient":
-            raise
-        patient_metrics = {"available": False, "reason": str(error), "count": 0}
+    if split_unit == "slide":
+        patient_metrics = {"available": False, "reason": "Patient analysis is disabled for slide-level experiments.", "count": 0}
+    else:
+        try:
+            patient_metrics = _metrics(
+                aggregate_patients(rows, aggregation), target, decision_threshold=decision_threshold
+            )
+        except ValueError as error:
+            if target["unit"] == "patient":
+                raise
+            patient_metrics = {"available": False, "reason": str(error), "count": 0}
     result = {
         "unit": target["unit"],
         "classOrder": target["classes"],
@@ -229,7 +235,7 @@ def classification_metrics(
         "patient": patient_metrics,
         "selected": patient_metrics if target["unit"] == "patient" else slide_metrics,
     }
-    if analysis is not None:
+    if analysis is not None and split_unit != "slide":
         from histopilot.statistics import patient_analysis
 
         result["patientAnalysis"] = patient_analysis(
@@ -364,9 +370,14 @@ class MILTrainModule(L.LightningModule):
         class_weights=None,
         class_weight_unit=None,
         clinical_preprocessor=None,
+        split_unit=None,
     ):
         super().__init__()
         self.save_hyperparameters()
+        from histopilot.schemas.training_controls import validate_split_unit
+
+        validate_split_unit(recipe, target, split_unit)
+        self.split_unit = split_unit
         self.target = target
         self.recipe = recipe
         self.input_mode = recipe.get("inputMode", "image")
@@ -567,6 +578,7 @@ class MILTrainModule(L.LightningModule):
             self.target,
             self.recipe.get("patientAggregation", "mean_probabilities"),
             decision_threshold=self.recipe.get("decisionThreshold", 0.5),
+            split_unit=self.split_unit,
         )["selected"]
         if not metrics["available"]:
             raise ValueError(

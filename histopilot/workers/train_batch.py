@@ -127,6 +127,7 @@ def _run_plan(batch: dict, run: dict, gpu: int | None) -> dict:
         "splitPlan": split,
         "recipe": candidate["recipe"],
         "target": batch["target"],
+        **({"splitUnit": batch["splitUnit"]} if "splitUnit" in batch else {}),
         "resources": batch["resources"],
         "device": "cpu" if gpu is None else "cuda",
         "data": {
@@ -212,10 +213,12 @@ def collect_results(batch: dict, state: dict, folder: Path):
                                 "An assessment slide appears in multiple folds of one k-fold seed."
                             )
                         expected[row["slideId"]] = row
-                        patient = row.get("patientId")
-                        previous = patient_folds.setdefault(patient, run["splitPlanId"])
-                        if previous != run["splitPlanId"]:
-                            raise ValueError("An assessment patient appears in multiple folds of one k-fold seed.")
+                        # Patient-grouped folds, including slide targets, keep a patient in one fold.
+                        if batch.get("splitUnit") != "slide" or batch.get("groupByPatient"):
+                            patient = row.get("patientId")
+                            previous = patient_folds.setdefault(patient, run["splitPlanId"])
+                            if previous != run["splitPlanId"]:
+                                raise ValueError("An assessment patient appears in multiple folds of one k-fold seed.")
             actual = Counter(row["slideId"] for row in records)
             if set(actual) != set(expected) or any(count != 1 for count in actual.values()):
                 raise ValueError(
@@ -248,7 +251,8 @@ def collect_results(batch: dict, state: dict, folder: Path):
             # Completed groups are collected repeatedly while other groups train.
             # Reuse analysis only when the actual predictions and scoring policy match.
             analysis_hash = _hash({"records": records, "target": batch["target"],
-                                   "recipe": recipe, "code": batch.get("code")})
+                                   "recipe": recipe, "code": batch.get("code"),
+                                   **({"splitUnit": batch["splitUnit"]} if "splitUnit" in batch else {})})
             cached = None
             if path.exists():
                 try:
@@ -269,6 +273,7 @@ def collect_results(batch: dict, state: dict, folder: Path):
                     records, batch["target"], recipe.get("patientAggregation", "mean_probabilities"),
                     analysis=recipe.get("analysis"),
                     decision_threshold=recipe.get("decisionThreshold", 0.5),
+                    split_unit=batch.get("splitUnit"),
                 )
             write_json(
                 path,

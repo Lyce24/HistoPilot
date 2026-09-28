@@ -85,3 +85,24 @@
   .experiment-run-tabs { gap: .25rem .75rem; }
   .experiment-run-metrics > div { padding: .7rem; }
 }
+
+/* Run map: test folds down, training seeds across. Status is text first; tint is secondary. */
+.experiment-run-map { display: grid; gap: .6rem; min-width: 0; }
+.experiment-run-map figure { display: grid; gap: .4rem; margin: 0; min-width: 0; }
+.experiment-run-map figcaption { font-size: .8rem; font-weight: 650; color: var(--ink); }
+.experiment-run-map-scroll { overflow-x: auto; }
+.experiment-run-map table { width: auto; border-collapse: separate; border-spacing: 4px; font-size: .78rem; white-space: nowrap; }
+.experiment-run-map th { padding: .2rem .45rem; border: 0; background: transparent; color: var(--muted); font-size: .7rem; font-weight: 650; letter-spacing: .02em; text-align: left; text-transform: none; }
+.experiment-run-map tbody th { color: var(--ink); }
+.experiment-run-map tbody th small { display: block; color: var(--muted); font-weight: 400; }
+.experiment-run-map td { padding: 0; border: 0; }
+.experiment-run-cell { display: grid; gap: .1rem; min-width: 6.8rem; padding: .4rem .55rem; border: 1px solid var(--line); border-radius: 8px; background: var(--theme-surface, #fff); color: var(--ink); font: inherit; text-align: left; cursor: pointer; font-variant-numeric: tabular-nums; }
+.experiment-run-cell strong { font-weight: 650; }
+.experiment-run-cell small { color: var(--muted); font-size: .7rem; }
+.experiment-run-cell:hover { border-color: var(--theme-line-strong); background: var(--theme-surface-hover); }
+.experiment-run-cell:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
+.experiment-run-cell[aria-pressed="true"] { border-color: var(--brand-primary); box-shadow: inset 0 0 0 1px var(--brand-primary); }
+.experiment-run-cell.is-running { background: var(--theme-next-soft); border-color: var(--theme-next-line); }
+.experiment-run-cell.is-queued, .experiment-run-cell.is-planned { background: var(--theme-soft); color: var(--muted); }
+.experiment-run-cell.is-failed, .experiment-run-cell.is-interrupted { background: var(--theme-alert-soft); border-color: var(--theme-alert-line); color: var(--theme-alert-ink); }
+.experiment-run-cell.is-cancelled { background: var(--theme-soft); color: var(--muted); text-decoration: line-through; text-decoration-color: var(--theme-line-strong); }

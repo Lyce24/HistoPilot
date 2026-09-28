@@ -22,7 +22,7 @@ import '../components/InferenceResults.css';
 
 export default function LocalInference({ workspace }: { workspace: Workspace }) {
   const parameters = useHashParameters();
-  const linked = { experiment: parameters.get('experiment') ?? '', predictor: parameters.get('predictor') ?? '', cohort: parameters.get('cohort') ?? '', evaluation: parameters.get('evaluation') ?? '' };
+  const linked = { experiment: parameters.get('experiment') ?? '', predictor: parameters.get('predictor') ?? '', cohort: parameters.get('cohort') ?? '', evaluation: parameters.get('evaluation') ?? '', batch: parameters.get('batch') ?? '' };
   return <InferenceWorkspace key={`${workspace.project.id}:${JSON.stringify(linked)}`} workspace={workspace} linked={linked} />;
 }
 
@@ -33,19 +33,19 @@ export function runSummary(record: ModelEvaluation) {
   return { unit: summary?.unit ?? null, selected, count: typeof record.execution?.result?.slideCount === 'number' ? record.execution.result.slideCount as number : null };
 }
 
-function InferenceWorkspace({ workspace, linked }: { workspace: Workspace; linked: { experiment: string; predictor: string; cohort: string; evaluation: string } }) {
+function InferenceWorkspace({ workspace, linked }: { workspace: Workspace; linked: { experiment: string; predictor: string; cohort: string; evaluation: string; batch?: string } }) {
   const project = workspace.project.id;
   // Query keys are shared with Evaluate models so both pages stay consistent.
   const batches = useQuery({ queryKey: ['evaluation-batches', project], queryFn: () => bulkEvaluations.list(project, true), refetchIntervalInBackground: false, refetchInterval: (query) => bulkEvaluationPollInterval(query.state.data) });
   const running = Boolean(batches.data?.items.some(bulkEvaluationActive));
-  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchIntervalInBackground: false, refetchInterval: () => running ? 5000 : 60000 });
+  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchIntervalInBackground: false, refetchInterval: () => running ? 30000 : 120000 });
   const experimentRegistry = useQuery({ queryKey: ['model-experiment-summaries', project], queryFn: () => experiments.summaries(project), refetchIntervalInBackground: false, refetchInterval: (query) => experimentPollInterval(query.state.data) });
   const cohorts = useQuery({ queryKey: ['evaluation-cohorts', project], queryFn: () => evaluation.list(project) });
   const records = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), refetchIntervalInBackground: false, refetchInterval: (query) => computePollInterval(query.state.data?.items) });
-  const [view, setView] = useState<'library' | 'setup' | 'detail' | 'batch'>(linked.evaluation ? 'detail' : linked.cohort || linked.predictor || linked.experiment ? 'setup' : 'library');
+  const [view, setView] = useState<'library' | 'setup' | 'detail' | 'batch'>(linked.evaluation ? 'detail' : linked.batch ? 'batch' : linked.cohort || linked.predictor || linked.experiment ? 'setup' : 'library');
   const [setupKey, setSetupKey] = useState(0);
   const [selectedRecord, setSelectedRecord] = useState(linked.evaluation);
-  const [batchId, setBatchId] = useState('');
+  const [batchId, setBatchId] = useState(linked.batch ?? '');
   const [tab, setTab] = useState<'runs' | 'batches'>('runs');
   const [search, setSearch] = useState('');
   const [state, setState] = useState('active');
@@ -69,9 +69,9 @@ function InferenceWorkspace({ workspace, linked }: { workspace: Workspace; linke
   function openLibrary() { if (!locked) setView('library'); }
   useStageLibrary(openLibrary);
   function create() { if (locked) return; setSelectedRecord(''); setSetupKey((key) => key + 1); setView('setup'); }
-  const title = view === 'library' ? 'Inference runs' : view === 'detail' ? detail?.manifest.name ?? 'Inference results' : view === 'batch' ? 'Inference batch' : 'Run inference';
+  const title = view === 'library' ? 'Run inference' : view === 'detail' ? detail?.manifest.name ?? 'Inference results' : view === 'batch' ? 'Inference batch' : 'Run inference';
   return <div className="clinical-workspace model-chains inference-workspace">
-    <PageHeader eyebrow="03 EVALUATE · INFERENCE" title={title}
+    <PageHeader eyebrow="05 EVALUATE · INFERENCE" title={title}
       description={view === 'library' ? 'Predict unlabeled slides with ready predictors. Results show what each model predicts, how confident it is and where it attends: no labels and no performance metrics.' : view === 'detail' ? 'Review saved predictions, compare model outputs and inspect attention on the original slides.' : view === 'batch' ? 'Monitor prediction jobs and open each predictor’s results.' : 'Select development models and an unlabeled inference cohort, review compatibility, then run predictions.'}
       actions={<div className="inline-actions">{view === 'library' ? <StageCreateButton onClick={create}>Run inference</StageCreateButton> : <StageBackButton disabled={locked} onClick={openLibrary}>Back to inference runs</StageBackButton>}<a className="btn btn-secondary" href="#test-data?purpose=inference">Create inference cohort</a></div>} />
     {view !== 'library' ? <EvidenceChain current="inference" experimentId={detail?.manifest.experimentId ?? (experimentIds.length === 1 ? experimentIds[0] : undefined)} predictorId={detail?.manifest.predictorId ?? (linked.predictor || undefined)} evaluationId={selectedRecord || undefined} /> : null}

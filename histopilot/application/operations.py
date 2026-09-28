@@ -10,7 +10,6 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import stat
 import tempfile
 import zipfile
@@ -24,6 +23,7 @@ from histopilot.application.project_workspace import (
     ProjectDocument,
     ProjectWorkspace,
 )
+from histopilot.storage import sqlite_connections
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     LOCK_FILE,
@@ -77,6 +77,72 @@ def _strings(value):
             yield from _strings(item)
 
 
+# Absolute path strings of immutable records, keyed by store, ID and content hash.
+_REFERENCES: dict[tuple[str, str, str], frozenset[str]] = {}
+_REFERENCE_LIMIT = 4096
+
+
+def _absolute(value):
+    return {item for item in _strings(value) if item.startswith("/") and "\x00" not in item}
+
+
+def _record_references(store, document):
+    key = (str(store.folder), document["id"], document.get("contentHash", ""))
+    cached = _REFERENCES.get(key)
+    if cached is not None and key[2]:
+        return cached
+    paths = _absolute(document.get("manifest", {}))
+    if document.get("manifest", {}).get("kind") == "dataset":
+        for artifact in ("records.json", "inventory.json"):
+            if artifact in document.get("artifacts", {}):
+                paths |= _absolute(
+                    json.loads(store.read_artifact(document["id"], artifact, include_inactive=True))
+                )
+    if len(_REFERENCES) >= _REFERENCE_LIMIT:
+        _REFERENCES.clear()
+    _REFERENCES[key] = frozenset(paths)
+    return _REFERENCES[key]
+
+
+def _missing_references(filesystem, paths, folder):
+    """Classify external references, listing each parent directory once.
+
+    On 9p and network mounts one listing replaces a ``resolve()`` and a ``stat``
+    per reference. Symbolic links, unlisted names and unreadable parents fall
+    back to the exact per-path check, so results match it.
+    """
+    groups = {}
+    for value in sorted(paths):
+        path = Path(value)
+        if not path.is_relative_to(folder):
+            groups.setdefault(path.parent, []).append((value, path))
+    missing = []
+    for parent, members in groups.items():
+        try:
+            try:
+                with os.scandir(parent) as entries:
+                    listing = {entry.name: entry.is_symlink() for entry in entries}
+            except FileNotFoundError:
+                # A missing parent resolves like each of its children would.
+                listing = {}
+            resolved = parent.resolve()
+        except OSError:
+            resolved, listing = None, None
+        for value, path in members:
+            name = path.name
+            fast = resolved is not None and name not in {"", ".", ".."}
+            if fast and listing.get(name) is False:
+                allowed, exists = filesystem._contains(resolved / name), True
+            elif fast and not listing:
+                allowed, exists = filesystem._contains(resolved / name), False
+            else:
+                allowed = filesystem._contains(path.resolve())
+                exists = allowed and path.exists()
+            if not allowed or not exists:
+                missing.append({"path": value, "reason": "missing" if allowed else "outside-roots"})
+    return missing
+
+
 def source_inventory(store, filesystem):
     """Check references without opening external files or decoding slide tensors."""
     document = ProjectWorkspace._read(store.folder)
@@ -91,32 +157,10 @@ def source_inventory(store, filesystem):
         *store.list_configurations(include_inactive=True),
     ]
     for document in documents:
-        paths.update(
-            value
-            for value in _strings(document.get("manifest", {}))
-            if value.startswith("/") and "\x00" not in value
-        )
-        if document.get("manifest", {}).get("kind") == "dataset":
-            for artifact in ("records.json", "inventory.json"):
-                if artifact in document.get("artifacts", {}):
-                    rows = json.loads(
-                        store.read_artifact(document["id"], artifact, include_inactive=True)
-                    )
-                    paths.update(
-                        value
-                        for value in _strings(rows)
-                        if value.startswith("/") and "\x00" not in value
-                    )
+        paths.update(_record_references(store, document))
         if len(paths) > 100_000:
             raise _error("The source inventory exceeds 100,000 references.", status=413)
-    missing = []
-    for value in sorted(paths):
-        path = Path(value)
-        if path.is_relative_to(store.folder):
-            continue
-        allowed = filesystem._contains(path.resolve())
-        if not allowed or not path.exists():
-            missing.append({"path": value, "reason": "missing" if allowed else "outside-roots"})
+    missing = _missing_references(filesystem, paths, store.folder)
     return {
         "sources": sources,
         "referenceCount": len(paths),
@@ -126,7 +170,8 @@ def source_inventory(store, filesystem):
 
 
 def operations_inventory(store, filesystem):
-    catalog = CleanupService(store, filesystem).catalog()
+    # Job rows only: the dependency graph is the cleanup page's concern.
+    catalog = CleanupService(store, filesystem)._catalog(graph=False)
     jobs = []
     for item in catalog["items"]:
         if item.get("job"):
@@ -135,16 +180,18 @@ def operations_inventory(store, filesystem):
                 row["job"]["waitingReason"] = "Waiting for shared CPU, RAM or GPU capacity."
             jobs.append(row)
     jobs.sort(key=lambda item: (item["job"]["status"] not in ACTIVE, item["name"]))
-    from histopilot.workers.train_batch import _capacity, _leases
+    from histopilot.taskcenter.leases import read_leases
+    from histopilot.workers.train_batch import _capacity
 
-    with _leases() as (_, active):
-        reservations = [
-            {
-                key: value.get(key)
-                for key in ("batchId", "runId", "kind", "cpus", "ramGb", "gpu", "runsPerGpu")
-            }
-            for value in active
-        ]
+    # Read-only: a polled inventory never prunes other workers' leases.
+    reservations = [
+        {
+            key: value.get(key)
+            for key in ("batchId", "runId", "kind", "cpus", "ramGb", "gpu", "runsPerGpu")
+        }
+        for value in read_leases()
+        if not value.get("invalid") and value.get("live")
+    ]
     cpus, ram = _capacity()
     return {
         "projectId": store.project_id,
@@ -201,7 +248,10 @@ class StudyPortability:
             ):
                 temporary = Path(temporary)
                 snapshot = temporary / DATABASE_FILE
-                with self.store._connection() as source, sqlite3.connect(snapshot) as target:
+                with (
+                    self.store._connection() as source,
+                    sqlite_connections.connect(snapshot) as target,
+                ):
                     source.backup(
                         target,
                         pages=1024,
@@ -489,7 +539,7 @@ def restore_archive(archive, destination, filesystem, *, progress=None, operatio
         result = verify_archive(archive, destination=staging, progress=progress)
         # Validate the snapshot before publishing a project descriptor at its final path.
         database = staging / DATABASE_FILE
-        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+        with sqlite_connections.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
             connection.execute("PRAGMA trusted_schema=OFF")
             if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise _error("The restored SQLite snapshot failed its integrity check.")

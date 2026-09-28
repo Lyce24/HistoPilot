@@ -18,10 +18,12 @@ import { createRoot } from ${JSON.stringify(join(web, 'node_modules/react-dom/cl
 import { QueryClient, QueryClientProvider } from ${JSON.stringify(join(web, 'node_modules/@tanstack/react-query/build/modern/index.js'))};
 import System from ${source('pages/System.tsx')};
 import { api, ApiError } from ${source('api/client.ts')};
+import { taskCenter } from ${source('api/taskCenter.ts')};
 import ${source('styles.css')};
 const gib = 1024 ** 3;
 const state = window.workflow = { computeCalls: 0, systemCalls: 0, failure: null, errors: [] };
 window.fetch = async (...args) => { state.errors.push('Unexpected request: ' + args[0]); throw new Error(state.errors.at(-1)); };
+taskCenter.rollup = async (scope) => ({ scope: scope ?? {}, state: 'not-started', counts: {}, byKind: {}, progress: null, live: 0, active: 0, pending: 0, held: false, position: null, queuePosition: null, waitingReason: null, eta: null, runnerAlive: true, paused: false, stopRequest: null, lastFailure: null, recentFailures: 0, current: null, startedAt: null, finishedAt: null, ownerKey: null, ownerKind: null, ownerId: null, title: null, projectId: null, projectName: null, href: '#task-center', updatedAt: '2026-09-25T10:05:00Z' });
 api.system = async () => { state.systemCalls++; return { mode: 'local', workspace: '/home/research/projects', storage: { engine: 'SQLite', journalMode: 'wal', schemaVersion: 3 }, control: { process: 'Control service', cudaModelsLoaded: false }, sourcesReadOnly: true, workers: { executionEnabled: true, nativeExecutionImplemented: true, tmuxAvailable: true, status: 'Runtime checks are available in each workflow.' } }; };
 api.systemCompute = async () => {
   state.computeCalls++;

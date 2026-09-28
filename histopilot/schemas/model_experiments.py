@@ -1,12 +1,13 @@
 """Typed commands for persistent model-development records, before inputs exist."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import Field, StrictInt, field_validator
+from pydantic import Field, StrictInt, field_validator, model_validator
 
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.schemas.predictor_policy import ExperimentPredictorPolicy
+from histopilot.schemas.protocols import SplitSpec
 from histopilot.schemas.workspace import RequestModel
 
 
@@ -41,6 +42,7 @@ class ExperimentBatchPlan(RequestModel):
 
 
 class CreateModelExperiment(ExperimentValues):
+    setupVersion: Literal[1] | None = None
     operationId: str = Field(min_length=1, max_length=200)
     sourceExperimentId: str | None = Field(default=None, min_length=1, max_length=128)
 
@@ -60,3 +62,31 @@ class UpdateModelExperiment(ExperimentValues):
 class SubmitModelExperiment(RequestModel):
     expectedRevision: Annotated[StrictInt, Field(ge=1, le=2**63 - 1)]
     operationId: str = Field(min_length=1, max_length=200)
+
+
+class ConfigureModelExperimentSetup(RequestModel):
+    expectedRevision: Annotated[StrictInt, Field(ge=1, le=2**63 - 1)]
+    datasetId: str = Field(min_length=1, max_length=128)
+    targetSplitId: str = Field(min_length=1, max_length=128)
+    featureBundleId: str = Field(min_length=1, max_length=128)
+    loadingPolicy: Literal["auto", "native", "mmap"] = "auto"
+    packArtifactId: str | None = Field(default=None, pattern=r"^pack-[a-f0-9]{64}$")
+    trainingSplit: SplitSpec
+
+    @model_validator(mode="after")
+    def coherent_inputs(self):
+        if self.trainingSplit.version != 4:
+            raise ValueError(
+                "Experimental setup requires a development-only training split (version 4)."
+            )
+        MILInputSpec(
+            protocolId="derived",
+            featureBundleId=self.featureBundleId,
+            loadingPolicy=self.loadingPolicy,
+            packArtifactId=self.packArtifactId,
+        )
+        return self
+
+
+class FreezeModelExperimentSetup(SubmitModelExperiment):
+    pass

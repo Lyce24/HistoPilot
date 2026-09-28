@@ -2,6 +2,11 @@
 
 Run as ``python -m histopilot.workers.pack_features /absolute/job/plan.json``.
 The absolute script entry point also works from an unrelated working directory.
+
+As a Task Center task (``HISTOPILOT_TASK_MANAGED=1``) the worker takes no resource lease
+and no legacy output claim: the output lock alone guards the destination. A busy output
+exits 75 (EX_TEMPFAIL) without a receipt so the task is requeued, and the receipt names
+the task attempt that wrote it.
 """
 
 import json
@@ -20,7 +25,7 @@ if __package__ in {None, ""}:
 
 from histopilot.application.features import FeatureService
 from histopilot.storage.filesystem import LocalFilesystem
-from histopilot.storage.project_lock import _reject_symlink_components
+from histopilot.storage.project_lock import StorageError, _reject_symlink_components
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.packing_process import (
     output_lock,
@@ -30,9 +35,25 @@ from histopilot.workers.packing_process import (
 )
 from histopilot.workers.resource_reservation import preparation_resources, reserve_preparation
 
+BUSY_EXIT = 75  # EX_TEMPFAIL: the output is in use; the Task Center retries later
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _managed() -> bool:
+    return os.environ.get("HISTOPILOT_TASK_MANAGED") == "1"
+
+
+def _task_identity() -> dict:
+    attempt = os.environ.get("HISTOPILOT_TASK_ATTEMPT", "")
+    if not os.environ.get("HISTOPILOT_TASK_ID"):
+        return {}
+    return {
+        "taskId": os.environ["HISTOPILOT_TASK_ID"],
+        "taskAttempt": int(attempt) if attempt.isdecimal() else None,
+    }
 
 
 def run_job(plan_path: Path) -> dict:
@@ -91,11 +112,14 @@ def _run_job(plan_path: Path) -> dict:
 
     result = {
         "jobId": plan["jobId"],
+        **_task_identity(),
         "state": "failed",
         "startedAt": _now(),
         "validation": None,
         "artifact": None,
     }
+    managed = _managed()
+    busy = None
     last_progress, last_stage = 0.0, None
 
     def progress(value):
@@ -149,12 +173,16 @@ def _run_job(plan_path: Path) -> dict:
                     if plan["spec"]["action"] == "pack":
                         output = Path(plan["spec"]["outputPath"])
                         _reject_symlink_components(output)
-                        with registry_lock():
-                            claim = json.loads(
-                                ScientificStore._read_file(Path(plan["claimPath"]), 65536)
-                            )
-                            if claim.get("jobId") != plan["jobId"]:
-                                raise ValueError("Output reservation belongs to another job.")
+                        if plan.get("claimPath"):
+                            with registry_lock():
+                                claim = json.loads(
+                                    ScientificStore._read_file(Path(plan["claimPath"]), 65536)
+                                )
+                                if claim.get("jobId") != plan["jobId"]:
+                                    raise ValueError("Output reservation belongs to another job.")
+                                stack.enter_context(output_lock(output))
+                        else:
+                            # Task Center jobs: the process-held lock alone guards the output.
                             stack.enter_context(output_lock(output))
                         artifact = build_pack(
                             configuration,
@@ -195,26 +223,34 @@ def _run_job(plan_path: Path) -> dict:
                     result["state"] = "succeeded"
                 print("Completed successfully.", flush=True)
             except Exception as error:
-                result["state"] = (
-                    "cancelled"
-                    if cancelled() or type(error).__name__ == "PackingCancelled"
-                    else "failed"
-                )
-                result["error"] = str(error)
-                traceback.print_exc()
+                if managed and isinstance(error, StorageError) and error.code == "OUTPUT_BUSY":
+                    busy = error  # no receipt: the Task Center requeues the task
+                else:
+                    result["state"] = (
+                        "cancelled"
+                        if cancelled() or type(error).__name__ == "PackingCancelled"
+                        else "failed"
+                    )
+                    result["error"] = str(error)
+                    traceback.print_exc()
             finally:
                 reservation_stack.close()
-                result["finishedAt"] = _now()
-                write_json(result_path, result)
-                print(f"Final state: {result['state']}", flush=True)
+                if busy is None:
+                    result["finishedAt"] = _now()
+                    write_json(result_path, result)
+                    print(f"Final state: {result['state']}", flush=True)
+                else:
+                    print(f"OUTPUT_BUSY: {busy}", flush=True)
                 log.flush()
                 os.fsync(log.fileno())
     finally:
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
         # Terminal result is durable before releasing the live-process receipt.
-        if result_path.exists():
+        if result_path.exists() or busy is not None:
             Path(plan["processPath"]).unlink(missing_ok=True)
+    if busy is not None:
+        raise busy
     return result
 
 
@@ -225,6 +261,12 @@ def main() -> int:
     try:
         result = run_job(Path(sys.argv[1]))
         return 0 if result["state"] == "succeeded" else 1
+    except StorageError as error:
+        if error.code == "OUTPUT_BUSY" and _managed():
+            print(f"OUTPUT_BUSY: {error}", flush=True)
+            return BUSY_EXIT
+        traceback.print_exc()
+        return 1
     except Exception:
         traceback.print_exc()
         return 1

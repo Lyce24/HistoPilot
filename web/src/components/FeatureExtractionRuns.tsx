@@ -2,12 +2,15 @@ import { extractionActive, type ExtractionJob } from '../api/trident';
 import { preparationLink, type PreparationContext } from '../lib/preparationRoute';
 import ExtractionProgress, { extractionModelLabel, extractionStateLabel, extractionTaskLabel } from './ExtractionProgress';
 import { Badge, Icon, Panel } from './ui';
+import RunStatusChip from './RunStatusChip';
 
 /** Extraction exists before a feature source or bundle can be saved. */
-export default function FeatureExtractionRuns({ jobs, context, isPending }: {
+export default function FeatureExtractionRuns({ jobs, context, isPending, project }: {
   jobs: ExtractionJob[];
   context: PreparationContext;
   isPending: boolean;
+  /** Task Center runs show one status chip (progress, queue place, link) instead of the stepper. */
+  project?: string;
 }) {
   if (isPending) return <p className="muted" role="status">Checking extraction runs…</p>;
   if (!jobs.length) return null;
@@ -22,10 +25,11 @@ export default function FeatureExtractionRuns({ jobs, context, isPending }: {
           <div><h3><a href={link(job)}>{extractionModelLabel(job)} · {extractionTaskLabel(job)}</a></h3>
             <p className="muted">Started <time dateTime={job.createdAt}>{new Date(job.createdAt).toLocaleString()}</time></p>
           </div>
-          <Badge tone="purple">{extractionStateLabel[job.state]}</Badge>
+          {/* A Task Center run's state is its chip below (read from the task store, not the record). */}
+          {job.executor === 'task-center' && project ? null : <Badge tone="purple">{extractionStateLabel[job.state]}</Badge>}
           <a className="btn btn-secondary btn-small" href={link(job)}>View progress <Icon name="arrow" size={15} /></a>
         </div>
-        <ExtractionProgress job={job} />
+        {job.executor === 'task-center' && project ? <RunStatusChip scope={job.ownerKey ? { owner: job.ownerKey } : { ownerKind: 'extraction', ownerId: job.id, project }} variant="row" label={`Extraction · ${extractionModelLabel(job)}`} /> : <ExtractionProgress job={job} />}
       </article>)}
       {finished.length ? <details className="pfm-extraction-history" open={!active.length || undefined}>
         <summary>Previous extraction runs ({finished.length})</summary>

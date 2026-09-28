@@ -43,21 +43,13 @@ export interface ResourcePolicy {
   maxConcurrentRuns: number; gpuIds: number[]; runsPerGpu: number;
   cpuThreadsPerRun: number; dataLoaderWorkers: number; ramGbPerRun: number;
 }
-export interface RuntimeRecommendation {
-  version: 1; generatedAt: string; applicable: boolean;
-  basis: 'measured' | 'estimated' | 'hardware_only' | 'unavailable';
-  resources: ResourcePolicy | null; summary: string;
-  memory: { perRunGpuGb: number | null; perRunRamGb: number | null; observedRuns: number };
-  limits: { cpuConcurrency: number; ramConcurrency: number; gpuConcurrency: number | null; additionalRunsNow: number | null };
-  evidence: { key: string; gpuUuid: string; trainingPatches: number; evaluationPatches: number; peakReservedGpuGb: number; stage: 'fit' | 'assessment'; epoch: number; batchId: string; runId: string }[];
-  findings: Finding[];
-  hardware?: { cpuCount: number; totalRamGb: number; availableRamGb: number; gpus: TrainingGPU[] };
-}
 export interface DevelopmentBatchSpec {
   version: 1; experimentId?: string; experimentRevision?: number; experimentName: string; batchName: string; inputs: MILExperimentSpec;
   recipe: TrainingRecipe; mode: 'single' | 'grid' | 'explicit';
   grid: { learningRates: number[]; weightDecays: number[]; maxEpochs: number[] };
-  configurations: TrainingRecipe[]; trainingSeeds: number[]; resources: ResourcePolicy; notes: string;
+  configurations: TrainingRecipe[]; trainingSeeds: number[]; notes: string;
+  /** Saved only by batches planned before the Task Center; it now decides parallelism and devices. */
+  resources?: ResourcePolicy;
   /** Omitted only on saved batches created before predictor choices belonged to each batch. */
   predictorPolicy?: ExperimentPredictorPolicy;
   selectionMetric?: TrainingRecipe['checkpointMetric'] | null;
@@ -134,6 +126,9 @@ export interface TrainingExecution {
   runs: TrainingRun[]; createdAt: string; updatedAt: string;
   resourcePlan?: { requestedConcurrency: number; effectiveConcurrency: number; cpuSlotsPerRun: number; cpuLimit: number; ramLimit: number; gpuSlotLimit: number | null; note: string };
   computePath?: string; computeVersion?: string; provenancePath?: string;
+  /** Batches launched through the Task Center have no tmux session of their own. */
+  executor?: 'task-center' | 'tmux';
+  taskCenter?: { runnerAlive: boolean; queued: number; running: number; held: boolean; waitingReason: string | null; ownerKey: string | null } | null;
   telemetry?: {
     path: string; intervalSeconds: number;
     latest: TrainingResourceSample;
@@ -170,7 +165,6 @@ const body = (value: unknown) => ({ method: 'POST', body: JSON.stringify(value) 
 export const development = {
   list: (project: string) => request<DevelopmentBatchList>(prefix(project)),
   runtime: (project: string) => request<TrainingRuntime>(`/projects/${encodeURIComponent(project)}/mil-experiments/runtime`),
-  runtimeRecommendation: (project: string, spec: DevelopmentBatchSpec, signal?: AbortSignal) => request<RuntimeRecommendation>(`${prefix(project)}/runtime-recommendation`, { ...body(spec), signal }),
   execution: (project: string, batch: string) => request<TrainingExecution | null>(`${batchPrefix(project, batch)}/execution`),
   history: (project: string, batch: string, run: string) => request<TrainingHistory>(`${batchPrefix(project, batch)}/runs/${encodeURIComponent(run)}/history`),
   resourceHistory: (project: string, batch: string, signal?: AbortSignal) => request<TrainingResourceHistory>(`${batchPrefix(project, batch)}/resources/history`, { signal }),
@@ -222,6 +216,7 @@ export const nnmilRecipe = (): TrainingRecipe => ({
   evalBagSize: null, evalBatchSize: 1, checkpointMetric: 'validation_auroc',
 });
 export const defaultResources = (): ResourcePolicy => ({ maxConcurrentRuns: 1, gpuIds: [0], runsPerGpu: 1, cpuThreadsPerRun: 2, dataLoaderWorkers: 2, ramGbPerRun: 8 });
+export const managedByTaskCenter = (execution?: Pick<TrainingExecution, 'executor' | 'taskCenter'> | null) => execution?.executor === 'task-center' || Boolean(execution?.taskCenter);
 export const trainingActive = (execution?: TrainingExecution | null) => execution?.status === 'queued' || execution?.status === 'running';
 export const developmentPollInterval = (data?: DevelopmentBatchList) => data?.executionImplemented ? data.executions?.some(trainingActive) ? 3000 : 15000 : false;
 /** A project-level refresh can discover a CLI launch before the selected-batch query. */

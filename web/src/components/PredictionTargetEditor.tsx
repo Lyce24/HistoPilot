@@ -6,6 +6,10 @@ import { ErrorNotice, Icon } from './ui';
 
 export interface PredictionTargetEditorProps {
   target: ProtocolSpec['target'];
+  classDefinitionLocked?: boolean;
+  /** Target/split construction owns this setting; other editors retain independent label units. */
+  splitUnit?: 'slide' | 'patient';
+  showFieldProfile?: boolean;
   fieldContext: ProtocolFieldContext;
   unlinkedSlideCount?: number;
   fallbackSlideCount?: number;
@@ -25,7 +29,7 @@ export interface PredictionTargetEditorProps {
 
 /** Keep development and independent test-cohort targets on the same editing workflow. */
 export default function PredictionTargetEditor({
-  target, fieldContext, unlinkedSlideCount, fallbackSlideCount, labelValues, rawValues, dataLabel,
+  target, classDefinitionLocked = false, showFieldProfile = true, splitUnit, fieldContext, unlinkedSlideCount, fallbackSlideCount, labelValues, rawValues, dataLabel,
   onChooseTarget, onChange,
 }: PredictionTargetEditorProps) {
   const columns = fieldContext.dictionary.map((item) => item.key);
@@ -39,7 +43,7 @@ export default function PredictionTargetEditor({
   }
   return (
     <div className="stack">
-      {unlinkedSlideCount ? (
+      {splitUnit !== 'slide' && unlinkedSlideCount ? (
         <div className="callout callout-warning">
           <strong>
             {unlinkedSlideCount} slides have unresolved
@@ -50,7 +54,7 @@ export default function PredictionTargetEditor({
             : 'Revise this dataset to supply a patient mapping or explicitly confirm Slide ID fallback. Fallback creates one group per unresolved slide; it cannot establish which slides belong to the same patient.'}
         </div>
       ) : null}
-      {target.unit === 'patient' && Boolean(fallbackSlideCount) ? <p className="callout callout-warning">{fallbackSlideCount} slides use Slide ID fallback. Supply verified patient IDs before using patient-level labels, validation or uncertainty estimates.</p> : null}
+      {splitUnit !== 'slide' && target.unit === 'patient' && Boolean(fallbackSlideCount) ? <p className="callout callout-warning">{fallbackSlideCount} slides use Slide ID fallback. Supply verified patient IDs before using patient-level labels, validation or uncertainty estimates.</p> : null}
       <div className="science-grid-two">
         <label className="label">
           Target attribute
@@ -71,6 +75,7 @@ export default function PredictionTargetEditor({
           <select
             className="field"
             value={target.task}
+            disabled={classDefinitionLocked}
             onChange={(event) =>
               updateTarget({
                 task: event.target.value as ProtocolSpec['target']['task'],
@@ -89,11 +94,12 @@ export default function PredictionTargetEditor({
             <option value="multiclass_classification">Multiclass classification</option>
           </select>
         </label>
-        <label className="label">
+        {splitUnit ? <div className="label">Label unit<strong>{target.unit === 'slide' ? 'Slide' : 'Patient'}</strong><small>{target.unit === splitUnit ? 'Uses the split unit selected in Dataset & cohort.' : 'This legacy draft retains its saved label unit. Choose a split unit to align labels and splitting.'}</small></div> : <label className="label">
           Label unit
           <select
             className="field"
             value={target.unit}
+            disabled={classDefinitionLocked}
             onChange={(event) =>
               updateTarget({ unit: event.target.value as 'patient' | 'slide' })
             }
@@ -104,12 +110,13 @@ export default function PredictionTargetEditor({
             <option value="slide">Slide / case — keep known patients together</option>
           </select>
           <small>Training uses individual slides. The label unit determines label consistency and primary scoring; known patients stay together in every split, including validation. Patient targets retain slide-level results as a secondary analysis.</small>
-        </label>
+        </label>}
         <label className="label">
           Class names, separated by |
           <input
             className="field"
             value={target.classes.join(' | ')}
+            disabled={classDefinitionLocked}
             onChange={(event) =>
               updateTarget({
                 classes:
@@ -134,7 +141,7 @@ export default function PredictionTargetEditor({
                 ? (target.positiveClass ?? '')
                 : ''
             }
-            disabled={target.task !== 'binary_classification'}
+            disabled={classDefinitionLocked || target.task !== 'binary_classification'}
             onChange={(event) =>
               updateTarget({ positiveClass: event.target.value || undefined })
             }
@@ -155,7 +162,7 @@ export default function PredictionTargetEditor({
       </div>
       {target.field ? (
         <div className="stack">
-          <FieldProfile {...fieldContext} field={target.field} />
+          {showFieldProfile ? <FieldProfile {...fieldContext} field={target.field} /> : null}
           {labelValues.isPending ? (
             <p className="protocol-live-status" role="status">
               Reading target values…
@@ -173,12 +180,13 @@ export default function PredictionTargetEditor({
           ) : null}
         </div>
       ) : null}
+      {classDefinitionLocked ? <p className="muted">Testing uses the training task, class names, label unit and positive class. Choose its source field and map the testing values below.</p> : null}
       <div className="science-subheading">
         <h3>Match source values to classes</h3>
         <button
           type="button"
           className="btn btn-secondary btn-small"
-          disabled={!rawValues.length || labelValues.data?.valuesTruncated}
+          disabled={classDefinitionLocked || !rawValues.length || labelValues.data?.valuesTruncated}
           onClick={() =>
             updateTarget({
               ...inferTargetSettings(rawValues),
@@ -193,8 +201,7 @@ export default function PredictionTargetEditor({
         </button>
       </div>
       <p className="muted">
-        Classes are filled from the source values. Choose the positive class for a binary
-        task, and edit any mapping below. Original dataset values stay unchanged.
+        {classDefinitionLocked ? 'Map the source values to the training classes. Original dataset values stay unchanged.' : 'Classes are filled from the source values. Choose the positive class for a binary task, and edit any mapping below. Original dataset values stay unchanged.'}
       </p>
       <ErrorNotice error={labelValues.error} />
       {labelValues.data?.valuesTruncated ? (
@@ -203,7 +210,7 @@ export default function PredictionTargetEditor({
           target or enter the task, classes and label mapping yourself.
         </p>
       ) : null}
-      {target.field &&
+      {!classDefinitionLocked && target.field &&
       labelValues.data &&
       !labelValues.data.valuesTruncated &&
       rawValues.length < 2 ? (

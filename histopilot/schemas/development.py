@@ -250,7 +250,9 @@ class DevelopmentBatchSpec(RequestModel):
     grid: SearchGrid = Field(default_factory=SearchGrid)
     configurations: list[TrainingRecipe] = Field(default_factory=list, max_length=512)
     trainingSeeds: list[Seed] = Field(default_factory=lambda: [42], min_length=1, max_length=100)
-    resources: ResourcePolicy = Field(default_factory=ResourcePolicy)
+    # Frozen specs from before the Task Center always carry resources; new setups leave
+    # parallelism to the Task Center and omit the key from their serialized shape.
+    resources: ResourcePolicy | None = None
     notes: str = Field(default="", max_length=2000)
     predictorPolicy: ExperimentPredictorPolicy | None = None
     selectionMetric: Literal["validation_auroc", "validation_loss", "validation_accuracy"] | None = (
@@ -305,6 +307,8 @@ class DevelopmentBatchSpec(RequestModel):
             values.pop("experimentRevision", None)
         if self.predictorPolicy is None:
             values.pop("predictorPolicy", None)
+        if self.resources is None:
+            values.pop("resources", None)
         if self.selectionMetric is None:
             values.pop("selectionMetric", None)
         if self.candidateSelection is None:

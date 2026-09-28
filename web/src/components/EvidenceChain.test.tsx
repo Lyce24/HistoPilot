@@ -9,4 +9,9 @@ describe('experiment-owned predictor evidence chain', () => {
     expect(html).not.toContain('>Predictors<'); expect(html).not.toContain('#post-development');
     expect(evidenceLink('post-development', { experimentId: 'one', predictorId: 'two' })).toBe('#experiments?experiment=one&predictor=two&tab=predictors');
   });
+  it('does not present model interpretation as a step after evaluation, clinical utility or inference', () => {
+    for (const current of ['evaluation', 'clinical-utility', 'inference'] as const) {
+      expect(renderToStaticMarkup(<EvidenceChain current={current} predictorId="ready-one" evaluationId="run" />)).not.toContain('Model interpretation');
+    }
+  });
 });

@@ -194,6 +194,71 @@ describe('control service client', () => {
     });
     expect(JSON.parse(fetcher.mock.calls[2][1].body).purpose).toBe('storage');
   });
+  describe('reads that meet a busy project', () => {
+    const busy = () => json({ detail: 'Another operation is changing this workspace.', code: 'PROJECT_BUSY' }, 409);
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('waits with a doubling backoff and reads again', async () => {
+      vi.useFakeTimers();
+      const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' }))
+        .mockResolvedValueOnce(busy()).mockResolvedValueOnce(busy()).mockResolvedValueOnce(json({ items: [] }));
+      vi.stubGlobal('fetch', fetcher);
+      const { request } = await import('./client');
+      const pending = request('/projects/p/model-experiments');
+      await vi.advanceTimersByTimeAsync(249);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(pending).resolves.toEqual({ items: [] });
+      expect(fetcher).toHaveBeenCalledTimes(4);
+      expect(fetcher.mock.calls[3][1].headers.get('X-HistoPilot-Token')).toBe('session');
+    });
+
+    it('gives up with the busy error after its retry budget', async () => {
+      vi.useFakeTimers();
+      const fetcher = vi.fn().mockImplementation(async (url: string) => (url.endsWith('/session') ? json({ token: 'session' }) : busy()));
+      vi.stubGlobal('fetch', fetcher);
+      const { BUSY_READ_RETRY_DELAYS_MS, request } = await import('./client');
+      const pending = request('/projects/p/operations/sources').catch((reason: unknown) => reason);
+      await vi.advanceTimersByTimeAsync(BUSY_READ_RETRY_DELAYS_MS.reduce((total, delay) => total + delay, 0));
+      expect(await pending).toMatchObject({ status: 409, code: 'PROJECT_BUSY' });
+      expect(fetcher).toHaveBeenCalledTimes(1 + 1 + BUSY_READ_RETRY_DELAYS_MS.length);
+    });
+
+    it('never replays a mutation, whose operation ID the UI keeps for an explicit retry', async () => {
+      const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' })).mockResolvedValueOnce(busy());
+      vi.stubGlobal('fetch', fetcher);
+      const { request } = await import('./client');
+      await expect(request('/projects/p/model-experiments/e/submit', { method: 'POST', body: '{"operationId":"keep"}' }))
+        .rejects.toMatchObject({ status: 409, code: 'PROJECT_BUSY' });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry other conflicts', async () => {
+      const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' }))
+        .mockResolvedValueOnce(json({ detail: 'Reload.', code: 'REVISION_CONFLICT' }, 409));
+      vi.stubGlobal('fetch', fetcher);
+      const { request } = await import('./client');
+      await expect(request('/projects/p/drafts/d')).rejects.toMatchObject({ code: 'REVISION_CONFLICT' });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+
+    it('stops waiting as soon as the query is cancelled', async () => {
+      vi.useFakeTimers();
+      const fetcher = vi.fn().mockResolvedValueOnce(json({ token: 'session' })).mockResolvedValue(busy());
+      vi.stubGlobal('fetch', fetcher);
+      const { request } = await import('./client');
+      const controller = new AbortController();
+      const pending = request('/projects/p/drafts', { signal: controller.signal }).catch((reason: unknown) => reason);
+      await vi.advanceTimersByTimeAsync(100);
+      controller.abort();
+      expect(await pending).toMatchObject({ name: 'AbortError' });
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it.each(['PREVIEW_STALE', 'FEATURE_BUNDLE_INVALID', 'VERSION_TAG_CONFLICT'])('preserves structured %s errors for the correct recovery flow', async (code) => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(json({ token: 'session' }))

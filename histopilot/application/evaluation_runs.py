@@ -88,12 +88,22 @@ class EvaluationRunService:
                 "COMPARISON_REQUIRES_LABELS",
                 409,
             )
+        if manifest.get("splitUnit") == "slide":
+            raise StorageError(
+                "Patient analysis is disabled for slide-level experiments.",
+                "PATIENT_ANALYSIS_DISABLED",
+                409,
+            )
         cohort = self.store.get_configuration(manifest["cohortId"])
         predictor = self.store.get_configuration(manifest["predictorId"])
-        if (manifest["cohort"] != reference(cohort)
-                or manifest["predictor"] != reference(predictor)
-                or manifest["target"] != predictor["manifest"]["target"]):
-            raise StorageError("Evaluation references or targets changed.", "COMPARISON_EVIDENCE_CHANGED", 409)
+        if (
+            manifest["cohort"] != reference(cohort)
+            or manifest["predictor"] != reference(predictor)
+            or manifest["target"] != predictor["manifest"]["target"]
+        ):
+            raise StorageError(
+                "Evaluation references or targets changed.", "COMPARISON_EVIDENCE_CHANGED", 409
+            )
         content = self.artifact(identity, "predictions.json")
         try:
             predictions = json.loads(content)
@@ -103,10 +113,13 @@ class EvaluationRunService:
             slides = _validate_records(predictions["records"], classes)
             memberships = {row["slideId"]: row for row in cohort["manifest"]["memberships"]}
             observed = {row["slideId"]: (row.get("patientId"), row.get("label")) for row in slides}
-            expected = {key: (row.get("patientId"), row.get("label"))
-                        for key, row in memberships.items()}
+            expected = {
+                key: (row.get("patientId"), row.get("label")) for key, row in memberships.items()
+            }
             if observed != expected:
-                raise ValueError("Predictions must cover exactly the frozen cohort membership and labels.")
+                raise ValueError(
+                    "Predictions must cover exactly the frozen cohort membership and labels."
+                )
             for row in slides:
                 source = memberships[row["slideId"]].get("patientIdSource")
                 if "patientIdSource" in row and row["patientIdSource"] != source:
@@ -114,8 +127,12 @@ class EvaluationRunService:
                 if not row.get("patientId") or source == "slide_fallback":
                     raise ValueError("Patient comparisons require verified patient identities.")
                 row["patientIdSource"] = source
-            patients = _patient_records(slides, predictions.get("patientRecords"), classes,
-                                         manifest["inference"]["patientAggregation"])
+            patients = _patient_records(
+                slides,
+                predictions.get("patientRecords"),
+                classes,
+                manifest["inference"]["patientAggregation"],
+            )
         except (ValueError, KeyError, TypeError, OverflowError) as error:
             raise StorageError(str(error), "COMPARISON_EVIDENCE_INVALID", 409) from error
         return document, slides, patients, hashlib.sha256(content).hexdigest()
@@ -123,24 +140,39 @@ class EvaluationRunService:
     def compare(self, request):
         from histopilot.statistics import patient_bootstrap
 
-        left, _left_slides, left_patients, left_hash = self.patient_evidence(request.leftEvaluationId)
-        right, _right_slides, right_patients, right_hash = self.patient_evidence(request.rightEvaluationId)
+        left, _left_slides, left_patients, left_hash = self.patient_evidence(
+            request.leftEvaluationId
+        )
+        right, _right_slides, right_patients, right_hash = self.patient_evidence(
+            request.rightEvaluationId
+        )
         a, b = left["manifest"], right["manifest"]
-        if (a["cohort"] != b["cohort"] or a["target"] != b["target"]
-                or a["inference"]["patientAggregation"] != b["inference"]["patientAggregation"]):
-            raise StorageError("Choose the same frozen cohort, target, and patient aggregation for paired comparison.",
-                               "COMPARISON_CONTEXT_MISMATCH", 409)
+        if (
+            a["cohort"] != b["cohort"]
+            or a["target"] != b["target"]
+            or a["inference"]["patientAggregation"] != b["inference"]["patientAggregation"]
+        ):
+            raise StorageError(
+                "Choose the same frozen cohort, target, and patient aggregation for paired comparison.",
+                "COMPARISON_CONTEXT_MISMATCH",
+                409,
+            )
         try:
-            result = patient_bootstrap(left_patients, a["target"], request.analysis.model_dump(),
-                                       other=right_patients)
+            result = patient_bootstrap(
+                left_patients, a["target"], request.analysis.model_dump(), other=right_patients
+            )
         except ValueError as error:
             raise StorageError(str(error), "COMPARISON_PATIENT_MISMATCH", 409) from error
         return {
-            "leftEvaluationId": left["id"], "rightEvaluationId": right["id"],
-            "leftName": a.get("name", left["id"]), "rightName": b.get("name", right["id"]),
-            "cohortId": a["cohortId"], "target": a["target"],
+            "leftEvaluationId": left["id"],
+            "rightEvaluationId": right["id"],
+            "leftName": a.get("name", left["id"]),
+            "rightName": b.get("name", right["id"]),
+            "cohortId": a["cohortId"],
+            "target": a["target"],
             "patientAggregation": a["inference"]["patientAggregation"],
-            "analysis": request.analysis.model_dump(), "difference": "left_minus_right",
+            "analysis": request.analysis.model_dump(),
+            "difference": "left_minus_right",
             "predictionsSha256": {"left": left_hash, "right": right_hash},
             "statistics": result,
         }
@@ -195,8 +227,15 @@ class EvaluationRunService:
         return next(iter(candidates.values()))["id"]
 
     def _review_cohort(self, selection, model, test):
-        if test["spec"].get("purpose") == "review" and selection.patientIdentifiers == "independent":
-            raise StorageError("Slide review predictions require shared patient identifiers.", "INVALID_REVIEW_COHORT", 409)
+        if (
+            test["spec"].get("purpose") == "review"
+            and selection.patientIdentifiers == "independent"
+        ):
+            raise StorageError(
+                "Slide review predictions require shared patient identifiers.",
+                "INVALID_REVIEW_COHORT",
+                409,
+            )
         if test["spec"].get("target"):
             target = TargetSpec.model_validate(test["spec"]["target"])
             expected = TargetSpec.model_validate(model["target"])
@@ -223,7 +262,9 @@ class EvaluationRunService:
             frozen_threshold is not None and selection.inference is None
         ):
             inference = inference.model_copy(
-                update={"decisionThreshold": frozen_threshold if frozen_threshold is not None else 0.5}
+                update={
+                    "decisionThreshold": frozen_threshold if frozen_threshold is not None else 0.5
+                }
             )
         bundle_id = self._test_bundle(selection, model, test, inference)
         spec = EvaluationSpec.model_validate(
@@ -261,6 +302,7 @@ class EvaluationRunService:
                 409,
             )
         model, test = predictor["manifest"], cohort["manifest"]
+        slide_unit = test["spec"].get("splitUnit") == "slide"
         reviewed_at_evaluation = (
             not test["spec"].get("protocolId")
             or selection.featureBundleId is not None
@@ -293,10 +335,20 @@ class EvaluationRunService:
         if purpose == "review" and (
             test["spec"].get("patientIdentifiers") != "shared" or model["target"]["unit"] != "slide"
         ):
-            raise StorageError("Review predictions require unlabeled slide outcomes and shared patient IDs.", "INVALID_REVIEW_COHORT", 409)
-        if (test["overlap"]["slideIds"] or test["overlap"].get("sourceSlideIds")
-                or (test["overlap"]["patientIds"]
-                    and not patient_overlap_allowed(purpose, model["target"]["unit"]))):
+            raise StorageError(
+                "Review predictions require unlabeled slide outcomes and shared patient IDs.",
+                "INVALID_REVIEW_COHORT",
+                409,
+            )
+        if (
+            test["overlap"]["slideIds"]
+            or test["overlap"].get("sourceSlideIds")
+            or (
+                not slide_unit
+                and test["overlap"]["patientIds"]
+                and not patient_overlap_allowed(purpose, model["target"]["unit"])
+            )
+        ):
             raise StorageError(
                 "Inference would predict slides or patients used in this predictor's development."
                 if inference
@@ -345,13 +397,20 @@ class EvaluationRunService:
                     "overlap",
                     "custom_mpp_keys",
                 )
-                if (representation_kind(features) == "slide"
-                        or model.get("recipe", {}).get("analysis") is not None):
+                if (
+                    representation_kind(features) == "slide"
+                    or model.get("recipe", {}).get("analysis") is not None
+                ):
                     keys += ("slide_encoder",)
                 if model.get("recipe", {}).get("analysis") is not None:
                     keys += (
-                        "reader_type", "segmenter", "seg_conf_thresh", "remove_holes",
-                        "remove_artifacts", "remove_penmarks", "min_tissue_proportion",
+                        "reader_type",
+                        "segmenter",
+                        "seg_conf_thresh",
+                        "remove_holes",
+                        "remove_artifacts",
+                        "remove_penmarks",
+                        "min_tissue_proportion",
                     )
                 left_options, right_options = left["spec"]["options"], right["spec"]["options"]
                 if any(left_options.get(key) != right_options.get(key) for key in keys):
@@ -360,7 +419,10 @@ class EvaluationRunService:
                         "EVALUATION_EXTRACTION_MISMATCH",
                         409,
                     )
-        if test["spec"]["inference"]["patientAggregation"] != model["patientAggregation"]:
+        if (
+            not slide_unit
+            and test["spec"]["inference"]["patientAggregation"] != model["patientAggregation"]
+        ):
             raise StorageError(
                 "Patient aggregation must preserve the frozen predictor's scoring rule.",
                 "EVALUATION_AGGREGATION_MISMATCH",
@@ -372,12 +434,14 @@ class EvaluationRunService:
         ):
             raise StorageError(
                 "Use the decision threshold frozen in the training recipe for every external cohort.",
-                "EVALUATION_THRESHOLD_MISMATCH", 409,
+                "EVALUATION_THRESHOLD_MISMATCH",
+                409,
             )
         self.predictors.verify_checkpoints(predictor)
         clinical_contract = self._clinical_contract(model, test)
         return {
             "kind": "model-evaluation",
+            **({"splitUnit": test["spec"]["splitUnit"]} if "splitUnit" in test["spec"] else {}),
             # Review cohorts are the earlier name of inference cohorts; new runs of
             # either execute as inference. Earlier "review" runs keep their manifest.
             **({"purpose": "inference"} if inference else {}),
@@ -399,14 +463,16 @@ class EvaluationRunService:
             # Patient bootstrap analysis needs observed outcomes; inference has none.
             **(
                 {}
-                if inference
+                if inference or slide_unit
                 else {
                     "analysis": model.get("recipe", {}).get("analysis")
                     or PatientAnalysisSettings().model_dump()
                 }
             ),
-            "bagPolicy": {"evalBagSize": model.get("recipe", {}).get("evalBagSize"),
-                          "trainingSeed": model["trainingSeed"]},
+            "bagPolicy": {
+                "evalBagSize": model.get("recipe", {}).get("evalBagSize"),
+                "trainingSeed": model["trainingSeed"],
+            },
             "features": features,
             "summary": test["summary"],
             "status": "planned",
@@ -433,8 +499,11 @@ class EvaluationRunService:
         if not fields:
             return None
         values = frozen_clinical_values(
-            self.store, self.filesystem, test["spec"].get("datasetIds") or [test["datasetId"]],
-            test["memberships"], fields,
+            self.store,
+            self.filesystem,
+            test["spec"].get("datasetIds") or [test["datasetId"]],
+            test["memberships"],
+            fields,
         )
         try:
             clinical_rows(test["memberships"], values, fields)
@@ -507,6 +576,8 @@ class EvaluationRunService:
                 }
             )
         reviewed = self._prepare(selection)
+        if reviewed.get("splitUnit", "patient") != manifest.get("splitUnit", "patient"):
+            raise StorageError("The frozen split unit changed.", "EVALUATION_INPUTS_CHANGED", 409)
         for key in ("predictor", "cohort", "target", "features", "inference"):
             if reviewed[key] != manifest[key]:
                 raise StorageError(
@@ -515,11 +586,18 @@ class EvaluationRunService:
                 )
         # Earlier "review" runs froze a label analysis policy that inference omits;
         # their saved plan keeps it, so only current policies are compared.
-        if ("analysis" in manifest and manifest.get("purpose") != "review"
-                and reviewed.get("analysis") != manifest["analysis"]):
-            raise StorageError("The frozen analysis policy changed.", "EVALUATION_INPUTS_CHANGED", 409)
+        if (
+            "analysis" in manifest
+            and manifest.get("purpose") != "review"
+            and reviewed.get("analysis") != manifest["analysis"]
+        ):
+            raise StorageError(
+                "The frozen analysis policy changed.", "EVALUATION_INPUTS_CHANGED", 409
+            )
         if "bagPolicy" in manifest and reviewed["bagPolicy"] != manifest["bagPolicy"]:
-            raise StorageError("The frozen evaluation bag policy changed.", "EVALUATION_INPUTS_CHANGED", 409)
+            raise StorageError(
+                "The frozen evaluation bag policy changed.", "EVALUATION_INPUTS_CHANGED", 409
+            )
         predictor = self.predictors.get(manifest["predictorId"])
         cohort = self.cohorts.get(manifest["cohortId"])
         feature = self.store.get_configuration(manifest["features"]["feature"]["id"])
@@ -531,11 +609,15 @@ class EvaluationRunService:
 
             current_clinical = self._clinical_contract(predictor["manifest"], cohort["manifest"])
             if current_clinical != manifest["clinical"]:
-                raise StorageError("Clinical schema or frozen values changed.", "CLINICAL_INPUTS_CHANGED", 409)
+                raise StorageError(
+                    "Clinical schema or frozen values changed.", "CLINICAL_INPUTS_CHANGED", 409
+                )
             clinical_values = frozen_clinical_values(
-                self.store, self.filesystem,
+                self.store,
+                self.filesystem,
                 cohort["manifest"]["spec"].get("datasetIds") or [cohort["manifest"]["datasetId"]],
-                memberships, manifest["clinical"]["fields"],
+                memberships,
+                manifest["clinical"]["fields"],
             )
         selected = {row["slideId"] for row in memberships}
         files = {
@@ -580,6 +662,7 @@ class EvaluationRunService:
             ).model_dump()
         return {
             "kind": "evaluation",
+            **({"splitUnit": manifest["splitUnit"]} if "splitUnit" in manifest else {}),
             # Only runs created as inference carry this key; earlier plans must keep
             # their exact keys so interrupted jobs remain resumable.
             **({"purpose": "inference"} if manifest.get("purpose") == "inference" else {}),
@@ -598,9 +681,15 @@ class EvaluationRunService:
             "checkpoints": predictor["manifest"]["checkpoints"],
             "references": [reference(value) for value in (predictor, cohort, feature, bundle)],
             "data": {
-                **({"clinicalValues": clinical_values,
-                    "inputMode": manifest["clinical"]["inputMode"],
-                    "clinicalFields": manifest["clinical"]["fields"]} if clinical_values else {}),
+                **(
+                    {
+                        "clinicalValues": clinical_values,
+                        "inputMode": manifest["clinical"]["inputMode"],
+                        "clinicalFields": manifest["clinical"]["fields"],
+                    }
+                    if clinical_values
+                    else {}
+                ),
                 "memberships": memberships,
                 "featureDim": manifest["features"]["dimensions"],
                 "featureFiles": files,
@@ -611,13 +700,23 @@ class EvaluationRunService:
             },
         }
 
-    def launch(self, identity, operation_id, *, resume=False):
+    def launch(self, identity, operation_id, *, resume=False, task_owner=None, task_title=None):
+        """``task_owner`` queues the job under another Task Center owner (a bulk batch)."""
         with lifecycle_guard(self.store.folder):
-            replay = self.jobs.replay_launch(identity, operation_id, resume=resume, record_kind="model-evaluation")
+            replay = self.jobs.replay_launch(
+                identity, operation_id, resume=resume, record_kind="model-evaluation"
+            )
             if replay is not None:
                 return replay
             plan = self._execution_plan(identity)
-            return self.jobs.launch(identity, plan, operation_id, resume=resume)
+            return self.jobs.launch(
+                identity,
+                plan,
+                operation_id,
+                resume=resume,
+                task_owner=task_owner,
+                task_title=task_title,
+            )
 
     def cancel(self, identity, operation_id):
         self.get(identity)

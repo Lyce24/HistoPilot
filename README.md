@@ -26,11 +26,9 @@ git clone https://github.com/Lyce24/HistoPilot.git
 cd HistoPilot
 uv sync --locked
 npm --prefix web ci
-npm --prefix web run build
-uv run python scripts/bundle_web.py
 ```
 
-Start HistoPilot:
+Start HistoPilot (the first start builds the browser UI, which takes a few seconds):
 
 ```bash
 bash serve.sh
@@ -38,7 +36,7 @@ bash serve.sh
 
 Open **http://127.0.0.1:8787** → **Open BLCA demo**. No research data, weights, or GPU are needed to explore it.
 
-Run `bash serve.sh` for each subsequent start; stop with **Ctrl+C**. Use `bash serve.sh --help` for options. After an update, repeat the setup commands from `uv sync` onward, then restart manually. See [deployment](docs/deployment.md) for Vite development, packaged installation, and SSH forwarding.
+Run `bash serve.sh` for each subsequent start; stop with **Ctrl+C**. Each start rebuilds the browser UI if `web/` changed since the last build, so a restart always serves the checkout's current version. Use `bash serve.sh --help` for options. After an update that changes dependencies, repeat the two setup commands, then restart manually. See [deployment](docs/deployment.md) for Vite development, packaged installation, and SSH forwarding.
 
 ## Your first project
 
@@ -50,9 +48,11 @@ bash serve.sh --data-root /path/to/research-data
 
 Choose **Start a new project** and select a dedicated new or empty project folder. The folder picker browses the machine running HistoPilot; source files are referenced in place.
 
-1. **Prepare:** import a CSV/XLSX dataset, attach or extract features, and freeze targets and development splits.
-2. **Train:** create an experiment, choose models and batches, review the plan, and follow runs and predictors.
-3. **Apply predictors:** choose **Evaluate models** for labeled test performance, or **Run inference** for unlabeled cohorts, predictions, confidence, review and export. Both support compatible slide attention; SDPC slides use OpenSDPC. See the [inference design and assessment](docs/INFERENCE_MODE.md).
+1. **Datasets:** import and freeze the slide and patient metadata.
+2. **Prepare in parallel:** attach or extract **Slide features**, and independently freeze the target and fixed training/testing membership in **Targets & splits**.
+3. **Experimental Setup:** combine these inputs, check compatibility, configure folds and hyperparameters, and freeze the design.
+4. **Experiments:** start a frozen setup and follow training runs and predictors.
+5. **Apply predictors:** choose **Evaluate models** for labeled test performance, or **Run inference** for unlabeled cohorts, predictions, confidence, review and export. Both support compatible slide attention; SDPC slides use OpenSDPC. See the [inference design and assessment](docs/INFERENCE_MODE.md).
 
 Models include ABMIL, nnMIL, mean/max pooling, slide-embedding probes, and clinical/image comparisons. Real extraction and training require their compute environments; clinical comparisons require verified patient identities. Follow the [workflow guide](docs/WORKFLOW_GUIDE.md) for setup and input requirements.
 

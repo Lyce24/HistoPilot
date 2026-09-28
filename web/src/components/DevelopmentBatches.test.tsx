@@ -4,8 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { defaultRecipe, defaultResources } from '../api/development';
 import type { DevelopmentResults, FrozenBatch, TrainingExecution, TrainingMetricDetails, TrainingRuntime } from '../api/development';
 import DevelopmentBatches, { ConfigurationTable, RecipeFields, batchVersionTag, developmentTabs } from './DevelopmentBatches';
-import { executionActions, RunTable, ResultsTable, TrainingControls, ExecutionEvidence } from './DevelopmentExecution';
+import DevelopmentExecution, { executionActions, RunTable, ResultsTable, TrainingControls, ExecutionEvidence } from './DevelopmentExecution';
 import JobTray from './JobTray';
+import { fixtureRollup } from '../testFixtures/taskCenter';
+import { taskCenterKeys } from '../api/taskCenter';
 import type { ExperimentBatch } from '../api/experiments';
 
 const inputs = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native' as const, packArtifactId: null };
@@ -131,13 +133,14 @@ describe('development execution controls', () => {
     expect(html).toContain('Gated attention');
   });
 
-  it('shares real training state with the jobs tray and keeps freezing in a separate module', () => {
+  it('shares Task Center state with the jobs tray and keeps freezing in a separate module', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    client.setQueryData(['development-batches', 'project'], { items: [batch], executionImplemented: true, executions: [execution('running')] });
+    client.setQueryData(taskCenterKeys.rollup({}), fixtureRollup({ scope: {}, counts: { running: 1, queued: 4 }, eta: null, recentFailures: 0 }));
+    client.setQueryData(['extractions', 'project', 'jobs'], { jobs: [] });
     client.setQueryData(['scientific', 'project', 'drafts'], { drafts: [] });
     try {
       const tray = renderToStaticMarkup(<QueryClientProvider client={client}><JobTray projectId="project" /></QueryClientProvider>);
-      expect(tray).toContain('1 active job');
+      expect(tray).toContain('1 running · 4 queued');
       expect(tray).not.toContain('Execution not implemented');
       expect(developmentTabs.map((tab) => tab.id)).toEqual(['setup', 'batches', 'runs', 'results']);
     } finally { client.clear(); }
@@ -189,5 +192,47 @@ describe('development execution controls', () => {
     expect(finished).toContain('CUDA allocated peak</dt><dd>1.00 GiB');
     expect(finished).toContain('CUDA reserved peak</dt><dd>2.00 GiB');
     expect(finished).toContain('Learning rate</dt><dd>3.000e-5');
+  });
+
+  it('shows partial results while the experiment runs instead of locking the Results view', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const running = execution('running', { runCounts: { total: 2, queued: 0, running: 1, completed: 1, failed: 0, cancelled: 0 } });
+    client.setQueryData(['training-execution', 'project', batch.id], running);
+    client.setQueryData(['development-results', 'project', batch.id], { status: 'running', oof: [], candidates: [{ candidateId: 'candidate', trainingSeed: 42, splitSeed: 7, complete: true, metrics: { available: true, auroc: 0.81, accuracy: 0.7 }, completedRuns: 1, totalRuns: 1 }] } satisfies DevelopmentResults);
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentExecution project="project" batch={batch} implemented view="results" stage="running" knownExecution={running} /></QueryClientProvider>);
+      expect(html).toContain('Partial results: groups appear as their folds finish.');
+      expect(html).toContain('OOF AUROC');
+      expect(html).toContain('1</strong> complete configuration / seed groups');
+      expect(html).not.toContain('Results unlock when the experiment finishes');
+      expect(client.getQueryCache().find({ queryKey: ['development-results', 'project', batch.id] })!.options).toMatchObject({ enabled: true });
+      const finished = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentExecution project="project" batch={batch} implemented view="results" stage="finished" knownExecution={{ ...running, status: 'completed' }} /></QueryClientProvider>);
+      expect(finished).not.toContain('Partial results');
+      // Other batches or predictors can keep the experiment running after this batch's folds are done.
+      const done = { ...running, status: 'completed' as const };
+      client.setQueryData(['training-execution', 'project', batch.id], done);
+      const trained = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentExecution project="project" batch={batch} implemented view="results" stage="running" knownExecution={done} /></QueryClientProvider>);
+      expect(trained).not.toContain('Partial results');
+    } finally { client.clear(); }
+  });
+
+  it('leaves Task Center batch controls, resources and worker details to the Task Center', () => {
+    const managed = execution('running', { executor: 'task-center', taskCenter: { runnerAlive: true, queued: 3, running: 0, held: false, waitingReason: 'Waiting for a GPU slot (5/5)', ownerKey: 'owner-1' } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['training-execution', 'project', batch.id], managed);
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentExecution project="project" batch={batch} implemented view="runs" stage="running" knownExecution={managed} /></QueryClientProvider>);
+      for (const text of ['Resume unfinished runs', 'Launch batch', 'Managed by the Task Center', 'Worker and saved artifacts', 'Device &amp; runtime details', 'Resource scheduling']) expect(html).not.toContain(text);
+      // The Task Center has no batch-wide action, so one batch keeps its own (confirmed) Cancel.
+      expect(html.match(/>Cancel batch</g)).toHaveLength(1);
+      expect(html).toContain('completed');
+      client.setQueryData(['training-execution', 'project', batch.id], { ...managed, status: 'completed' });
+      const finished = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentExecution project="project" batch={batch} implemented view="runs" stage="running" /></QueryClientProvider>);
+      expect(finished).not.toContain('Cancel batch');
+      expect(client.getQueryCache().find({ queryKey: ['training-runtime', 'project'] })?.state.fetchStatus ?? 'idle').toBe('idle');
+    } finally { client.clear(); }
+    const legacy = renderToStaticMarkup(<ExecutionEvidence execution={execution('running', { resourcePlan: { requestedConcurrency: 4, effectiveConcurrency: 2, cpuSlotsPerRun: 6, cpuLimit: 2, ramLimit: 8, gpuSlotLimit: 4, note: 'CPU limited.' } })} />);
+    expect(legacy).toContain('hp-mil-test');
+    expect(legacy).toContain('At launch: up to <strong>2</strong> concurrent runs from 4 requested.');
   });
 });

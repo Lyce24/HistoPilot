@@ -39,3 +39,11 @@
 .experiment-detail-id { color: var(--muted); overflow-wrap: anywhere; }
 .experiment-snapshot { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; font-size: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
 @media (max-width: 760px) { .experiment-create-fields { grid-template-columns: 1fr; } }
+
+/* Result column: the best batch's OOF seed mean, with where it came from. */
+.experiment-headline { display: grid; gap: .1rem; font-variant-numeric: tabular-nums; }
+.experiment-headline-value { white-space: nowrap; color: var(--theme-ink); }
+.experiment-headline-value strong { font-weight: 650; }
+.experiment-headline-value span { color: var(--theme-muted); }
+.experiment-headline small { display: block; color: var(--theme-muted); font-size: .76rem; font-weight: 400; }
+.experiment-result-column { min-width: 11rem; }

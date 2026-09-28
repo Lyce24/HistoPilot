@@ -29,6 +29,7 @@ import { modelEvaluations, predictors } from ${source('api/predictors.ts')};
 import { clinicalAnalyses } from ${source('api/clinicalUtility.ts')};
 import { interpretations } from ${source('api/interpretation.ts')};
 import { experiments } from ${source('api/experiments.ts')};
+import { taskCenter } from ${source('api/taskCenter.ts')};
 import ${source('styles.css')};
 import ${source('local-workspace.css')};
 import ${source('scientific.css')};
@@ -50,6 +51,8 @@ for (const api of [bundles, evaluation, predictors, modelEvaluations, clinicalAn
 development.list = async () => ({ items: [], executions: [] });
 predictors.refits = async () => ({ items: [] });
 experiments.summaries = async () => ({ items: [] });
+taskCenter.rollup = async (scope) => ({ scope: scope ?? {}, state: 'not-started', counts: {}, byKind: {}, progress: null, live: 0, active: 0, pending: 0, held: false, position: null, queuePosition: null, waitingReason: null, eta: null, runnerAlive: true, paused: false, stopRequest: null, lastFailure: null, recentFailures: 0, current: null, startedAt: null, finishedAt: null, ownerKey: null, ownerKind: null, ownerId: null, title: null, projectId: null, projectName: null, href: '#task-center', updatedAt: '2026-09-25T10:05:00Z' });
+taskCenter.summary = async () => ({ runner: { alive: true, heartbeatAt: null, pid: 1, state: 'running', message: null, codeHash: 'fixture', codeCurrent: true, autostart: true }, paused: false, capacity: { gpus: [], cpu: { logical: 8, physical: 4, committedThreads: 0, reserveThreads: 2, cpuTaskSlots: 2, usedCpuTasks: 0 }, ram: { totalGb: 32, availableGb: 24, reserveGb: 2 } }, counts: {}, eta: null, foreignLeases: [], workspace: '/fixture', updatedAt: '2026-09-12T12:00:00Z' });
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 const root = createRoot(document.getElementById('app'));
 root.render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
@@ -138,7 +141,7 @@ try {
   await cdp('Page.navigate', { url: pathToFileURL(join(dist, 'index.html')).href });
   await waitFor('document.querySelector(".start-recent-list button")');
   assert.ok(requestedPage('Start'), 'Start must load on demand');
-  for (const name of ['LocalDataset', 'LocalProtocol', 'LocalExperiments', 'LocalFeatures', 'LocalInterpretation']) assert.equal(requestedPage(name), false, name + ' downloaded before opening a project');
+  for (const name of ['LocalDataset', 'LocalTargetSplit', 'LocalExperiments', 'LocalFeatures', 'LocalInterpretation']) assert.equal(requestedPage(name), false, name + ' downloaded before opening a project');
   await evaluate('document.querySelector(".start-recent-list button").click()');
   await waitFor('document.querySelector(".sidebar")');
   await evaluate(`document.querySelector('.sidebar a[href="#dataset"]').click()`);
@@ -147,7 +150,6 @@ try {
   assert.equal(requestedPage('LocalExperiments'), false, 'Dataset downloaded Experiments');
   await evaluate('window.location.hash = "#cohort"');
   await waitFor('document.body.innerText.includes("Prepare the required inputs")');
-  assert.equal(requestedPage('LocalProtocol'), false, 'Locked protocol route downloaded its editor');
   await evaluate(`document.querySelector('.sidebar a[href="#experiments"]').click()`);
   await waitFor('document.body.innerText.includes("Create your first experiment")');
   assert.ok(requestedPage('LocalExperiments'), 'Experiment page did not load');

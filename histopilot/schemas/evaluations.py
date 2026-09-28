@@ -31,7 +31,9 @@ class InferenceSettings(RequestModel):
     device: Literal["auto", "cpu", "cuda"] = "auto"
     precision: Literal["float32", "float16", "bfloat16"] = "float32"
     patientAggregation: Literal["mean", "mean_logits", "predictor", "max"] = "mean"
-    decisionThreshold: Annotated[float, Field(gt=0, lt=1, allow_inf_nan=False)] | Literal["predictor"] = 0.5
+    decisionThreshold: (
+        Annotated[float, Field(gt=0, lt=1, allow_inf_nan=False)] | Literal["predictor"]
+    ) = 0.5
 
     @model_validator(mode="after")
     def loading_contract(self):
@@ -45,6 +47,7 @@ class InferenceSettings(RequestModel):
 
 
 class EvaluationSpec(RequestModel):
+    splitUnit: Literal["slide", "patient"] = "patient"
     purpose: Literal["independent", "inference", "review"] = "independent"
 
     @model_serializer(mode="wrap")
@@ -52,17 +55,32 @@ class EvaluationSpec(RequestModel):
         serialized = handler(self)
         if self.purpose == "independent":
             serialized.pop("purpose", None)
+        if "splitUnit" not in self.model_fields_set:
+            serialized.pop("splitUnit", None)
+        if self.sourceTargetSplitId is None:
+            serialized.pop("sourceTargetSplitId", None)
         return serialized
 
     @model_validator(mode="after")
     def inference_is_unlabeled(self):
+        if (
+            "splitUnit" in self.model_fields_set
+            and self.target is not None
+            and self.target.unit != self.splitUnit
+        ):
+            raise ValueError("The evaluation target must use the selected split unit.")
         if self.purpose == "inference" and self.target is not None:
             raise ValueError("Inference cohorts are unlabeled. Remove the prediction target.")
-        if self.purpose == "review" and (self.target is not None or self.patientIdentifiers != "shared"):
-            raise ValueError("Review predictions require unlabeled slides and shared patient identifiers.")
+        if self.purpose == "review" and (
+            self.target is not None or self.patientIdentifiers != "shared"
+        ):
+            raise ValueError(
+                "Review predictions require unlabeled slides and shared patient identifiers."
+            )
         return self
 
     # Keep old bindings readable; new cohorts have no development or feature dependencies.
+    sourceTargetSplitId: ConfigurationId | None = None
     protocolId: ConfigurationId | None = None
     developmentFeatureBundleId: ConfigurationId | None = None
     datasetId: str = Field(pattern=r"^dataset-[a-f0-9]{64}$")
@@ -82,6 +100,15 @@ class EvaluationSpec(RequestModel):
 
     @model_validator(mode="after")
     def dataset_selection(self):
+        if self.sourceTargetSplitId and (
+            self.purpose not in {"independent", "inference"}
+            or self.eligibility
+            or (self.purpose == "independent" and self.target is None)
+            or (self.datasetIds is not None and self.datasetIds != [self.datasetId])
+        ):
+            raise ValueError(
+                "A frozen testing partition uses its exact dataset rows without additional filters, with evaluation labels or unlabeled inference."
+            )
         if self.datasetIds is not None:
             if len(set(self.datasetIds)) != len(self.datasetIds):
                 raise ValueError("Select each test dataset once.")

@@ -109,6 +109,8 @@ def candidate(service, name="Trial", *, legacy=False, refit_ready=False, checkpo
         "runs": runs,
         "splitPlans": splits,
         "target": protocol["manifest"]["spec"]["target"],
+        **({"splitUnit": protocol["manifest"]["spec"]["splitUnit"]}
+           if "splitUnit" in protocol["manifest"]["spec"] else {}),
         "resources": {},
         "runtime": {"python": "/fixture/python", "versions": {"lightning": "fixture"}},
         "code": {"sha256": "fixture"},

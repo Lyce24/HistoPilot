@@ -4,9 +4,12 @@ from typing import Literal
 
 from fastapi import APIRouter
 
+from histopilot.application.experiment_results import experiment_headlines, experiment_results
 from histopilot.application.model_experiments import ModelExperimentService
 from histopilot.schemas.model_experiments import (
+    ConfigureModelExperimentSetup,
     CreateModelExperiment,
+    FreezeModelExperimentSetup,
     SubmitModelExperiment,
     UpdateModelExperiment,
 )
@@ -31,13 +34,31 @@ def model_experiments_router(projects, filesystem):
     def create(identity: str, payload: CreateModelExperiment):
         return service(identity).create(payload)
 
+    @router.get("/headlines")
+    def headlines(identity: str):
+        """One seed-mean OOF headline per batch, for the experiment list. Read-only."""
+        return experiment_headlines(projects.scientific_store(identity), filesystem)
+
     @router.get("/{experiment_id}")
     def detail(identity: str, experiment_id: str):
         return service(identity).get(experiment_id)
 
+    @router.get("/{experiment_id}/results")
+    def results(identity: str, experiment_id: str):
+        """Per-fold, per-seed and seed-averaged results of every batch, read-only."""
+        return experiment_results(projects.scientific_store(identity), filesystem, experiment_id)
+
     @router.patch("/{experiment_id}")
     def update(identity: str, experiment_id: str, payload: UpdateModelExperiment):
         return service(identity).update(experiment_id, payload)
+
+    @router.post("/{experiment_id}/setup-inputs")
+    def setup_inputs(identity: str, experiment_id: str, payload: ConfigureModelExperimentSetup):
+        return service(identity).setup_inputs(experiment_id, payload)
+
+    @router.post("/{experiment_id}/freeze-setup", status_code=201)
+    def freeze_setup(identity: str, experiment_id: str, payload: FreezeModelExperimentSetup):
+        return service(identity).freeze_setup(experiment_id, payload)
 
     @router.post("/{experiment_id}/submit", status_code=202)
     def submit(identity: str, experiment_id: str, payload: SubmitModelExperiment):

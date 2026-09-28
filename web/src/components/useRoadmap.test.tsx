@@ -1,15 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { targetSplits, type TargetSplit } from '../api/targetSplits';
 import { bundles, type FeatureBundle } from '../api/bundles';
-import { scientific, type Configuration, type DatasetVersion } from '../api/scientific';
+import { scientific, type DatasetVersion } from '../api/scientific';
 import type { Workspace } from '../api/types';
 import { useRoadmap } from './useRoadmap';
 
 const keys = {
   drafts: ['scientific', 'project', 'drafts'],
   datasets: ['scientific', 'project', 'datasets'],
-  protocols: ['scientific', 'project', 'configurations', 'protocol'],
+  targetSplits: ['scientific', 'project', 'configurations', 'target-split'],
+  setups: ['scientific', 'project', 'configurations', 'experiment-setup'],
   features: ['scientific', 'project', 'configurations', 'feature'],
   bundles: ['feature-bundles', 'project'],
   extractions: ['extractions', 'project', 'jobs'],
@@ -24,10 +26,6 @@ const keys = {
 const dataset: DatasetVersion = {
   id: 'dataset', projectId: 'project', contentHash: 'dataset-hash', createdAt: '', manifest: {}, artifacts: {},
 };
-const protocol = {
-  id: 'protocol', projectId: 'project', contentHash: 'protocol-hash', createdAt: '',
-  manifest: { kind: 'protocol', datasetId: 'dataset', spec: { datasetId: 'dataset' }, summary: {} },
-} as Configuration;
 const bundle: FeatureBundle = {
   id: 'bundle', contentHash: 'bundle-hash', createdAt: '', current: true, findings: [],
   manifest: {
@@ -68,7 +66,8 @@ afterEach(() => {
 function seed(value: QueryClient) {
   value.setQueryData(keys.drafts, { drafts: [] });
   value.setQueryData(keys.datasets, { datasets: [dataset] });
-  value.setQueryData(keys.protocols, { configurations: [protocol] });
+  value.setQueryData(keys.targetSplits, { configurations: [{ id: 'targets', manifest: { kind: 'target-split', datasetId: 'dataset' } } as TargetSplit] });
+  value.setQueryData(keys.setups, { configurations: [] });
   value.setQueryData(keys.features, { configurations: [] });
   value.setQueryData(keys.bundles, { items: [bundle] });
   value.setQueryData(keys.extractions, { jobs: [] });
@@ -107,7 +106,7 @@ describe('roadmap prerequisite query isolation', () => {
     const roadmap = probe(value);
     expect(roadmap.byId.features.status).toBe('draft');
     expect(roadmap.byId.features.evidence).toBe('1 extraction in progress · Tissue segmentation · 128/1111 slides in stage');
-    expect(roadmap.byId.experiments.blockers).toContain('features');
+    expect(roadmap.byId['experimental-setup'].blockers).toContain('features');
     value.setQueryData(keys.extractions, { jobs: [{ id: 'extraction-live', state: 'succeeded' }] });
     const updated = probe(value);
     expect(updated.byId.features.status).toBe('draft');
@@ -135,8 +134,8 @@ describe('roadmap prerequisite query isolation', () => {
     const roadmap = probe(value);
     expect(roadmap.checksById.experiments).toEqual({ isLoading: false, error: null, hasData: true });
     expect(roadmap.checksById.evaluation.hasData).toBe(true);
-    expect(roadmap.checksById['test-data']).toEqual({ isLoading: false, error: null, hasData: true });
-    expect(roadmap.byId['test-data'].unlocked).toBe(true);
+    expect(roadmap.checksById['experimental-setup']).toEqual({ isLoading: false, error: null, hasData: true });
+    expect(roadmap.byId['experimental-setup'].unlocked).toBe(true);
     expect(roadmap.byId.experiments.unlocked).toBe(true);
     expect(roadmap.byId.experiments.status).toBe('not-started');
   });
@@ -162,14 +161,14 @@ describe('roadmap prerequisite query isolation', () => {
     const roadmap = probe(value);
     expect(roadmap.error).toBe(failure);
     expect(roadmap.hasData).toBe(false);
-    for (const id of ['dataset', 'test-data', 'cohort', 'features'] as const) {
+    for (const id of ['dataset', 'experimental-setup', 'cohort', 'features'] as const) {
       expect(roadmap.checksById[id]).toEqual({ isLoading: false, error: null, hasData: true });
       expect(roadmap.byId[id].unlocked).toBe(true);
     }
     expect(roadmap.checksById.experiments).toEqual({ isLoading: false, error: null, hasData: true });
   });
 
-  it.each(['datasets', 'protocols', 'bundles'] as const)('allows creating experiments before %s are prepared', (missing) => {
+  it.each(['datasets', 'targetSplits', 'bundles'] as const)('allows creating experiments before %s are prepared', (missing) => {
     const value = client();
     seed(value);
     value.removeQueries({ queryKey: keys[missing], exact: true });
@@ -178,11 +177,11 @@ describe('roadmap prerequisite query isolation', () => {
     expect(roadmap.checksById.experiments).toEqual({ isLoading: false, error: null, hasData: true });
     expect(roadmap.byId.experiments.unlocked).toBe(true);
     expect(roadmap.checksById.dataset.hasData).toBe(true);
-    expect(roadmap.checksById['test-data']).toEqual({ isLoading: false, error: null, hasData: true });
-    expect(roadmap.byId['test-data'].unlocked).toBe(true);
+    expect(roadmap.checksById['experimental-setup']).toEqual({ isLoading: false, error: null, hasData: true });
+    expect(roadmap.byId['experimental-setup'].unlocked).toBe(true);
   });
 
-  it.each(['datasets', 'protocols', 'bundles'] as const)('retains cached prerequisites and unlock state after a %s refresh fails', (failed) => {
+  it.each(['datasets', 'targetSplits', 'bundles'] as const)('retains cached prerequisites and unlock state after a %s refresh fails', (failed) => {
     const value = client();
     seed(value);
     const failure = new Error('Background refresh failed');
@@ -199,7 +198,7 @@ describe('roadmap prerequisite query isolation', () => {
     expect(roadmap.byId.features.status).toBe('complete');
   });
 
-  it('keeps a retained protocol accessible when its dataset is absent from active input choices', () => {
+  it('keeps a retained target split accessible when its dataset is absent from active input choices', () => {
     const value = client();
     seed(value);
     value.setQueryData(keys.datasets, { datasets: [] });
@@ -207,7 +206,7 @@ describe('roadmap prerequisite query isolation', () => {
     const roadmap = probe(value);
     expect(roadmap.checksById.cohort).toEqual({ isLoading: false, error: null, hasData: true });
     expect(roadmap.byId.cohort.unlocked).toBe(true);
-    expect(roadmap.byId.cohort.status).toBe('draft');
+    expect(roadmap.byId.cohort.status).not.toBe('not-started');
     expect(roadmap.byId.cohort.blockers).toEqual([]);
   });
 
@@ -215,9 +214,9 @@ describe('roadmap prerequisite query isolation', () => {
     const value = client();
     seed(value);
     value.setQueryData(keys.batches, { items: [{ id: 'retained-batch' }], executions: [], executionImplemented: true });
-    value.removeQueries({ queryKey: keys.protocols, exact: true });
+    value.removeQueries({ queryKey: keys.bundles, exact: true });
     const error = new Error('Active input choices unavailable');
-    fail(value, keys.protocols, error);
+    fail(value, keys.bundles, error);
     const roadmap = probe(value);
     expect(roadmap.byId.experiments.unlocked).toBe(true);
     expect(roadmap.byId.experiments.status).toBe('draft');
@@ -247,6 +246,7 @@ describe('roadmap prerequisite query isolation', () => {
       vi.spyOn(scientific, 'drafts').mockRejectedValue(new Error('Unexpected request')),
       vi.spyOn(scientific, 'datasets').mockRejectedValue(new Error('Unexpected request')),
       vi.spyOn(scientific, 'configurations').mockRejectedValue(new Error('Unexpected request')),
+      vi.spyOn(targetSplits, 'list').mockRejectedValue(new Error('Unexpected request')),
       vi.spyOn(bundles, 'list').mockRejectedValue(new Error('Unexpected request')),
     ];
 

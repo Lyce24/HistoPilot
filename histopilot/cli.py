@@ -17,6 +17,7 @@ from histopilot.archive_cli import register_archive_commands
 from histopilot.config import Settings, load_settings
 from histopilot.contracts.experiment import ExperimentSpec
 from histopilot.doctor import system_report
+from histopilot.runner_cli import register_runner_commands
 from histopilot.service_lock import service_lock
 
 app = typer.Typer(
@@ -24,6 +25,7 @@ app = typer.Typer(
 )
 
 register_archive_commands(app)
+register_runner_commands(app)
 
 
 def create_dev_app():
@@ -32,6 +34,94 @@ def create_dev_app():
 
     values = json.loads(os.environ["HISTOPILOT_SERVICE_SETTINGS"])
     return create_app(Settings(**values))
+
+
+RUNNER_RESTART_WAIT = 20.0
+RUNNER_EXIT_WAIT = 600.0
+
+
+def _restart_outdated_runner() -> dict | None:
+    """Restart a live runner whose code changed since it started; None when it is current.
+
+    Its tasks keep running in their own sessions and the new runner adopts them.
+    """
+    from histopilot.taskcenter import launcher, paths
+    from histopilot.taskcenter.runner import code_current, foreign_checkout
+    from histopilot.taskcenter.store import TaskStore
+
+    row = TaskStore().runner()
+    if not paths.autostart_enabled() or code_current(row):
+        return None
+    other = foreign_checkout(row)
+    if other:
+        # One runner serves every checkout of this OS user; the latest service decides.
+        typer.echo(
+            f"Tasks      Task Center runner was started from another checkout ({other}); "
+            "restarting it from this one",
+            err=True,
+        )
+    outcome = launcher.restart_runner(wait=RUNNER_RESTART_WAIT)
+    if outcome.get("pending"):
+        # The old runner exits after its current step; start the new one then.
+        def start_when_gone() -> None:
+            if launcher.await_runner_exit(RUNNER_EXIT_WAIT):
+                launcher.ensure_runner()
+
+        threading.Thread(target=start_when_gone, name="runner-restart", daemon=True).start()
+    return outcome
+
+
+def _warn_if_stale_bundle(static_dir: Path) -> None:
+    """A source checkout says so before serving a UI older than its web/ folder."""
+    from histopilot import web_bundle
+
+    try:
+        current, reason = web_bundle.bundle_state(web_bundle.checkout_root(), static_dir)
+    except OSError:
+        return
+    if not current:
+        typer.echo(
+            f"Frontend   Out of date: {reason}. This service serves the older UI; "
+            "bash serve.sh rebuilds it before starting.",
+            err=True,
+        )
+
+
+def _ensure_task_center_runner() -> None:
+    """Best effort: a runner problem is reported but never stops the control service."""
+    try:
+        from histopilot.taskcenter.launcher import ensure_runner
+
+        outcome = ensure_runner()
+        restarted = _restart_outdated_runner() if outcome.get("alive") else None
+    except Exception as exc:  # the service must start even if the runner cannot
+        typer.echo(f"Tasks      Task Center runner not started: {exc}", err=True)
+        return
+    if restarted is not None:
+        stopped = restarted.get("stopped") or {}
+        if restarted.get("pending"):
+            typer.echo(
+                "Tasks      Task Center runner code changed; it restarts once its current "
+                "step finishes"
+            )
+        elif restarted.get("started") or (stopped.get("stopped") and restarted.get("alive")):
+            typer.echo("Tasks      Task Center runner restarted because its code changed")
+        else:
+            # The old runner could not be stopped, so the running one still has the old code.
+            typer.echo(
+                "Tasks      Task Center runner code changed but it could not be restarted: "
+                f"{restarted.get('reason') or stopped.get('reason')}",
+                err=True,
+            )
+        return
+    if outcome.get("alive"):
+        typer.echo("Tasks      Task Center runner is running")
+    elif outcome.get("started"):
+        typer.echo("Tasks      Task Center runner started in tmux")
+    elif outcome.get("reason") == "disabled":
+        typer.echo("Tasks      Task Center runner autostart is disabled")
+    else:
+        typer.echo(f"Tasks      Task Center runner not started: {outcome.get('reason')}", err=True)
 
 
 @app.command()
@@ -54,6 +144,11 @@ def serve(
     ),
     browser: bool = typer.Option(
         True, "--browser/--no-browser", help="Open the local URL in a browser."
+    ),
+    runner: bool = typer.Option(
+        True,
+        "--runner/--no-runner",
+        help="Start the machine-wide Task Center runner in tmux if it is not running.",
     ),
 ) -> None:
     """Start one local control service and serve the packaged browser application."""
@@ -82,6 +177,8 @@ def serve(
             typer.echo(
                 f"HistoPilot · local control service\nWorkspace  {settings.workspace}\nBrowser    {url}\nCompute    TRIDENT extraction; ABMIL k-fold training in Model development"
             )
+            if not dev:
+                _warn_if_stale_bundle(settings.static_dir)
             if settings.data_roots:
                 typer.echo("Sources    Read-only folders available in the data/slide picker:")
                 for root in settings.data_roots:
@@ -93,6 +190,16 @@ def serve(
                     "           or set [storage].data_roots in your service TOML configuration.\n"
                     "           Experiment storage is available in the workspace above."
                 )
+            if runner:
+                _ensure_task_center_runner()
+            from histopilot.diagnostics import enable_stack_dumps
+            from histopilot.taskcenter import paths as task_paths
+
+            stacks = enable_stack_dumps(
+                task_paths.state_dir() / f"server-{settings.port}-stacks.log"
+            )
+            if stacks is not None:
+                typer.echo(f"Stacks     kill -USR1 {os.getpid()} appends thread stacks to {stacks}")
             if browser:
                 timer = threading.Timer(1, webbrowser.open, args=[url], kwargs={"new": 2})
                 timer.daemon = True

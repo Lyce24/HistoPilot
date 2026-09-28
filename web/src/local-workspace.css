@@ -57,3 +57,10 @@
     max-width: 58vw;
   }
 }
+
+/* Collapsible "details" panels used by several stages (Experiments, Datasets, batch editors).
+   Global so a deep link into one stage is styled before any other stage chunk loads. */
+.setup-details { margin: 0 0 20px; padding: 0 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--theme-surface); }
+.setup-details > summary { padding: 14px 0; cursor: pointer; font-size: 13px; font-weight: 600; }
+.setup-details > .science-toolbar { margin: 0 0 18px; }
+.setup-details > .stack { padding-bottom: 18px; }

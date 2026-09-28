@@ -24,6 +24,7 @@ from histopilot.schemas.version_labels import (
     SetVersionLabelRequest,
     VersionLabelValues,
 )
+from histopilot.storage import sqlite_connections
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
@@ -49,7 +50,19 @@ _STAGE_NAME = re.compile(r"operation-[a-f0-9]{32}\Z")
 # Concurrent SQLite opening/closing can deadlock in supported native builds.
 # Closing the final connection also unlinks WAL/SHM files: path validation must
 # share this guard. Queries and transactions run outside the lifecycle lock.
-_SQLITE_LIFECYCLE_LOCK = RLock()
+# Shared with every SQLite connection in the process; see sqlite_connections.
+_SQLITE_LIFECYCLE_LOCK = sqlite_connections.LIFECYCLE_LOCK
+# Reads need no project lock. A database is validated (schema, integrity,
+# recovery) under the locks once per file identity and schema cookie; writers
+# still initialize under their own lock on every mutation.
+_READY: dict[str, tuple] = {}
+# Verified configuration rows by database and ID. A hit requires the exact
+# stored text and hash, so any change to a row is verified again in full.
+_VERIFIED_CONFIGURATIONS: dict[tuple[str, str, str], tuple[str, bytes, str | None]] = {}
+_VERIFIED_LIMIT = 4096
+# One full verification at a time: parallel page reads after a restart wait for it
+# and reuse the result instead of each verifying every row again.
+_VERIFYING = RLock()
 
 _SCHEMA_V1 = (
     "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -273,8 +286,10 @@ class ScientificStore:
         """Failure-injection seam; production publication has no callback actions."""
 
     @staticmethod
-    def _regular(path: Path, *, missing_ok: bool = False) -> os.stat_result | None:
-        if any(parent.is_symlink() for parent in path.parents):
+    def _regular(
+        path: Path, *, missing_ok: bool = False, parents: bool = True
+    ) -> os.stat_result | None:
+        if parents and any(parent.is_symlink() for parent in path.parents):
             raise _error(
                 "Managed storage cannot traverse symbolic links.", "STORAGE_UNSAFE_PATH", 403
             )
@@ -296,8 +311,9 @@ class ScientificStore:
 
     def _database_paths(self) -> None:
         with _SQLITE_LIFECYCLE_LOCK:
+            # The four files share one parent chain: check it once.
             for suffix in ("", "-wal", "-shm", "-journal"):
-                self._regular(Path(str(self.path) + suffix), missing_ok=True)
+                self._regular(Path(str(self.path) + suffix), missing_ok=True, parents=not suffix)
 
     @staticmethod
     def _read_file(path: Path, maximum: int) -> bytes:
@@ -333,6 +349,7 @@ class ScientificStore:
             with _SQLITE_LIFECYCLE_LOCK:
                 self._database_paths()
                 connection = sqlite3.connect(uri, uri=True, timeout=2, isolation_level=None)
+            sqlite_connections.prepare(connection)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA trusted_schema=OFF")
@@ -364,6 +381,77 @@ class ScientificStore:
         # these short checks serialize instead of surfacing spurious busy errors.
         with lifecycle_guard(self.folder), writer_lock(self.folder, timeout=5):
             self._initialize_locked()
+        self._remember_ready()
+
+    def _database_identity(self, connection: sqlite3.Connection) -> tuple | None:
+        try:
+            info = os.stat(self.path, follow_symlinks=False)
+        except OSError:
+            return None
+        cookie = tuple(
+            connection.execute(f"PRAGMA {name}").fetchone()[0]
+            for name in ("schema_version", "user_version", "application_id")
+        )
+        return (info.st_dev, info.st_ino, *cookie)
+
+    def _remember_ready(self) -> None:
+        try:
+            with self._connection() as connection:
+                identity = self._database_identity(connection)
+        except StorageError:
+            return
+        if identity is not None:
+            _READY[str(self.path)] = identity
+
+    @contextmanager
+    def _reader(self) -> Iterator[sqlite3.Connection]:
+        """A connection for reads that never waits for, or blocks, project writers.
+
+        The first read of a database file validates and recovers it under the
+        locks, like ``initialize``. Later reads skip that work unless the file or
+        its schema changed or an interrupted publication awaits recovery. A writer
+        holding the lock initializes and recovers under it, so reads do not wait.
+        """
+        cached = _READY.get(str(self.path))
+        validated = False
+        if cached is not None and self.path.exists():
+            with self._connection() as connection:
+                validated = self._database_identity(connection) == cached
+                pending = connection.execute(
+                    "SELECT 1 FROM publications WHERE status='preparing' LIMIT 1"
+                ).fetchone()
+                if validated and pending is None:
+                    yield connection
+                    return
+        self._prepare_read(validated)
+        with self._connection() as connection:
+            yield connection
+
+    def _prepare_read(self, validated: bool = False) -> None:
+        try:
+            with lifecycle_guard(self.folder, timeout=0), writer_lock(self.folder, timeout=0):
+                self._initialize_locked()
+        except StorageError as error:
+            if error.code != "PROJECT_BUSY":
+                raise
+            if not validated and not self._readable():
+                # Creation or migration needs the lock; wait for it as before.
+                self.initialize()
+            return
+        self._remember_ready()
+
+    def _readable(self) -> bool:
+        """Lock-free check that a busy project's database already has the current schema."""
+        if not self.path.exists():
+            return False
+        with self._connection() as connection:
+            if (
+                connection.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION
+                or connection.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID
+            ):
+                return False
+            self._validate_schema(connection)
+        return True
 
     def _initialize_locked(self) -> None:
         self._database_paths()
@@ -503,8 +591,7 @@ class ScientificStore:
             )
 
     def status(self) -> dict:
-        self.initialize()
-        with self._connection() as connection:
+        with self._reader() as connection:
             operations = []
             for row in connection.execute("SELECT * FROM publications ORDER BY created_at,id"):
                 operation = {
@@ -572,10 +659,9 @@ class ScientificStore:
                 )
 
     def get_draft(self, identity: str, *, include_inactive: bool = False) -> dict:
-        self.initialize()
-        if not include_inactive:
-            self.lifecycle.assert_usable([f"draft:{identity}"])
-        with self._connection() as connection:
+        with self._reader() as connection:
+            if not include_inactive:
+                self.lifecycle.assert_usable([f"draft:{identity}"])
             return self._draft(
                 connection.execute("SELECT * FROM drafts WHERE id=?", (identity,)).fetchone()
             )
@@ -588,9 +674,8 @@ class ScientificStore:
         )
 
     def list_drafts(self, *, include_inactive: bool = False) -> list[dict]:
-        self.initialize()
-        lifecycle = self.lifecycle.read()
-        with self._connection() as connection:
+        with self._reader() as connection:
+            lifecycle = self.lifecycle.read()
             return [
                 self._draft(row)
                 for row in connection.execute("SELECT * FROM drafts ORDER BY created_at,id")
@@ -697,14 +782,13 @@ class ScientificStore:
     def get_version_label(
         self, resource_type: str, resource_id: str, *, include_inactive: bool = False
     ) -> dict | None:
-        self.initialize()
-        if not include_inactive:
-            self.lifecycle.assert_usable(
-                [f"{resource_type}:{resource_id}"]
-                if resource_type in {"dataset", "configuration"}
-                else []
-            )
-        with self._connection() as connection:
+        with self._reader() as connection:
+            if not include_inactive:
+                self.lifecycle.assert_usable(
+                    [f"{resource_type}:{resource_id}"]
+                    if resource_type in {"dataset", "configuration"}
+                    else []
+                )
             kind, _document = self._version_target(connection, resource_type, resource_id)
             return self._version_label(connection, resource_type, resource_id, kind)
 
@@ -898,12 +982,43 @@ class ScientificStore:
             self._checkpoint("version_label_committed")
             return result
 
+    def _verified_key(self, identity: str) -> tuple[str, str, str]:
+        return (str(self.path), self.project_id, identity)
+
     def _configuration(self, connection: sqlite3.Connection, identity: str) -> dict:
         row = connection.execute("SELECT * FROM configurations WHERE id=?", (identity,)).fetchone()
         if row is None:
             raise _error("The frozen configuration does not exist.", "CONFIGURATION_NOT_FOUND", 404)
         try:
-            document = json.loads(row["document"])
+            text = row["document"]
+            stored = hashlib.sha256(
+                text.encode("utf-8") if isinstance(text, str) else text
+            ).digest()
+            document = json.loads(text)
+            if self._verified(identity, row["content_hash"], stored):
+                # Byte-identical to a row this process already verified in full.
+                return document
+            with _VERIFYING:
+                if not self._verified(identity, row["content_hash"], stored):
+                    self._verify_configuration(identity, row["content_hash"], stored, document)
+            return document
+        except (ValueError, TypeError, KeyError, AttributeError) as error:
+            raise _error(
+                "The frozen configuration failed its checksum.", "STORAGE_CORRUPT"
+            ) from error
+
+    def _verified(self, identity: str, content_hash: str, stored: bytes | None = None) -> bool:
+        verified = _VERIFIED_CONFIGURATIONS.get(self._verified_key(identity))
+        return (
+            verified is not None
+            and verified[0] == content_hash
+            and (stored is None or verified[1] == stored)
+        )
+
+    def _verify_configuration(
+        self, identity: str, content_hash: str, stored: bytes, document: dict
+    ) -> None:
+        try:
             _json(document, MAX_CONFIGURATION_BYTES)
             digest = hashlib.sha256(
                 _json(document["manifest"], MAX_CONFIGURATION_BYTES)
@@ -911,22 +1026,27 @@ class ScientificStore:
             if (
                 document["projectId"] != self.project_id
                 or document["contentHash"] != digest
-                or row["content_hash"] != digest
+                or content_hash != digest
                 or document["id"] != identity
                 or identity != f"configuration-{digest}"
             ):
                 raise ValueError
-            return document
-        except (ValueError, TypeError, KeyError) as error:
+            if len(_VERIFIED_CONFIGURATIONS) >= _VERIFIED_LIMIT:
+                _VERIFIED_CONFIGURATIONS.clear()
+            _VERIFIED_CONFIGURATIONS[self._verified_key(identity)] = (
+                digest,
+                stored,
+                document["manifest"].get("kind"),
+            )
+        except (ValueError, TypeError, KeyError, AttributeError) as error:
             raise _error(
                 "The frozen configuration failed its checksum.", "STORAGE_CORRUPT"
             ) from error
 
     def get_configuration(self, identity: str, *, include_inactive: bool = False) -> dict:
-        self.initialize()
-        if not include_inactive:
-            self.lifecycle.assert_usable([f"configuration:{identity}"])
-        with self._connection() as connection:
+        with self._reader() as connection:
+            if not include_inactive:
+                self.lifecycle.assert_usable([f"configuration:{identity}"])
             return self._with_version_label(
                 connection, "configuration", self._configuration(connection, identity)
             )
@@ -934,25 +1054,46 @@ class ScientificStore:
     def list_configurations(
         self, kind: str | None = None, *, include_inactive: bool = False
     ) -> list[dict]:
-        self.initialize()
-        lifecycle = self.lifecycle.read()
-        with self._connection() as connection:
+        with self._reader() as connection:
+            lifecycle = self.lifecycle.read()
+            rows = [
+                (identity, content_hash)
+                for identity, content_hash in connection.execute(
+                    "SELECT id, content_hash FROM configurations ORDER BY id"
+                ).fetchall()
+                if include_inactive or self._visible("configuration", identity, lifecycle)
+            ]
+            if kind is not None and any(not self._verified(*row) for row in rows):
+                # Only verified rows have a known kind. Verify the rest once, under the
+                # verification lock, so parallel reads do not each repeat it.
+                with _VERIFYING:
+                    for identity, content_hash in rows:
+                        if not self._verified(identity, content_hash):
+                            self._configuration(connection, identity)
+            identities = []
+            for identity, content_hash in rows:
+                # One read of the cache: another thread may clear it between two. A row
+                # not verified (any more) has no known kind and is filtered once loaded.
+                verified = _VERIFIED_CONFIGURATIONS.get(self._verified_key(identity))
+                if (
+                    kind is None
+                    or verified is None
+                    or verified[0] != content_hash
+                    or verified[2] == kind
+                ):
+                    identities.append(identity)
             documents = [
                 self._with_version_label(
-                    connection, "configuration", self._configuration(connection, row[0])
+                    connection, "configuration", self._configuration(connection, identity)
                 )
-                for row in connection.execute(
-                    "SELECT id FROM configurations ORDER BY id"
-                ).fetchall()
-                if include_inactive or self._visible("configuration", row[0], lifecycle)
+                for identity in identities
             ]
         return [item for item in documents if kind is None or item["manifest"].get("kind") == kind]
 
     def configuration_publication(self, operation_id: str) -> dict | None:
         """Return a completed publication for caller-side immutable intent replay."""
         _label(operation_id, "operation ID")
-        self.initialize()
-        with self._connection() as connection:
+        with self._reader() as connection:
             operation = connection.execute(
                 "SELECT configuration_id FROM configuration_publications WHERE id=?",
                 (operation_id,),
@@ -964,6 +1105,16 @@ class ScientificStore:
                 )
             self.lifecycle.assert_usable(())
             return None
+
+    def published_configuration_id(self, operation_id: str) -> str | None:
+        """The configuration an operation published, if any; a read without lifecycle checks."""
+        _label(operation_id, "operation ID")
+        with self._reader() as connection:
+            row = connection.execute(
+                "SELECT configuration_id FROM configuration_publications WHERE id=?",
+                (operation_id,),
+            ).fetchone()
+        return row[0] if row else None
 
     def publish_configuration(
         self,
@@ -987,6 +1138,8 @@ class ScientificStore:
             _revision(expected_revision)
         if manifest.get("kind") not in {
             "protocol",
+            "target-split",
+            "experiment-setup",
             "feature",
             "feature-bundle",
             "mil-batch",
@@ -1227,18 +1380,16 @@ class ScientificStore:
         return document
 
     def get_dataset(self, identity: str, *, include_inactive: bool = False) -> dict:
-        self.initialize()
-        if not include_inactive:
-            self.lifecycle.assert_usable([f"dataset:{identity}"])
-        with self._connection() as connection:
+        with self._reader() as connection:
+            if not include_inactive:
+                self.lifecycle.assert_usable([f"dataset:{identity}"])
             return self._with_version_label(
                 connection, "dataset", self._get_dataset(connection, identity)
             )
 
     def list_datasets(self, *, include_inactive: bool = False) -> list[dict]:
-        self.initialize()
-        lifecycle = self.lifecycle.read()
-        with self._connection() as connection:
+        with self._reader() as connection:
+            lifecycle = self.lifecycle.read()
             return [
                 self._with_version_label(
                     connection, "dataset", self._get_dataset(connection, row["id"])
@@ -1249,10 +1400,9 @@ class ScientificStore:
 
     def read_artifact(self, dataset_id: str, name: str, *, include_inactive: bool = False) -> bytes:
         _artifact_name(name)
-        self.initialize()
-        if not include_inactive:
-            self.lifecycle.assert_usable([f"dataset:{dataset_id}"])
-        with self._connection() as connection:
+        with self._reader() as connection:
+            if not include_inactive:
+                self.lifecycle.assert_usable([f"dataset:{dataset_id}"])
             document = self._get_dataset(connection, dataset_id)
         if name not in document["artifacts"]:
             raise _error(

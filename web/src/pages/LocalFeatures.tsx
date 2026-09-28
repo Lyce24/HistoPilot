@@ -1,5 +1,5 @@
 import { StageBackButton, StageContinueButton, StageCreateButton } from '../components/StageActions';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import { scientific } from '../api/scientific';
@@ -14,7 +14,7 @@ import {
   useRefreshScientific,
 } from '../components/ScientificUI';
 import ServerFolderPicker from '../components/ServerFolderPicker';
-import TridentExtraction from '../components/TridentExtraction';
+import TridentExtraction, { legacyActive } from '../components/TridentExtraction';
 import FeatureExtractionRuns from '../components/FeatureExtractionRuns';
 import { extractionActive, trident } from '../api/trident';
 import { useHashParameters } from '../lib/hashRoute';
@@ -48,9 +48,13 @@ export default function LocalFeatures({ workspace: w }: { workspace: Workspace }
     return () => document.removeEventListener('click', openCurrent);
   }, [extractionId]);
   const extractionRequest = useMemo(() => extractionId ? { id: extractionId } : undefined, [parameters, extractionId, reopen]);
-  return <FeaturesWorkspace key={`${context.datasetId ?? ''}:${context.protocolId ?? ''}`} workspace={w} context={context} extractionRequest={extractionRequest} />;
+  // `source=<feature version>&packing=<job>` (a Task Center back-link) opens that version's packing.
+  const sourceId = parameters.get('source') || undefined;
+  const packingId = parameters.get('packing') || undefined;
+  const packRequest = useMemo(() => sourceId ? { source: sourceId, packing: packingId } : undefined, [sourceId, packingId]);
+  return <FeaturesWorkspace key={`${context.datasetId ?? ''}:${context.targetSplitId ?? ''}`} workspace={w} context={context} extractionRequest={extractionRequest} packRequest={packRequest} />;
 }
-function FeaturesWorkspace({ workspace: w, context, extractionRequest }: { workspace: Workspace; context: PreparationContext; extractionRequest?: { id: string } }) {
+function FeaturesWorkspace({ workspace: w, context, extractionRequest, packRequest }: { workspace: Workspace; context: PreparationContext; extractionRequest?: { id: string }; packRequest?: { source: string; packing?: string } }) {
   const extractionId = extractionRequest?.id;
   const project = w.project.id;
   const datasets = useDatasets(project);
@@ -59,7 +63,8 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest }: { works
   const extractionJobs = useQuery({
     queryKey: ['extractions', project, 'jobs'],
     queryFn: () => trident.jobs(project),
-    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 3000 : false,
+    // Task Center runs are followed by their status chips; tmux runs keep fast polling.
+    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? query.state.data.jobs.some(legacyActive) ? 3000 : 10_000 : false,
   });
   const runs = extractionJobs.data?.jobs ?? [];
   const activeExtractions = runs.filter(extractionActive);
@@ -98,6 +103,14 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest }: { works
   const configuration = versions.find((item) => item.id === selected) ?? versions[0];
   const selectedId = configuration?.id ?? '';
   const dataset = datasets.data?.datasets.find((item) => item.id === configuration?.manifest.datasetId);
+  const openedPack = useRef<string | null>(null);
+  useEffect(() => {
+    if (!packRequest || extractionRequest || !versions.some((item) => item.id === packRequest.source)) return;
+    const key = `${packRequest.source}:${packRequest.packing ?? ''}`;
+    if (openedPack.current === key) return;
+    openedPack.current = key;
+    selectVersion(packRequest.source);
+  });
   function openLibrary() {
     setView('bundles'); setSelectedBundle('');
     if (extractionId) window.location.hash = preparationLink('features', context);
@@ -150,13 +163,13 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest }: { works
   return (
     <div className="clinical-workspace feature-workspace">
       <PageHeader
-        eyebrow="01 PREPARE"
+        eyebrow="02 PREPARE"
         title={activeView === 'bundles' ? 'Slide features' : activeView === 'add' && mode === 'extract' ? 'Slide extraction' : 'Prepare slide features'}
         description={activeView === 'bundles' ? 'Follow extraction runs, open a feature bundle, or create one for your experiments.' : 'Choose existing features or extract them, check slide coverage, then freeze a feature bundle.'}
         actions={activeView === 'bundles' ? <StageCreateButton type="button" disabled={busy || bundleBusy} onClick={() => prepareBundle()}>Create feature bundle</StageCreateButton> : <StageBackButton disabled={busy || bundleBusy} onClick={openLibrary}>Back to feature bundles</StageBackButton>}
       />
       {activeView !== 'bundles' ? <SetupContext input="Slide images or extracted features; a dataset is optional" output="A verified feature bundle for model development">
-        A bundle saves verified features and optional packs for reuse. In Experiments, select a development protocol and bundle to check feature coverage and compatibility before training.
+        A bundle saves verified features and optional packs for reuse. In Experimental Setup, select targets and splits with a feature bundle to check feature coverage and compatibility before training.
       </SetupContext> : null}
       <PreparationNotice context={context} />
       {context.datasetId ? <p className="muted">All project bundles are available. The selected dataset is an optional slide filter when adding features.</p> : null}
@@ -176,7 +189,7 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest }: { works
           else if (step === 'review' && bundleReviewReady) { setBundlePage('review'); setView('library'); }
         }} /> : null}
       <StagePage pageKey={`${activeView}:${sourceStep}:${bundlePage}:${selectedBundle}`} className="pfm-workspace">
-      {activeView === 'bundles' ? <FeatureExtractionRuns jobs={runs} context={context} isPending={extractionJobs.isPending} /> : null}
+      {activeView === 'bundles' ? <FeatureExtractionRuns jobs={runs} context={context} isPending={extractionJobs.isPending} project={project} /> : null}
       {configurations.isPending || frozenBundles.isPending ? <p className="muted" role="status">Loading feature sources and bundles…</p> : <>
       {activeView === 'bundles' || activeView === 'detail' ? <section className="pfm-content" aria-label="Frozen feature bundles">
         <FeatureBundleLibrary project={project} items={bundleItems} features={versions} selectedId={activeView === 'detail' ? selectedBundle : ''} onSelect={(id) => { setSelectedBundle(id); setView('detail'); }} onPrepare={prepareBundle} context={context}
@@ -387,13 +400,13 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest }: { works
                 <div><dt>Source folder</dt><dd className="mono">{configuration.manifest.layout?.featureDirectory ?? (configuration.manifest.spec as FeatureSpec).path}</dd></div>
               </dl>
               {configuration.versionLabel?.note ? <p className="pfm-version-note">{configuration.versionLabel.note}</p> : null}
-              <FeatureBundlePreparation onBusyChange={setBundleBusy} page={bundlePage} onPageChange={setBundlePage} onReviewReadyChange={setBundleReviewReady} showSteps={false} key={`${configuration.id}:${bundleSeed?.revision ?? 0}`} project={project} configuration={configuration} configurations={versions} onSelectVersion={selectVersion}
+              <FeatureBundlePreparation requestedPackingJob={packRequest?.source === configuration.id ? packRequest.packing : undefined} onBusyChange={setBundleBusy} page={bundlePage} onPageChange={setBundlePage} onReviewReadyChange={setBundleReviewReady} showSteps={false} key={`${configuration.id}:${bundleSeed?.revision ?? 0}`} project={project} configuration={configuration} configurations={versions} onSelectVersion={selectVersion}
                 initialPackIds={bundleSeed?.featureId === configuration.id ? bundleSeed.packIds : []}
                 onFrozen={(bundle) => {
                   setSelectedBundle(bundle.id);
                   setView('detail');
                   setMessage(`Bundle “${bundle.versionLabel?.tag || 'Feature bundle'}” frozen.`);
-                  window.location.hash = preparationLink('experiments', { datasetId: context.datasetId, bundleId: bundle.id, protocolId: context.protocolId, saved: 'bundle' });
+                  window.location.hash = preparationLink('experimental-setup', { datasetId: context.datasetId, bundleId: bundle.id, targetSplitId: context.targetSplitId, saved: 'bundle' });
                   window.scrollTo({ top: 0 });
                 }} />
             </Panel>

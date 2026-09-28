@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import LocalOperations, { cancelPipelineJob } from './LocalOperations';
-import { lifecycle } from '../api/lifecycle';
+import LocalOperations from './LocalOperations';
 import type { Workspace } from '../api/types';
 import type { OperationsInventory } from '../api/operations';
 import { extractionActive } from '../api/trident';
@@ -23,34 +22,20 @@ function render(inventory: OperationsInventory, failed = false) {
 const empty: OperationsInventory = { projectId: 'project', jobs: [], reservations: [], capacity: { cpus: 8, availableRamGb: 16 }, note: '' };
 
 describe('project operations workspace', () => {
-  it('uses a fresh cancellation receipt after acknowledgement for a resumed job', async () => {
-    const cancel = vi.spyOn(lifecycle, 'cancel').mockResolvedValue({ key: 'configuration:job', job: {} });
-    const receipts = new Map<string, string>();
-    await cancelPipelineJob('project', 'configuration:job', receipts);
-    await cancelPipelineJob('project', 'configuration:job', receipts);
-    expect(cancel.mock.calls[0][2]).not.toEqual(cancel.mock.calls[1][2]);
-    expect(receipts.size).toBe(0);
-  });
-  it('retries an uncertain cancellation with its existing receipt', async () => {
-    const cancel = vi.spyOn(lifecycle, 'cancel').mockRejectedValueOnce(new Error('Connection lost')).mockResolvedValueOnce({ key: 'configuration:job', job: {} });
-    const receipts = new Map<string, string>();
-    await expect(cancelPipelineJob('project', 'configuration:job', receipts)).rejects.toThrow('Connection lost');
-    await cancelPipelineJob('project', 'configuration:job', receipts);
-    expect(cancel.mock.calls[0][2]).toEqual(cancel.mock.calls[1][2]);
-    expect(receipts.size).toBe(0);
-  });
   it('keeps waiting preparation jobs active for cancellation and polling', () => {
     expect(extractionActive({ state: 'queued' } as ExtractionJob)).toBe(true);
     expect(featurePackActive({ state: 'queued' } as FeaturePackJob)).toBe(true);
   });
-  it('shows unified jobs, cancellation and reservation context', () => {
-    const html = render({ ...empty, jobs: [{ key: 'extraction:x', id: 'x', kind: 'extraction', name: 'Slide embeddings', job: { status: 'queued', cancellable: true, waitingReason: 'Waiting for GPU capacity.' } }], reservations: [{ batchId: 'batch', runId: 'run', cpus: 4, ramGb: 8, gpu: 0, runsPerGpu: 1 }] });
-    expect(html).toContain('Slide embeddings');
-    expect(html).toContain('href="#features?extraction=x"');
-    expect(html).toContain('Waiting for GPU capacity.');
-    expect(html).toContain('Cancel job');
-    expect(html).toContain('Host reservations across all projects');
-    expect(html).toContain('4 CPU slots');
+  it('points compute work to the Task Center and keeps export gated on active project jobs', () => {
+    const html = render({ ...empty, jobs: [{ key: 'extraction:x', id: 'x', kind: 'extraction', name: 'Slide embeddings', job: { status: 'running', cancellable: true } }] });
+    expect(html).toContain('Study backups &amp; sources');
+    expect(html).toContain('href="#task-center?project=project"');
+    expect(html).toContain('Export waits for 1 active project job to finish');
+    expect(html).not.toContain('Unified job queue');
+    expect(html).not.toContain('Cancel job');
+    expect(html).not.toContain('Host reservations across all projects');
+    const idle = render(empty);
+    expect(idle).not.toContain('Export waits for');
   });
   it('explains external source policy and preserves honest failed verification status', () => {
     const html = render(empty, true);

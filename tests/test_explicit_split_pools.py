@@ -4,18 +4,13 @@ import copy
 import json
 import runpy
 from collections import Counter, defaultdict
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from histopilot.api import create_app
 from histopilot.application.protocols import ProtocolService
-from histopilot.config import Settings
 from histopilot.schemas.protocols import ProtocolExploreRequest
 from histopilot.storage.project_lock import StorageError
-from histopilot.storage.scientific import ScientificStore
 
 DATASET_ID = "dataset-" + "a" * 64
 MODES = ("kfold", "monte_carlo", "leave_one_domain_out", "nested_kfold", "held_out")
@@ -396,19 +391,17 @@ def test_membership_budget_counts_fixed_validation_and_final_evaluation(monkeypa
     assert "PROTOCOL_MEMBERSHIP_LIMIT" in {finding["code"] for finding in result["findings"]}
 
 
-def test_pool_exploration_reports_counts_before_target_mapping_is_complete():
+def test_version_three_pools_get_cohort_counts_but_no_live_partition_counts():
+    # Version 3 designs are frozen history; live partition counts cover version 4 only.
     store = Store()
     split = store.draft["payload"]["spec"]["split"]
     result = ProtocolService(store).explore(
         ProtocolExploreRequest(datasetId=DATASET_ID, targetField="label", split=split)
     )
-    assert result["valid"], result["findings"]
-    assert result["selectionBasis"] == "pools"
+    assert not result["valid"]
+    assert "INVALID_STRATEGY_CONFIG" in {finding["code"] for finding in result["findings"]}
     assert result["cohort"]["totalSlides"] == 240
-    assert result["partitions"]["train"]["expanded"]["patientCount"] == 100
-    assert result["partitions"]["test"]["expanded"]["patientCount"] == 20
-    assert result["partitions"]["val"]["expanded"]["patientCount"] == 0
-    assert result["unassigned"]["patientCount"] == 0
+    assert result["partitions"] is result["unassigned"] is None
 
 
 def test_version_two_preview_hash_omits_new_pool_fields_and_feature_metadata():
@@ -418,83 +411,6 @@ def test_version_two_preview_hash_omits_new_pool_fields_and_feature_metadata():
     assert (
         result["previewHash"] == "876f7a780ad70a02d4e9f0c85692c45eee499f63be4589c8b74a353ed4d618fb"
     )
-
-
-def test_version_three_pool_protocol_freezes_and_reopens_through_api(tmp_path):
-    data = tmp_path / "data"
-    data.mkdir()
-    settings = Settings(workspace=tmp_path / "registry-a", data_roots=(data,))
-
-    def connect(config):
-        return TestClient(create_app(config), base_url="http://127.0.0.1:8787")
-
-    def auth(client):
-        client.headers["X-HistoPilot-Token"] = client.get("/api/v1/session").json()["token"]
-
-    def post(client, url, body, status=200):
-        response = client.post(url, json=body)
-        assert response.status_code == status, response.text
-        return response.json()
-
-    with connect(settings) as client:
-        auth(client)
-        project = post(
-            client,
-            "/api/v1/projects",
-            {"name": "Analysis", "storagePath": str(data / "experiment")},
-            201,
-        )
-        base = f"/api/v1/projects/{project['id']}"
-        memory = Store("nested_kfold", fixed_validation=True)
-        storage = ScientificStore(Path(project["storagePath"]), project["id"])
-        storage.initialize()
-        imported = storage.create_draft("import", "Source", {})
-        dataset = storage.publish_dataset(
-            imported["id"],
-            expected_revision=1,
-            manifest=memory.dataset["manifest"],
-            artifacts={"records.json": json.dumps(memory.rows).encode()},
-            operation_id="source",
-        )
-        spec = memory.draft["payload"]["spec"]
-        spec["datasetId"] = dataset["id"]
-        live = post(
-            client,
-            base + "/protocols/explore",
-            {"datasetId": dataset["id"], "split": spec["split"]},
-        )
-        assert live["valid"]
-        assert live["partitions"]["train"]["expanded"]["patientCount"] == 80
-        assert live["partitions"]["val"]["expanded"]["patientCount"] == 20
-        assert live["partitions"]["test"]["expanded"]["patientCount"] == 20
-        draft = post(
-            client,
-            base + "/drafts",
-            {
-                "kind": "experiment",
-                "name": "Nested analysis",
-                "payload": {"type": "analysis-protocol", "spec": spec},
-            },
-            201,
-        )
-        protocol_url = base + f"/protocols/{draft['id']}"
-        result = post(client, protocol_url + "/preview", {"expectedRevision": 1})
-        assert result["canFreeze"], result["findings"]
-        intent = {
-            "expectedRevision": 1,
-            "previewHash": result["previewHash"],
-            "operationId": "freeze-pools",
-            "versionLabel": {"tag": "Nested split pools"},
-        }
-        frozen = post(client, protocol_url + "/freeze", intent, 201)
-        assert frozen["manifest"]["memberships"] == result["memberships"]
-        assert frozen["manifest"]["summary"]["poolCounts"] == result["summary"]["poolCounts"]
-    with connect(replace(settings, workspace=tmp_path / "registry-b")) as client:
-        auth(client)
-        reopened = post(client, "/api/v1/projects/open", {"path": project["storagePath"]})
-        assert reopened["id"] == project["id"]
-        assert client.get(base + f"/configurations/{frozen['id']}").json() == frozen
-        assert post(client, protocol_url + "/freeze", intent, 201) == frozen
 
 
 def test_final_test_class_minimum_is_enforced_for_domain_strategy():

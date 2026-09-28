@@ -1,0 +1,5 @@
+.task-owner-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.task-owner-move { display: inline-flex; }
+.task-owner-move .btn { border-radius: 0; margin-left: -1px; }
+.task-owner-move .btn:first-child { border-radius: 8px 0 0 8px; margin-left: 0; }
+.task-owner-move .btn:last-child { border-radius: 0 8px 8px 0; }

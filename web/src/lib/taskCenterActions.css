@@ -1,0 +1,3 @@
+/* In-page confirmation for Stop and Cancel (no browser dialog). */
+.confirm-action { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 10px; border: 1px solid var(--theme-alert-line); border-radius: 8px; background: var(--theme-alert-soft); color: var(--theme-alert-ink); font-size: 12px; line-height: 1.5; }
+.confirm-action > span { flex: 1 1 200px; min-width: 0; }

@@ -21,11 +21,9 @@ import React from ${JSON.stringify(join(web, 'node_modules/react/index.js'))};
 import { createRoot } from ${JSON.stringify(join(web, 'node_modules/react-dom/client.js'))};
 import { QueryClient, QueryClientProvider } from ${JSON.stringify(join(web, 'node_modules/@tanstack/react-query/build/modern/index.js'))};
 import LocalDataset from ${source('pages/LocalDataset.tsx')};
-import LocalProtocol from ${source('pages/LocalProtocol.tsx')};
 import { scientific } from ${source('api/scientific.ts')};
 import { packing } from ${source('api/packing.ts')};
 import { bundles } from ${source('api/bundles.ts')};
-import { newSplit } from ${source('components/SplitStrategy.tsx')};
 import ${source('styles.css')};
 import ${source('local-workspace.css')};
 import ${source('scientific.css')};
@@ -33,23 +31,19 @@ import ${source('clinical-workspace.css')};
 import ${source('components/StageWorkflow.css')};
 
 const copy = (value) => structuredClone(value);
-const state = window.workflow = { calls: [], drafts: [], datasets: [], protocols: [], bundles: [], errors: [], revision: 0, confirms: [], confirmNavigation: false, holdFreeze: false, freezeFailures: 0, refreshMode: 'ready', pendingRefresh: [] };
+const state = window.workflow = { calls: [], drafts: [], datasets: [], bundles: [], errors: [], revision: 0, confirms: [], confirmNavigation: false, holdFreeze: false, freezeFailures: 0, refreshMode: 'ready', pendingRefresh: [] };
 window.confirm = (message) => { state.confirms.push(message); return state.confirmNavigation; };
 window.fetch = async (...args) => { state.errors.push('Unexpected network request: ' + args[0]); throw new Error(state.errors.at(-1)); };
 const rows = ['low', 'high', 'low', 'high'].map((grade, index) => ({ slideId: 'slide-' + index, patientId: 'patient-' + index, patientIdSource: 'source', slidePath: '/slides/' + index + '.svs', attributes: { grade, cohort: ['TCGA', 'SurGen', 'RIH', 'TCGA'][index] } }));
 const dictionary = [{ key: 'grade', sourceColumn: 'grade', owner: 'patient', type: 'categorical' }, { key: 'cohort', sourceColumn: 'cohort', owner: 'patient', type: 'categorical' }];
 const importSpec = { source: { path: '/metadata.csv' }, slideIdColumn: 'Slide_ID', patientIdColumn: 'Patient_ID', patientIdFallback: 'unresolved', slideRoot: '/slides', recursive: true, includeMissingSlides: false, missingValues: [''], attributes: copy(dictionary) };
 const importSummary = { sourceRowCount: 4, slideCount: 4, mappedPatientCount: 4, verifiedPatientCount: 4, unlinkedSlideCount: 0, matchedSlideCount: 4, missingSlideCount: 0, unmatchedFileCount: 0, excludedRowCount: 0, scannedFileCount: 4 };
-const protocolSpec = (datasetId) => ({ datasetId, target: { field: 'grade', task: 'binary_classification', unit: 'patient', classes: ['low', 'high'], labels: { low: 'low', high: 'high' }, positiveClass: 'high', missing: 'block', unmapped: 'block' }, predictors: [], eligibility: [], split: newSplit([42], 2), constraints: { minPatientsPerClass: 1, minPatientsPerPartition: 1 }, featureBundleId: 'bundle-shared' });
 const datasets = ['a', 'b'].map((key, index) => ({ id: 'dataset-' + key, projectId: 'project', createdAt: '2026-09-' + (10 + index) + 'T12:00:00Z', contentHash: key, artifacts: {}, versionLabel: { tag: 'Hospital ' + key.toUpperCase(), note: 'Saved dataset ' + key, revision: 1 }, manifest: { name: key, dictionary: copy(dictionary), summary: copy(importSummary), provenance: { mapping: copy(importSpec) } } }));
 const featureBundles = [{ id: 'bundle-shared', current: true, findings: [], versionLabel: { tag: 'All slides · UNI' }, manifest: { kind: 'feature-bundle', datasetId: 'another-dataset', spec: { featureSetId: 'source', packArtifactIds: [] }, summary: { slideCount: 6, patchCount: 600, dimensions: 1024, dtype: 'float32', packCount: 0 }, feature: { validation: { tensorValidationComplete: true } }, packs: [] } }];
-const protocols = ['a', 'b'].map((key, index) => ({ id: 'protocol-' + key, projectId: 'project', createdAt: '2026-09-' + (10 + index) + 'T12:00:00Z', versionLabel: { tag: 'Protocol ' + key.toUpperCase(), note: 'Saved protocol ' + key, revision: 1 }, manifest: { kind: 'protocol', datasetId: 'dataset-' + key, spec: protocolSpec('dataset-' + key), summary: { splitVersion: 4, includedPatients: 4, includedSlides: 4, totalSlides: 4, excludedSlides: 0, includedGroups: 4, strategy: 'kfold', evaluationPlanCount: 2 }, partitions: [], findings: [] } }));
 const drafts = [
   { id: 'import-draft', name: 'Existing import draft', kind: 'import', payload: { type: 'dataset-import', spec: { ...copy(importSpec), source: { path: '/saved-import.csv' } } } },
-  { id: 'protocol-draft', name: 'Existing protocol draft', kind: 'experiment', payload: { type: 'analysis-protocol', spec: protocolSpec('dataset-b') } },
 ].map((draft) => ({ ...draft, projectId: 'project', status: 'editable', revision: 3, createdAt: '2026-09-12T12:00:00Z', updatedAt: '2026-09-12T12:00:00Z' }));
 const values = (field) => field ? [...new Set(rows.map((row) => row.attributes[field]))].map((value) => ({ value, count: rows.filter((row) => row.attributes[field] === value).length })) : [];
-const stats = { totalSlides: 4, patientCount: 4, fallbackSlideCount: 0, groupCount: 4, unlinkedSlideCount: 0, sample: rows };
 const refreshRead = async (method) => {
   state.calls.push({ method });
   if (state.refreshMode === 'held') await new Promise((resolve) => state.pendingRefresh.push(resolve));
@@ -58,18 +52,13 @@ const refreshRead = async (method) => {
 window.releaseRefresh = () => { state.refreshMode = 'ready'; state.pendingRefresh.splice(0).forEach((resolve) => resolve()); };
 scientific.datasets = async () => { await refreshRead('datasets'); return { datasets: copy(state.datasets) }; };
 scientific.drafts = async () => ({ drafts: copy(state.drafts) });
-scientific.configurations = async (_, kind) => { await refreshRead('configurations-' + kind); return { configurations: kind === 'protocol' ? copy(state.protocols) : [] }; };
+scientific.configurations = async (_, kind) => { await refreshRead('configurations-' + kind); return { configurations: [] }; };
 packing.jobs = async () => { state.calls.push({ method: 'packing.jobs' }); throw new Error('Features are unavailable during dataset preparation.'); };
 bundles.list = async () => { state.calls.push({ method: 'bundles.list' }); throw new Error('Feature bundles are unavailable during dataset preparation.'); };
 scientific.draft = async (_, id) => { state.calls.push({ method: 'draft', id }); return copy(state.drafts.find((draft) => draft.id === id)); };
 scientific.queryDataset = async (_, id, query) => {
   state.calls.push({ method: 'queryDataset', id });
   return { records: copy(rows), total: 4, totalSlides: 4, offset: 0, limit: 200, summary: copy(importSummary), valueCounts: values(query.field), valuesTruncated: false, distribution: { kind: 'categorical', unit: 'patient', counts: values(query.field), total: 4, missingCount: 0 } };
-};
-scientific.exploreProtocol = async (_, request) => {
-  state.calls.push({ method: 'exploreProtocol', request: copy(request) });
-  return { datasetId: request.datasetId, splitMode: request.splitMode, valid: true, dataset: copy(stats), cohort: copy(stats), ...(request.featureBundleId ? { populationSource: 'dataset_and_bundle', matchedSlides: 4, bundleSlides: 6 } : {}), partitions: null, unassigned: null,
-    target: request.targetField ? { field: request.targetField, values: values(request.targetField).map(({ value, count }) => ({ value, slides: count })), distinctCount: 2 } : null, findings: [] };
 };
 scientific.inspect = async (_, source) => { state.calls.push({ method: 'inspect', source: copy(source) }); return { headers: ['Slide_ID', 'Patient_ID', 'grade'], sheets: [], sheet: null, rows: rows.map((row) => ({ Slide_ID: row.slideId, Patient_ID: row.patientId, grade: row.attributes.grade })), rowCount: 4, fingerprint: source.path, findings: [] }; };
 scientific.saveDraft = async (_, input, current) => {
@@ -78,30 +67,23 @@ scientific.saveDraft = async (_, input, current) => {
   state.drafts = [...state.drafts.filter((item) => item.id !== draft.id), draft]; return copy(draft);
 };
 scientific.importPreview = async (_, draftId, revision) => { state.calls.push({ method: 'importPreview', draftId, revision }); return { draftId, revision, previewHash: 'import-' + revision, canFreeze: true, findings: [], summary: copy(importSummary), dictionary: copy(dictionary), records: copy(rows), recordsTruncated: false }; };
-scientific.protocolPreview = async (_, draftId, revision) => { state.calls.push({ method: 'protocolPreview', draftId, revision }); return { draftId, revision, previewHash: 'protocol-' + revision, canFreeze: true, findings: [], partitions: [], summary: { splitVersion: 4, includedPatients: 4, includedSlides: 4, totalSlides: 4, excludedSlides: 0, includedGroups: 4, strategy: 'kfold', evaluationPlanCount: 2 } }; };
-scientific.protocolPreflight = async (_, protocolId) => { state.calls.push({ method: 'protocolPreflight', protocolId }); return { protocolId, findings: [] }; };
-const freezeVersion = async (kind, draftId, revision, previewHash, versionLabel, operationId) => {
-  state.calls.push({ method: kind === 'dataset' ? 'importFreeze' : 'protocolFreeze', draftId, revision, previewHash, versionLabel: copy(versionLabel), operationId });
+scientific.importFreeze = async (_, draftId, revision, previewHash, versionLabel, operationId) => {
+  state.calls.push({ method: 'importFreeze', draftId, revision, previewHash, versionLabel: copy(versionLabel), operationId });
   if (state.holdFreeze) await new Promise((resolve) => { window.releaseFreeze = () => { state.holdFreeze = false; resolve(); }; });
   if (state.freezeFailures > 0) { state.freezeFailures -= 1; throw new Error('The freeze response was interrupted. Please retry.'); }
   const draft = state.drafts.find((item) => item.id === draftId);
-  const record = { id: kind + '-frozen-' + state.revision, projectId: 'project', contentHash: kind + '-content', createdAt: '2026-09-25T12:00:00Z', artifacts: {}, versionLabel: { ...copy(versionLabel), revision: 1 }, manifest: kind === 'dataset'
-    ? { name: draft.name, dictionary: copy(dictionary), summary: copy(importSummary), provenance: { mapping: copy(draft.payload.spec) } }
-    : { kind: 'protocol', datasetId: draft.payload.spec.datasetId, spec: copy(draft.payload.spec), summary: { splitVersion: 4, includedPatients: 4, includedSlides: 4, totalSlides: 4, excludedSlides: 0, includedGroups: 4, strategy: 'kfold', evaluationPlanCount: 2 }, partitions: [], findings: [] } };
-  const key = kind === 'dataset' ? 'datasets' : 'protocols';
-  state[key] = [...state[key], record]; state.drafts = state.drafts.map((item) => item.id === draftId ? { ...item, status: 'frozen', revision: revision + 1 } : item);
+  const record = { id: 'dataset-frozen-' + state.revision, projectId: 'project', contentHash: 'dataset-content', createdAt: '2026-09-25T12:00:00Z', artifacts: {}, versionLabel: { ...copy(versionLabel), revision: 1 }, manifest: { name: draft.name, dictionary: copy(dictionary), summary: copy(importSummary), provenance: { mapping: copy(draft.payload.spec) } } };
+  state.datasets = [...state.datasets, record]; state.drafts = state.drafts.map((item) => item.id === draftId ? { ...item, status: 'frozen', revision: revision + 1 } : item);
   return copy(record);
 };
-scientific.importFreeze = async (_, ...args) => freezeVersion('dataset', ...args);
-scientific.protocolFreeze = async (_, ...args) => freezeVersion('protocol', ...args);
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 const root = createRoot(document.getElementById('app'));
 window.configure = (page, empty = false, hash = '') => {
   window.releaseRefresh(); state.holdFreeze = false; state.freezeFailures = 0; state.confirms = []; state.confirmNavigation = false;
-  state.datasets = empty ? [] : copy(datasets); state.protocols = empty ? [] : copy(protocols); state.drafts = empty ? [] : copy(drafts); state.bundles = empty ? [] : copy(featureBundles);
+  state.datasets = empty ? [] : copy(datasets); state.drafts = empty ? [] : copy(drafts); state.bundles = empty ? [] : copy(featureBundles);
   state.revision += 1; client.clear(); window.history.replaceState({}, '', location.pathname + hash);
   const workspace = { project: { id: 'project', name: 'Preparation study', config: { seed: 42, folds: 2 } }, dataset: { id: 'dataset-a' }, sources: [{ role: 'slides', path: '/slides' }] };
-  root.render(<QueryClientProvider client={client}><div className="stage-workspace" key={state.revision}>{page === 'data' ? <LocalDataset workspace={workspace} /> : <LocalProtocol workspace={workspace} />}</div></QueryClientProvider>);
+  root.render(<QueryClientProvider client={client}><div className="stage-workspace" key={state.revision}><LocalDataset workspace={workspace} /></div></QueryClientProvider>);
 };
 window.configure('data', true);
 `);
@@ -167,10 +149,10 @@ async function waitFor(expression, description = expression) {
 const button = (text) => '[...document.querySelectorAll("button")].find(el => el.checkVisibility() && el.textContent.trim() === ' + JSON.stringify(text) + ')';
 const field = (text, selector = 'input,select,textarea') => '(() => { const label = [...document.querySelectorAll("label")].find(el => el.checkVisibility() && el.textContent.trim().startsWith(' + JSON.stringify(text) + ')); return label?.control ?? label?.querySelector(' + JSON.stringify(selector) + '); })()';
 async function click(text) {
-  if (text === 'Create dataset' || text === 'Create protocol') await verifyHeader(true);
+  if (text === 'Create dataset') await verifyHeader(true);
   await waitFor(button(text) + ' && !' + button(text) + '.matches(":disabled")', 'enabled button ' + text);
   await evaluate(button(text) + '.click()');
-  if (text === 'Back to datasets' || text === 'Back to protocols') {
+  if (text === 'Back to datasets') {
     await waitFor('document.querySelector(".stage-library")');
     await verifyHeader(true);
   }
@@ -188,12 +170,11 @@ async function screenshot(name) {
 const visible = (selector) => '[...document.querySelectorAll(' + JSON.stringify(selector) + ')].filter(el => el.checkVisibility()).length';
 async function verifyHeader(library) {
   const header = await evaluate(`({
-    page: document.querySelector('.dataset-workspace') ? 'dataset' : 'protocol',
     library: Boolean(document.querySelector('.stage-library')),
     actions: [...document.querySelectorAll('.page-header [data-stage-action]')].filter(el => el.checkVisibility()).map(el => ({ kind: el.dataset.stageAction, text: el.textContent.trim() }))
   })`);
   assert.equal(header.library, library, 'Creation must begin from the library; return there before creating another record');
-  assert.deepEqual(header.actions, [{ kind: library ? 'create' : 'back', text: library ? 'Create ' + header.page : 'Back to ' + (header.page === 'dataset' ? 'datasets' : 'protocols') }], 'Page header must show one consistent Create or Back action');
+  assert.deepEqual(header.actions, [{ kind: library ? 'create' : 'back', text: library ? 'Create dataset' : 'Back to datasets' }], 'Page header must show one consistent Create or Back action');
 }
 async function currentPage(key) {
   await waitFor('document.querySelector("[data-stage-page]")?.dataset.stagePage === ' + JSON.stringify(key));
@@ -339,132 +320,6 @@ try {
   await openRecord('Open import Existing import draft');
   await waitFor(field('Dataset name') + '?.value === "Unsaved import edit"');
   assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "draft" && call.id === "import-draft").length'), 1);
-  await configure('targets', true);
-  assert.ok(await evaluate('document.body.innerText.includes("No protocols or drafts yet")'));
-  assert.equal(await evaluate(visible('fieldset')), 0);
-  await click('Create protocol');
-  await currentPage('protocol-1');
-  assert.equal(await evaluate(button('Continue to target') + '.matches(":disabled")'), true);
-  await configure('targets', false, '#cohort?dataset=dataset-b&saved=dataset');
-  await screenshot('03-protocol-library');
-  assert.equal(await evaluate('document.querySelectorAll(".stage-library tbody tr").length'), 3);
-  await verifyLibraryControls({ emptyTitle: 'No matching protocols or drafts', names: ['Protocol A', 'Protocol B'], draftName: 'Existing protocol draft', managementKeys: [['Protocol B', 'configuration:protocol-b'], ['Existing protocol draft', 'draft:protocol-draft']] });
-  await fill('Search', 'Hospital B');
-  await waitFor('document.querySelectorAll(".stage-library tbody tr").length === 2');
-  await fill('Search', 'grade');
-  await waitFor('document.querySelectorAll(".stage-library tbody tr").length === 3');
-  await click('Clear filters');
-  assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "exploreProtocol").length'), 0);
-  await click('Create protocol');
-  await currentPage('protocol-1');
-  assert.equal(await evaluate(field('Dataset version', 'select') + '.value'), 'dataset-b');
-  assert.equal(await evaluate(visible('.protocol-section')), 1);
-  await fill('Protocol name', 'Retained development draft');
-  assert.equal(await evaluate(button('Continue to target') + '.matches(":disabled")'), false);
-  assert.equal(await evaluate(field('Feature bundle', 'select') + ' === undefined'), true);
-  assert.equal(await evaluate(visible('select') + ' >= 1'), true);
-  assert.equal(await evaluate('document.body.innerText.includes("Training set selection")'), false);
-  assert.equal(await evaluate('document.body.innerText.includes("Training slide filters")'), true);
-  await fill('Dataset version', 'dataset-a', 'select');
-  await fill('Dataset version', 'dataset-b', 'select');
-  await waitFor('window.workflow.calls.some(call => call.method === "exploreProtocol" && !call.request.featureBundleId && call.request.datasetId === "dataset-b")');
-  await screenshot('03a-dataset-selection');
-  await click('Add condition');
-  await waitFor(field('Field', 'select') + '?.value === "cohort"');
-  await waitFor(field('TCGA', 'input'));
-  await evaluate(field('TCGA', 'input') + '.click()');
-  await evaluate(field('SurGen', 'input') + '.click()');
-  await waitFor('window.workflow.calls.some(call => call.method === "exploreProtocol" && call.request.split?.pools?.rules?.train?.[0]?.value?.join(",") === "TCGA,SurGen")');
-  const filtered = await evaluate('window.workflow.calls.filter(call => call.method === "exploreProtocol").at(-1).request');
-  assert.equal(filtered.split.pools.trainSelection, 'rules');
-  assert.deepEqual(filtered.split.pools.rules.train, [{ field: 'cohort', op: 'in', value: ['TCGA', 'SurGen'] }]);
-  await screenshot('03b-cohort-value-filter');
-  await evaluate('[...document.querySelectorAll("button")].find(el => el.getAttribute("aria-label") === "Remove Training slide filters condition 1").click()');
-  await waitFor('document.querySelectorAll("#protocol-cohort .protocol-condition").length === 0');
-  await click('Continue to target');
-  await currentPage('protocol-2');
-  assert.equal(await evaluate(button('Continue to split design') + '.matches(":disabled")'), true);
-  assert.equal(await evaluate(visible('.protocol-section')), 1);
-  await fill('Target attribute', 'grade', 'select');
-  await waitFor(field('Class names', 'input') + '?.value.includes("high")');
-  await fill('Positive class', 'high', 'select');
-  await click('Continue to split design');
-  await currentPage('protocol-3');
-  assert.equal(await evaluate(visible('.protocol-section')), 1);
-  await fill('Split seeds', 'invalid', 'input');
-  assert.equal(await evaluate(button('Continue to review') + '.matches(":disabled")'), true);
-  await fill('Split seeds', '13, 27', 'input');
-  await click('Back to protocols');
-  await click('Return to current protocol');
-  await currentPage('protocol-3');
-  assert.equal(await evaluate(field('Split seeds', 'input') + '.value'), '13, 27');
-  await click('Back');
-  await currentPage('protocol-2');
-  assert.equal(await evaluate(field('Positive class', 'select') + '.value'), 'high');
-  await click('Back');
-  await currentPage('protocol-1');
-  assert.equal(await evaluate(field('Protocol name', 'input') + '.value'), 'Retained development draft');
-  await click('Continue to target'); await click('Continue to split design'); await click('Continue to review');
-  await currentPage('protocol-4');
-  await click('Preview & validate');
-  await waitFor(button('Name & freeze protocol'));
-  await currentPage('protocol-4-preview-protocol-1');
-  assert.equal(await evaluate(visible('.protocol-section')), 1);
-  assert.equal(await evaluate('document.getElementById("protocol-review").checkVisibility()'), false);
-  assert.equal(await evaluate('document.querySelector(".setup-step-actions").checkVisibility()'), false);
-  assert.equal(await evaluate(button('Preview & validate') + ' === undefined'), true);
-  assert.equal(await evaluate(button('Back to split design') + '?.checkVisibility()'), true);
-  const saved = await evaluate('window.workflow.calls.filter(call => call.method === "saveDraft" && call.input.payload.type === "analysis-protocol").at(-1).input');
-  assert.equal(saved.name, 'Retained development draft');
-  assert.equal(saved.payload.spec.datasetId, 'dataset-b');
-  for (const key of ['featureBundleId', 'featureSetId', 'featurePackId', 'featureCoverage']) assert.equal(key in saved.payload.spec, false);
-  assert.equal(saved.payload.spec.split.pools.trainSelection, 'remaining');
-  assert.deepEqual(saved.payload.spec.split.pools.rules.train, []);
-  assert.ok(await evaluate('window.workflow.calls.some(call => call.method === "exploreProtocol" && call.request.targetField === "grade" && !call.request.featureBundleId)'));
-  assert.deepEqual(saved.payload.spec.split.seeds, [13, 27]);
-  assert.equal(saved.payload.spec.target.positiveClass, 'high');
-  await screenshot('04-protocol-review');
-  await click('Name & freeze protocol');
-  await waitFor('document.querySelector("[role=dialog]")');
-  assert.equal(await evaluate(field('Version tag', 'input') + '.value'), 'Retained development draft');
-  await click('Back to review');
-  await evaluate('[...document.querySelectorAll("summary")].find(el => el.textContent === "Review settings and rerun checks").click()');
-  await click('Preview & validate');
-  await waitFor('window.workflow.calls.filter(call => call.method === "protocolPreview").length === 2');
-  await currentPage('protocol-4-preview-protocol-1');
-  await click('Back to split design');
-  await currentPage('protocol-3');
-  assert.equal(await evaluate(field('Split seeds', 'input') + '.value'), '13, 27');
-  await click('Continue to review');
-  await currentPage('protocol-4-preview-protocol-1');
-  await evaluate('window.dispatchEvent(new Event("histopilot:stage-library"))');
-  await waitFor('document.querySelector(".stage-library")');
-  await openRecord('Open protocol Protocol B');
-  await waitFor('document.querySelector(".panel-header")?.textContent.includes("Protocol B")');
-  assert.ok(await evaluate('document.querySelector(".detail-list")?.textContent.includes("Hospital B")'));
-  assert.equal(await evaluate(button('Recheck input preflight') + ' === undefined'), true);
-  assert.ok(await evaluate('document.body.innerText.includes("Select features and check their coverage and compatibility in Experiments")'));
-  await click('Copy into a new draft');
-  await currentPage('protocol-1');
-  assert.equal(await evaluate(field('Dataset version', 'select') + '.value'), 'dataset-b');
-  assert.equal(await evaluate(field('Protocol name', 'input') + '.value'), 'Protocol B copy');
-  assert.equal(await evaluate('window.workflow.protocols.find(item => item.id === "protocol-b").manifest.spec.datasetId'), 'dataset-b');
-  await click('Back to protocols');
-  await openRecord('Open protocol draft Existing protocol draft');
-  await waitFor(field('Protocol name') + '?.value === "Existing protocol draft"');
-  assert.equal(await evaluate(field('Dataset version', 'select') + '.value'), 'dataset-b');
-  await fill('Protocol name', 'Unsaved protocol edit');
-  await evaluate('window.dispatchEvent(new Event("histopilot:stage-library"))');
-  await waitFor('document.querySelector(".stage-library")');
-  await openRecord('Open protocol draft Existing protocol draft');
-  await waitFor(field('Protocol name') + '?.value === "Unsaved protocol edit"');
-  assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "draft" && call.id === "protocol-draft").length'), 1);
-  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-  await waitFor('!document.body.innerText.includes("Updating selection…")');
-  await verifyHeader(false);
-  await screenshot('05-mobile-protocol');
-  assert.ok(await evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), 'Protocol editor overflows the mobile viewport');
-  await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false });
   await reviewNewDataset('Dataset freeze stays here');
   const firstFreezeCount = await evaluate('window.workflow.calls.filter(call => call.method === "importFreeze").length');
   await evaluate('window.workflow.holdFreeze = true; window.workflow.refreshMode = "held"');
@@ -510,41 +365,11 @@ try {
   await click('Back to datasets');
   assert.equal(await evaluate('document.querySelectorAll(".stage-library tbody tr").length'), 1, 'Frozen import disappears from the editable draft list');
   assert.equal(await evaluate('document.querySelector(".stage-record-name").textContent'), 'Retry preserves this version');
-
-  await configure('targets', false, '#cohort');
-  await click('Create protocol');
-  await fill('Protocol name', 'Protocol freeze stays here');
-  await click('Continue to target');
-  await fill('Target attribute', 'grade', 'select');
-  await waitFor(field('Class names', 'input') + '?.value.includes("high")');
-  await fill('Positive class', 'high', 'select');
-  await click('Continue to split design');
-  await click('Continue to review');
-  await click('Preview & validate');
-  await click('Name & freeze protocol');
-  const protocolFreezeCount = await evaluate('window.workflow.calls.filter(call => call.method === "protocolFreeze").length');
-  await evaluate('window.workflow.holdFreeze = true; window.workflow.refreshMode = "failed"');
-  await doubleSubmitFreeze('Freeze development protocol version');
-  await waitFor(button('Freezing version…'));
-  await tryPendingNavigation('#experiments', /request is still pending/);
-  await evaluate('window.releaseFreeze()');
-  await waitFor('!document.querySelector("[role=dialog]") && document.querySelector(".detail-list")');
-  assert.equal(await evaluate('location.hash'), '#cohort', 'Freezing a protocol stays in Targets & splits');
-  assert.equal(await evaluate('window.workflow.confirms.length'), 1);
-  assert.equal(await evaluate('window.workflow.calls.filter(call => call.method === "protocolFreeze").length'), protocolFreezeCount + 1);
-  assert.ok(await evaluate('document.querySelector(".panel-header")?.textContent.includes("Protocol freeze stays here")'));
-  assert.ok(await evaluate('document.body.innerText.includes("Your tag and note are saved")'));
-  const frozenProtocol = await evaluate('window.workflow.protocols.at(-1)');
-  assert.equal(await evaluate('document.querySelector(".detail-list strong").title'), frozenProtocol.manifest.datasetId);
-  await screenshot('08-protocol-freeze-refresh-failed');
-  await clickNextLink('#experiments?protocol=' + frozenProtocol.id);
-  assert.equal('featureBundleId' in frozenProtocol.manifest.spec, false);
-  assert.equal(await evaluate('window.workflow.calls.some(call => ["bundles.list", "packing.jobs", "configurations-feature", "protocolPreflight"].includes(call.method))'), false, 'Targets and splits never fetch or preflight features');
-  const freezeChecks = ['dataset freeze keeps Datasets route and shows returned saved version', 'slow list refresh does not hold freeze modal or next-step navigation', 'completed freeze never triggers pending-write confirmation', 'actual pending dataset/protocol write still guards navigation', 'double-click freeze sends one request', 'failed freeze retains modal tag/note and route', 'retry keeps the identical operation identity', 'failed list refresh preserves successful dataset/protocol save', 'frozen import removed from editable library', 'protocol freeze stays in Targets & splits', 'explicit next-step links carry exact saved dataset/protocol IDs without confirmation'];
+  const freezeChecks = ['dataset freeze keeps Datasets route and shows returned saved version', 'slow list refresh does not hold freeze modal or next-step navigation', 'completed freeze never triggers pending-write confirmation', 'actual pending dataset write still guards navigation', 'double-click freeze sends one request', 'failed freeze retains modal tag/note and route', 'retry keeps the identical operation identity', 'failed list refresh preserves successful dataset save', 'frozen import removed from editable library', 'explicit next-step links carry exact saved dataset IDs without confirmation'];
   assert.deepEqual(await evaluate('window.workflow.errors'), []);
   assert.deepEqual(exceptions, []);
-  await writeFile(join(artifacts, 'preparation-verification.json'), JSON.stringify({ passed: true, scope: 'Real React components and Chromium DOM; in-memory scientific APIs; no HistoPilot server.', checks: ['one Create action in library headers', 'one Back action and no competing Create in editor/detail headers', 'return to library before creating another record', 'empty and saved libraries', 'search and clear', 'combined draft/frozen filtering', 'recent/oldest/name sorting', 'search source dataset and target', 'exact Manage record keys', 'open/back retains search', 'exact dataset and protocol IDs', 'construct and freeze protocols with feature APIs unavailable', 'no feature controls or compatibility preflight in Targets and splits', 'dataset-only target-value exploration', 'direct training filters without duplicate selection gate', 'TCGA and SurGen selected as inclusive cohort values', 'removing final filter restores all dataset slides', 'draft reopening', 'create and copy', 'one active substage', 'forward validation gates', 'review and freeze gates', 'version name reused when freezing', 'back/forward retained form state', 'same-module library event', 'focus and scroll reset', 'mobile snapshot', ...freezeChecks], calls: await evaluate('window.workflow.calls') }, null, 2));
-  console.log('PASS: dataset/protocol libraries, transitions, exact records, validation gates, draft state, same-module entry, and dataset/protocol freeze completion, retries, and navigation guards.');
+  await writeFile(join(artifacts, 'preparation-verification.json'), JSON.stringify({ passed: true, scope: 'Real React components and Chromium DOM; in-memory scientific APIs; no HistoPilot server.', checks: ['one Create action in library headers', 'one Back action and no competing Create in editor/detail headers', 'return to library before creating another record', 'empty and saved libraries', 'search and clear', 'combined draft/frozen filtering', 'recent/oldest/name sorting', 'exact Manage record keys', 'open/back retains search', 'exact dataset IDs', 'draft reopening', 'one active substage', 'forward validation gates', 'review and freeze gates', 'version name reused when freezing', 'back/forward retained form state', 'same-module library event', 'focus and scroll reset', ...freezeChecks], calls: await evaluate('window.workflow.calls') }, null, 2));
+  console.log('PASS: dataset library, transitions, exact records, validation gates, draft state, same-module entry, and dataset freeze completion, retries, and navigation guards.');
   console.log('Artifacts: ' + artifacts);
 } catch (error) {
   try { await writeFile(join(artifacts, 'preparation-failure.txt'), await evaluate('document.body.innerText')); await screenshot('failure'); } catch { /* Chromium may not have launched. */ }

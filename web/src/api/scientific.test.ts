@@ -17,16 +17,14 @@ describe('version label metadata API', () => {
     vi.stubGlobal('fetch', fetcher);
     const { scientific } = await import('./scientific');
     await scientific.importFreeze('project', 'draft', 4, 'dataset-preview', versionLabel, 'import:one-intent');
-    await scientific.protocolFreeze('project', 'protocol-draft', 2, 'protocol-preview', versionLabel, 'protocol:one-intent');
     await scientific.featureFreeze('project', { datasetId: 'dataset', path: '/features', fileSuffix: '.h5', idSuffix: '', recursive: false }, 'feature-preview', versionLabel, 'feature:one-intent');
-    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher).toHaveBeenCalledTimes(3);
     for (const [, init] of fetcher.mock.calls.slice(1)) {
       expect(init.method).toBe('POST');
       expect(JSON.parse(init.body).versionLabel).toEqual(versionLabel);
     }
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ expectedRevision: 4, previewHash: 'dataset-preview', versionLabel, operationId: 'import:one-intent' });
-    expect(JSON.parse(fetcher.mock.calls[2][1].body).operationId).toBe('protocol:one-intent');
-    expect(JSON.parse(fetcher.mock.calls[3][1].body)).toMatchObject({ datasetId: 'dataset', path: '/features', operationId: 'feature:one-intent' });
+    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toMatchObject({ datasetId: 'dataset', path: '/features', operationId: 'feature:one-intent' });
   });
 
   it('saves dataset and configuration labels with explicit revisions outside scientific manifests', async () => {

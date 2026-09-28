@@ -3,6 +3,8 @@ import { ApiError } from '../api/client';
 import { useSystem, useSystemCompute } from '../api/queries';
 import type { SystemCompute, SystemStatus } from '../api/types';
 import { Badge, ErrorNotice, Icon, PageHeader, Panel } from '../components/ui';
+import RunStatusChip, { useRunRollup } from '../components/RunStatusChip';
+import { taskCenterHref } from '../api/taskCenter';
 import './System.css';
 
 const unavailable = 'Unavailable';
@@ -54,6 +56,7 @@ export function ComputeDashboard({ data, stale = false, live = true }: { data: S
       <div><strong>{host.hostname || 'Python host'}</strong><span>{[host.platform, host.release].filter(Boolean).join(' · ')}</span></div>
       <div><Badge tone={stale ? 'amber' : live ? 'green' : 'neutral'}>{stale ? 'Last known sample' : live ? 'Live · every 5 seconds' : 'Updates paused'}</Badge><span>Updated <time dateTime={data.sampledAt}>{sampledLabel}</time> · Uptime {formatUptime(host.uptimeSeconds)}</span></div>
     </div>
+    <p className="system-metric-note">These are host measurements. What runs now, what waits, and how many GPU tasks may share a GPU are in the <a className="text-link" href={taskCenterHref()}>Task Center →</a></p>
     <div className="grid-2">
       <Panel title="CPU" subtitle={cpu.model ?? 'Processor details unavailable'}>
         <UsageMeter label="CPU utilization" value={cpu.utilizationPercent} pending={cpu.status === 'available'} />
@@ -106,6 +109,21 @@ export function computeErrorMessage(error: Error): string {
     : `Compute statistics could not be refreshed. ${error.message}`;
 }
 
+/** Every model job runs in the Task Center; this card says whether its runner runs and links there. */
+export function TaskCenterCard({ tmuxAvailable, extractionReady }: { tmuxAvailable?: boolean; extractionReady?: boolean }) {
+  const machine = useRunRollup({});
+  const runner = machine.data ? machine.data.runnerAlive : null;
+  return <Panel title="Task Center" actions={<Badge tone={runner === null ? 'neutral' : runner ? 'green' : 'amber'}>{runner === null ? machine.isError ? 'Status unavailable' : 'Checking runner…' : runner ? 'Runner running' : 'Runner stopped'}</Badge>}>
+    <RunStatusChip scope={{}} variant="chip" />
+    <ul className="detail-list">
+      <li><span>Runs training, refits, evaluation, inference and attention</span><strong>{runner === false ? 'Queued work waits until the runner starts' : 'One queue for every project on this host'}</strong></li>
+      <li><span>tmux (hosts the Task Center runner)</span><strong>{tmuxAvailable === undefined ? 'Availability not reported' : tmuxAvailable ? 'tmux available' : 'tmux unavailable'}</strong></li>
+      <li><span>TRIDENT feature extraction runtime</span><strong>{extractionReady ? 'Runtime ready' : 'Extraction runtime setup required'}</strong></li>
+    </ul>
+    <div className="inline-actions"><a className="text-link" href={taskCenterHref()}>Open Task Center →</a></div>
+  </Panel>;
+}
+
 function ServiceDetails({ data, stale }: { data: SystemStatus; stale: boolean }) {
   return <details className="system-service-details">
     <summary>Service & workspace details</summary>
@@ -126,15 +144,7 @@ function ServiceDetails({ data, stale }: { data: SystemStatus; stale: boolean })
           <li><span>Original WSI policy</span><strong>{data.sourcesReadOnly ? 'Referenced read-only' : 'See server configuration'}</strong></li>
         </ul>
       </Panel>
-      <Panel title="Compute workers" actions={<Badge tone={data.workers.nativeExecutionImplemented ? 'green' : 'neutral'}>{data.workers.nativeExecutionImplemented ? 'Native execution implemented' : 'Check module runtimes'}</Badge>}>
-        <ul className="detail-list">
-          <li><span>ABMIL training, evaluation & attention</span><strong>{data.workers.nativeExecutionImplemented ? 'Implemented · check module runtime' : 'Check availability in each module'}</strong></li>
-          <li><span>TRIDENT feature extraction</span><strong>{data.workers.executionEnabled ? 'Runtime ready' : 'Extraction runtime setup required'}</strong></li>
-          <li><span>Persistent tmux jobs</span><strong>{data.workers.tmuxAvailable === undefined ? 'Availability not reported' : data.workers.tmuxAvailable ? 'tmux available' : 'tmux unavailable'}</strong></li>
-        </ul>
-        <p className="system-metric-note">{data.workers.status}</p>
-        <div className="inline-actions"><a className="text-link" href="#features">Prepare features →</a><a className="text-link" href="#experiments">Open experiments →</a></div>
-      </Panel>
+      <TaskCenterCard tmuxAvailable={data.workers.tmuxAvailable} extractionReady={data.workers.executionEnabled} />
       <Panel title="Storage formats">
         <ul className="detail-list">
           <li><span>SQLite</span><strong>Application metadata</strong></li>

@@ -323,7 +323,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
       />
       <StagePage pageKey={`${view}-${view === 'import' ? step : versionId}`}>
       {view !== 'library' ? <SetupContext input="Slide table and optional slide images" output="A reusable metadata dataset for targets, filters and splits">
-        Recommended: keep development and test rows in one file with a cohort column. Select development rows in Targets and test rows in Evaluate. Separate files are also supported.
+        Build your dataset first, then prepare slide features and Targets & Splits independently. Targets & Splits saves the training and testing populations; Experimental Setup defines training folds and validation.
       </SetupContext> : null}
       <ErrorNotice error={error ?? versions.error ?? savedDrafts.error} />
       <SavedNotice>{message}</SavedNotice>

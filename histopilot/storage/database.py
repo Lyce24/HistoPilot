@@ -6,6 +6,8 @@ from typing import Any
 from sqlalchemy import JSON, URL, Integer, String, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
+from histopilot.storage import sqlite_connections
+
 SCHEMA_VERSION = 1
 
 
@@ -42,6 +44,7 @@ class Database:
 
         @event.listens_for(self.engine, "connect")
         def configure_connection(connection, _record):
+            sqlite_connections.prepare(connection)
             cursor = connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA busy_timeout=10000")

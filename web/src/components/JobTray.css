@@ -1,0 +1,6 @@
+/* Links in the expanded tray sit apart instead of running together. */
+.job-tray-links { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 12px; }
+.job-tray-links .text-link { margin-top: 0; }
+.job-tray-list li { gap: 4px 10px; }
+.job-tray-failure { margin: 10px 0 0; font-size: 12px; line-height: 1.6; }
+.job-tray-content > .muted { font-size: 12px; }

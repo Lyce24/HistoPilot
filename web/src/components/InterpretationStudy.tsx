@@ -7,7 +7,7 @@ import ComputeJobControls from './ComputeJobControls';
 import EvidenceChain from './EvidenceChain';
 import AttentionSlideViewer from './AttentionSlideViewer';
 export default function InterpretationStudy({ project, record }: { project: string; record: Interpretation }) {
-  const execution = useQuery({ queryKey: ['compute-job', project, 'interpretation', record.id], queryFn: () => interpretations.execution(project, record.id), initialData: record.execution, refetchInterval: (query) => computeActive(query.state.data) ? 2500 : 10000, enabled: record.lifecycleState !== 'trashed' });
+  const execution = useQuery({ queryKey: ['compute-job', project, 'interpretation', record.id], queryFn: () => interpretations.execution(project, record.id), initialData: record.execution, refetchInterval: (query) => computeActive(query.state.data) && query.state.data?.executor !== 'task-center' ? 5000 : false, enabled: record.lifecycleState !== 'trashed' });
   const [slideId, setSlideId] = useState(record.manifest.slides[0]?.slideId ?? '');
   const slide = record.manifest.slides.find((item) => item.slideId === slideId);
   const result = !execution.isError && execution.data?.status === 'completed' ? execution.data.result?.slides?.find((item) => item.slideId === slideId) : undefined;

@@ -7,6 +7,7 @@ import { buildRoadmap } from './lib/roadmap';
 import type { Workspace } from './api/types';
 import type { Roadmap } from './pages/ProjectRoadmap';
 import { useRoadmap } from './components/useRoadmap';
+import { fixtureCapacity, fixtureSnapshot, fixtureSummary } from './testFixtures/taskCenter';
 
 const workspace = { mode: 'local', project: { id: 'project' }, dataset: { slideCount: 0 }, drafts: [], featureSets: [], cohortSnapshots: [] } as unknown as Workspace;
 function roadmap(unlocked = false, hasData = true): Roadmap {
@@ -38,12 +39,12 @@ describe('experiment predictor navigation and direct URL gates', () => {
     client.setQueryData(['evaluation-cohorts', 'project'], { items: [] });
     client.setQueryData(['predictors', 'project'], { items: [] });
     client.setQueryData(['model-evaluations', 'project'], { items: [] });
-    client.setQueryData(['model-experiments', 'project', 'summary'], { items: [{ id: 'legacy-mil-draft', key: 'draft:mil-draft', name: 'Retained experiment inputs', revision: 1, state: 'active', status: 'planned', legacy: true, notes: '', tags: [], inputs: null, batches: [], drafts: [], createdAt: '', updatedAt: '', predictorId: null }] });
+    client.setQueryData(['model-experiments', 'project', 'summary'], { items: [{ id: 'legacy-mil-draft', key: 'draft:mil-draft', name: 'Retained experiment inputs', revision: 1, state: 'active', status: 'completed', legacy: true, notes: '', tags: [], inputs: null, batches: [], drafts: [], createdAt: '', updatedAt: '', predictorId: null }] });
     function DirectRoute() { return <Content page={page} workspace={source} roadmap={useRoadmap(source)} />; }
     try {
       const html = await renderLoadedPage(<QueryClientProvider client={client}><DirectRoute /></QueryClientProvider>);
       expect(html).toContain('Retained experiment inputs');
-      expect(html).toContain('Create experiment');
+      expect(html).toContain('Prepare a setup');
       expect(html).not.toContain('Prepare the required inputs');
       expect(html).not.toContain('Launch batch');
     } finally { client.clear(); }
@@ -58,6 +59,28 @@ describe('experiment predictor navigation and direct URL gates', () => {
     expect(html).toContain('Restore to Active');
     expect(html).not.toContain('Checking module prerequisites');
   });
+  it.each(['#task-center', '#tasks', '#task-center?task=one'])('routes %s to the machine-wide Task Center', (hash) => {
+    expect(pageFromHash(hash)).toBe('task-center');
+    expect(moduleForPage('task-center')).toBe('task-center');
+  });
+
+  it('opens the Task Center directly, even from a project in Trash, without falling into the project workspace', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['task-center', 'snapshot'], fixtureSnapshot({ summary: fixtureSummary({ running: 1, queued: 2 }), running: [], owners: [], pendingCount: 2 }));
+    client.setQueryData(['task-center', 'capacity'], fixtureCapacity());
+    client.setQueryData(['task-center', 'history', '?state=history&limit=15&offset=0'], { groups: [], total: 0, offset: 0, limit: 15 });
+    client.setQueryData(['model-experiments', 'project', 'summary'], { items: [] });
+    try {
+      for (const lifecycleState of ['active', 'trashed'] as const) {
+        const html = await renderLoadedPage(<QueryClientProvider client={client}><Content page="task-center" workspace={{ ...workspace, project: { ...workspace.project, lifecycleState } }} roadmap={roadmap(false, false)} /></QueryClientProvider>);
+        expect(html).toContain('<h1>Task Center</h1>');
+        expect(html).toContain('aria-label="Runner and queue state"');
+        expect(html).not.toContain('This project is in Trash</h1>');
+        expect(html).not.toContain('Checking module prerequisites');
+      }
+    } finally { client.clear(); }
+  });
+
   it.each(['#selection', '#predictor', '#post-development'])('keeps %s as a legacy route owned by Experiments', (hash) => {
     expect(pageFromHash(hash)).toBe('post-development');
     expect(moduleForPage(pageFromHash(hash))).toBe('experiments');

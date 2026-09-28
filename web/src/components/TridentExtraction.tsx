@@ -23,6 +23,7 @@ import ServerFolderPicker from './ServerFolderPicker';
 import SlideListField from './SlideListField';
 import { slideListReady, type SlideListSource } from '../api/slideLists';
 import ExtractionProgress, { extractionModelLabel, extractionStateLabel, extractionTaskLabel } from './ExtractionProgress';
+import RunStatusChip from './RunStatusChip';
 import { StagePage, StageSteps } from './StageWorkflow';
 import { readHashParameters } from '../lib/hashRoute';
 import './TridentExtraction.css';
@@ -83,7 +84,8 @@ export default function TridentExtraction({
   const jobs = useQuery({
     queryKey: [...queryKey, 'jobs'],
     queryFn: () => trident.jobs(project),
-    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 3000 : false,
+    // Task Center runs are followed by their status chip; only tmux runs need fast polling.
+    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? query.state.data.jobs.some(legacyActive) ? 3000 : 10_000 : false,
   });
   const [datasetId, setDatasetId] = useState<string | null>(initialDatasetId ?? null);
   const [slideList, setSlideList] = useState<SlideListSource | null>(null);
@@ -93,7 +95,7 @@ export default function TridentExtraction({
   const [overrides, setOverrides] = useState<Record<string, unknown>>({});
   const [preview, setPreview] = useState<ExtractionPreview | null>(null);
   const [selectedJob, setSelectedJob] = useState(requestedJob?.id ?? '');
-  const [busy, setBusy] = useState<'preview' | 'start' | 'cancel' | null>(null);
+  const [busy, setBusy] = useState<'preview' | 'start' | 'cancel' | 'resume' | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const operationId = useRef<string | null>(null);
   const [selectedPage, setPage] = useState<'settings' | 'review' | 'activity' | null>(requestedJob ? 'activity' : null);
@@ -110,7 +112,7 @@ export default function TridentExtraction({
     queryKey: [...queryKey, 'job', selectedId],
     queryFn: () => trident.job(project, selectedId),
     enabled: Boolean(selectedId),
-    refetchInterval: (query) => extractionActive(query.state.data) ? 3000 : false,
+    refetchInterval: (query) => extractionActive(query.state.data) ? legacyActive(query.state.data) ? 3000 : 10_000 : false,
   });
   const values = { ...catalog.data?.defaults, ...overrides };
   const task = String(values.task ?? 'all');
@@ -338,7 +340,7 @@ export default function TridentExtraction({
             <div className="trident-review-bar">
               <div>
                 <strong>Launch on this workstation</strong>
-                <p>Jobs run in tmux with persistent logs. Existing TRIDENT outputs are available for resuming work.</p>
+                <p>Extraction runs in the Task Center, which queues it with other GPU work and keeps its log. Existing TRIDENT outputs are available for resuming work.</p>
               </div>
               <button
                 type="button"
@@ -387,6 +389,8 @@ export default function TridentExtraction({
             {job ? (
               <JobDetail
                 job={job}
+                project={project}
+                onResume={() => void run('resume', async () => updateJob(await trident.resume(project, job.id)))}
                 dataset={job.spec.datasetId ? datasetById.get(job.spec.datasetId) : undefined}
                 busy={busy !== null}
                 onCancel={() => void run('cancel', async () => updateJob(await trident.cancel(project, job.id)))}
@@ -574,10 +578,15 @@ function OutputLayout({ layout }: { layout: TridentOutputLayout }) {
   );
 }
 
+/** An extraction still running in its own tmux session (submitted before the Task Center ran extraction). */
+export const legacyActive = (job?: ExtractionJob) => Boolean(job && extractionActive(job) && job.executor !== 'task-center');
+
 function JobDetail({
-  job, dataset, busy, onCancel, onUseSettings, onAttach,
+  job, project, dataset, busy, onCancel, onResume, onUseSettings, onAttach,
 }: {
   job: ExtractionJob;
+  project: string;
+  onResume: () => void;
   dataset?: DatasetVersion;
   busy: boolean;
   onCancel: () => void;
@@ -586,6 +595,9 @@ function JobDetail({
 }) {
   const layout = job.result?.outputLayout ?? job.outputLayout;
   const featurePath = job.result?.featurePath ?? job.result?.featureDirectory;
+  // Task Center runs: progress, cancel, attempts and the log are in the Task Center; this page
+  // keeps the settings, findings, coverage and the outputs.
+  const managed = job.executor === 'task-center';
   return (
     <div className="trident-job-detail">
       <div className="trident-job-heading">
@@ -601,13 +613,14 @@ function JobDetail({
           <div><dt>Patch size</dt><dd>{job.spec.options.patch_size !== undefined ? `${job.spec.options.patch_size} px` : 'Automatic'}</dd></div>
         </> : null}
       </dl>
-      <ExtractionProgress job={job} />
-      {job.error ? <div className="callout callout-warning trident-run-error" role="alert"><strong>{extractionActive(job) ? 'Processing notice' : 'Processing stopped'}</strong><p>{job.error}</p><small>Technical details are available in Troubleshooting.</small></div> : null}
+      {managed ? <RunStatusChip scope={job.ownerKey ? { owner: job.ownerKey } : { ownerKind: 'extraction', ownerId: job.id, project }} variant="row" label={`Extraction · ${extractionModelLabel(job)}`}
+        primaryAction={['failed', 'cancelled', 'interrupted'].includes(job.state) ? <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={onResume}>Resume</button> : null} /> : <ExtractionProgress job={job} />}
+      {job.error && !managed ? <div className="callout callout-warning trident-run-error" role="alert"><strong>{extractionActive(job) ? 'Processing notice' : 'Processing stopped'}</strong><p>{job.error}</p><small>Technical details are available in Troubleshooting.</small></div> : null}
       {job.result?.findings?.length ? <Findings findings={job.result.findings} /> : null}
       {job.state !== 'succeeded' && job.result?.missingSlides ? <p className="trident-job-coverage">{job.result.missingSlides.toLocaleString()} slides have missing outputs. Review the run details before attaching features.</p> : null}
       <div className="inline-actions trident-job-actions">
         <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={onUseSettings}><Icon name="reset" size={15} /> {extractionActive(job) || job.state === 'succeeded' ? 'Reuse settings' : 'Review & resume'}</button>
-        {extractionActive(job) ? <button type="button" className="btn btn-secondary btn-small" disabled={busy || job.state === 'cancelling'} onClick={onCancel}><Icon name="close" size={15} /> {job.state === 'cancelling' ? 'Cancelling…' : 'Cancel job'}</button> : null}
+        {extractionActive(job) && !managed ? <button type="button" className="btn btn-secondary btn-small" disabled={busy || job.state === 'cancelling'} onClick={onCancel}><Icon name="close" size={15} /> {job.state === 'cancelling' ? 'Cancelling…' : 'Cancel job'}</button> : null}
       </div>
       {job.state === 'succeeded' && featurePath ? (
         <div className="trident-completion">
@@ -616,7 +629,7 @@ function JobDetail({
         </div>
       ) : null}
       {layout ? <details className="trident-run-details"><summary>Output folders</summary><OutputLayout layout={layout} /></details> : null}
-      <details className="trident-run-details">
+      {managed ? null : <details className="trident-run-details">
         <summary>Troubleshooting</summary>
         <dl className="trident-job-paths">
           <div><dt>Job identifier</dt><dd className="mono">{job.id}</dd></div>
@@ -626,7 +639,7 @@ function JobDetail({
         </dl>
         <div className="trident-log-heading"><strong>Technical log</strong>{extractionActive(job) ? <span><i /> Updates every 3 seconds</span> : null}</div>
         <pre className="trident-log" aria-label="Extraction log" tabIndex={0}>{job.logs || (extractionActive(job) ? 'Waiting for TRIDENT output…' : 'No log output is available.')}</pre>
-      </details>
+      </details>}
     </div>
   );
 }

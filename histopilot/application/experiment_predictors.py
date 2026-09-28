@@ -13,8 +13,17 @@ import shlex
 import subprocess
 import sys
 from copy import deepcopy
+from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
+from histopilot.application.compute_jobs import (
+    archive_protocol,
+    host_gpu_argv,
+    submit_task,
+    task_pending,
+    task_view,
+    wake_runner,
+)
 from histopilot.application.experiment_policy import (
     has_predictor_intent,
     predictor_work_expected,
@@ -33,12 +42,18 @@ from histopilot.storage.project_lock import (
     _reject_symlink_components,
     ensure_managed_directory,
 )
+from histopilot.taskcenter import ids, paths
+from histopilot.taskcenter.model import LIVE
 from histopilot.workers.compute_archive import prepare_compute_archive
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import TmuxTrainingExecutor, now, read_json
 
 ACTIVE = {"queued", "waiting", "running", "cancelling"}
 TERMINAL = {"completed", "cancelled", "skipped"}
+# A lock another request held: the step changed nothing and is retried, never failed.
+BUSY_CODES = {"PROJECT_BUSY", "OUTPUT_BUSY"}
+# Archives whose coordinator defines this constant run as Task Center tasks.
+TASK_CENTER_PROTOCOL = 1
 
 
 def source_items(experiment_id, batches, policy=None, *, policies=None):
@@ -111,6 +126,93 @@ class TmuxExperimentExecutor(TmuxTrainingExecutor):
         )
 
 
+class TaskCenterExperimentExecutor:
+    """Queue the coordinator as a Task Center service task behind its fold batches.
+
+    It depends on every fold task of its batches succeeding and on each batch's final
+    results collection finishing; batches launched before the Task Center add nothing.
+    """
+
+    managed = True
+
+    def __init__(self, client=None, *, legacy=None):
+        self._client = client
+        self._default_client = client is None
+        self.legacy = legacy or TmuxExperimentExecutor()
+
+    @property
+    def client(self):
+        if self._client is None:
+            from histopilot.taskcenter.client import default_client
+
+            self._client = default_client()
+        return self._client
+
+    def available(self):
+        return True
+
+    def running(self, session):
+        task = self.client.by_session(session)
+        if task is not None:
+            return task["state"] in LIVE
+        # Coordinators started before the Task Center live in tmux.
+        return self.legacy.running(session)
+
+    def dependencies(self, plan):
+        """Wait for every batch's final results; the coordinator itself decides per batch.
+
+        A cancelled or failed batch marks only its own items, as it always has, so one
+        stopped fold never blocks the predictors of the experiment's other batches.
+        """
+        return [
+            {"task": task["id"], "condition": "terminal"}
+            for batch in plan["batchIds"]
+            for task in self.client.store.list(
+                group=("mil-batch", batch),
+                project_folder=plan["projectFolder"],
+                kinds=("mil-collect",),
+                limit=None,
+            )
+            if task["adapterData"].get("final")
+        ]
+
+    def launch(self, session, python, plan, log, *, package_root, task_id, owner, title):
+        frozen = read_json(plan)
+        folder = Path(plan).parent
+        spec = {
+            "id": task_id,
+            "kind": "predictor-coordinator",
+            "adapter": "predictor-coordinator",
+            "title": title,
+            "group": {"kind": "predictor-coordinator", "id": frozen["experimentId"]},
+            "sessionName": session,
+            "labels": {"experimentId": frozen["experimentId"]},
+            "request": {"lane": "cpu", "service": True, "cpuThreads": 1, "ramGb": 0.5},
+            "command": {
+                "argv": host_gpu_argv(
+                    [python, "-u", "-m", "histopilot.workers.experiment_predictors", str(plan)]
+                ),
+                "cwd": str(package_root),
+                "env": {"PYTHONDONTWRITEBYTECODE": "1"},
+                "log": str(log),
+            },
+            "adapterData": {
+                "coordinatorFolder": str(folder),
+                "experimentId": frozen["experimentId"],
+            },
+            "dependsOn": self.dependencies(frozen),
+        }
+        submit_task(
+            self.client,
+            owner,
+            spec,
+            reason="launch",
+            active_message="This experiment coordinator already exists.",
+            active_code="EXPERIMENT_ACTIVE",
+        )
+        wake_runner(self._default_client)
+
+
 class ExperimentPredictorService:
     def __init__(
         self,
@@ -122,9 +224,22 @@ class ExperimentPredictorService:
         builds=None,
         refits=None,
         runtime=None,
+        execution_mode=None,
+        task_center=None,
     ):
         self.store, self.filesystem = store, filesystem
-        self.executor = executor or TmuxExperimentExecutor()
+        # An injected executor keeps its caller on the legacy path unless a mode is named.
+        self.mode = execution_mode or ("tmux" if executor is not None else paths.execution_mode())
+        if executor is None:
+            executor = (
+                TaskCenterExperimentExecutor(task_center)
+                if self.mode == "task-center"
+                else TmuxExperimentExecutor()
+            )
+        self.executor = executor
+        managed = getattr(executor, "managed", False)
+        self.legacy_executor = getattr(executor, "legacy", None) if managed else executor
+        self._task_center = task_center
         if training is None:
             from histopilot.application.training import TrainingService
 
@@ -133,6 +248,40 @@ class ExperimentPredictorService:
         self.builds = builds or PredictorBuildService(store, filesystem)
         self.refits = refits or RefitService(store, filesystem)
         self.runtime = runtime or training_runtime
+
+    @property
+    def task_center(self):
+        if self._task_center is None:
+            if getattr(self.executor, "managed", False):
+                self._task_center = self.executor.client
+            else:
+                from histopilot.taskcenter.client import default_client
+
+                self._task_center = default_client()
+        return self._task_center
+
+    def _task(self, state):
+        """The Task Center view of a managed coordinator; None for tmux coordinators."""
+        if state.get("executor") != "task-center":
+            return None
+        try:
+            client = self.task_center
+        except (StorageError, OSError) as error:
+            return {
+                "id": state.get("taskId"),
+                "state": None,
+                "unknown": True,
+                "error": str(error),
+                "runnerAlive": None,
+            }
+        return task_view(client, state.get("taskId"))
+
+    def _coordinator_running(self, state):
+        """A queued Task Center coordinator counts as running, like a live tmux session."""
+        if state.get("executor") == "task-center":
+            return task_pending(self._task(state))
+        session = state.get("sessionName")
+        return bool(session) and self.legacy_executor.running(session)
 
     def folder(self, identity):
         folder = (
@@ -226,8 +375,18 @@ class ExperimentPredictorService:
             "updatedAt": state.get("updatedAt"),
             "sessionName": state.get("sessionName"),
             "logPath": state.get("logPath"),
-            "retryable": state["status"] in {"attention", "interrupted"},
+            "retryable": state["status"] in {"attention", "interrupted"}
+            or (state["status"] == "cancelled" and state.get("executor") == "task-center"),
             "cancellable": state["status"] not in TERMINAL | {"cancelling"},
+            **(
+                {
+                    "executor": "task-center",
+                    "waitingReason": state.get("waitingReason"),
+                    "runnerAlive": state.get("runnerAlive"),
+                }
+                if state.get("executor") == "task-center"
+                else {}
+            ),
         }
 
     def status(self, identity, *, summary=False):
@@ -238,9 +397,20 @@ class ExperimentPredictorService:
         if state["status"] in ACTIVE:
             from histopilot.application.lifecycle import _confirmed_live
 
-            if not _confirmed_live(state.get("process")) and not self.executor.running(
-                state["sessionName"]
-            ):
+            task = self._task(state)
+            if task:
+                state = {**state, "runnerAlive": task.get("runnerAlive")}
+            if task and task["state"] in {"blocked", "queued"}:
+                state = {
+                    **state,
+                    "waitingReason": task["waitingReason"]
+                    or (
+                        "Waiting for the experiment's fold batches to finish."
+                        if task["state"] == "blocked"
+                        else "Queued in the Task Center."
+                    ),
+                }
+            if not _confirmed_live(state.get("process")) and not self._coordinator_running(state):
                 if (folder / "cancel.requested").exists():
                     pending = False
                     for item in state["items"]:
@@ -354,6 +524,7 @@ class ExperimentPredictorService:
                 raise StorageError(
                     "This operation belongs to a predictor cancellation.", "OPERATION_CONFLICT", 409
                 )
+            reopen = False
             if (folder / "state.json").exists():
                 plan, previous = self._read(identity)
                 if operation_id in previous["operations"]:
@@ -371,16 +542,20 @@ class ExperimentPredictorService:
                     write_json(folder / "state.json", previous)
                     return current
 
-                if current["status"] in ACTIVE | TERMINAL:
+                # Task Center experiments stay resumable after a cancel, like their batches.
+                reopen = (
+                    resume
+                    and current["status"] == "cancelled"
+                    and previous.get("executor") == "task-center"
+                )
+                if current["status"] in ACTIVE | TERMINAL and not reopen:
                     return accepted_noop()
                 if not resume:
                     # An accepted launch must never implicitly resume failures.
                     return accepted_noop()
                 from histopilot.application.lifecycle import _confirmed_live
 
-                if _confirmed_live(previous.get("process")) or self.executor.running(
-                    previous["sessionName"]
-                ):
+                if _confirmed_live(previous.get("process")) or self._coordinator_running(previous):
                     return accepted_noop()
             else:
                 previous = None
@@ -393,6 +568,26 @@ class ExperimentPredictorService:
                 plan["executionContract"]["code"],
                 source_root=source if source.is_dir() else None,
             )
+            # Coordinators pinned before the Task Center keep their tmux executor.
+            protocol = archive_protocol(
+                archive / "histopilot" / "application" / "experiment_predictors.py"
+            )
+            managed = getattr(self.executor, "managed", False) and protocol is not None
+            executor = self.executor if managed else self.legacy_executor
+            launch_options = {}
+            if managed:
+                launch_options = {
+                    "task_id": ids.coordinator_task_id(str(folder)),
+                    "owner": {
+                        "kind": "experiment",
+                        "id": identity,
+                        "title": (record.get("name") or plan["name"] or identity)[:200],
+                        "projectId": self.store.project_id,
+                        "projectFolder": str(self.store.folder),
+                        "workspace": None,
+                    },
+                    "title": f"Predictors · {record.get('name') or plan['name']}"[:200],
+                }
             if previous is None:
                 write_json(folder / "plan.json", plan)
             items = (
@@ -411,8 +606,9 @@ class ExperimentPredictorService:
                     for row in plan["items"]
                 ]
             )
+            reopened = {"failed", "cancelled"} if reopen else {"failed"}
             for item in items:
-                if item["status"] == "failed":
+                if item["status"] in reopened:
                     item.update(status="waiting", error=None)
             state = {
                 "planHash": _hash(plan),
@@ -430,19 +626,22 @@ class ExperimentPredictorService:
                 },
                 "updatedAt": now(),
             }
+            if managed:
+                state.update(executor="task-center", taskId=launch_options["task_id"])
             (folder / "cancel.requested").unlink(missing_ok=True)
             write_json(folder / "state.json", state)
             try:
-                self.executor.launch(
+                executor.launch(
                     state["sessionName"],
                     sys.executable,
                     folder / "plan.json",
                     folder / "worker.log",
                     package_root=archive,
+                    **launch_options,
                 )
             except Exception as error:
                 try:
-                    running = self.executor.running(state["sessionName"])
+                    running = executor.running(state["sessionName"])
                     _plan, current = self._read(identity)
                     if running or current.get("process") or current["status"] != "queued":
                         return self.public(current)
@@ -533,8 +732,18 @@ class ExperimentPredictorService:
             write_json(folder / "cancel.requested", {"operationId": operation_id, "at": now()})
             self._cancel_items(plan, stored)
             write_json(folder / "state.json", stored)
+            self._cancel_pending_task(stored)
             write_json(receipt_path, {**receipt, "status": "applied"})
             return self.public(stored)
+
+    def _cancel_pending_task(self, state):
+        """A coordinator still waiting in the Task Center never needs to start.
+
+        A running one sees ``cancel.requested`` within one iteration and exits itself.
+        """
+        task = self._task(state)
+        if task and task["state"] in {"blocked", "queued"}:
+            self.task_center.store.cancel_pending([task["id"]])
 
     def _cancel_items(self, plan, state):
         pending = False
@@ -617,24 +826,48 @@ class ExperimentPredictorService:
     def advance(self, identity):
         """One worker iteration; never called by GET endpoints.
 
-        Release the lifecycle guard between source groups: a large parameter
-        sweep must remain inspectable and cancellable while checkpoints are
-        verified. Every publication reacquires it and checks cancellation again.
+        Batch and refit status is read once per pass without the lifecycle guard; each
+        source item then takes the guard only to check cancellation, act and save, so a
+        large parameter sweep stays inspectable and cancellable. Every publication and
+        refit launch re-reads what it acts on under the guard.
         """
         with lifecycle_guard(self.store.folder):
-            _plan, state = self._read(identity)
+            plan, state = self._read(identity)
             keys = [row["key"] for row in state["items"] if row["status"] not in TERMINAL]
         result = self.public(state)
+        if not keys:
+            return result
+        observed = self._observe(plan, state)
         for key in keys:
-            result = self._advance_one(identity, key)
+            result = self._advance_one(identity, key, observed)
             if result["status"] in TERMINAL:
                 break
         return result
 
-    def _advance_one(self, identity, item_key):
-        """Serialize one source item with cancellation and other publications."""
+    def _observe(self, plan, state):
+        return {
+            "batches": {
+                key: self.training.execution(key, include_progress=False)
+                for key in plan["batchIds"]
+            },
+            "refits": {
+                item["recordId"]: self.refits.execution(item["recordId"])
+                for item in state["items"]
+                if item["method"] == "refit" and item["recordId"] and item["status"] not in TERMINAL
+            },
+        }
+
+    def _advance_one(self, identity, item_key, observed=None):
+        """Serialize one source item with cancellation and other publications.
+
+        Every ready refit is launched as its own task; the Task Center decides when each
+        runs. A busy project lock leaves the item as it was for the next pass.
+        """
+        observed = observed or {}
         with lifecycle_guard(self.store.folder):
             plan, state = self._read(identity)
+            if "batches" not in observed:
+                observed = self._observe(plan, state)
             record, _submission = self._submission(identity)
             self.store.lifecycle.assert_document_usable(record)
             folder = self.folder(identity)
@@ -642,22 +875,13 @@ class ExperimentPredictorService:
                 self._cancel_items(plan, state)
                 write_json(folder / "state.json", state)
                 return self.public(state)
-            batches = {
-                key: self.training.execution(key, include_progress=False)
-                for key in plan["batchIds"]
-            }
-            refit_executions = {
-                item["recordId"]: self.refits.execution(item["recordId"])
-                for item in state["items"]
-                if item["method"] == "refit" and item["recordId"] and item["status"] not in TERMINAL
-            }
-            active_refit = any(
-                row["status"] in {"queued", "running"} for row in refit_executions.values()
-            )
+            batches = observed["batches"]
             for item in state["items"]:
                 if item["key"] != item_key:
                     continue
-                active_execution = refit_executions.get(item["recordId"], {})
+                active_execution = (
+                    observed["refits"].get(item["recordId"], {}) if item["recordId"] else {}
+                )
                 if item["status"] == "failed" and active_execution.get("status") in {
                     "queued",
                     "running",
@@ -681,18 +905,25 @@ class ExperimentPredictorService:
                             409,
                         )
                     batch_record = self.store.get_configuration(item["source"]["batchId"])
-                    if batch_record["manifest"]["spec"].get("candidateSelection") == "best_validation":
+                    if (
+                        batch_record["manifest"]["spec"].get("candidateSelection")
+                        == "best_validation"
+                    ):
                         from histopilot.candidate_selection import validation_selection
 
                         training_folder = self.store.folder / "training" / item["source"]["batchId"]
-                        selected = validation_selection(read_json(training_folder / "plan.json"),
-                                                        read_json(training_folder / "state.json"))
+                        selected = validation_selection(
+                            read_json(training_folder / "plan.json"),
+                            read_json(training_folder / "state.json"),
+                        )
                         if not selected or not selected["ready"]:
-                            raise StorageError("Complete valid validation scores are required for configuration selection.",
-                                               "VALIDATION_SELECTION_UNAVAILABLE", 409)
+                            raise StorageError(
+                                "Complete valid validation scores are required for configuration selection.",
+                                "VALIDATION_SELECTION_UNAVAILABLE",
+                                409,
+                            )
                         if selected["selectedCandidateId"] != item["source"]["candidateId"]:
-                            item.update(status="skipped", selectionEvidence=selected,
-                                        error=None)
+                            item.update(status="skipped", selectionEvidence=selected, error=None)
                             continue
                     if not item["recordId"]:
                         # _build stores its review in memory; save it even if an
@@ -718,9 +949,8 @@ class ExperimentPredictorService:
                     if item["method"] == "refit":
                         refit = self.refits.get(item["recordId"])
                         item["epochBudget"] = refit["manifest"]["epochBudget"]
-                        execution = refit_executions.get(item["recordId"]) or self.refits.execution(
-                            item["recordId"]
-                        )
+                        # Re-read under the guard: this item acts on it.
+                        execution = self.refits.execution(item["recordId"])
                         item["execution"] = execution
                         status = execution["status"]
                         if status == "completed":
@@ -732,10 +962,12 @@ class ExperimentPredictorService:
                             item.update(status="completed", predictorId=published["id"], error=None)
                         elif status in {"queued", "running"}:
                             item["status"] = status
-                            active_refit = True
-                        elif active_refit:
-                            item["status"] = "waiting"
-                        elif status == "cancelled":
+                        elif status == "cancelled" and (
+                            state.get("executor") != "task-center"
+                            or item.get("launchedAttempt") == state["attempt"]
+                        ):
+                            # Cancelled during this attempt; a resumed Task Center attempt
+                            # relaunches refits cancelled by an earlier one.
                             item["status"] = "cancelled"
                         else:
                             # Failure retries require a new explicit coordinator
@@ -762,8 +994,11 @@ class ExperimentPredictorService:
                                 resume=status != "not_started",
                             )
                             item.update(status=execution["status"], execution=execution)
-                            active_refit = execution["status"] in {"queued", "running"}
                 except (StorageError, OSError, ValueError, RuntimeError) as error:
+                    if getattr(error, "code", None) in BUSY_CODES:
+                        # Another request held a lock; nothing was changed. Every step is
+                        # idempotent by operation id, so the next pass simply retries.
+                        continue
                     item.update(
                         status="failed",
                         error={
@@ -780,9 +1015,8 @@ class ExperimentPredictorService:
                                 item.update(
                                     status=execution["status"], execution=execution, error=None
                                 )
-                                active_refit = True
                         except (StorageError, OSError, ValueError, RuntimeError):
-                            active_refit = True
+                            pass
                 finally:
                     state["updatedAt"] = now()
                     write_json(folder / "state.json", state)

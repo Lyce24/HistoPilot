@@ -63,16 +63,16 @@ describe('clinical utility evidence selection', () => {
   });
 });
 describe('interpretation input provenance', () => {
-  it('uses shared bundle and folder selection while preserving unavailable historical links', () => {
+  it('uses shared bundle and folder selection, keeps an unavailable model link and ignores evidence links', () => {
     const html = render('interpretation', { hash: '#interpretation?predictor=missing&evaluation=eval&clinical=report' });
-    expect(html).toContain('Feature bundle'); expect(html).toContain('Original slide features'); expect(html).not.toContain('Slide folder on the server'); expect(html).toContain('Slides are loaded automatically from the dataset');
-    expect(html).toContain('Linked predictor unavailable'); expect(html).toContain('Linked evaluation unavailable or incompatible');
+    expect(html).toContain('Feature bundle'); expect(html).toContain('Original slide features'); expect(html).not.toContain('Slide folder on the server'); expect(html).toContain('Slides come from the chosen frozen dataset');
+    expect(html).toContain('Linked predictor unavailable'); expect(html).not.toContain('Linked evaluation'); expect(html).not.toContain('clinical report');
     expect(html).not.toContain('Review attention study'); expect(html).not.toContain('Separate coordinates file');
     expect(html).not.toContain('Compute slide attention');
   });
   it('rejects unsupported pooling models from predictor choices', () => {
     const source = { id: 'mean-model', lifecycleState: 'active', manifest: { name: 'Mean-pooling model', method: 'refit', recipe: { ...defaultRecipe(), model: 'mean_pool' }, checkpoints: [], inputs: { features: {} } } } as unknown as FrozenPredictor;
     const html = render('interpretation', { predictors: [source] });
-    expect(html).toMatch(/<option value="mean-model" disabled="">Mean-pooling model · Refit · attention unsupported/);
+    expect(html).toMatch(/<option value="mean-model" disabled="">Mean-pooling model · [^<]* · Refit · attention unsupported/);
   });
 });

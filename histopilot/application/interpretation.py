@@ -22,6 +22,7 @@ from histopilot.application.predictors import (
     lifecycle_document,
     reference,
 )
+from histopilot.inference_summary import describe
 from histopilot.schemas.interpretation import InterpretationSelection, SaveInterpretation
 from histopilot.storage.attention_inputs import (
     as_input_error,
@@ -82,6 +83,29 @@ def _attention_scientific_inputs(manifest):
     }
 
 
+def slide_predictions(execution, target, threshold):
+    """Attach each completed slide's frozen decision for display; saved results are unchanged."""
+    result = execution.get("result") if execution.get("status") == "completed" else None
+    if not isinstance(result, dict) or not isinstance(result.get("slides"), list):
+        return execution
+    slides = []
+    for slide in result["slides"]:
+        probabilities = slide.get("probabilities") if isinstance(slide, dict) else None
+        if not isinstance(probabilities, list) or len(probabilities) != len(target["classes"]):
+            slides.append(slide)
+            continue
+        members = [
+            member["probabilities"]
+            for member in slide.get("members", [])
+            if isinstance(member, dict) and isinstance(member.get("probabilities"), list)
+        ]
+        row = {"probabilities": probabilities}
+        if len(members) > 1:
+            row["memberProbabilities"] = members
+        slides.append({**slide, "prediction": describe(row, target, threshold)})
+    return {**execution, "result": {**result, "slides": slides}}
+
+
 class InterpretationService:
     def __init__(self, store, filesystem):
         self.store, self.filesystem = store, filesystem
@@ -89,6 +113,49 @@ class InterpretationService:
         self.jobs = ComputeJobService(store, filesystem)
         self.gallery = InterpretationGalleryService(store, filesystem)
         self.pack_filesystem = LocalFilesystem((store.folder, *filesystem.roots))
+
+    def _decision_threshold(self, predictor_id, thresholds):
+        """The predictor's frozen binary threshold; multiclass decisions take the top class."""
+        if predictor_id not in thresholds:
+            try:
+                value = self.predictors.get(predictor_id)["manifest"].get("recipe", {})
+                value = value.get("decisionThreshold")
+            except StorageError:
+                value = None
+            valid = isinstance(value, (int, float)) and not isinstance(value, bool)
+            thresholds[predictor_id] = value if valid and 0 < value < 1 else 0.5
+        return thresholds[predictor_id]
+
+    def presented(self, document, thresholds=None):
+        """A document as shown to users: completed slides carry their predicted label."""
+        manifest, execution = document.get("manifest", {}), document.get("execution")
+        target = manifest.get("target")
+        if not isinstance(execution, dict) or not isinstance(target, dict):
+            return document
+        if not isinstance(target.get("classes"), list) or not target["classes"]:
+            return document
+        threshold = self._decision_threshold(
+            manifest.get("predictorId"), {} if thresholds is None else thresholds
+        )
+        return {**document, "execution": slide_predictions(execution, target, threshold)}
+
+    def presented_list(self, *, include_inactive=False):
+        listing, thresholds = self.list(include_inactive=include_inactive), {}
+        return {
+            **listing,
+            "items": [self.presented(item, thresholds) for item in listing["items"]],
+        }
+
+    def presented_visualization(self, request):
+        outcome, thresholds = self.visualize(request), {}
+        items = [
+            {**item, "interpretation": self.presented(item["interpretation"], thresholds)}
+            if isinstance(item.get("interpretation"), dict)
+            else item
+            for item in outcome["items"]
+        ]
+        documents = [self.presented(item, thresholds) for item in outcome["interpretations"]]
+        return {**outcome, "items": items, "interpretations": documents}
 
     def gallery_thumbnail(self, value, *, max_size=256):
         self.store.lifecycle.assert_usable([f"project:{self.store.project_id}"])
@@ -661,7 +728,16 @@ class InterpretationService:
             },
         }
 
-    def launch(self, identity, operation_id, *, resume=False, gallery_context=None):
+    def launch(
+        self,
+        identity,
+        operation_id,
+        *,
+        resume=False,
+        gallery_context=None,
+        task_owner=None,
+        task_title=None,
+    ):
         replay = self.jobs.replay_launch(identity, operation_id, resume=resume, record_kind="model-interpretation")
         if replay is not None:
             return replay
@@ -671,7 +747,14 @@ class InterpretationService:
                 verify_sources(plan["slides"])
             except (OSError, ValueError) as error:
                 raise as_input_error(error) from error
-            return self.jobs.launch(identity, plan, operation_id, resume=resume)
+            return self.jobs.launch(
+                identity,
+                plan,
+                operation_id,
+                resume=resume,
+                task_owner=task_owner,
+                task_title=task_title,
+            )
 
     def cancel(self, identity, operation_id):
         self.get(identity)

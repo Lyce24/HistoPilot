@@ -40,6 +40,9 @@ def validate_memberships(plan: dict) -> dict[str, list[dict]]:
     if not isinstance(rows, list) or not rows:
         raise MILDataError("A run requires explicit frozen slide memberships.")
     target = plan.get("target", {})
+    slide_unit = plan.get("splitUnit") == "slide"
+    if slide_unit and target.get("unit") != "slide":
+        raise MILDataError("Slide-level splits require a slide-level target.")
     classes = target.get("classes", [])
     if (
         target.get("task") not in {"binary_classification", "multiclass_classification"}
@@ -62,7 +65,7 @@ def validate_memberships(plan: dict) -> dict[str, list[dict]]:
         )
         if any(
             not isinstance(value, str) or not value or value.strip() != value
-            for value in (slide, patient)
+            for value in ((slide,) if slide_unit else (slide, patient))
         ):
             raise MILDataError("Every selected row requires exact nonempty slide and patient IDs.")
         if slide in seen_slides:
@@ -87,7 +90,7 @@ def validate_memberships(plan: dict) -> dict[str, list[dict]]:
             )
         if label not in classes:
             raise MILDataError(f"{slide}: label is not a declared target class.")
-        if patient in patients and patients[patient] != role:
+        if not slide_unit and patient in patients and patients[patient] != role:
             raise MILDataError(f"Patient {patient} appears in more than one partition.")
         if (
             target["unit"] == "patient"
@@ -95,7 +98,8 @@ def validate_memberships(plan: dict) -> dict[str, list[dict]]:
             and patient_labels[patient] != label
         ):
             raise MILDataError(f"Patient {patient} has conflicting target labels.")
-        patients[patient], patient_labels[patient] = role, label
+        if not slide_unit:
+            patients[patient], patient_labels[patient] = role, label
         metadata = {
             key: row[key]
             for key in (

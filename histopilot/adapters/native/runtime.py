@@ -33,8 +33,9 @@ def training_python() -> str:
     return str(candidate) if candidate.is_file() else sys.executable
 
 
-def training_runtime(*, refresh=False) -> dict:
-    executable = training_python()
+def training_runtime(*, refresh=False, python: str | None = None) -> dict:
+    """Probe ``python`` (default: the configured training interpreter), cached per executable."""
+    executable = str(Path(python).expanduser().absolute()) if python else training_python()
     with _LOCK:
         prior = _CACHE.get(executable)
         if not refresh and prior and time.monotonic() - prior[0] < 30:

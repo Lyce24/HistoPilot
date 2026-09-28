@@ -99,7 +99,8 @@ class DevelopmentService:
         experimental = [
             (number, recipe)
             for number, recipe in enumerate(recipes, 1)
-            if selection_metric is not None
+            if protocol["spec"].get("splitUnit") is not None
+            or selection_metric is not None
             or recipe.get("analysis") is not None
             or recipe.get("lossType", "ce") != "ce"
             or recipe.get("classWeighting", "none") != "none"
@@ -175,6 +176,7 @@ class DevelopmentService:
                         recipe,
                         protocol["spec"]["target"],
                         sampling_memberships(rows, recipe, cohort_values),
+                        split_unit=protocol["spec"].get("splitUnit"),
                     )
                     validate_selection_metric(selection_metric, protocol["spec"]["target"], rows)
                 except ValueError as error:
@@ -194,6 +196,11 @@ class DevelopmentService:
                         message = (
                             f"Validation has {decision['positivePatients']} positive {noun} "
                             f"(minimum {decision['minimumPositivePatients']}). " + message
+                        )
+                    elif decision["reason"] == "insufficient_validation_positive_slides":
+                        message = (
+                            f"Validation has {decision['positiveSlides']} positive slides "
+                            f"(minimum {decision['minimumPositiveSlides']}). " + message
                         )
                     record("warning", "FIXED_EPOCH_BUDGET", message, number, plan_id)
         return [
@@ -234,6 +241,10 @@ class DevelopmentService:
             from histopilot.clinical_features import clinical_fields, fit_clinical_preprocessor
 
             try:
+                from histopilot.schemas.training_controls import validate_split_unit
+
+                for recipe in recipes:
+                    validate_split_unit(recipe, protocol["spec"]["target"], protocol["spec"].get("splitUnit"))
                 clinical_values = development_clinical_values(
                     self.store, self.filesystem, protocol, recipes
                 )
@@ -306,7 +317,7 @@ class DevelopmentService:
                     "message": "Limit a batch to 20,000 training runs.",
                 }
             )
-        if spec.resources.runsPerGpu > 1:
+        if spec.resources is not None and spec.resources.runsPerGpu > 1:
             findings.append(
                 {
                     "severity": "warning",
@@ -385,8 +396,10 @@ class DevelopmentService:
                     "resolvedInputs": binding,
                     "configurations": candidates,
                     "trainingSeeds": list(spec.trainingSeeds),
-                    "resources": spec.resources.model_dump(),
                 }
+                # Hash-bearing: legacy specs keep their resources, new ones omit the key.
+                if spec.resources is not None:
+                    manifest["inputSnapshot"]["resources"] = spec.resources.model_dump()
         return {
             "canFreeze": not any(item["severity"] == "error" for item in findings),
             "findings": findings,

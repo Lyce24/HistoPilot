@@ -108,3 +108,39 @@ def test_doctor_does_not_claim_compute_readiness():
     result = CliRunner().invoke(app, ["doctor", "--json"])
     assert result.exit_code == 0
     assert json.loads(result.stdout)["compute"]["enabled"] is False
+
+
+@pytest.mark.parametrize("current", [True, False])
+def test_serve_warns_before_serving_a_bundle_older_than_web(tmp_path, monkeypatch, current):
+    from dataclasses import replace
+
+    import histopilot.cli as cli
+    from histopilot import web_bundle
+
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("bundle")
+    original = cli.load_settings
+    monkeypatch.setattr(
+        cli, "load_settings", lambda *a, **k: replace(original(*a, **k), static_dir=static)
+    )
+    seen = []
+
+    def state(root, directory):
+        seen.append((root, directory))
+        return (
+            current,
+            "the bundle matches web/" if current else "web/ changed after the bundle was built",
+        )
+
+    monkeypatch.setattr(web_bundle, "bundle_state", state)
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: None)
+    config = tmp_path / "config.toml"
+    config.write_text('[storage]\nworkspace = "state"\n')
+    result = CliRunner().invoke(
+        app, ["serve", "--config", str(config), "--no-browser", "--no-runner"]
+    )
+    assert result.exit_code == 0, result.output
+    assert seen == [(web_bundle.checkout_root(), static)]
+    warned = "Frontend   Out of date: web/ changed after the bundle was built" in result.output
+    assert warned is not current

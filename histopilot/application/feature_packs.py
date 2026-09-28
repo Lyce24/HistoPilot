@@ -1,4 +1,11 @@
-"""Optional feature validation and materialization jobs, bound to frozen inventories."""
+"""Optional feature validation and materialization jobs, bound to frozen inventories.
+
+New jobs are Task Center tasks (kind ``packing``, CPU lane, owner kind ``feature-pack``).
+Jobs of one feature source share an exclusive key, and a pack's output is guarded by the
+worker's output lock plus the live packing tasks of every project, which replaces the
+legacy claim files. Jobs recorded before, or launched with an injected tmux executor,
+keep their tmux session and claim.
+"""
 
 from __future__ import annotations
 
@@ -9,11 +16,18 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
+import threading
+import time
+from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from histopilot.application import task_records
 from histopilot.application.features import FeatureService, _stamp
+from histopilot.application.project_outputs import overlaps as _overlaps
+from histopilot.application.project_outputs import protected_output
 from histopilot.schemas.feature_packs import FeaturePackSpec
 from histopilot.schemas.features import FeatureSpec
 from histopilot.storage.filesystem import LocalFilesystem
@@ -25,9 +39,11 @@ from histopilot.storage.project_lock import (
     writer_lock,
 )
 from histopilot.storage.scientific import ScientificStore
+from histopilot.taskcenter import ids
 from histopilot.workers.packing_process import (
     TmuxPackingExecutor,
     live_process,
+    maybe_sweep_registry,
     output_key,
     output_lock,
     registry_lock,
@@ -38,6 +54,39 @@ ACTIVE = {"queued", "starting", "running", "cancelling"}
 JOB_ID = re.compile(r"^packing-[a-f0-9]{32}$")
 MAX_JSON = 64 * 1024 * 1024
 _UNREAD = object()
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+WORKER = Path(__file__).parents[1] / "workers" / "pack_features.py"
+PACKING_GRACE_SECONDS = 60
+# Receipts are immutable once written and can be large (a 1,111-slide pack receipt is
+# about 9 MB); the list polls every few seconds. Parsed receipts are cached by file
+# identity, and source freshness checks for the list view for a short while.
+RECEIPT_CACHE_BYTES = 64 * 1024 * 1024
+SOURCE_FINDINGS_SECONDS = 30.0
+_RECEIPTS: OrderedDict = OrderedDict()
+_SOURCE_FINDINGS: dict = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def _read_receipt(path: Path) -> dict:
+    """``_read`` of a receipt, cached by (inode, size, mtime); callers must not mutate it."""
+    try:
+        info = path.stat()
+    except OSError:
+        return _read(path)
+    key = (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+    with _CACHE_LOCK:
+        cached = _RECEIPTS.get(key)
+        if cached is not None:
+            _RECEIPTS.move_to_end(key)
+            return cached[0]
+    value = _read(path)
+    with _CACHE_LOCK:
+        _RECEIPTS[key] = (value, info.st_size)
+        total = sum(size for _value, size in _RECEIPTS.values())
+        while total > RECEIPT_CACHE_BYTES and len(_RECEIPTS) > 1:
+            _key, (_value, size) = _RECEIPTS.popitem(last=False)
+            total -= size
+    return value
 
 
 def _now() -> str:
@@ -58,11 +107,6 @@ def _read(path: Path) -> dict:
         raise StorageError("Packing metadata is invalid.", "PACKING_CORRUPT") from error
 
 
-def _overlaps(first: str | Path, second: str | Path) -> bool:
-    first, second = Path(first), Path(second)
-    return first.is_relative_to(second) or second.is_relative_to(first)
-
-
 def _compact(value: dict | None) -> dict | None:
     if value is None:
         return None
@@ -78,12 +122,32 @@ def _compact(value: dict | None) -> dict | None:
 
 
 class FeaturePackService:
-    def __init__(self, store: ScientificStore, filesystem: LocalFilesystem, executor=None):
+    def __init__(
+        self,
+        store: ScientificStore,
+        filesystem: LocalFilesystem,
+        executor=None,
+        *,
+        execution_mode=None,
+        task_center=None,
+    ):
         self.store = store
         self.filesystem = filesystem
         self.outputs = LocalFilesystem((store.folder, *filesystem.roots))
+        # An injected executor keeps its caller on the tmux path unless a mode is named.
+        self._mode = execution_mode or ("tmux" if executor is not None else None)
         self.executor = executor or TmuxPackingExecutor()
+        self.tasks = task_records.TaskCenterAccess(task_center)
         self.folder = store.folder / "packing"
+
+    @property
+    def mode(self) -> str:
+        """How new records launch (resolved per call, so a long-lived service follows it)."""
+        return self._mode or task_records.default_execution_mode()
+
+    @property
+    def managed(self) -> bool:
+        return self.mode == task_records.TASK_CENTER
 
     @staticmethod
     def format_available() -> bool:
@@ -117,36 +181,7 @@ class FeaturePackService:
         path = path.resolve()
         if not self.outputs._contains(path):
             raise StorageError("Output is outside configured data roots.", "INVALID_PATH", 403)
-        reserved = (
-            "datasets",
-            "configurations",
-            "extractions",
-            "packing",
-            "training",
-            "compute-jobs",
-            "predictor-builds",
-            "evaluation-batches",
-            "jobs",
-            "drafts",
-            ".staging",
-            ".trash",
-            ".git",
-            ".codex",
-            ".histopilot-write.lock",
-            ".histopilot-lifecycle.lock",
-            "histopilot-lifecycle.json",
-            "histopilot-project.json",
-            "histopilot-state.sqlite",
-            "histopilot-state.sqlite-wal",
-            "histopilot-state.sqlite-shm",
-            "project.sqlite3",
-            "histopilot.sqlite3",
-        )
-        if (
-            path == self.store.folder
-            or path in self.outputs.roots
-            or any(_overlaps(path, self.store.folder / name) for name in reserved)
-        ):
+        if protected_output(path, self.store.folder) or path in self.outputs.roots:
             raise StorageError("Choose a dedicated feature pack directory.", "INVALID_OUTPUT", 422)
         manifest = configuration["manifest"]
         source_paths = [manifest.get("spec", {}).get(key) for key in ("path", "coordinatesPath")]
@@ -195,20 +230,62 @@ class FeaturePackService:
         return job.get("state") == "starting" and age < 30
 
     def _claims(self, output: Path, folder: Path) -> list[dict]:
+        """Legacy (tmux) jobs' live claims on ``output``; new jobs write none.
+
+        A malformed claim is skipped (the registry sweep removes it once old) rather than
+        blocking packing machine-wide.
+        """
         claims = []
         for path in folder.glob("*.claim.json"):
-            claim = _read(path)
+            try:
+                claim = _read(path)
+                if not isinstance(claim.get("outputPath"), str) or not isinstance(
+                    claim.get("jobPath"), str
+                ):
+                    continue
+            except (OSError, StorageError):
+                continue
             if _overlaps(output, claim["outputPath"]):
                 result_path = Path(claim["jobPath"]).parent / "result.json"
-                result = _read(result_path) if result_path.exists() else {}
+                try:
+                    result = _read_receipt(result_path) if result_path.exists() else {}
+                except (OSError, StorageError):
+                    result = {}
                 published = (
                     result.get("state") == "succeeded"
                     and result.get("artifact")
                     and Path(claim["outputPath"]).exists()
                 )
-                if published or self._claim_busy(claim):
+                try:
+                    busy = published or self._claim_busy(claim)
+                except (OSError, StorageError, KeyError, ValueError):
+                    busy = True  # unreadable evidence never frees an output
+                if busy:
                     claims.append(claim)
         return claims
+
+    def _output_busy(self, output: Path) -> bool:
+        """Whether a legacy claim or a live packing task of any project uses ``output``."""
+        maybe_sweep_registry()
+        with registry_lock() as registry:
+            if self._claims(output, registry):
+                return True
+        return self._tasks_busy(output)
+
+    def _tasks_busy(self, output: Path) -> bool:
+        try:
+            tasks = self.tasks.client.store.list(
+                states=("blocked", "queued", "starting", "running", "stopping"),
+                kinds=("packing",),
+                limit=None,
+            )
+        except (StorageError, OSError):
+            return False  # the Task Center re-checks before it starts a pack
+        return any(
+            (task.get("adapterData") or {}).get("outputPath")
+            and _overlaps(output, task["adapterData"]["outputPath"])
+            for task in tasks
+        )
 
     def _existing_path(self, value: str) -> Path:
         path = Path(value)
@@ -364,9 +441,8 @@ class FeaturePackService:
                         "INSUFFICIENT_SPACE",
                         "The output filesystem has less free space than the estimated pack size.",
                     )
-            with registry_lock() as registry:
-                if self._claims(output, registry):
-                    finding("OUTPUT_BUSY", "A feature job is already using this output folder.")
+            if self._output_busy(output):
+                finding("OUTPUT_BUSY", "A feature job is already using this output folder.")
         for job in self._jobs():
             if (
                 job["featureSetId"] == spec.featureSetId
@@ -471,7 +547,7 @@ class FeaturePackService:
                 output = Path(preview["outputPath"]) if preview["outputPath"] else None
                 if output:
                     self._path(str(output), configuration)
-                    if self._claims(output, registry):
+                    if self._claims(output, registry) or self._tasks_busy(output):
                         raise StorageError("Another job owns this output.", "OUTPUT_BUSY")
                     with output_lock(output):
                         if output.exists() and (not output.is_dir() or any(output.iterdir())):
@@ -496,8 +572,21 @@ class FeaturePackService:
                     "createdAt": _now(),
                     "updatedAt": _now(),
                 }
+                if self.managed:
+                    job.update(
+                        state="queued",
+                        sessionName=None,
+                        executionMode=task_records.TASK_CENTER,
+                        taskId=ids.task_id("packing", str(folder)),
+                        ownerKey=task_records.owner_key("feature-pack", identity, self.store),
+                    )
                 write_json(folder / "job.json", job)
-                claim_path = registry / f"{output_key(output)}.claim.json" if output else None
+                # Task Center jobs need no claim: the runner and the output lock guard them.
+                claim_path = (
+                    registry / f"{output_key(output)}.claim.json"
+                    if output and not self.managed
+                    else None
+                )
                 if claim_path:
                     write_json(
                         claim_path,
@@ -525,10 +614,21 @@ class FeaturePackService:
                         "existingPackStamps": pack_stamps,
                     },
                 )
+            if self.managed:
+                try:
+                    self._enqueue(job, folder, preview)
+                except (StorageError, OSError) as error:
+                    job["state"], job["error"] = (
+                        "failed",
+                        f"Could not queue the feature job in the Task Center: {error}",
+                    )
+                    job["updatedAt"] = _now()
+                    write_json(folder / "job.json", job)
+                return self.get(identity)
             try:
                 self.executor.launch(
                     job["sessionName"],
-                    Path(__file__).parents[1] / "workers" / "pack_features.py",
+                    WORKER,
                     folder / "plan.json",
                 )
                 # Persist the process launch even for fast workers that have already completed.
@@ -557,11 +657,64 @@ class FeaturePackService:
             write_json(folder / "job.json", job)
         return self.get(identity)
 
+    def _enqueue(self, job: dict, folder: Path, preview: dict) -> None:
+        action = job["spec"]["action"]
+        source = self.store.get_configuration(job["featureSetId"])
+        label = source["manifest"].get("name") or job["featureSetId"][-12:]
+        task = {
+            "id": job["taskId"],
+            "kind": "packing",
+            "adapter": "packing",
+            "title": f"Packing · {action} · {label}"[:200],
+            "group": {"kind": "feature-pack", "id": job["id"]},
+            "labels": {
+                "recordKind": "feature-pack",
+                "recordId": job["id"],
+                "projectId": self.store.project_id,
+                "action": action,
+                "featureSetId": job["featureSetId"],
+            },
+            # One job per feature source at a time (validate, attach and pack read the same
+            # files); outputs are guarded separately.
+            "exclusiveKey": "feature-source:"
+            + hashlib.sha256(f"{self.store.folder}\0{job['featureSetId']}".encode()).hexdigest(),
+            "request": {
+                "lane": "cpu",
+                "cpuThreads": 1,
+                "dataWorkers": 0,
+                "ramGb": 2.0,
+                "graceSeconds": PACKING_GRACE_SECONDS,
+            },
+            "command": {
+                "argv": [sys.executable, "-u", str(WORKER), str(folder / "plan.json")],
+                "cwd": str(REPOSITORY_ROOT),
+                "env": {"HISTOPILOT_TASK_MANAGED": "1", "PYTHONDONTWRITEBYTECODE": "1"},
+                "log": job["logPath"],
+                "progress": str(folder / "progress.json"),
+                "result": str(folder / "result.json"),
+            },
+            "adapterData": {
+                "packingFolder": str(folder),
+                "jobId": job["id"],
+                "action": action,
+                "outputPath": job["outputPath"],
+                "estimatedBytes": int(preview.get("estimatedBytes") or 0),
+            },
+        }
+        owner = task_records.owner(
+            "feature-pack",
+            job["id"],
+            task["title"],
+            self.store,
+            {"recordKind": "feature-pack", "featureSetId": job["featureSetId"]},
+        )
+        task_records.enqueue(self.tasks, owner, [task])
+
     def _result(self, job: dict) -> dict | None:
         path = self.folder / job["id"] / "result.json"
         if not path.exists():
             return None
-        result = _read(path)
+        result = _read_receipt(path)
         if result.get("jobId") != job["id"]:
             raise StorageError("Packing result belongs to another job.", "PACKING_CORRUPT")
         if result.get("state") not in {"succeeded", "failed", "cancelled"}:
@@ -624,6 +777,21 @@ class FeaturePackService:
         folder = self.folder / identity
         if result is _UNREAD:
             result = self._result(job)
+        managed = task_records.managed_record(job)
+        if managed:
+            (view,) = self.tasks.views([job.get("taskId")])
+            job["executor"] = "task-center"
+            job["task"] = task_records.public_view(view)
+            if (
+                result is not None
+                and view
+                and not view.get("unknown")
+                and result.get("taskAttempt") != view["attempt"]
+                # A later attempt that found this job already packed ends "succeeded"
+                # without a receipt of its own; the earlier attempt's success stands.
+                and not (result.get("state") == "succeeded" and view["state"] == "succeeded")
+            ):
+                result = None  # an earlier attempt's receipt; this attempt has not finished
         if result is not None:
             job["result"] = {
                 **result,
@@ -634,7 +802,10 @@ class FeaturePackService:
             job["updatedAt"] = result.get("finishedAt", job["updatedAt"])
             if result.get("error"):
                 job["error"] = result["error"]
-        elif job["state"] in ACTIVE or (folder / "cancelled").exists():
+        if managed:
+            if not (result is not None and view and view.get("unknown")):
+                self._task_state(job, view)
+        elif result is None and (job["state"] in ACTIVE or (folder / "cancelled").exists()):
             try:
                 running = bool(live_process(folder)) or self.executor.running(job["sessionName"])
                 if (folder / "cancelled").exists():
@@ -652,7 +823,11 @@ class FeaturePackService:
                 job["error"] = f"Cannot inspect worker status: {error}"
         from histopilot.workers.training_process import read_progress
 
-        if job["state"] in {"starting", "running"} and (folder / "resources.json").exists():
+        if (
+            not managed
+            and job["state"] in {"starting", "running"}
+            and (folder / "resources.json").exists()
+        ):
             reservation = json.loads(ScientificStore._read_file(folder / "resources.json", 65536))
             job["resourceReservation"] = reservation
             if reservation.get("status") == "queued":
@@ -672,6 +847,27 @@ class FeaturePackService:
         return {
             key: value for key, value in job.items() if key not in {"operationId", "requestHash"}
         }
+
+    @staticmethod
+    def _task_state(job: dict, view: dict | None) -> None:
+        """A Task Center job's state comes from its task; the receipt adds the details."""
+        if view is None:
+            if job["state"] in ACTIVE:
+                job["state"] = "interrupted"
+                job["error"] = "The Task Center has no task for this feature job. Preview again."
+            return
+        if view.get("unknown"):
+            job["waitingReason"] = task_records.waiting_reason(view)
+            return
+        state = task_records.record_state(view)
+        if state == "succeeded" and job.get("result", {}).get("state") != "succeeded":
+            state = "failed"
+            job["error"] = "The feature job finished without a successful receipt."
+        job["state"] = state
+        if state == "queued":
+            job["waitingReason"] = task_records.waiting_reason(view)
+        if state in {"failed", "cancelled", "interrupted"} and not job.get("error"):
+            job["error"] = view.get("error") or f"The feature job was {state}."
 
     def list(self, *, include_inactive=False) -> dict:
         records = sorted(self._jobs(), key=lambda job: job["createdAt"], reverse=True)
@@ -709,7 +905,8 @@ class FeaturePackService:
             feature_id = artifact["featureSetId"]
             if feature_id not in source_findings:
                 source_findings[feature_id] = self._source_findings(
-                    self.store.get_configuration(feature_id, include_inactive=include_inactive)
+                    self.store.get_configuration(feature_id, include_inactive=include_inactive),
+                    cached=True,
                 )
             findings = self._artifact_findings(artifact, source_findings[feature_id])
             fresh_artifacts.append(
@@ -741,6 +938,23 @@ class FeaturePackService:
     def _cancel(self, identity: str) -> dict:
         with writer_lock(self.store.folder):
             job = self.get(identity, include_inactive=True)
+            if task_records.managed_record(job):
+                task = job.get("task") or {}
+                if job["state"] in ACTIVE:
+                    write_json(
+                        self.folder / identity / "cancelled",
+                        {
+                            "requestedAt": _now(),
+                            "attempts": {task["id"]: task["attempt"]}
+                            if task.get("id") and task.get("attempt")
+                            else {},
+                        },
+                    )
+                    try:
+                        self.tasks.client.cancel_task(job["taskId"])
+                    except (StorageError, OSError):
+                        pass  # the worker still stops on the marker at its next chunk
+                return self.get(identity, include_inactive=True)
             if (
                 job["state"] in ACTIVE
                 or live_process(self.folder / identity)
@@ -780,7 +994,26 @@ class FeaturePackService:
             "findings": findings,
         }
 
-    def _source_findings(self, configuration: dict) -> list[dict]:
+    def _source_findings(self, configuration: dict, *, cached=False) -> list[dict]:
+        """Freshness of a saved feature version's source files.
+
+        ``cached`` (the polled list) reuses a check up to ``SOURCE_FINDINGS_SECONDS`` old;
+        selection and bundle checks always look again.
+        """
+        key = (str(self.store.folder), configuration["id"], configuration.get("contentHash"))
+        if cached:
+            with _CACHE_LOCK:
+                hit = _SOURCE_FINDINGS.get(key)
+            if hit is not None and time.monotonic() - hit[0] < SOURCE_FINDINGS_SECONDS:
+                return [dict(item) for item in hit[1]]
+        findings = self._check_sources(configuration)
+        with _CACHE_LOCK:
+            if len(_SOURCE_FINDINGS) > 256:
+                _SOURCE_FINDINGS.clear()
+            _SOURCE_FINDINGS[key] = (time.monotonic(), [dict(item) for item in findings])
+        return findings
+
+    def _check_sources(self, configuration: dict) -> list[dict]:
         findings = []
         manifest = configuration["manifest"]
         if manifest.get("sourceExtraction"):

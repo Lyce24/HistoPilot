@@ -308,7 +308,7 @@ try {
   await waitFor('window.workflow.calls.some(call => call.method === "bundleFreeze")');
   assert.deepEqual(await evaluate('window.workflow.calls.find(call => call.method === "bundleFreeze").spec.packArtifactIds'), ['pack']);
   assert.equal(await evaluate('window.workflow.calls.find(call => call.method === "sourceFreeze").spec.path'), '/features/new');
-  await waitFor('window.location.hash.startsWith("#experiments?")');
+  await waitFor('window.location.hash.startsWith("#experimental-setup?")');
   assert.equal(await evaluate('new URLSearchParams(window.location.hash.split("?")[1]).get("bundle")'), 'new-bundle');
   assert.equal(await evaluate('new URLSearchParams(window.location.hash.split("?")[1]).has("dataset")'), false);
   assert.deepEqual(await evaluate('window.workflow.errors'), []);

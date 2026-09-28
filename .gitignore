@@ -26,6 +26,8 @@ coverage/
 /logs/
 /.local/
 /histopilot/static/
+/histopilot/static.incoming/
+/histopilot/static.previous/
 *.db
 *.db-shm
 *.db-wal
@@ -50,3 +52,12 @@ test-results/
 /docs/verification/**/build.mjs
 /docs/verification/**/index.html
 /docs/verification/**/dist/
+
+# Private study notes: unpublished cohort details and results. The remote is public.
+/docs/EXPERIMENT_RESULTS.md
+/docs/PIPELINE_HARDENING.md
+/docs/hardening/
+/docs/INFERENCE_MODE.md
+/docs/REAL_SLIDE_VIEWER_VALIDATION.md
+/docs/gej-extraction-performance-2026-09-25.md
+/docs/verification/real-slide-viewer-20260925.json

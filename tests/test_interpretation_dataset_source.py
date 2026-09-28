@@ -181,3 +181,41 @@ def test_automatic_folder_gallery_http_auth_and_request(gallery, tmp_path, monke
         assert response.status_code == 202, response.text
         assert response.json()["items"][0]["status"] == "queued"
         assert len(executor.calls) == 1
+
+
+def test_dataset_sources_list_each_frozen_dataset_slide_folder(gallery):
+    service, source, _, _ = gallery
+    bundle_dataset = service.gallery.sources()["items"][0]["datasetId"]
+    items = {item["datasetId"]: item for item in service.gallery.dataset_sources()["items"]}
+    chosen = items[bundle_dataset]
+    assert chosen["slideFolder"] == source["slideFolder"]
+    assert chosen["slideFolderSource"] == "dataset_records"
+    assert chosen["datasetName"] == "Gallery"
+    assert chosen["slideCount"] == len(service.gallery._records(bundle_dataset))
+
+
+def test_store_scoped_bundle_stays_usable_with_a_chosen_dataset_folder(gallery, monkeypatch):
+    service, source, _, _ = gallery
+    original = service.gallery.dataset_source
+    metadata = original(service.gallery.sources()["items"][0]["datasetId"])
+    warning = {
+        "severity": "warning",
+        "code": "DATASET_SLIDE_FOLDER_UNAVAILABLE",
+        "message": "These features are scoped to a slide store, not a frozen dataset.",
+    }
+    monkeypatch.setattr(
+        service.gallery,
+        "dataset_source",
+        lambda *args, **kwargs: {
+            **metadata,
+            "datasetId": None,
+            "slideFolder": None,
+            "slideFolderSource": None,
+            "slideFolderFinding": warning,
+        },
+    )
+    item = service.gallery.sources()["items"][0]
+    assert item["current"] and warning in item["findings"]
+    # The page passes the chosen dataset's folder explicitly; features still come from the bundle.
+    results = service.gallery.query(InterpretationGalleryQuery(**source))
+    assert results["folder"] == source["slideFolder"] and results["total"] == 3

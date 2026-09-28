@@ -1,6 +1,14 @@
-"""Persistent project archive worker; contains no server lifecycle operations."""
+"""Persistent project archive worker; contains no server lifecycle operations.
+
+As a Task Center task (``HISTOPILOT_TASK_MANAGED=1``) an export that finds the project
+busy (active jobs, or its lifecycle lock held) records ``queued`` with the reason and
+exits 75 (EX_TEMPFAIL); the Task Center requeues it with a backoff until the project is
+idle. A signal without a cancel request is recorded as ``interrupted``, never
+``cancelled``.
+"""
 
 import json
+import os
 import signal
 import sys
 import time
@@ -19,19 +27,35 @@ from histopilot.application.operations import (
     verify_archive,
 )
 from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.packing_process import output_lock, process_metadata, write_json
+
+BUSY_EXIT = 75  # EX_TEMPFAIL: the project is busy; the Task Center retries later
+BUSY_CODES = frozenset({"PORTABILITY_ACTIVE_JOBS", "PROJECT_BUSY"})
+
+
+def _task_identity() -> dict:
+    attempt = os.environ.get("HISTOPILOT_TASK_ATTEMPT", "")
+    if not os.environ.get("HISTOPILOT_TASK_ID"):
+        return {}
+    return {
+        "taskId": os.environ["HISTOPILOT_TASK_ID"],
+        "taskAttempt": int(attempt) if attempt.isdecimal() else None,
+    }
 
 
 def run(plan_path):
     folder = plan_path.parent
+    managed = os.environ.get("HISTOPILOT_TASK_MANAGED") == "1"
     with output_lock(f"portability:{plan_path}"):
         plan = json.loads(ScientificStore._read_file(plan_path, 1024 * 1024))
         state = json.loads(ScientificStore._read_file(folder / "state.json", 64 * 1024 * 1024))
         if state["status"] in {"completed", "failed", "cancelled"}:
             return state
         write_json(folder / "process.json", process_metadata())
-        state.update(status="running", updatedAt=_now())
+        state.update(status="running", updatedAt=_now(), **_task_identity())
+        state.pop("waitingReason", None)
         write_json(folder / "state.json", state)
         last_update, last_stage = 0.0, None
         interrupted = False
@@ -85,7 +109,22 @@ def run(plan_path):
                 raise ValueError("Unsupported archive operation.")
             state.update(status="completed", result=result, error=None)
         except PortabilityCancelled as error:
-            state.update(status="cancelled", error=str(error), result=None)
+            if (folder / "cancel.requested").exists():
+                state.update(status="cancelled", error=str(error), result=None)
+            else:
+                # A signal from the host is not a cancel request; the operation can resume.
+                state.update(
+                    status="interrupted",
+                    error="The archive worker was stopped before finishing. Retry to run it again.",
+                    result=None,
+                )
+        except StorageError as error:
+            if managed and error.code in BUSY_CODES:
+                print(f"PROJECT_BUSY: {error}", flush=True)
+                state.update(status="queued", waitingReason=str(error), error=None, result=None)
+            else:
+                traceback.print_exc()
+                state.update(status="failed", error=str(error), result=None)
         except Exception as error:
             traceback.print_exc()
             state.update(status="failed", error=str(error), result=None)
@@ -98,7 +137,23 @@ def run(plan_path):
         return state
 
 
+def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if len(argv) != 1:
+        print("Usage: portability.py PLAN.json", file=sys.stderr)
+        return 2
+    managed = os.environ.get("HISTOPILOT_TASK_MANAGED") == "1"
+    try:
+        state = run(Path(argv[0]))
+    except StorageError as error:
+        if managed and error.code == "OUTPUT_BUSY":
+            print(f"OUTPUT_BUSY: {error}", flush=True)
+            return BUSY_EXIT
+        raise
+    if managed and state["status"] == "queued":
+        return BUSY_EXIT
+    return 0 if state["status"] == "completed" else 1
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: portability.py PLAN.json")
-    raise SystemExit(0 if run(Path(sys.argv[1]))["status"] == "completed" else 1)
+    raise SystemExit(main())

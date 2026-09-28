@@ -11,6 +11,7 @@ from histopilot.application.features import FeatureService
 from histopilot.application.imports import ImportService
 from histopilot.application.project_workspace import ProjectWorkspace
 from histopilot.application.protocols import ProtocolService
+from histopilot.application.target_splits import TargetSplitService
 from histopilot.schemas.extractions import ExtractionSpec, SubmitExtractionRequest
 from histopilot.schemas.feature_bundles import FeatureBundleSpec, FreezeFeatureBundleRequest
 from histopilot.schemas.feature_packs import (
@@ -25,14 +26,9 @@ from histopilot.schemas.protocols import (
     ProtocolFreezeRequest,
     ProtocolPreviewRequest,
 )
+from histopilot.schemas.target_splits import TargetSplitPartitionPreviewRequest
 from histopilot.schemas.version_labels import SetVersionLabelRequest
-from histopilot.schemas.workspace import RequestModel
 from histopilot.storage.filesystem import LocalFilesystem
-from histopilot.storage.project_lock import StorageError
-
-
-class JobIntent(RequestModel):
-    protocolId: str
 
 
 def scientific_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -> APIRouter:
@@ -167,6 +163,10 @@ def scientific_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -
     def cancel_extraction(identity: str, job_id: str):
         return extraction(identity).cancel(job_id)
 
+    @router.post("/extractions/{job_id}/resume")
+    def resume_extraction(identity: str, job_id: str):
+        return extraction(identity).resume(job_id)
+
     @router.post("/imports/inspect")
     def inspect(identity: str, payload: InspectRequest):
         return importer(identity).inspect(payload.source)
@@ -214,13 +214,21 @@ def scientific_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -
     def explore_protocol(identity: str, payload: ProtocolExploreRequest):
         return protocols(identity).explore(payload)
 
-    @router.post("/protocols/{draft_id}/preview")
-    def preview_protocol(identity: str, draft_id: str, payload: ProtocolPreviewRequest):
-        return protocols(identity).preview(draft_id, payload.expectedRevision)
+    @router.post("/target-splits/partition-preview")
+    def preview_target_partition(identity: str, payload: TargetSplitPartitionPreviewRequest):
+        return TargetSplitService(
+            projects.scientific_store(identity), filesystem
+        ).partition_preview(payload)
 
-    @router.post("/protocols/{draft_id}/freeze", status_code=201)
-    def freeze_protocol(identity: str, draft_id: str, payload: ProtocolFreezeRequest):
-        return protocols(identity).freeze(
+    @router.post("/target-splits/{draft_id}/preview")
+    def preview_target_split(identity: str, draft_id: str, payload: ProtocolPreviewRequest):
+        return TargetSplitService(projects.scientific_store(identity), filesystem).preview(
+            draft_id, payload.expectedRevision
+        )
+
+    @router.post("/target-splits/{draft_id}/freeze", status_code=201)
+    def freeze_target_split(identity: str, draft_id: str, payload: ProtocolFreezeRequest):
+        return TargetSplitService(projects.scientific_store(identity), filesystem).freeze(
             draft_id,
             payload.expectedRevision,
             payload.previewHash,
@@ -228,13 +236,29 @@ def scientific_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -
             version_label=payload.versionLabel.model_dump(),
         )
 
+    @router.get("/target-splits/{configuration_id}")
+    def target_split(identity: str, configuration_id: str):
+        return TargetSplitService(projects.scientific_store(identity), filesystem).get(
+            configuration_id
+        )
+
+    @router.post("/target-splits/{configuration_id}/test-cohort")
+    def target_split_test_cohort(identity: str, configuration_id: str):
+        cohort = TargetSplitService(
+            projects.scientific_store(identity), filesystem
+        ).create_test_cohort(configuration_id)
+        return {"evaluationCohortId": cohort["id"] if cohort else None, "cohort": cohort}
+
+    # Stored configurations are verified JSON documents: skip FastAPI's recursive
+    # re-encoding, which costs more than the read itself for multi-MB manifests.
     @router.get("/configurations")
     def configurations(identity: str, kind: str | None = None):
-        return {"configurations": projects.scientific_store(identity).list_configurations(kind)}
+        store = projects.scientific_store(identity)
+        return JSONResponse({"configurations": store.list_configurations(kind)})
 
     @router.get("/configurations/{configuration_id}")
     def configuration(identity: str, configuration_id: str):
-        return projects.scientific_store(identity).get_configuration(configuration_id)
+        return JSONResponse(projects.scientific_store(identity).get_configuration(configuration_id))
 
     @router.post("/features/preview")
     def preview_feature(identity: str, payload: FeatureSpec):
@@ -250,46 +274,6 @@ def scientific_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -
             payload.previewHash,
             payload.operationId,
             version_label=payload.versionLabel.model_dump(),
-        )
-
-    @router.get("/protocols/{configuration_id}/preflight")
-    def preflight(identity: str, configuration_id: str):
-        store = projects.scientific_store(identity)
-        protocol = store.get_configuration(configuration_id)["manifest"]
-        if protocol.get("kind") != "protocol":
-            raise StorageError("Select a frozen target/split protocol.", "INVALID_PROTOCOL", 422)
-        store.get_dataset(protocol["datasetId"])
-        # A saved target/split protocol is a dataset construction. Features and
-        # execution compatibility are assessed through experiment input preview.
-        return {
-            "protocolId": configuration_id,
-            "scope": "protocol",
-            "protocolReady": True,
-            "scientificReady": False,
-            "executionEnabled": False,
-            "executionReady": False,
-            "findings": [],
-        }
-
-    @router.post("/jobs")
-    def submit(identity: str, payload: JobIntent):
-        report = preflight(identity, payload.protocolId)
-        if not report["scientificReady"]:
-            return JSONResponse(
-                {
-                    "detail": "Choose a feature source and check compatibility in Experiments before execution.",
-                    "code": "PREFLIGHT_BLOCKED",
-                    **report,
-                },
-                status_code=422,
-            )
-        return JSONResponse(
-            {
-                "detail": "Compute execution is not implemented. No job was submitted.",
-                "code": "EXECUTION_UNAVAILABLE",
-                **report,
-            },
-            status_code=501,
         )
 
     return router

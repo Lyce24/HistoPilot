@@ -204,6 +204,10 @@ def test_missing_slide_references_are_detected_in_frozen_artifacts(project):
 
 def test_authenticated_operations_api_executes_archive_worker(project, monkeypatch):
     store, projects, client, _ = project
+    # This test exercises the legacy tmux launch path of the API.
+    monkeypatch.setattr(
+        "histopilot.application.task_records.default_execution_mode", lambda: "tmux"
+    )
     monkeypatch.setattr(
         "histopilot.application.portability_jobs.PortabilityExecutor.available", lambda _: True
     )

@@ -13,6 +13,8 @@ export interface EvaluationInference {
 }
 
 export interface EvaluationSpec {
+  /** Absent on historical artifacts, which retain patient grouping. */
+  splitUnit?: 'slide' | 'patient';
   /** Inference cohorts are unlabeled; `review` is their earlier name. */
   purpose?: 'independent' | 'inference' | 'review';
   protocolId?: string | null;

@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Configuration } from '../api/scientific';
 import type { FeaturePackArtifact, FeaturePackJob, FeaturePackPreview, FeatureValidationReport } from '../api/packing';
-import FeaturePacking, { ExistingPackComparison, FeaturePackCoverage, FeaturePackProgress, FeatureValidationSummary, SavedPackChoice, canIncludeFeaturePack, nextBundlePackIds, formatPackBytes } from './FeaturePacking';
+import FeaturePacking, { ExistingPackComparison, FeaturePackCoverage, FeaturePackProgress, FeatureValidationSummary, ManagedFeatureJob, SavedPackChoice, canIncludeFeaturePack, legacyPackActive, nextBundlePackIds, formatPackBytes } from './FeaturePacking';
+import { taskCenterKeys } from '../api/taskCenter';
+import { fixtureRollup } from '../testFixtures/taskCenter';
 import PackFolderExamples from './PackFolderExamples';
 
 const report: FeatureValidationReport = {
@@ -236,5 +238,22 @@ describe('feature preparation presentation', () => {
     expect(formatPackBytes(1024 ** 3)).toBe('1 GiB');
     expect(formatPackBytes(null)).toBe('Unavailable');
     expect(formatPackBytes(NaN)).toBe('Unavailable');
+  });
+});
+
+describe('Task Center packing jobs', () => {
+  it('show one status chip linking to the Task Center, with no stages, cancel, tmux or log', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const managed = job({ executor: 'task-center', ownerKey: 'owner-pack', sessionName: null } as Partial<FeaturePackJob>);
+    client.setQueryData(taskCenterKeys.rollup({ owner: 'owner-pack' }), fixtureRollup({ counts: { running: 1 }, live: 1, active: 1, pending: 0, current: { taskId: 't', title: 'Pack', kind: 'packing', labels: {}, progress: { completed: 40, total: 120 }, startedAt: null }, eta: null, href: '#task-center?owner=owner-pack&project=project' }));
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><ManagedFeatureJob job={managed} project="project" /></QueryClientProvider>);
+      expect(html).toContain('>Packing<');
+      expect(html).toContain('>40 / 120<');
+      expect(html).toContain('href="#task-center?owner=owner-pack&amp;project=project"');
+      for (const text of ['tmux attach', 'Cancel job', 'Current stage']) expect(html).not.toContain(text);
+      expect(legacyPackActive(managed)).toBe(false);
+      expect(legacyPackActive(job())).toBe(true);
+    } finally { client.clear(); }
   });
 });

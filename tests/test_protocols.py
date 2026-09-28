@@ -810,10 +810,8 @@ def test_live_cohort_needs_no_labels_or_feature_configuration_and_uses_every_row
     assert result["cohort"]["fallbackSlideCount"] == result["cohort"]["unlinkedSlideCount"] == 0
     assert len(result["cohort"]["sample"]) == 5
     assert sum(value["slides"] for value in result["target"]["values"]) == 320
-    assert result["partitions"]["train"]["selection"] == "remaining"
-    assert result["partitions"]["train"]["expanded"]["totalSlides"] == 320
-    assert result["partitions"]["val"]["expanded"]["totalSlides"] == 0
-    assert result["unassigned"]["totalSlides"] == 0
+    # Only development (version 4) splits get live partition counts.
+    assert result["partitions"] is result["unassigned"] is None
     assert store.draft["payload"] == {}
 
 
@@ -822,19 +820,15 @@ def test_rules_test_expands_to_whole_patient_and_empty_train_uses_complement():
     split = store.draft["payload"]["spec"]["split"]
     split.update(mode="rules")
     split["rules"] = {"test": [{"field": "Slide_ID", "op": "regex", "value": "^s1[2-5]-0$"}]}
-    live = explore(store, rules=split["rules"])
     frozen = preview(store)
-    assert live["valid"] and frozen["canFreeze"], frozen["findings"]
-    assert live["partitions"]["test"]["directMatches"]["totalSlides"] == 4
-    assert live["partitions"]["test"]["expanded"]["totalSlides"] == 8
-    assert live["partitions"]["train"]["expanded"]["totalSlides"] == 24
-    assert live["partitions"]["val"]["selection"] == "none"
+    assert frozen["canFreeze"], frozen["findings"]
     assert len(frozen["partitions"]) == 2
     assert {part["fold"] for part in frozen["partitions"]} == {0}
     for part in frozen["partitions"]:
-        for role in ("train", "val", "test"):
-            assert part[role]["slides"] == live["partitions"][role]["expanded"]["totalSlides"]
-            assert part[role]["patients"] == live["partitions"][role]["expanded"]["patientCount"]
+        # Four matching slides expand to their four patients' eight slides.
+        slides = {role: part[role]["slides"] for role in ("train", "val", "test")}
+        assert slides == {"train": 24, "val": 0, "test": 8}
+        assert (part["train"]["patients"], part["test"]["patients"]) == (12, 4)
     assert_patient_disjoint(frozen)
 
 
@@ -859,25 +853,10 @@ def test_explicit_train_rule_never_silently_drops_unassigned_groups():
     split = store.draft["payload"]["spec"]["split"]
     split.update(mode="rules")
     split["rules"]["train"] = [{"field": "number", "op": "lt", "value": 2}]
-    live = explore(store, rules=split["rules"])
-    assert "UNASSIGNED_RULE_GROUPS" in codes(live)
-    assert not live["valid"]
-    assert live["unassigned"]["patientCount"] == 10
     result = preview(store)
     assert "UNASSIGNED_RULE_GROUPS" in codes(result)
     assert not result["canFreeze"]
     assert result["memberships"] == []
-
-
-def test_live_eligibility_applies_before_patient_expansion():
-    result = explore(
-        eligibility=[{"field": "stage", "op": "eq", "value": "Primary"}],
-        rules={"test": [{"field": "grade", "op": "eq", "value": "2"}]},
-    )
-    assert result["cohort"]["totalSlides"] == 16
-    assert result["cohort"]["patientCount"] == 16
-    assert result["partitions"]["test"]["expanded"]["totalSlides"] == 4
-    assert result["partitions"]["train"]["expanded"]["totalSlides"] == 12
 
 
 @pytest.mark.parametrize(
@@ -894,42 +873,29 @@ def test_invalid_live_rules_clear_counts_instead_of_showing_unfiltered_success(c
     assert code in codes(result)
     assert result["cohort"] is result["partitions"] is result["unassigned"] is None
     assert result["dataset"]["totalSlides"] == 32
-    result = explore(rules={"test": [condition]})
-    assert result["cohort"]["totalSlides"] == 32
-    assert result["partitions"] is result["unassigned"] is None
-    assert code in codes(result)
 
 
-def test_cross_slide_rule_overlap_clears_live_partition_counts():
-    result = explore(
-        rules={
-            "train": [{"field": "Slide_ID", "op": "eq", "value": "s00-0"}],
-            "test": [{"field": "Slide_ID", "op": "eq", "value": "s00-1"}],
-        }
-    )
-    assert "OVERLAPPING_PATIENT_RULES" in codes(result)
-    assert not result["valid"]
-    assert result["partitions"] is None
-
-
-def test_live_and_preview_cannot_hide_bad_numeric_values_behind_another_matching_slide():
+def test_preview_cannot_hide_bad_numeric_values_behind_another_matching_slide():
     store = MemoryStore()
     store.rows[1]["attributes"]["number"] = "unknown"
     rules = {"test": [{"field": "number", "op": "gte", "value": 0}]}
     store.draft["payload"]["spec"]["split"]["rules"] = rules
-    assert "INVALID_FILTER_VALUE" in codes(explore(store, rules=rules))
     assert "INVALID_FILTER_VALUE" in codes(preview(store))
 
 
-def test_live_regex_budget_is_shared_by_eligibility_and_partition_rules(monkeypatch):
+def test_live_regex_budget_is_shared_by_eligibility_and_pool_rules(monkeypatch):
     # Each successful regex costs two milliseconds. Eligibility consumes 64ms;
-    # continuing into fixed rules must hit the same request's 65ms budget.
+    # continuing into development pool rules must hit the same request's 65ms budget.
     ticks = iter(index / 500 for index in range(1000))
     monkeypatch.setattr("histopilot.application.protocols.time.monotonic", lambda: next(ticks))
     monkeypatch.setattr("histopilot.application.protocols.REGEX_TOTAL_SECONDS", 0.065)
+    pools = {
+        "trainSelection": "rules",
+        "rules": {"train": [{"field": "grade", "op": "regex", "value": "2"}]},
+    }
     result = explore(
         eligibility=[{"field": "name", "op": "regex", "value": "ordinary"}],
-        rules={"test": [{"field": "grade", "op": "regex", "value": "2"}]},
+        split={"version": 4, "mode": "kfold", "folds": 2, "seeds": [42], "pools": pools},
     )
     assert "REGEX_TIMEOUT" in codes(result)
     assert result["cohort"]["totalSlides"] == 32
@@ -974,16 +940,6 @@ def test_fallback_identity_collision_blocks_live_and_final_assignments():
     assert "FALLBACK_PATIENT_ID_COLLISION" in codes(preview(store))
 
 
-def test_generated_split_modes_leave_unfixed_live_cohort_for_generation():
-    result = explore(
-        splitMode="kfold", rules={"test": [{"field": "grade", "op": "eq", "value": "2"}]}
-    )
-    assert result["valid"]
-    assert result["partitions"]["train"]["selection"] == "none"
-    assert result["partitions"]["train"]["expanded"]["totalSlides"] == 0
-    assert result["unassigned"]["totalSlides"] == 24
-
-
 @pytest.mark.parametrize("coverage", ["require", "restrict"])
 def test_live_counts_and_preview_use_dataset_rows_despite_legacy_feature_settings(coverage):
     store = MemoryStore()
@@ -1018,3 +974,63 @@ def test_feature_configuration_changes_do_not_change_construction_preview_hash()
     store.feature["contentHash"] = "e" * 64
     store.feature["manifest"]["files"] = [{"slideId": row["slideId"]} for row in store.rows]
     assert preview(store) == baseline
+
+
+def test_cohort_only_counts_do_not_require_patient_or_partition_readiness(monkeypatch):
+    store = MemoryStore()
+    for row in store.rows[:2]:
+        row["patientId"] = None
+    monkeypatch.setattr(
+        ProtocolService,
+        "_identity_findings",
+        lambda *_: pytest.fail("Cohort-only exploration checked partition identities"),
+    )
+    result = explore(
+        store,
+        cohortOnly=True,
+        eligibility=[{"field": "number", "op": "lt", "value": 4}],
+        # Old editor controls may be present: this scope deliberately ignores
+        # their completeness, even when their semantic validation would fail.
+        split={"mode": "unfinished", "version": 99},
+        rules={"test": [{"field": "unknown", "op": "regex", "value": "["}]},
+        targetField="unfinished-target",
+    )
+    assert result["valid"]
+    assert result["findings"] == []
+    assert result["dataset"]["totalSlides"] == 32
+    assert result["cohort"]["totalSlides"] == 8
+    assert result["cohort"]["patientCount"] == 3
+    assert result["cohort"]["unlinkedSlideCount"] == 2
+    assert result["cohort"]["fallbackSlideCount"] == 0
+    assert result["partitions"] is result["unassigned"] is result["target"] is None
+
+
+@pytest.mark.parametrize(
+    "condition,code",
+    [
+        ({"field": "name", "op": "regex", "value": "["}, "INVALID_REGEX"),
+        ({"field": "missing-field", "op": "eq", "value": "x"}, "UNKNOWN_FIELD"),
+        ({"field": "name", "op": "gt", "value": 2}, "INVALID_FILTER_VALUE"),
+    ],
+)
+def test_cohort_only_invalid_filters_clear_counts(condition, code):
+    result = explore(cohortOnly=True, eligibility=[condition])
+    assert not result["valid"]
+    assert codes(result) == {code}
+    assert result["cohort"] is result["partitions"] is result["target"] is None
+    assert result["dataset"]["totalSlides"] == 32
+
+
+def test_cohort_only_flag_preserves_default_identity_validation_and_partition_behavior():
+    store = MemoryStore()
+    ordinary = explore(store)
+    explicit_default = explore(store, cohortOnly=False)
+    assert ordinary == explicit_default
+    store.rows[0]["patientId"] = None
+    with_partition_checks = explore(store)
+    cohort_only = explore(store, cohortOnly=True)
+    assert not with_partition_checks["valid"]
+    assert "MISSING_PATIENT_ID" in codes(with_partition_checks)
+    assert cohort_only["valid"]
+    assert cohort_only["cohort"] == with_partition_checks["cohort"]
+    assert cohort_only["partitions"] is None

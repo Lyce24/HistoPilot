@@ -49,11 +49,11 @@ function frozen(datasetId = 'dataset', tag = 'UNI features only'): FeatureBundle
 
 describe('feature bundle stage entry', () => {
   it('keeps every bundle available when a dataset is linked', () => {
-    vi.stubGlobal('window', { location: { hash: '#features?dataset=older&protocol=protocol-old&saved=protocol' } });
+    vi.stubGlobal('window', { location: { hash: '#features?dataset=older&targetSplit=targets-old&saved=target-split' } });
     const html = render([version], [frozen(), frozen('older', 'Older dataset bundle')]);
     expect(html).toContain('Older dataset bundle');
     expect(html).toContain('UNI features only');
-    expect(html).toContain('Development protocol saved. Create or open an experiment to select features, check compatibility and configure training.');
+    expect(html).toContain('Targets and splits saved. Use them with a feature bundle in Experimental Setup.');
     expect(html).toContain('All project bundles are available.');
     expect(html).toContain('Search feature bundles');
     expect(html).not.toContain('Stage 0 · Saved records');

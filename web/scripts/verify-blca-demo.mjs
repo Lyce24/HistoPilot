@@ -85,7 +85,11 @@ async function evaluate(expression) {
 }
 async function waitFor(expression, description = expression) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (await evaluate('Boolean(' + expression + ')')) return;
+    try {
+      if (await evaluate('Boolean(' + expression + ')')) return;
+    } catch (error) {
+      if (!/navigated|execution context|Cannot find context/i.test(String(error))) throw error;
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error('Timed out: ' + description + '\n' + await evaluate('document.body.innerText'));
@@ -126,7 +130,9 @@ try {
   await cdp('Page.navigate',{url:pathToFileURL(join(dist,'index.html')).href});
   await click('Open BLCA demo');
   await waitFor('document.querySelector(".blca-demo-hero h1")?.textContent==="BLCA demo"');
-  assert.equal(await evaluate('document.querySelectorAll(".blca-demo-stage").length'),8);
+  assert.equal(await evaluate('document.querySelectorAll(".blca-demo-stage").length'),9);
+  assert.deepEqual(await evaluate('[...document.querySelectorAll(".blca-demo-stage")].map(link=>link.getAttribute("href"))'), ['#dataset','#features','#cohort','#experimental-setup','#experiments','#evaluation','#inference','#clinical-utility','#interpretation']);
+  assert.deepEqual(await evaluate('Object.fromEntries([...document.querySelectorAll(".blca-demo-summary > div")].map(item=>[item.querySelector("dt").textContent,item.querySelector("dd").textContent]))'), {'Synthetic slide records':'138','Pipeline stages':'7','Illustrative training runs':'10'});
   assert.equal(await evaluate('document.body.innerText.includes("138")'),true);
   assert.equal(await evaluate('document.querySelector(".job-tray")===null'),true,'Demo must not expose active compute controls');
   await screenshot('01-blca-overview');
@@ -138,6 +144,24 @@ try {
     for(const current of record.steps) {
       await step(current.title);
       assert.equal(await evaluate('document.querySelector(".blca-demo-notice").innerText.includes("Synthetic")'),true);
+      if(record.module==='cohort' && current.id==='splits') {
+        const facts=await evaluate('Object.fromEntries([...document.querySelectorAll(".blca-demo-step .blca-demo-facts > div")].map(item=>[item.querySelector("dt").textContent,item.querySelector("dd").textContent]))');
+        assert.equal(facts['Training slides'],'62');
+        assert.equal(facts['Testing slides'],'76');
+        assert.equal(facts['Folds'],undefined,'Targets and splits only fixes training/testing membership');
+        await screenshot('targets-training-testing');
+      }
+      if(record.module==='experimental-setup') {
+        assert.equal(current.runs,undefined,'Setup illustrates design without executing runs');
+        if(current.id==='compatibility') assert.equal(await evaluate('document.querySelector(".blca-demo-step").innerText.includes("All 62 frozen training slides; never shrink membership")'),true);
+        if(current.id==='frozen') assert.equal(await evaluate('[...document.querySelectorAll(".blca-demo-facts > div")].find(item=>item.querySelector("dt").textContent==="Runs started by freezing")?.querySelector("dd").textContent'), '0');
+        if(['compatibility','splits','frozen'].includes(current.id)) await screenshot(record.id+'-'+current.id);
+      }
+      if(record.module==='inference' && current.id==='predictions') {
+        assert.deepEqual(await evaluate('[...document.querySelectorAll(".blca-demo-step table thead th")].map(item=>item.textContent)'),['Synthetic slide','P(high)','Predicted at 0.5']);
+        assert.equal(await evaluate('document.querySelectorAll(".blca-demo-step table tbody tr").length'),76);
+        await screenshot('inference-predictions');
+      }
       if(current.runs) {
         await waitFor('document.querySelector(".experiment-history-charts svg") && document.querySelectorAll(".run-resource-chart").length===4');
         const ordered=await evaluate(`Boolean(document.querySelector('.experiment-run-tracker').compareDocumentPosition(document.querySelector('.run-resource-usage'))&4)&&Boolean(document.querySelector('.run-resource-usage').compareDocumentPosition(document.querySelector('.blca-demo-table-section'))&4)`);

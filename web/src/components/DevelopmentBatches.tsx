@@ -1,8 +1,8 @@
 import { StageBackButton, StageContinueButton, StageCreateButton } from './StageActions';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { development, defaultRecipe, defaultResources, nnmilRecipe, oceanPathRecipe, parseNumberList, withRecipeDefaults } from '../api/development';
-import type { BatchPreview, DevelopmentBatchSpec, TrainingRecipe } from '../api/development';
+import { development, defaultRecipe, nnmilRecipe, oceanPathRecipe, parseNumberList, trainingActive, withRecipeDefaults } from '../api/development';
+import type { BatchPreview, DevelopmentBatchSpec, ResourcePolicy, TrainingRecipe } from '../api/development';
 import { experiments, type ExperimentBatch, type ExperimentBatchPlan, type ExperimentStage, type ExperimentPredictorPolicy, type ModelExperiment } from '../api/experiments';
 import ExperimentLifecycle from './ExperimentLifecycle';
 import { scientific, type FeatureSpec, type ProtocolSpec, type ScientificDraft } from '../api/scientific';
@@ -18,8 +18,6 @@ import { featureKindOf, modelLabel, modelSpec, modelsForFeatureKind, usesPatchFe
 import './DevelopmentBatches.css';
 import DevelopmentExecution from './DevelopmentExecution';
 import NumericField from './NumericField';
-import TrainingCapacity from './TrainingCapacity';
-import { EditingRuntimeRecommendation } from './RuntimeRecommendation';
 import BatchNumberList, { validateBatchNumberList } from './BatchNumberList';
 import BatchPredictorFields, { batchPredictorLabel } from './BatchPredictorFields';
 import PatientAnalysisFields from './PatientAnalysisFields';
@@ -64,7 +62,7 @@ export function batchTemplate(id: string, inputs: MILExperimentSpec, experimentN
     : id === 'nnmil' ? nnmilRecipe() : { ...defaultRecipe(), ...(id === 'quick' ? { maxEpochs: 5, bagSize: 1024, patience: 3 } : {}) };
   return { version: 1, experimentName, batchName: id === 'blank' ? '' : batchTemplates.find((item) => item.id === id)?.name ?? 'Baseline', inputs,
     recipe, mode: id === 'learning-rate' ? 'grid' : 'single', grid: { learningRates: id === 'learning-rate' ? [0.0001, 0.0003, 0.001] : [recipe.learningRate], weightDecays: [recipe.weightDecay], maxEpochs: [recipe.maxEpochs] },
-    configurations: [], trainingSeeds: [42], resources: defaultResources(), notes: '', predictorPolicy: defaultPredictorPolicy(), selectionMetric: 'validation_auroc', candidateSelection: 'best_validation' };
+    configurations: [], trainingSeeds: [42], notes: '', predictorPolicy: defaultPredictorPolicy(), selectionMetric: 'validation_auroc', candidateSelection: 'best_validation' };
 }
 
 export function RecipeFields({ value, onChange, gridMode = false, classes, clinicalFields, featureKind, modelChoicePending = false }: { value: TrainingRecipe; onChange: (value: TrainingRecipe) => void; gridMode?: boolean; classes?: string[]; clinicalFields?: string[]; featureKind?: FeatureKind; modelChoicePending?: boolean }) {
@@ -196,6 +194,11 @@ export function BatchPredictorSummary({ spec, protocol, fallbackPredictorPolicy,
   </div>;
 }
 
+/** Older plans saved devices and parallelism with the batch. They stay visible, read-only, but no longer steer scheduling. */
+export function legacyResourceSummary(resources: ResourcePolicy) {
+  return `${resources.gpuIds.length ? `GPU ${resources.gpuIds.join(', ')}` : 'CPU'} · ${resources.maxConcurrentRuns} concurrent run${resources.maxConcurrentRuns === 1 ? '' : 's'} · ${resources.cpuThreadsPerRun} CPU threads · ${resources.ramGbPerRun} GiB RAM per run`;
+}
+
 export function BatchPlanSettings({ spec, fallbackPredictorPolicy }: { spec: DevelopmentBatchSpec; fallbackPredictorPolicy?: ExperimentPredictorPolicy }) {
   const policy = spec.predictorPolicy ?? fallbackPredictorPolicy;
   const count = batchConfigurationCount(spec);
@@ -206,8 +209,7 @@ export function BatchPlanSettings({ spec, fallbackPredictorPolicy }: { spec: Dev
       <div><dt>Predictors</dt><dd>{policy ? batchPredictorLabel(policy) : 'Not configured (historical batch)'}</dd></div>
       <div><dt>Training seeds</dt><dd>{spec.trainingSeeds.join(', ')}</dd></div>
       {spec.mode === 'grid' ? <><div><dt>Learning rates</dt><dd>{spec.grid.learningRates.join(', ')}</dd></div><div><dt>Weight decays</dt><dd>{spec.grid.weightDecays.join(', ')}</dd></div><div><dt>Maximum epochs</dt><dd>{spec.grid.maxEpochs.join(', ')}</dd></div></> : null}
-      <div><dt>Compute</dt><dd>{spec.resources.gpuIds.length ? `GPU ${spec.resources.gpuIds.join(', ')}` : 'CPU'} · {spec.resources.maxConcurrentRuns} concurrent run{spec.resources.maxConcurrentRuns === 1 ? '' : 's'}</dd></div>
-      <div><dt>Reservation per run</dt><dd>{spec.resources.cpuThreadsPerRun} CPU threads · {spec.resources.ramGbPerRun} GiB RAM</dd></div>
+      {spec.resources ? <div className="batch-legacy-resources"><dt>Saved compute settings</dt><dd>{legacyResourceSummary(spec.resources)}<small>Legacy; the Task Center now decides parallelism.</small></dd></div> : null}
     </dl>
     {spec.mode === 'grid' ? <p className="muted">The parameter grid supplies learning rate, weight decay and maximum epochs. Other training settings are shared.</p> : null}
     {recipes.map((recipe, index) => {
@@ -245,7 +247,6 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   const [recoveryNotice, setRecoveryNotice] = useState(Boolean(recovered));
   const [editorInputs, setEditorInputs] = useState(recovered?.inputs ?? inputs);
   const [numericDrafts, setNumericDrafts] = useState<NumericDrafts>(recovered?.numericDrafts ?? {});
-  const runtime = useQuery({ queryKey: ['training-runtime', project], queryFn: () => development.runtime(project), enabled: tab === 'batches', staleTime: 30000 });
   const [name, setName] = useState(recovered?.name ?? '');
   const [editorOpen, setEditorOpen] = useState(recovered ? true : !(record?.batchPlans?.length || ownedBatches.length));
   const [batchPage, setBatchPage] = useState(recovered?.batchPage ?? 1);
@@ -254,7 +255,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   const [selectionMetric, setSelectionMetric] = useState<DevelopmentBatchSpec['selectionMetric']>(recovered ? recovered.selectionMetric ?? null : 'validation_auroc');
   const [candidateSelection, setCandidateSelection] = useState<DevelopmentBatchSpec['candidateSelection']>(recovered ? recovered.candidateSelection ?? null : 'best_validation');
   const [recipe, setRecipe] = useState(() => recovered ? withRecipeDefaults(recovered.recipe) : defaultRecipe());
-  const [resources, setResources] = useState(recovered?.resources ?? defaultResources);
+  const [legacyResources, setLegacyResources] = useState<ResourcePolicy | null>(recovered?.resources ?? null);
   const [mode, setMode] = useState<DevelopmentBatchSpec['mode']>(recovered?.mode ?? 'single');
   const [rows, setRows] = useState(() => recovered?.rows.map((row) => ({ ...row, recipe: withRecipeDefaults(row.recipe) })) ?? [{ id: 0, recipe: defaultRecipe() }]);
   const nextRowId = useRef(Math.max(...rows.map((row) => row.id)) + 1);
@@ -264,7 +265,6 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   const [lrs, setLrs] = useState(recovered?.lrs ?? String(defaultRecipe().learningRate));
   const [wds, setWds] = useState(recovered?.wds ?? String(defaultRecipe().weightDecay));
   const [epochs, setEpochs] = useState(recovered?.epochs ?? '40');
-  const [gpus, setGpus] = useState(recovered?.gpus ?? '0');
   const [notes, setNotes] = useState(recovered?.notes ?? '');
   const [preview, setPreview] = useState<BatchPreview | null>(null);
   const sourceBundles = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project), enabled: tab === 'batches', staleTime: 30000 });
@@ -282,11 +282,11 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   const [editorRevision, setEditorRevision] = useState(recovered?.editorRevision ?? experimentRevision);
   const busyRef = useRef(false);
   const editor = useRef<HTMLFieldSetElement>(null);
-  const isRuntimeDraftValid = useCallback(() => Boolean(editor.current) && [...editor.current!.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea')]
-    .every((field) => !field.willValidate || field.validity.valid), []);
   const [editorVersion, setEditorVersion] = useState(0);
   const items = ownedBatches;
-  const selectedBatch = items.find((item) => item.id === selected) ?? (!selected && items.length === 1 ? items[0] : undefined);
+  // Runs and results open on a batch: the one still training, else the first, until another is chosen.
+  const selectedBatch = items.find((item) => item.id === selected) ?? (!selected && (items.length === 1 || tab === 'results' || tab === 'runs')
+    ? (tab === 'runs' ? items.find((item) => trainingActive(item.execution)) ?? items[0] : items[0]) : undefined);
   const savedDrafts = ownedDrafts.filter((draft) => draft.payload.type === 'development-batch');
   const plans = record?.batchPlans ?? [];
   const locked = readOnly || (experimentStage !== undefined && experimentStage !== 'planning');
@@ -299,17 +299,11 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   useEffect(() => () => onEditorOpenChange?.(false), [onEditorOpenChange]);
   const recovery: BatchEditorDraft | null = dirty ? {
     version: 1, editorRevision, inputs: editorInputs, workingPlan, name, editorOpen, batchPage, templateId,
-    predictorPolicy, selectionMetric, candidateSelection, recipe, resources, mode, rows, explicitInitialized: explicitInitialized.current,
-    seeds, lrs, wds, epochs, gpus, notes, numericDrafts,
+    predictorPolicy, selectionMetric, candidateSelection, recipe, ...(legacyResources ? { resources: legacyResources } : {}), mode, rows, explicitInitialized: explicitInitialized.current,
+    seeds, lrs, wds, epochs, notes, numericDrafts,
   } : null;
   const backup = useSessionDraftBackup(recoveryKey, recovery, isBatchEditorDraft);
   useWorkspaceNavigationGuard(dirty && backup.error ? 'Unsaved batch edits cannot be recovered in this browser. Save the batch before leaving.' : null);
-  let gpuSelection: number[] = [];
-  let gpuSelectionError = '';
-  try {
-    gpuSelection = gpus.trim() ? parseNumberList(gpus, 'GPU IDs', true) : [];
-    if (gpuSelection.some((id) => id > 127)) throw new Error('GPU IDs must be between 0 and 127.');
-  } catch (reason) { gpuSelectionError = reason instanceof Error ? reason.message : 'Enter valid GPU IDs.'; }
 
   let plannedConfigurations: number | null = null;
   let plannedSeeds: number | null = null;
@@ -358,7 +352,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
     return { version: 1, experimentId, experimentRevision, experimentName, batchName: name.trim(), inputs, recipe, mode,
       grid: mode === 'grid' ? { learningRates: parseNumberList(lrs, 'Learning rates', false, Number.MIN_VALUE), weightDecays: parseNumberList(wds, 'Weight decay'), maxEpochs: parseNumberList(epochs, 'Maximum epochs', true, 1) } : { learningRates: [recipe.learningRate], weightDecays: [recipe.weightDecay], maxEpochs: [recipe.maxEpochs] },
       configurations: mode === 'explicit' ? rows.map((row) => row.recipe) : [], trainingSeeds: parseNumberList(seeds, 'Training seeds', true),
-      resources: { ...resources, gpuIds: gpus.trim() ? parseNumberList(gpus, 'GPU IDs', true) : [] }, notes, predictorPolicy, selectionMetric, candidateSelection };
+      notes, predictorPolicy, selectionMetric, candidateSelection };
   }
   async function savePlans(next: ExperimentBatchPlan[], expectedRevision = editorRevision) {
     if (!record) throw new Error('Reload this experiment before saving its batch plans.');
@@ -399,10 +393,10 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
     explicitInitialized.current = spec.mode === 'explicit';
     const inputsChanged = !sameJSON(inputs, spec.inputs);
     setWorkingPlan(planId ?? null); setEditorRevision(experimentRevision);
-    setName(copy ? `${spec.batchName.slice(0, 70)} copy` : spec.batchName); setRecipe(withRecipeDefaults(spec.recipe)); setResources(spec.resources); setMode(spec.mode);
+    setName(copy ? `${spec.batchName.slice(0, 70)} copy` : spec.batchName); setRecipe(withRecipeDefaults(spec.recipe)); setLegacyResources(spec.resources ?? null); setMode(spec.mode);
     setRows((spec.configurations.length ? spec.configurations : [spec.recipe]).map((value) => ({ id: nextRowId.current++, recipe: withRecipeDefaults(value) }))); setSeeds(spec.trainingSeeds.join(', '));
     setLrs(spec.grid.learningRates.join(', ')); setWds(spec.grid.weightDecays.join(', ')); setEpochs(spec.grid.maxEpochs.join(', '));
-    setGpus(spec.resources.gpuIds.join(', ')); setNotes(spec.notes); setDirty(!planId); setPreview(null); setMessage(inputsChanged ? 'Batch settings copied. This batch will use this experiment’s verified inputs.' : ''); setError(null);
+    setNotes(spec.notes); setDirty(!planId); setPreview(null); setMessage(inputsChanged ? 'Batch settings copied. This batch will use this experiment’s verified inputs.' : ''); setError(null);
     return true;
   }
   function keepAsNewBatch() {
@@ -414,10 +408,6 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
   }
   let reviewSpec: DevelopmentBatchSpec | null = null;
   if (batchPage === 4) { try { reviewSpec = specification(); } catch { /* Unfinished recovered lists stay editable. */ } }
-  let runtimeSpec: DevelopmentBatchSpec | null = null;
-  if (batchPage === 3 && editorOpen && !locked && !busy && !stale && name.trim() && inputs.protocolId && inputs.featureBundleId && !gpuSelectionError && plannedConfigurations !== null && plannedSeeds !== null) {
-    try { runtimeSpec = specification(); } catch { /* Incomplete draft values do not start a recommendation request. */ }
-  }
   async function removePlan(id: string) {
     if (locked || busyRef.current || dirty || stale) return;
     busyRef.current = true; setBusy(true); setError(null);
@@ -425,15 +415,15 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
     catch (reason) { setError(reason instanceof Error ? reason : new Error('Batch could not be removed.')); }
     finally { busyRef.current = false; setBusy(false); }
   }
-  if (experimentStage === 'planning' && (tab === 'runs' || tab === 'results')) return <p className="callout">Runs unlock after submission. Results unlock when the experiment finishes.</p>;
+  if (experimentStage === 'planning' && (tab === 'runs' || tab === 'results')) return <p className="callout">Runs and results unlock after submission.</p>;
   return <StagePage pageKey={`${tab}:${editorOpen}:${batchPage}`} className="development-batches">
     <ErrorNotice error={error} />
     {dirty && backup.error ? <p className="callout callout-warning" role="alert">{backup.error}</p> : null}
     {recoveryNotice && !locked ? <p className="callout batch-recovery-notice" role="status"><strong>Recovered unsaved batch edits.</strong> Your settings are restored in this tab. They have not been saved to the experiment.</p> : null}
     <SavedNotice>{tab === 'batches' ? message : ''}</SavedNotice>
-    {tab !== 'batches' && items.length > 1 ? <ExperimentBatchOverview batches={items} view={tab} onSelect={setSelected} /> : null}
+    {tab === 'runs' && items.length > 1 ? <ExperimentBatchOverview batches={items} view={tab} onSelect={setSelected} /> : null}
     {tab === 'batches' && !editorOpen && !locked ? <div className="stage-actions"><p>{dirty ? 'Your unsaved batch edits are retained while you review the plan.' : 'Add a batch or open a saved plan to adjust its settings.'}</p>{dirty ? <button className="btn btn-secondary" onClick={() => setEditorOpen(true)}>Resume batch edits</button> : null}<StageCreateButton disabled={busy} onClick={() => load(batchTemplate('blank', inputs, experimentName), undefined, false, 'blank')}>Add training batch</StageCreateButton></div> : null}
-    {tab === 'batches' && (locked || !editorOpen) && plans.length ? <Panel title={`Batch plans (${plans.length})`} subtitle={locked ? 'These settings were locked when the experiment was submitted.' : 'Edit or remove a batch before submission. All batches use the experiment’s saved inputs.'}>
+    {tab === 'batches' && (locked || !editorOpen) && plans.length ? <Panel title={`Batch plans (${plans.length})`} subtitle={record?.setupVersion === 1 ? locked ? 'These settings are part of the frozen experimental setup.' : 'Edit or remove batches before freezing this setup. All batches use its saved inputs.' : locked ? 'These settings were locked when the experiment was submitted.' : 'Edit or remove a batch before submission. All batches use the experiment’s saved inputs.'}>
       <div className="batch-plan-list">{plans.map((plan) => <article key={plan.id} className={`batch-plan-card${workingPlan === plan.id ? ' is-editing' : ''}`}>
         <div className="batch-plan-heading"><h3>{plan.spec.batchName}</h3><p className="muted">{batchConfigurationCount(plan.spec)} configuration{batchConfigurationCount(plan.spec) === 1 ? '' : 's'} × {plan.spec.trainingSeeds.length} training seed{plan.spec.trainingSeeds.length === 1 ? '' : 's'}</p><BatchPredictorSummary spec={plan.spec} protocol={protocol} fallbackPredictorPolicy={record?.predictorPolicy ?? (!locked ? defaultPredictorPolicy() : undefined)} /></div>
         {!locked ? <div className="inline-actions"><button className="btn btn-secondary btn-small" disabled={busy} onClick={() => load(plan.spec, plan.id)}>Edit batch</button><button className="text-button" disabled={busy} onClick={() => load(plan.spec, undefined, true)}>Duplicate</button><button className="text-button" disabled={busy || dirty || stale} onClick={() => void removePlan(plan.id)}>Remove</button></div> : <Badge>Locked</Badge>}
@@ -441,7 +431,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
       </article>)}</div>
     </Panel> : null}
     {tab === 'batches' && !locked ? <div hidden={!editorOpen}>
-      <StageSteps label="Batch configuration steps" current={String(batchPage)} disabled={busy || stale} onChange={(id) => showBatchPage(Number(id))} steps={[{ id: '1', title: 'Configuration', description: 'Name, parameter search and seeds' }, { id: '2', title: 'Training settings', description: 'Model and optimization' }, { id: '3', title: 'Compute & predictors', description: 'Resources and prediction methods' }, { id: '4', title: 'Review batch', description: 'Check and save the plan' }].map((step) => ({ ...step, disabled: Number(step.id) > batchPage + 1 }))} />
+      <StageSteps label="Batch configuration steps" current={String(batchPage)} disabled={busy || stale} onChange={(id) => showBatchPage(Number(id))} steps={[{ id: '1', title: 'Configuration', description: 'Name, parameter search and seeds' }, { id: '2', title: 'Training settings', description: 'Model and optimization' }, { id: '3', title: 'Predictors', description: 'Model selection and prediction methods' }, { id: '4', title: 'Review batch', description: 'Check and save the plan' }].map((step) => ({ ...step, disabled: Number(step.id) > batchPage + 1 }))} />
       <ErrorNotice error={sourceBundles.error ?? featureSource.error} /><Panel title={workingPlan ? `Edit batch: ${name || 'Untitled'}` : 'Add a training batch'} subtitle="Choose one setup or compare parameter combinations. Save your batches, then submit the experiment when the plan is ready.">
         <div hidden={batchPage !== 1}><div className="batch-template-picker"><label className="label">Start from a template<select className="field" value={templateId} disabled={busy} onChange={(event) => load(batchTemplate(event.target.value, inputs, experimentName), undefined, false, event.target.value)}>{templateId === 'saved' ? <option value="saved" disabled>Saved batch settings</option> : null}{batchTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></label><p className="muted">{batchTemplates.find((template) => template.id === templateId)?.description ?? 'Adjust the saved settings, or choose a template to start another batch.'}</p></div></div>
         {!inputs.protocolId || !inputs.featureBundleId ? <p className="callout">Choose prepared targets and features in <button type="button" className="text-button" onClick={onOpenSetup}>Inputs</button> first.</p> : <p className="development-input-summary">Inputs selected for <strong>{experimentName}</strong>. <button type="button" className="text-button" onClick={onOpenSetup}>Review inputs</button></p>}
@@ -469,21 +459,8 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
             setMode('explicit'); setCandidateSelection('all'); edit();
           }}>Create matched image / clinical / combined comparison</button><p className="muted">Creates three configurations with the same selected fields, frozen patients, folds and seeds. All three are retained for paired external comparison.</p></div> : null}
           <details className="setup-details batch-settings-details"><summary>Batch notes (optional)</summary><label className="label">Notes<textarea className="field" value={notes} maxLength={2000} onChange={(e) => setNotes(e.target.value)} /></label></details></section>
-          </div><div data-batch-step="3" hidden={batchPage !== 3}><section className="development-resource-settings batch-editor-section" aria-label="Parallel training"><div className="batch-section-heading"><h3>Compute &amp; parallelism</h3><p>Choose the device and how many fold runs may train at once.</p></div>
-          {batchPage === 3 && editorOpen ? <EditingRuntimeRecommendation project={project} spec={runtimeSpec} draftKey={JSON.stringify(numericDrafts)} isDraftValid={isRuntimeDraftValid} onEdit={edit} onApply={(suggested) => {
-            if (locked || stale || busyRef.current || !isRuntimeDraftValid()) return;
-            setResources(suggested); setGpus(suggested.gpuIds.join(', '));
-            setNumericDrafts((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !['Concurrent runs', 'Runs per GPU', 'CPU threads per run', 'Data workers per loader', 'RAM reservation per run (GiB)'].includes(key))));
-          }} /> : null}
-          <div className="development-fields">
-            <label className="label">Run on<select className="field" value={gpus.trim() ? 'gpu' : 'cpu'} onChange={(e) => setGpus(e.target.value === 'cpu' ? '' : '0')}><option value="gpu">GPU</option><option value="cpu">CPU</option></select></label>
-            <NumericField label="Concurrent runs" value={resources.maxConcurrentRuns} min={1} max={128} onChange={(maxConcurrentRuns) => setResources((current) => ({ ...current, maxConcurrentRuns }))} />
-            {gpus.trim() ? <NumericField label="Runs per GPU" value={resources.runsPerGpu} min={1} max={16} onChange={(runsPerGpu) => setResources((current) => ({ ...current, runsPerGpu }))} /> : null}
-          </div>{gpuSelectionError ? <p className="callout" role="status">{gpuSelectionError}</p> : <TrainingCapacity resources={{ ...resources, gpuIds: gpuSelection }} runtime={runtime.data} />}
-          <details className="setup-details batch-settings-details"><summary><span>Advanced resource settings</span>{' '}<small>{resources.cpuThreadsPerRun} CPU threads · {resources.ramGbPerRun} GiB per run</small></summary><p className="muted">CPU threads control numerical operations in each training process. Data workers load saved slide features, sample patches, and prepare batches. Training and validation keep separate worker pools: reserved CPU slots per run = CPU threads + 2 × data workers. RAM is a scheduling reservation per run, not an enforced memory cap.</p><div className="development-fields">
-            <BatchNumberList label="Allowed GPU IDs" value={gpus} onChange={setGpus} min={0} max={127} maxItems={128} allowEmpty hint="Comma-separated; leave empty for CPU." />
-            {([['cpuThreadsPerRun', 'CPU threads per run', 1, 256], ['dataLoaderWorkers', 'Data workers per loader', 0, 64], ['ramGbPerRun', 'RAM reservation per run (GiB)', Number.MIN_VALUE, undefined]] as const).map(([key, label, min, max]) => <NumericField key={key} label={label} value={resources[key]} min={min} max={max} integer={key !== 'ramGbPerRun'} onChange={(number) => setResources((current) => ({ ...current, [key]: number }))} />)}
-          </div></details></section>
+          </div><div data-batch-step="3" hidden={batchPage !== 3}>
+          {legacyResources ? <p className="callout batch-legacy-resources-note" role="note">This batch was saved with compute settings ({legacyResourceSummary(legacyResources)}). They are no longer used: saving it again removes them, and the Task Center decides parallelism.</p> : null}
           <section className="batch-editor-section"><h3>Model selection</h3><p>Rank configurations using the mean validation score across folds and seeds. Validation uses the protocol’s prediction unit and the recipe’s patient aggregation. Assessment and external outcomes do not enter this selection.</p><div className="development-fields">
             <label className="label">Configuration selection metric<select className="field" value={selectionMetric ?? ''} onChange={(event) => setSelectionMetric(event.target.value as NonNullable<DevelopmentBatchSpec['selectionMetric']>)}>{!selectionMetric ? <option value="">Historical manual selection</option> : null}<option value="validation_auroc">Highest validation AUROC (default)</option><option value="validation_loss">Lowest validation loss</option><option value="validation_accuracy">Highest validation accuracy</option></select></label>
             <label className="label">Configurations to build<select className="field" value={candidateSelection ?? 'all'} onChange={(event) => { setCandidateSelection(event.target.value as NonNullable<DevelopmentBatchSpec['candidateSelection']>); if (!selectionMetric) setSelectionMetric('validation_auroc'); }}><option value="best_validation">Best validation configuration (default)</option><option value="all">All configurations for a predefined comparison</option></select></label>
@@ -497,7 +474,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
         </div> : null}
         {batchPage === 4 && !reviewSpec ? <p role="alert" className="callout">Some recovered parameter values are unfinished. Return to Configuration to complete them before saving.</p> : null}
         <div hidden={batchPage !== 4}><div className="inline-actions batch-editor-actions"><button type="button" className="btn btn-primary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim() || (!!workingPlan && !dirty)} onClick={() => void action('save')}>{!workingPlan ? <Icon name="plus" size={16} /> : null}{busy ? 'Working…' : workingPlan ? 'Save batch changes' : 'Add batch to plan'}</button><button type="button" className="btn btn-secondary" disabled={busy || stale || !inputs.protocolId || !inputs.featureBundleId || !name.trim()} onClick={() => void action('preview')}>Check batch</button>{workingPlan || dirty ? <button className="text-button" disabled={busy} onClick={() => { if (load(batchTemplate('blank', inputs, experimentName), undefined, false, 'blank')) setDirty(false); }}>{dirty ? 'Discard batch edits' : 'New batch'}</button> : null}{dirty ? <span className="muted" role="status">Unsaved batch edits</span> : null}</div></div>
-        <div className="stage-actions"><StageBackButton type="button" disabled={busy} onClick={() => batchPage > 1 ? setBatchPage((page) => page - 1) : setEditorOpen(false)}>{batchPage > 1 ? 'Back' : 'Back to batch plans'}</StageBackButton><p>{batchPage === 4 ? 'Saving retains an editable batch. Training starts when you submit the experiment.' : dirty ? 'Unsaved settings are kept in this tab until you save or discard them.' : 'Your settings are retained when you go back.'}</p>{batchPage < 4 ? <StageContinueButton type="button" disabled={busy || stale} onClick={() => showBatchPage(batchPage + 1)}>Continue to {batchPage === 1 ? 'training settings' : batchPage === 2 ? 'compute & predictors' : 'batch review'}</StageContinueButton> : null}</div>
+        <div className="stage-actions"><StageBackButton type="button" disabled={busy} onClick={() => batchPage > 1 ? setBatchPage((page) => page - 1) : setEditorOpen(false)}>{batchPage > 1 ? 'Back' : 'Back to batch plans'}</StageBackButton><p>{batchPage === 4 ? 'Saving retains an editable batch. Training starts when you submit the experiment.' : dirty ? 'Unsaved settings are kept in this tab until you save or discard them.' : 'Your settings are retained when you go back.'}</p>{batchPage < 4 ? <StageContinueButton type="button" disabled={busy || stale} onClick={() => showBatchPage(batchPage + 1)}>Continue to {batchPage === 1 ? 'training settings' : batchPage === 2 ? 'predictors' : 'batch review'}</StageContinueButton> : null}</div>
       </Panel>
       {savedDrafts.length ? <details className="setup-details"><summary>Earlier batch drafts</summary><p className="muted">Load an earlier draft and add it to this experiment’s plan. Drafts are not submitted automatically.</p>{savedDrafts.map((draft) => <div className="development-saved-row" key={draft.id}><span>{draft.name}</span><button type="button" className="btn btn-secondary btn-small" onClick={() => load(draft.payload.spec as unknown as DevelopmentBatchSpec)}>Use draft settings</button></div>)}</details> : null}
     </div> : null}

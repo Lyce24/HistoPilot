@@ -51,11 +51,14 @@ def training_oof_csv(store, batch_id, candidate_id, training_seed, split_seed, u
         protocol_id = manifest["spec"]["inputs"]["protocolId"]
         protocol = store.get_configuration(protocol_id)
         target = protocol["manifest"]["spec"]["target"]
+        if plan.get("splitUnit") == "slide" and unit == "patient":
+            raise StorageError("Patient exports are unavailable for slide-level experiments.", "TRAINING_OOF_UNIT_INVALID", 422)
         classes, recipe = target["classes"], candidate["recipe"]
         if (plan.get("batchId") != batch_id or plan.get("batchContentHash") != batch["contentHash"]
                 or plan.get("protocolId") != protocol_id
                 or plan.get("protocolContentHash") != protocol["contentHash"]
                 or plan.get("target") != target
+                or plan.get("splitUnit") != protocol["manifest"]["spec"].get("splitUnit")
                 or plan.get("configurations") != manifest["configurations"]
                 or plan.get("runs") != manifest["runs"]
                 or plan.get("splitPlans") != manifest["splitPlans"]):
@@ -87,6 +90,7 @@ def training_oof_csv(store, batch_id, candidate_id, training_seed, split_seed, u
                     or run_plan.get("code") != plan.get("code")
                     or run_plan.get("runtime") != plan.get("runtime")
                     or run_plan.get("recipe") != recipe or run_plan.get("target") != target
+                    or run_plan.get("splitUnit") != plan.get("splitUnit")
                     or run_plan.get("data") != expected_data
                     or any(run_plan.get(key) != resolved.get(key)
                            or receipt.get(key) != resolved.get(key)
@@ -114,9 +118,10 @@ def training_oof_csv(store, batch_id, candidate_id, training_seed, split_seed, u
                     raise _invalid("OOF identities and labels must match each assessment fold exactly once.")
                 patient = member["patientId"]
                 fold = splits[run["splitPlanId"]]["fold"]
-                if patient in patient_folds and patient_folds[patient] != fold:
+                if plan.get("splitUnit") != "slide" and patient in patient_folds and patient_folds[patient] != fold:
                     raise _invalid("One patient's slides appear in different assessment folds.")
-                patient_folds[patient] = fold
+                if plan.get("splitUnit") != "slide":
+                    patient_folds[patient] = fold
                 expected[identity], fold_records[identity] = member, row
         key = hashlib.sha256(f"{candidate_id}/{training_seed}/{split_seed}".encode()).hexdigest()[:24]
         document = read_evidence(folder / f"oof-{key}.json", folder)
@@ -130,7 +135,8 @@ def training_oof_csv(store, batch_id, candidate_id, training_seed, split_seed, u
         if set(row["slideId"] for row in records) != set(expected):
             raise _invalid("OOF predictions are incomplete.")
         expected_hash = _hash({"records": records, "target": target, "recipe": recipe,
-                               "code": plan.get("code")})
+                               "code": plan.get("code"),
+                               **({"splitUnit": plan["splitUnit"]} if "splitUnit" in plan else {})})
         if document.get("analysisInputHash") != expected_hash:
             raise _invalid("OOF predictions or their frozen scoring policy changed.")
         slides = []

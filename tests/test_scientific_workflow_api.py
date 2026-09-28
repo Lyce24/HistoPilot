@@ -1,4 +1,4 @@
-"""The real browser/API story: import, map, freeze, attach, split and reopen."""
+"""The real browser/API story: import, map, freeze, attach, explore and reopen."""
 
 import csv
 from dataclasses import replace
@@ -53,7 +53,7 @@ def fixture_sources(tmp_path):
     return data, table, features
 
 
-def test_import_feature_patient_split_freeze_and_new_registry_reopen(tmp_path):
+def test_import_feature_live_split_and_new_registry_reopen(tmp_path):
     data, table, features = fixture_sources(tmp_path)
     settings = Settings(workspace=tmp_path / "registry-a", data_roots=(data,))
     with connect(settings) as client:
@@ -106,17 +106,12 @@ def test_import_feature_patient_split_freeze_and_new_registry_reopen(tmp_path):
         cohort = post(
             client,
             base + "/protocols/explore",
-            {
-                "datasetId": dataset["id"],
-                "targetField": "WHO 2022",
-                "rules": {"test": [{"field": "WHO 1973", "op": "eq", "value": "2"}]},
-            },
+            {"datasetId": dataset["id"], "targetField": "WHO 2022"},
         )
         assert cohort["valid"], cohort["findings"]
         assert cohort["cohort"]["totalSlides"] == 24
         assert cohort["cohort"]["patientCount"] == 12
-        assert cohort["partitions"]["test"]["expanded"]["totalSlides"] == 8
-        assert cohort["partitions"]["train"]["expanded"]["totalSlides"] == 16
+        assert sum(value["slides"] for value in cohort["target"]["values"]) == 24
         assert client.get(base + "/drafts").json() == drafts_before
         assert client.get(base + "/configurations").json() == configurations_before
         records = client.get(base + f"/datasets/{dataset['id']}/records?limit=5").json()
@@ -139,112 +134,11 @@ def test_import_feature_patient_split_freeze_and_new_registry_reopen(tmp_path):
             },
             201,
         )
-        protocol_spec = {
-            "datasetId": dataset["id"],
-            "featureSetId": feature["id"],
-            "target": {
-                "field": "WHO 2022",
-                "task": "binary_classification",
-                "unit": "slide",
-                "classes": ["low", "high"],
-                "labels": {"low": "low", "high": "high"},
-                "positiveClass": "high",
-            },
-            "split": {
-                "mode": "kfold",
-                "folds": 2,
-                "seeds": [42, 19],
-                "rules": {"test": [{"field": "WHO 1973", "op": "eq", "value": "2"}]},
-            },
-        }
-        assert feature["versionLabel"]["tag"] == "Baseline features"
-        assert "versionLabel" not in feature["manifest"]
-        protocol_draft = post(
-            client,
-            base + "/drafts",
-            {
-                "kind": "experiment",
-                "name": "Grade-2 holdout",
-                "payload": {"type": "analysis-protocol", "spec": protocol_spec},
-            },
-            201,
-        )
-        protocol_url = base + f"/protocols/{protocol_draft['id']}"
-        split = post(client, protocol_url + "/preview", {"expectedRevision": 1})
-        assert split["canFreeze"], split["findings"]
-        assert len(split["partitions"]) == 4
-        assert all(
-            item["test"]["patients"] == 4 and item["test"]["slides"] == 8
-            for item in split["partitions"]
-        )
-        frozen_intent = {
-            "expectedRevision": 1,
-            "previewHash": split["previewHash"],
-            "operationId": "protocol",
-            "versionLabel": {"tag": "Grade-2 holdout"},
-        }
-        protocol = post(client, protocol_url + "/freeze", frozen_intent, 201)
-        assert protocol["versionLabel"]["tag"] == "Grade-2 holdout"
-        assert "versionLabel" not in protocol["manifest"]
-        assert post(client, protocol_url + "/freeze", frozen_intent, 201) == protocol
-        memberships = protocol["manifest"]["memberships"]
-        assignments = {}
-        for row in memberships:
-            key = row["seed"], row["fold"], row["patientId"]
-            assert assignments.setdefault(key, row["partition"]) == row["partition"]
-        report = client.get(base + f"/protocols/{protocol['id']}/preflight").json()
-        assert report["executionEnabled"] is False
-        assert not report["executionReady"]
-        with h5py.File(features / "000.0.h5", "a") as content:
-            content.attrs["changed"] = "after freeze"
-        report = client.get(base + f"/protocols/{protocol['id']}/preflight").json()
-        assert not report["scientificReady"]
-        assert report["scope"] == "protocol"
-        assert report["protocolReady"]
-        assert report["findings"] == []
-        blocked = post(client, base + "/jobs", {"protocolId": protocol["id"]}, 422)
-        assert blocked["code"] == "PREFLIGHT_BLOCKED"
-        assert client.get("/api/v1/jobs").json()["jobs"] == []
-        # Imported slide-level splits that divide one patient must fail before publication.
-        leaking = {
-            **protocol_spec,
-            "split": {
-                "mode": "imported",
-                "imported": {
-                    "partitionField": "partition",
-                    "partitionLabels": {"train": "train", "test": "test"},
-                },
-            },
-        }
-        invalid = post(
-            client,
-            base + "/drafts",
-            {
-                "kind": "experiment",
-                "name": "Leaking legacy split",
-                "payload": {"type": "analysis-protocol", "spec": leaking},
-            },
-            201,
-        )
-        invalid_url = base + f"/protocols/{invalid['id']}"
-        rejected = post(client, invalid_url + "/preview", {"expectedRevision": 1})
-        assert not rejected["canFreeze"]
-        assert any(item["code"] == "IMPORTED_PATIENT_LEAKAGE" for item in rejected["findings"])
-        response = client.post(
-            invalid_url + "/freeze",
-            json={
-                "expectedRevision": 1,
-                "previewHash": rejected["previewHash"],
-                "operationId": "invalid",
-                "versionLabel": {"tag": "Invalid split"},
-            },
-        )
-        assert response.status_code in {409, 422}
     with connect(replace(settings, workspace=tmp_path / "registry-b")) as client:
         auth(client)
         reopened = post(client, "/api/v1/projects/open", {"path": project["storagePath"]})
         assert reopened["id"] == project["id"]
-        assert client.get(base + f"/configurations/{protocol['id']}").json() == protocol
+        assert client.get(base + f"/configurations/{feature['id']}").json() == feature
         assert client.get(base + f"/datasets/{dataset['id']}").json() == dataset
         workspace = client.get(base + "/workspace").json()
         assert workspace["dataset"]["slideCount"] == 24
@@ -339,63 +233,3 @@ def test_incomplete_strategy_metadata_returns_live_cohort_counts_without_server_
         assert result["partitions"] is None
         assert any(finding["code"] == "INVALID_STRATEGY_CONFIG" for finding in result["findings"])
         assert client.get(base + "/drafts").json() == drafts_before
-
-
-def test_nested_cv_api_freeze_and_reopen_preserves_inner_and_outer_memberships(tmp_path):
-    data = tmp_path / "data"
-    data.mkdir()
-    settings = Settings(workspace=tmp_path / "registry-a", data_roots=(data,))
-    with connect(settings) as client:
-        auth(client)
-        project, base, dataset = cv_dataset(client, data)
-        spec = {
-            "datasetId": dataset["id"],
-            "target": {
-                "field": "label",
-                "task": "binary_classification",
-                "unit": "patient",
-                "classes": ["negative", "positive"],
-                "labels": {"0": "negative", "1": "positive"},
-                "positiveClass": "positive",
-            },
-            "split": {
-                "version": 2,
-                "mode": "nested_kfold",
-                "outerFolds": 3,
-                "innerFolds": 2,
-                "seeds": [42],
-                "validationFraction": 0.25,
-            },
-        }
-        draft = post(
-            client,
-            base + "/drafts",
-            {
-                "kind": "experiment",
-                "name": "Nested evaluation",
-                "payload": {"type": "analysis-protocol", "spec": spec},
-            },
-            201,
-        )
-        protocol_url = base + f"/protocols/{draft['id']}"
-        result = post(client, protocol_url + "/preview", {"expectedRevision": 1})
-        assert result["canFreeze"], result["findings"]
-        assert len(result["partitions"]) == 9
-        assert {row["phase"] for row in result["memberships"]} == {"inner", "outer"}
-        assert len({row["planId"] for row in result["memberships"]}) == 9
-        intent = {
-            "expectedRevision": 1,
-            "previewHash": result["previewHash"],
-            "operationId": "nested",
-            "versionLabel": {"tag": "Nested CV v1"},
-        }
-        frozen = post(client, protocol_url + "/freeze", intent, 201)
-        assert frozen["manifest"]["memberships"] == result["memberships"]
-        assert frozen["manifest"]["spec"]["split"]["version"] == 2
-        assert post(client, protocol_url + "/freeze", intent, 201) == frozen
-    with connect(replace(settings, workspace=tmp_path / "registry-b")) as client:
-        auth(client)
-        reopened = post(client, "/api/v1/projects/open", {"path": project["storagePath"]})
-        assert reopened["id"] == project["id"]
-        assert client.get(base + f"/configurations/{frozen['id']}").json() == frozen
-        assert post(client, protocol_url + "/freeze", intent, 201) == frozen

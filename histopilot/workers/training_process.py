@@ -285,6 +285,8 @@ def compute_snapshot() -> dict:
         *(root / "datasets").glob("*.py"),
         *(root / "training").glob("*.py"),
         root / "workers" / "train_batch.py",
+        root / "workers" / "managed_fold.py",
+        root / "workers" / "managed_collect.py",
         root / "workers" / "training_process.py",
         root / "workers" / "compute_archive.py",
         root / "workers" / "compute_job.py",

@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import shutil
 import signal
 import stat
 import subprocess
@@ -18,8 +19,19 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from histopilot.adapters import trident
-from histopilot.adapters.trident.performance import resolve_max_workers
+from histopilot.adapters.trident.performance import (
+    estimate_output_bytes,
+    estimate_ram_gb,
+    estimate_vram_gb,
+    execution_device_count,
+    resolve_max_workers,
+    uses_gpu,
+    workload_key,
+)
 from histopilot.adapters.trident.progress import build_progress
+from histopilot.application import task_records
+from histopilot.application.project_outputs import overlaps as _overlaps
+from histopilot.application.project_outputs import protected_output
 from histopilot.application.slide_lists import (
     SlideListError,
     read_slide_list_source,
@@ -37,12 +49,19 @@ from histopilot.storage.project_lock import (
     writer_lock,
 )
 from histopilot.storage.scientific import ScientificStore
+from histopilot.taskcenter import ids
 from histopilot.workers.extraction_process import TmuxExtractionExecutor
+from histopilot.workers.packing_process import live_process
 
 ACTIVE = {"queued", "starting", "running", "cancelling"}
 JOB_ID = re.compile(r"^extraction-[a-f0-9]{32}$")
 MAX_JSON = 8 * 1024 * 1024
 MAX_LOG_BYTES = 64 * 1024
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+# Refuse to start when the output volume cannot even hold this much of an estimated run.
+MIN_FREE_BYTES = 2 * 1024**3
+EXTRACTION_GRACE_SECONDS = 30
+VALIDATION_GRACE_SECONDS = 10
 
 
 def _now() -> str:
@@ -51,11 +70,6 @@ def _now() -> str:
 
 def _hash(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
-
-
-def _overlaps(first: str | Path, second: str | Path) -> bool:
-    first, second = Path(first), Path(second)
-    return first.is_relative_to(second) or second.is_relative_to(first)
 
 
 def _read(path: Path) -> dict:
@@ -105,12 +119,40 @@ def _log_tail(path: Path) -> tuple[str, str | None]:
 
 
 class ExtractionService:
-    def __init__(self, store: ScientificStore, filesystem: LocalFilesystem, executor=None):
+    """TRIDENT extraction records.
+
+    New jobs are two Task Center tasks: ``extraction`` (TRIDENT, GPU lane) and
+    ``extraction-validation`` (artifact validation, CPU lane, after it). Jobs recorded
+    before the Task Center, or launched with an injected tmux executor, keep their tmux
+    session for status and cancel.
+    """
+
+    def __init__(
+        self,
+        store: ScientificStore,
+        filesystem: LocalFilesystem,
+        executor=None,
+        *,
+        execution_mode=None,
+        task_center=None,
+    ):
         self.store = store
         self.filesystem = filesystem
         self.outputs = LocalFilesystem((store.folder, *filesystem.roots))
+        # An injected executor keeps its caller on the tmux path unless a mode is named.
+        self._mode = execution_mode or ("tmux" if executor is not None else None)
         self.executor = executor or TmuxExtractionExecutor()
+        self.tasks = task_records.TaskCenterAccess(task_center)
         self.folder = store.folder / "extractions"
+
+    @property
+    def mode(self) -> str:
+        """How new records launch (resolved per call, so a long-lived service follows it)."""
+        return self._mode or task_records.default_execution_mode()
+
+    @property
+    def managed(self) -> bool:
+        return self.mode == task_records.TASK_CENTER
 
     def catalog(self) -> dict:
         return {
@@ -277,35 +319,7 @@ class ExtractionService:
         values = options.model_dump(mode="json")
         output = self._path(spec.outputPath)
         # Outputs may be siblings of project data, never the project itself or its metadata.
-        protected = [
-            self.store.folder / name
-            for name in (
-                "datasets",
-                "configurations",
-                "extractions",
-                "packing",
-                "training",
-                "compute-jobs",
-                "predictor-builds",
-                "evaluation-batches",
-                "jobs",
-                "drafts",
-                ".staging",
-                ".trash",
-                ".git",
-                ".codex",
-                ".histopilot-write.lock",
-                ".histopilot-lifecycle.lock",
-                "histopilot-lifecycle.json",
-                "histopilot-project.json",
-                "histopilot-state.sqlite",
-                "histopilot-state.sqlite-wal",
-                "histopilot-state.sqlite-shm",
-            )
-        ]
-        if output == self.store.folder or any(
-            output.is_relative_to(path) or path.is_relative_to(output) for path in protected
-        ):
+        if protected_output(output, self.store.folder):
             raise StorageError(
                 "Choose a dedicated TRIDENT output directory.", "INVALID_OUTPUT", 422
             )
@@ -323,8 +337,8 @@ class ExtractionService:
             )
         findings = []
 
-        def finding(code, message):
-            findings.append({"severity": "error", "code": code, "message": message})
+        def finding(code, message, severity="error"):
+            findings.append({"severity": severity, "code": code, "message": message})
 
         records = (
             json.loads(self.store.read_artifact(spec.datasetId, "records.json"))
@@ -491,6 +505,14 @@ class ExtractionService:
                 "TRIDENT_WORKERS_ZERO",
                 "This TRIDENT CSV loader requires max_workers of at least 1. Leave it automatic or choose a positive count.",
             )
+        devices = values.get("gpus") or [values.get("gpu", 0)]
+        if self.managed and len({device for device in devices if device >= 0}) > 1:
+            finding(
+                "SINGLE_GPU_TASK",
+                "The Task Center runs an extraction on one GPU; the other selected GPUs stay "
+                "available for other work.",
+                "warning",
+            )
         normalized = ExtractionSpec(
             datasetId=spec.datasetId,
             slideRoot=spec.slideRoot,
@@ -512,6 +534,22 @@ class ExtractionService:
                     "STAGE_INPUT_MISSING",
                     f"{missing} slides lack {'patch coordinates' if values['task'] == 'feat' else 'segmentation contours'}. Run the preceding stage or choose All stages.",
                 )
+        if runtime.get("available") and slides:
+            self._reader_findings(runtime, slides, values, finding)
+        estimated, available = self._space(values, layout, slides, output)
+        if available is not None and available < min(estimated, MIN_FREE_BYTES):
+            finding(
+                "INSUFFICIENT_SPACE",
+                f"The output volume is nearly full. Free at least "
+                f"{min(estimated, MIN_FREE_BYTES) / 1024**3:.1f} GiB before extracting.",
+            )
+        elif available is not None and available < estimated:
+            finding(
+                "LOW_DISK_SPACE",
+                f"This run may write about {estimated / 1024**3:.0f} GiB (an estimate), more "
+                "than the output volume has free. Free space or choose another output folder.",
+                "warning",
+            )
         command = []
         if runtime.get("available") and slides:
             common = os.path.commonpath([str(Path(row["path"]).parent) for row in slides])
@@ -535,16 +573,72 @@ class ExtractionService:
             "spec": normalized.model_dump(mode="json"),
             "slideCount": len(slides),
             "findings": findings,
-            "canRun": not findings,
+            "canRun": not any(item["severity"] == "error" for item in findings),
             "runtime": runtime,
             "outputLayout": layout,
             "command": command,
             "customListSha256": slide_list["sha256"] if slide_list else None,
             "slideList": slide_list,
             "inputFiles": input_files,
+            "estimatedBytes": estimated,
         }
+        # Free space may change between two requests without invalidating the user's intent.
         result["previewHash"] = _hash({**result, "slides": slides})
+        result["availableBytes"] = available
         return result, slides
+
+    @staticmethod
+    def _final_pattern(values: dict, layout: dict) -> str:
+        """The last file TRIDENT writes for a slide in this run's task."""
+        if values["task"] == "seg":
+            return str(Path(layout["contoursDir"]) / "{slide}.jpg")
+        if values["task"] == "coords":
+            return layout["coordinatePattern"]
+        return layout["featurePattern"]
+
+    def _space(self, values: dict, layout: dict, slides: list, output: Path):
+        """Estimated bytes still to write (slides without their final output) and free bytes."""
+        pattern = self._final_pattern(values, layout)
+        missing = [row for row in slides if not Path(pattern.format(slide=row["name"])).is_file()]
+        estimated = estimate_output_bytes(
+            values, sum(int(row.get("size") or 0) for row in missing), len(missing)
+        )
+        ancestor = output
+        while not ancestor.exists() and ancestor != ancestor.parent:
+            ancestor = ancestor.parent
+        try:
+            available = shutil.disk_usage(ancestor).free
+        except OSError:
+            available = None
+        return estimated, available
+
+    @staticmethod
+    def _reader_findings(runtime: dict, slides: list, values: dict, finding) -> None:
+        """TRIDENT imports each slide reader lazily, so a missing one fails mid-run."""
+        readers = trident.slide_readers([row["path"] for row in slides], values.get("reader_type"))
+        modules = {
+            module: reader
+            for reader in readers
+            for module in trident.READER_MODULES.get(reader, ())
+        }
+        probe = trident.probe_reader_modules(
+            runtime["pythonPath"], list(modules), cwd=runtime.get("tridentRoot")
+        )
+        if probe.get("error"):
+            finding(
+                "SLIDE_READER_UNCHECKED",
+                f"{probe['error']}. TRIDENT checks its slide readers when it starts.",
+                "warning",
+            )
+            return
+        for module, error in sorted(probe.get("modules", {}).items()):
+            if error:
+                reader = modules[module]
+                finding(
+                    "SLIDE_READER_UNAVAILABLE",
+                    f"TRIDENT's Python cannot import {module}, which the {reader} reader needs "
+                    f"for {readers[reader]} selected slide(s): {error}",
+                )
 
     def preview(self, spec: ExtractionSpec) -> dict:
         return self._prepare(spec)[0]
@@ -646,8 +740,14 @@ class ExtractionService:
                 ensure_managed_directory(cache.parent)
                 options = options.model_copy(update={"wsi_cache": str(cache)})
             runtime = preview["runtime"]
+            values = options.model_dump(mode="json")
+            lane = "gpu" if uses_gpu(values) else "cpu"
+            command_options = options
+            if self.managed and lane == "gpu":
+                # The runner exposes the GPU it admits the task on as CUDA device 0.
+                command_options = options.model_copy(update={"gpu": 0, "gpus": None})
             command = trident.build_command(
-                options,
+                command_options,
                 python_path=runtime["pythonPath"],
                 trident_root=runtime["tridentRoot"],
                 wsi_dir=str(root),
@@ -674,28 +774,61 @@ class ExtractionService:
                 "createdAt": _now(),
                 "updatedAt": _now(),
             }
+            if self.managed:
+                job.update(
+                    state="queued",
+                    sessionName=None,
+                    executionMode=task_records.TASK_CENTER,
+                    taskId=ids.task_id("extraction", str(folder)),
+                    validationTaskId=ids.task_id("extraction-validation", str(folder)),
+                    ownerKey=task_records.owner_key("extraction", identity, self.store),
+                )
             _write(folder / "job.json", job)
-            from histopilot.workers.resource_reservation import preparation_resources
+            plan = {
+                "command": command,
+                "resultPath": str(folder / "result.json"),
+                "logPath": job["logPath"],
+                "cancelPath": str(folder / "cancelled"),
+                "processPath": str(folder / "process.json"),
+                "cwd": runtime["tridentRoot"],
+                # Each attempt owns its output: locks of dead TRIDENT writers are cleared
+                # before TRIDENT starts, or it would skip those slides (resume).
+                "clearDeadLocks": {
+                    "root": str(output),
+                    "maxAgeHours": options.dead_lock_max_age_hours,
+                },
+            }
+            if self.managed:
+                plan.update(
+                    managed=True,
+                    jobPath=str(folder / "job.json"),
+                    progressPath=str(folder / "progress.json"),
+                    peakPath=str(folder / "trident-peak.json"),
+                )
+            else:
+                from histopilot.workers.resource_reservation import preparation_resources
 
-            _write(
-                folder / "plan.json",
-                {
-                    "command": command,
-                    "resultPath": str(folder / "result.json"),
-                    "logPath": job["logPath"],
-                    "cancelPath": str(folder / "cancelled"),
-                    "processPath": str(folder / "process.json"),
-                    "resources": preparation_resources("extraction", options.model_dump()),
-                    "validationCommand": [
+                plan.update(
+                    resources=preparation_resources("extraction", options.model_dump()),
+                    validationCommand=[
                         sys.executable,
                         "-m",
                         "histopilot.workers.verify_extraction",
                         str(folder / "job.json"),
                         str(folder / "validation.json"),
                     ],
-                    "cwd": runtime["tridentRoot"],
-                },
-            )
+                )
+            _write(folder / "plan.json", plan)
+            if self.managed:
+                try:
+                    self._enqueue(job, folder, values, lane, preview["estimatedBytes"])
+                except (StorageError, OSError) as error:
+                    job["state"], job["error"] = (
+                        "failed",
+                        f"Could not queue the extraction in the Task Center: {error}",
+                    )
+                    _write(folder / "job.json", job)
+                return self.get(identity)
             try:
                 self.executor.launch(
                     job["sessionName"],
@@ -707,7 +840,7 @@ class ExtractionService:
                 try:
                     started = (
                         self.executor.running(job["sessionName"])
-                        or self._live_process(folder)
+                        or live_process(folder)
                         or (folder / "result.json").exists()
                     )
                 except (OSError, RuntimeError, subprocess.SubprocessError):
@@ -723,6 +856,109 @@ class ExtractionService:
             _write(folder / "job.json", job)
         return self.get(identity)
 
+    def _enqueue(self, job: dict, folder: Path, values: dict, lane: str, estimated: int) -> None:
+        """Queue TRIDENT (GPU lane) and its artifact validation (CPU lane, after it)."""
+        identity, count = job["id"], job["slideCount"]
+        encoder = values.get("slide_encoder") or values.get("patch_encoder")
+        stage = {"seg": "Segmentation", "coords": "Patch coordinates"}.get(values["task"])
+        subject = stage or f"Extraction · {encoder}"
+        labels = {
+            "recordKind": "extraction",
+            "recordId": identity,
+            "projectId": self.store.project_id,
+            "extractionId": identity,
+            "encoder": encoder,
+            "slideCount": count,
+        }
+        workers = resolve_max_workers(values)
+        devices = 1 if lane == "gpu" else execution_device_count(values)
+        environment = {"HISTOPILOT_TASK_MANAGED": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+        extraction = {
+            "id": job["taskId"],
+            "kind": "extraction",
+            "adapter": "extraction",
+            "title": f"{subject} · {count} slides"[:200],
+            "group": {"kind": "extraction", "id": identity},
+            "labels": {**labels, "phase": "extraction"},
+            "exclusiveKey": "trident-output:"
+            + hashlib.sha256(job["outputPath"].encode()).hexdigest(),
+            "request": {
+                "lane": lane,
+                "cpuThreads": devices,
+                "dataWorkers": min(256, workers * devices),
+                "ramGb": estimate_ram_gb(values) * devices,
+                "vramGb": estimate_vram_gb(values) if lane == "gpu" else 0.0,
+                "graceSeconds": EXTRACTION_GRACE_SECONDS,
+                "workloadKey": workload_key(values),
+            },
+            "command": {
+                "argv": [
+                    sys.executable,
+                    "-u",
+                    str(Path(trident.__file__).with_name("runner.py")),
+                    str(folder / "plan.json"),
+                ],
+                "cwd": job["runtime"]["tridentRoot"],
+                "env": environment,
+                "log": job["logPath"],
+                "progress": str(folder / "progress.json"),
+                "result": str(folder / "result.json"),
+            },
+            "adapterData": {
+                "extractionFolder": str(folder),
+                "jobId": identity,
+                "validationTaskId": job["validationTaskId"],
+                "outputPath": job["outputPath"],
+                "estimatedOutputBytes": int(estimated),
+            },
+        }
+        validation = {
+            "id": job["validationTaskId"],
+            "kind": "extraction-validation",
+            "adapter": "extraction-validation",
+            "title": f"Extraction validation · {count} slides",
+            "group": {"kind": "extraction", "id": identity},
+            "planOrder": 1,
+            "labels": {**labels, "phase": "validation"},
+            "request": {
+                "lane": "cpu",
+                "cpuThreads": 1,
+                "dataWorkers": 0,
+                "ramGb": 2.0,
+                "graceSeconds": VALIDATION_GRACE_SECONDS,
+            },
+            "command": {
+                "argv": [
+                    sys.executable,
+                    "-u",
+                    "-m",
+                    "histopilot.workers.verify_extraction",
+                    str(folder / "job.json"),
+                    str(folder / "validation.json"),
+                    str(folder / "validation-progress.json"),
+                ],
+                "cwd": str(REPOSITORY_ROOT),
+                "env": environment,
+                "log": job["logPath"],
+                "progress": str(folder / "validation-progress.json"),
+                "result": str(folder / "validation.json"),
+            },
+            "dependsOn": [{"task": job["taskId"], "condition": "succeeded"}],
+            "adapterData": {
+                "extractionFolder": str(folder),
+                "jobId": identity,
+                "extractionTaskId": job["taskId"],
+            },
+        }
+        owner = task_records.owner(
+            "extraction",
+            identity,
+            f"{subject} · {count} slides",
+            self.store,
+            {"recordKind": "extraction"},
+        )
+        task_records.enqueue(self.tasks, owner, [extraction, validation])
+
     def get(self, identity: str, *, logs=False, include_inactive=False) -> dict:
         if not include_inactive:
             LifecycleStore(self.store.folder, self.store.project_id).assert_usable(
@@ -730,7 +966,9 @@ class ExtractionService:
             )
         job = self._job_record(identity)
         folder = self.folder / identity
-        if (folder / "result.json").exists():
+        if task_records.managed_record(job):
+            self._task_state(job, folder)
+        elif (folder / "result.json").exists():
             result = _read(folder / "result.json")
             job["result"] = result
             job["state"] = result.get("state", "failed")
@@ -742,19 +980,23 @@ class ExtractionService:
         elif (folder / "cancelled").exists():
             job["state"] = (
                 "cancelling"
-                if self.executor.running(job["sessionName"]) or self._live_process(folder)
+                if self.executor.running(job["sessionName"]) or live_process(folder)
                 else "cancelled"
             )
         elif job["state"] in ACTIVE:
             try:
-                if not self.executor.running(job["sessionName"]) and not self._live_process(folder):
+                if not self.executor.running(job["sessionName"]) and not live_process(folder):
                     job["state"] = "interrupted"
                     job["error"] = (
                         "The tmux session ended without a completion record. Inspect the log, then preview a resume run."
                     )
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 job["error"] = f"Cannot inspect worker status: {error}"
-        if job["state"] in {"starting", "running", "queued"} and (folder / "resources.json").exists():
+        if (
+            not task_records.managed_record(job)
+            and job["state"] in {"starting", "running", "queued"}
+            and (folder / "resources.json").exists()
+        ):
             reservation = _read(folder / "resources.json")
             job["resourceReservation"] = reservation
             if reservation.get("status") == "queued":
@@ -783,27 +1025,54 @@ class ExtractionService:
             if key not in {"slides", "requestHash", "operationId"}
         }
 
-    @staticmethod
-    def _live_process(folder: Path) -> dict | None:
-        path = folder / "process.json"
-        if not path.exists():
-            return None
-        process = _read(path)
-        pid = process.get("pid")
-        if type(pid) is not int or pid <= 1:
-            return None
-        try:
-            boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-            if (
-                process.get("bootId") == boot
-                and process.get("startTicks") == int(fields[19])
-                and fields[0] != "Z"
-            ):
-                return process
-        except (OSError, ValueError, IndexError):
-            pass
-        return None
+    def _task_state(self, job: dict, folder: Path) -> None:
+        """Derive a Task Center job's state from its two tasks (the store, not processes)."""
+        extraction, validation = self.tasks.views([job.get("taskId"), job.get("validationTaskId")])
+        job["executor"] = "task-center"
+        job["tasks"] = {
+            "extraction": task_records.public_view(extraction),
+            "validation": task_records.public_view(validation),
+        }
+        extracted = bool(extraction) and extraction.get("state") == "succeeded"
+        current = validation if extracted else extraction
+        job["task"] = task_records.public_view(current)
+        receipt = _read(folder / "result.json") if (folder / "result.json").exists() else None
+        if (
+            receipt
+            and extraction
+            and receipt.get("taskId") == extraction.get("id")
+            and receipt.get("taskAttempt") == extraction.get("attempt")
+        ):
+            job["result"] = receipt
+            job["updatedAt"] = receipt.get("finishedAt", job["updatedAt"])
+        if current is None:
+            if job["state"] in ACTIVE:
+                job["state"] = "interrupted"
+                job["error"] = (
+                    "The Task Center has no task for this extraction. Preview a resume run."
+                )
+            return
+        if current.get("unknown"):
+            # An unreadable store never reads as stopped: keep the recorded state.
+            job["waitingReason"] = task_records.waiting_reason(current)
+            return
+        state = task_records.record_state(current)
+        if extracted and state in {"queued", "starting"}:
+            state = "running"  # TRIDENT finished; its validation waits for a CPU slot
+        job["state"] = state
+        if task_records.pending(current):
+            job["waitingReason"] = task_records.waiting_reason(current)
+        if state in {"failed", "cancelled", "interrupted"}:
+            job["error"] = (
+                current.get("error") or job.get("error") or f"The extraction was {state}."
+            )
+        if extracted and validation and validation["state"] in {"succeeded", "failed"}:
+            # Coverage of this validation attempt's own report (never an older one).
+            path = folder / "validation.json"
+            report = _read(path) if path.exists() else None
+            if report is not None and report.get("taskAttempt") == validation["attempt"]:
+                job.setdefault("result", {})
+                self._coverage(job)
 
     def _coverage(self, job: dict) -> None:
         from histopilot.application.extraction_artifacts import complete_coverage
@@ -862,10 +1131,12 @@ class ExtractionService:
     def _cancel(self, identity: str) -> dict:
         with writer_lock(self.store.folder):
             job = self.get(identity, include_inactive=True)
+            if task_records.managed_record(job):
+                return self._cancel_tasks(identity, job)
             if (
                 job["state"] not in ACTIVE
                 and not self.executor.running(job["sessionName"])
-                and not self._live_process(self.folder / identity)
+                and not live_process(self.folder / identity)
             ):
                 return job
             marker = self.folder / identity / "cancelled"
@@ -874,7 +1145,7 @@ class ExtractionService:
                 fsync_directory(marker.parent)
             # The standalone runner observes this durable marker and terminates its process group.
             if not self.executor.running(job["sessionName"]):
-                process = self._live_process(marker.parent)
+                process = live_process(marker.parent)
                 if process:
                     # The original runner may have died. Reconcile the exact child identity
                     # before signaling its group; PID reuse and reboots cannot target another job.
@@ -882,4 +1153,86 @@ class ExtractionService:
                         os.killpg(process["pid"], signal.SIGTERM)
                     except ProcessLookupError:
                         pass
+        return self.get(identity, logs=True, include_inactive=True)
+
+    def resume(self, identity: str) -> dict:
+        """Run a stopped Task Center extraction again: TRIDENT, then a fresh validation.
+
+        TRIDENT skips slides whose outputs are complete, and every attempt first clears
+        the locks of dead writers, so this resumes where the last attempt stopped. Jobs
+        recorded before the Task Center resume through a new preview on the same output.
+        """
+        with lifecycle_guard(self.store.folder, timeout=5):
+            LifecycleStore(self.store.folder, self.store.project_id).assert_usable(
+                [f"extraction:{identity}"]
+            )
+            with writer_lock(self.store.folder):
+                job = self.get(identity)
+                if not task_records.managed_record(job):
+                    raise StorageError(
+                        "Preview a resume run on the same output folder to continue this job.",
+                        "EXTRACTION_RESUME_UNSUPPORTED",
+                        409,
+                    )
+                if job["state"] in ACTIVE or job["state"] == "succeeded":
+                    return job
+                # As at submit: the task's exclusive key serializes only identical folders,
+                # and this job's dead-lock sweep must never walk a live job's nested output.
+                for other in self._jobs():
+                    if (
+                        other["id"] != identity
+                        and _overlaps(other["outputPath"], job["outputPath"])
+                        and self.get(other["id"], include_inactive=True)["state"] in ACTIVE
+                    ):
+                        raise StorageError(
+                            "Another extraction is using an overlapping output folder. "
+                            "Resume this one after it finishes.",
+                            "OUTPUT_BUSY",
+                            409,
+                        )
+                try:
+                    requeued = self.tasks.client.store.requeue(
+                        [job["taskId"]], reason="resume", include_succeeded=True
+                    )
+                except (StorageError, OSError) as error:
+                    raise StorageError(
+                        f"The Task Center cannot resume this extraction: {error}",
+                        "TASK_CENTER_UNAVAILABLE",
+                        503,
+                    ) from error
+                if not requeued:
+                    raise StorageError(
+                        "This extraction is still running in the Task Center.",
+                        "EXTRACTION_ACTIVE",
+                        409,
+                    )
+                self.tasks.wake()
+        return self.get(identity)
+
+    def _cancel_tasks(self, identity: str, job: dict) -> dict:
+        """Mark the cancel (the worker stops on it too), then cancel both tasks.
+
+        The marker names the attempts it cancels, so a later retry from the Task Center
+        runs instead of finding a stale cancel.
+        """
+        if job["state"] not in ACTIVE:
+            return self.get(identity, logs=True, include_inactive=True)
+        views = self.tasks.views([job.get("taskId"), job.get("validationTaskId")])
+        _write(
+            self.folder / identity / "cancelled",
+            {
+                "requestedAt": _now(),
+                "attempts": {
+                    view["id"]: view["attempt"]
+                    for view in views
+                    if view and not view.get("unknown")
+                },
+            },
+        )
+        for view in views:
+            if view and task_records.live(view) and not view.get("unknown"):
+                try:
+                    self.tasks.client.cancel_task(view["id"])
+                except (StorageError, OSError):
+                    pass  # the worker still stops on the marker
         return self.get(identity, logs=True, include_inactive=True)

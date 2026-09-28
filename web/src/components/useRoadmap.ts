@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { bundles } from '../api/bundles';
+import { targetSplits as targetSplitApi } from '../api/targetSplits';
 import { scientific } from '../api/scientific';
 import { development, developmentPollInterval, trainingActive } from '../api/development';
 import { evaluation } from '../api/evaluation';
@@ -17,7 +18,8 @@ export function useRoadmap(workspace: Workspace) {
   // Share cache keys with the module editors so saving and freezing refresh progress.
   const drafts = useQuery({ queryKey: ['scientific', project, 'drafts'], queryFn: () => scientific.drafts(project), enabled });
   const datasets = useQuery({ queryKey: ['scientific', project, 'datasets'], queryFn: () => scientific.datasets(project), enabled });
-  const protocols = useQuery({ queryKey: ['scientific', project, 'configurations', 'protocol'], queryFn: () => scientific.configurations(project, 'protocol'), enabled });
+  const targetSplits = useQuery({ queryKey: ['scientific', project, 'configurations', 'target-split'], queryFn: () => targetSplitApi.list(project), enabled });
+  const setups = useQuery({ queryKey: ['scientific', project, 'configurations', 'experiment-setup'], queryFn: () => scientific.configurations(project, 'experiment-setup'), enabled });
   const features = useQuery({ queryKey: ['scientific', project, 'configurations', 'feature'], queryFn: () => scientific.configurations(project, 'feature'), enabled });
   const featureBundles = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project), enabled });
   const extractions = useQuery({ queryKey: ['extractions', project, 'jobs'], queryFn: () => trident.jobs(project), enabled, refetchIntervalInBackground: false, refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 3000 : false });
@@ -32,7 +34,8 @@ export function useRoadmap(workspace: Workspace) {
   const modules = useMemo(() => buildRoadmap(workspace, {
     drafts: drafts.data?.drafts ?? [],
     datasets: datasets.data?.datasets ?? [],
-    protocols: protocols.data?.configurations ?? [],
+    targetSplits: targetSplits.data?.configurations ?? [],
+    setups: setups.data?.configurations ?? [],
     features: features.data?.configurations ?? [],
     bundles: featureBundles.data?.items ?? [],
     extractions: extractions.data?.jobs ?? [],
@@ -43,9 +46,9 @@ export function useRoadmap(workspace: Workspace) {
     modelEvaluations: evaluationRecords.data?.items ?? [],
     clinicalAnalyses: clinicalRecords.data?.items ?? [],
     interpretations: interpretationRecords.data?.items ?? [],
-  }), [workspace, drafts.data, datasets.data, protocols.data, features.data, featureBundles.data, extractions.data, batches.data, evaluationCohorts.data, frozenPredictors.data, evaluationRecords.data, clinicalRecords.data, interpretationRecords.data]);
+  }), [workspace, drafts.data, datasets.data, targetSplits.data, setups.data, features.data, featureBundles.data, extractions.data, batches.data, evaluationCohorts.data, frozenPredictors.data, evaluationRecords.data, clinicalRecords.data, interpretationRecords.data]);
   const byId = useMemo(() => Object.fromEntries(modules.map((module) => [module.id, module])) as Record<RoadmapModuleId, RoadmapModule>, [modules]);
-  const queries = [drafts, datasets, protocols, features, featureBundles, extractions, batches, evaluationCohorts, frozenPredictors, evaluationRecords, clinicalRecords, interpretationRecords];
+  const queries = [drafts, datasets, targetSplits, setups, features, featureBundles, extractions, batches, evaluationCohorts, frozenPredictors, evaluationRecords, clinicalRecords, interpretationRecords];
   const check = (required: typeof queries) => ({
     isLoading: enabled && required.some((query) => query.isPending),
     error: enabled ? required.find((query) => query.error)?.error ?? null : null,
@@ -53,17 +56,17 @@ export function useRoadmap(workspace: Workspace) {
     hasData: !enabled || required.every((query) => query.data !== undefined),
   });
   const { isLoading, error, hasData } = check(queries);
-  const inputQueries = [datasets, protocols, featureBundles];
+  const inputQueries = [datasets, featureBundles];
   const checksById = Object.fromEntries(modules.map(({ id, retainedWork }) => {
     const result = check(
-    id === 'dataset' || (enabled && ['cohort', 'features', 'experiments', 'test-data', 'evaluation', 'inference', 'clinical-utility', 'interpretation'].includes(id))
+    id === 'dataset' || (enabled && ['cohort', 'features', 'experimental-setup', 'experiments', 'test-data', 'evaluation', 'inference', 'clinical-utility', 'interpretation'].includes(id))
       ? []
       : id === 'evaluation' || id === 'inference'
         ? [batches, evaluationCohorts]
       : id === 'clinical-utility'
         ? [evaluationRecords]
       : id === 'interpretation'
-        ? [clinicalRecords, frozenPredictors]
+        ? [frozenPredictors, featureBundles]
       : id === 'test-data'
         ? [datasets]
       : id === 'cohort' || id === 'features'

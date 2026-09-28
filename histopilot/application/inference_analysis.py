@@ -77,7 +77,9 @@ class InferenceAnalysisService:
             "patientAggregation": manifest["inference"]["patientAggregation"],
             "source": {"predictionsSha256": checksum},
             **summarize(records, target, threshold, described=described),
-            "patients": len({row["patientId"] for row in records if row.get("patientId")}),
+            "patients": 0
+            if manifest.get("splitUnit") == "slide"
+            else len({row["patientId"] for row in records if row.get("patientId")}),
         }
         shared = development_patients(manifest)
         if shared is None:

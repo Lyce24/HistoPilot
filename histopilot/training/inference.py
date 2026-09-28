@@ -80,10 +80,15 @@ def _write_csv(path, rows, classes, *, patient=False, columns=EVALUATION_COLUMNS
             )
             # Spreadsheet applications interpret these text cells as formulas,
             # even when CSV quoting is present. Preserve identifiers as text.
-            writer.writerow({
-                key: "'" + cell if isinstance(cell, str) and cell.lstrip().startswith(("=", "+", "-", "@", "\t", "\r")) else cell
-                for key, cell in value.items()
-            })
+            writer.writerow(
+                {
+                    key: "'" + cell
+                    if isinstance(cell, str)
+                    and cell.lstrip().startswith(("=", "+", "-", "@", "\t", "\r"))
+                    else cell
+                    for key, cell in value.items()
+                }
+            )
         stream.flush()
         os.fsync(stream.fileno())
     temporary.replace(path)
@@ -95,13 +100,15 @@ def _described_rows(rows, target, threshold):
     for row in rows:
         described = describe(row, target, threshold)
         agreement = described.get("memberAgreement")
-        result.append({
-            **row,
-            "confidence": described["confidence"],
-            "margin": described["margin"],
-            "membersAgreeing": agreement["agree"] if agreement else None,
-            "memberCount": agreement["total"] if agreement else None,
-        })
+        result.append(
+            {
+                **row,
+                "confidence": described["confidence"],
+                "margin": described["margin"],
+                "membersAgreeing": agreement["agree"] if agreement else None,
+                "memberCount": agreement["total"] if agreement else None,
+            }
+        )
     return result
 
 
@@ -123,15 +130,26 @@ def _finish_inference(plan, folder, records, *, method, checkpoints, input_hash,
     target, classes = plan["target"], plan["target"]["classes"]
     threshold = plan["inference"]["decisionThreshold"]
     aggregation = plan["inference"]["patientAggregation"]
-    try:
-        patients = _decisions(patient_predictions(records, aggregation), target, threshold)
-        patient_summary = summarize(
-            _patient_members(records, patients, aggregation), target, threshold
+    slide_unit = plan.get("splitUnit") == "slide"
+    if slide_unit:
+        patients, patient_summary = (
+            [],
+            {
+                "available": False,
+                "count": 0,
+                "reason": "Patient analysis is disabled for slide-level experiments.",
+            },
         )
-    except ValueError as error:
-        if target["unit"] == "patient":
-            raise
-        patients, patient_summary = [], {"available": False, "count": 0, "reason": str(error)}
+    else:
+        try:
+            patients = _decisions(patient_predictions(records, aggregation), target, threshold)
+            patient_summary = summarize(
+                _patient_members(records, patients, aggregation), target, threshold
+            )
+        except ValueError as error:
+            if target["unit"] == "patient":
+                raise
+            patients, patient_summary = [], {"available": False, "count": 0, "reason": str(error)}
     slide_summary = summarize(records, target, threshold)
     summary = {
         "purpose": "inference",
@@ -139,7 +157,12 @@ def _finish_inference(plan, folder, records, *, method, checkpoints, input_hash,
         "classOrder": classes,
         "positiveClass": target.get("positiveClass"),
         "decisionThreshold": threshold,
-        "patientAggregation": "mean_logits" if aggregation == "mean_logits" else "mean_probabilities",
+        "patientAggregation": None
+        if slide_unit
+        else "mean_logits"
+        if aggregation == "mean_logits"
+        else "mean_probabilities",
+        **({"splitUnit": plan["splitUnit"]} if "splitUnit" in plan else {}),
         "memberCount": len(checkpoints),
         "memberProbabilities": member_evidence,
         "slide": slide_summary,
@@ -157,19 +180,20 @@ def _finish_inference(plan, folder, records, *, method, checkpoints, input_hash,
         classes,
         columns=INFERENCE_COLUMNS,
     )
-    _write_csv(
-        folder / "patient-predictions.csv",
-        _described_rows(_patient_members(records, patients, aggregation), target, threshold),
-        classes,
-        patient=True,
-        columns=INFERENCE_COLUMNS,
-    )
+    if not slide_unit:
+        _write_csv(
+            folder / "patient-predictions.csv",
+            _described_rows(_patient_members(records, patients, aggregation), target, threshold),
+            classes,
+            patient=True,
+            columns=INFERENCE_COLUMNS,
+        )
     artifacts = {}
     for name in (
         "predictions.json",
         "summary.json",
         "slide-predictions.csv",
-        "patient-predictions.csv",
+        *(() if slide_unit else ("patient-predictions.csv",)),
     ):
         path = folder / name
         artifacts[name] = {
@@ -217,20 +241,29 @@ def _valid_window_uncertainty(rows, shape):
         if (
             not isinstance(row, dict)
             or set(row) != {"windowCount", "probabilityVariance", *scalar_fields}
-            or type(row["windowCount"]) is not int or row["windowCount"] < 1
+            or type(row["windowCount"]) is not int
+            or row["windowCount"] < 1
         ):
             return False
         if any(
-            isinstance(row[name], bool) or not isinstance(row[name], (int, float))
-            or not np.isfinite(row[name]) or not 0 <= row[name] <= np.log(shape[1]) + 1e-6
+            isinstance(row[name], bool)
+            or not isinstance(row[name], (int, float))
+            or not np.isfinite(row[name])
+            or not 0 <= row[name] <= np.log(shape[1]) + 1e-6
             for name in scalar_fields
         ):
             return False
         variance = row["probabilityVariance"]
         if (
-            not isinstance(variance, list) or len(variance) != shape[1]
-            or any(isinstance(value, bool) or not isinstance(value, (int, float))
-                   or not np.isfinite(value) or not 0 <= value <= 0.25 + 1e-6 for value in variance)
+            not isinstance(variance, list)
+            or len(variance) != shape[1]
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not np.isfinite(value)
+                or not 0 <= value <= 0.25 + 1e-6
+                for value in variance
+            )
         ):
             return False
     return True
@@ -255,8 +288,11 @@ def _cached_member(path, input_hash, member_hash, identities, shape, *, include_
                 {
                     "probabilities": cache.get("probabilities"),
                     "logProbabilities": cache.get("logProbabilities"),
-                    **({"windowUncertainty": cache["windowUncertainty"]}
-                       if "windowUncertainty" in cache else {}),
+                    **(
+                        {"windowUncertainty": cache["windowUncertainty"]}
+                        if "windowUncertainty" in cache
+                        else {}
+                    ),
                 }
             )
         ):
@@ -264,9 +300,8 @@ def _cached_member(path, input_hash, member_hash, identities, shape, *, include_
         probabilities = np.asarray(cache["probabilities"], dtype=np.float64)
         log_probabilities = np.asarray(cache["logProbabilities"], dtype=np.float64)
         uncertainty = cache.get("windowUncertainty")
-        if (
-            _valid_probabilities(probabilities, log_probabilities, shape)
-            and (uncertainty is None or _valid_window_uncertainty(uncertainty, shape))
+        if _valid_probabilities(probabilities, log_probabilities, shape) and (
+            uncertainty is None or _valid_window_uncertainty(uncertainty, shape)
         ):
             if include_uncertainty:
                 return probabilities, log_probabilities, uncertainty
@@ -301,6 +336,12 @@ def evaluate(plan, output_dir):
     if purpose not in {None, "inference"}:
         raise ValueError("Unsupported evaluation purpose.")
     inference_only = purpose == "inference"
+    split_unit = plan.get("splitUnit", "patient")
+    if split_unit not in {"slide", "patient"}:
+        raise ValueError("Unsupported split unit.")
+    slide_unit = split_unit == "slide"
+    if "splitUnit" in plan and target["unit"] != split_unit:
+        raise ValueError("The prediction target must match the frozen split unit.")
     rows = data["memberships"]
     identities = [row["slideId"] for row in rows]
     if not identities or len(set(identities)) != len(identities):
@@ -312,7 +353,7 @@ def evaluate(plan, output_dir):
     if target["unit"] == "patient" and any(not row.get("patientId") for row in rows):
         raise ValueError("Patient evaluation requires a grouping identity for every slide.")
     patient_aggregation = plan["inference"]["patientAggregation"]
-    if patient_aggregation not in {"mean", "mean_logits"}:
+    if not slide_unit and patient_aggregation not in {"mean", "mean_logits"}:
         raise ValueError("Frozen predictors require mean probabilities or mean logits.")
     aggregation = plan.get("aggregation", "mean_probability")
     if aggregation not in {"mean_probability", "mean_logit", "single_model"}:
@@ -332,11 +373,18 @@ def evaluate(plan, output_dir):
         for row in rows
     ]
     dataset = SlideDataset(
-        {**data, "target": target,
-         "trainingSeed": plan.get("bagPolicy", {}).get("trainingSeed", 0),
-         "recipe": {"bagSize": None, "evalBagSize": plan.get("bagPolicy", {}).get("evalBagSize"),
-                    "inputMode": data.get("inputMode", "image"),
-                    "clinicalFields": data.get("clinicalFields", [])}},
+        {
+            **data,
+            "target": target,
+            **({"splitUnit": plan["splitUnit"]} if "splitUnit" in plan else {}),
+            "trainingSeed": plan.get("bagPolicy", {}).get("trainingSeed", 0),
+            "recipe": {
+                "bagSize": None,
+                "evalBagSize": plan.get("bagPolicy", {}).get("evalBagSize"),
+                "inputMode": data.get("inputMode", "image"),
+                "clinicalFields": data.get("clinicalFields", []),
+            },
+        },
         memberships,
         training=False,
     )
@@ -359,18 +407,21 @@ def evaluate(plan, output_dir):
     member_evidence = "single_model" if len(checkpoints) == 1 else "recorded"
     # Log probabilities are essential when patient voting averages logits:
     # exponentiation may round an extreme but finite probability down to zero.
-    retain_member_logs = patient_aggregation == "mean_logits"
+    retain_member_logs = not slide_unit and patient_aggregation == "mean_logits"
     evidence_width = 2 if retain_member_logs else 1
     if len(rows) * len(checkpoints) * len(classes) * evidence_width > MAX_MEMBER_VALUES:
         member_evidence = "omitted_for_size" if len(checkpoints) > 1 else "single_model"
     member_probabilities = (
         [[] for _ in rows] if inference_only and member_evidence == "recorded" else None
     )
-    member_logs = [[] for _ in rows] if member_probabilities is not None and retain_member_logs else None
+    member_logs = (
+        [[] for _ in rows] if member_probabilities is not None and retain_member_logs else None
+    )
     input_hash = _hash(
         {
             "data": data,
             "target": target,
+            **({"splitUnit": plan["splitUnit"]} if "splitUnit" in plan else {}),
             "inference": plan["inference"],
             "checkpoints": checkpoints,
             **({"bagPolicy": plan["bagPolicy"]} if "bagPolicy" in plan else {}),
@@ -389,7 +440,11 @@ def evaluate(plan, output_dir):
             cache_path = cache_dir / f"member-{index}.json"
             member_hash = _hash({"inputHash": input_hash, "checkpoint": checkpoint})
             cached = _cached_member(
-                cache_path, input_hash, member_hash, identities, totals.shape,
+                cache_path,
+                input_hash,
+                member_hash,
+                identities,
+                totals.shape,
                 include_uncertainty=True,
             )
             if cached is None:
@@ -400,9 +455,12 @@ def evaluate(plan, output_dir):
                     raise ValueError(
                         "The checkpoint target or feature dimensions differ from its predictor."
                     )
-                if (model.recipe.get("inputMode", "image") != data.get("inputMode", "image")
-                        or model.recipe.get("clinicalFields", []) != data.get("clinicalFields", [])):
-                    raise ValueError("Checkpoint clinical schema differs from its frozen evaluation.")
+                if model.recipe.get("inputMode", "image") != data.get(
+                    "inputMode", "image"
+                ) or model.recipe.get("clinicalFields", []) != data.get("clinicalFields", []):
+                    raise ValueError(
+                        "Checkpoint clinical schema differs from its frozen evaluation."
+                    )
                 model.eval().to(device)
                 collected, log_collected, observed, uncertainty_collected = [], [], [], []
                 with torch.inference_mode():
@@ -415,7 +473,8 @@ def evaluate(plan, output_dir):
                             enabled=precision != "float32",
                         ):
                             output = model.prediction_output(
-                                batch["features"].to(device), batch["mask"].to(device),
+                                batch["features"].to(device),
+                                batch["mask"].to(device),
                                 **({"clinical": batch["clinical"]} if "clinical" in batch else {}),
                             )
                             logits = output["logits"]
@@ -426,9 +485,9 @@ def evaluate(plan, output_dir):
                         )
                         observed.extend(batch["slideIds"])
                         if output.get("window_uncertainty") is not None:
-                            uncertainty_collected.extend(window_uncertainty_rows(
-                                output["window_uncertainty"], target
-                            ))
+                            uncertainty_collected.extend(
+                                window_uncertainty_rows(output["window_uncertainty"], target)
+                            )
                 del model
                 if observed != identities:
                     raise ValueError("Inference changed the selected slide order or membership.")
@@ -437,10 +496,13 @@ def evaluate(plan, output_dir):
                 if not _valid_probabilities(probabilities, log_probabilities, totals.shape):
                     raise ValueError("A checkpoint produced invalid probabilities.")
                 uncertainty = uncertainty_collected or None
-                if uncertainty is not None and not _valid_window_uncertainty(uncertainty, totals.shape):
+                if uncertainty is not None and not _valid_window_uncertainty(
+                    uncertainty, totals.shape
+                ):
                     raise ValueError("A checkpoint produced invalid feature-window uncertainty.")
                 payload = {
-                    "probabilities": collected, "logProbabilities": log_collected,
+                    "probabilities": collected,
+                    "logProbabilities": log_collected,
                     **({"windowUncertainty": uncertainty} if uncertainty is not None else {}),
                 }
                 write_json(
@@ -457,11 +519,17 @@ def evaluate(plan, output_dir):
                 probabilities, log_probabilities, uncertainty = cached
             if uncertainty is not None:
                 for members, scores in zip(window_uncertainty_members, uncertainty, strict=True):
-                    members.append({
-                        "memberIndex": index, "checkpointSha256": checkpoint["sha256"], **scores,
-                    })
+                    members.append(
+                        {
+                            "memberIndex": index,
+                            "checkpointSha256": checkpoint["sha256"],
+                            **scores,
+                        }
+                    )
             if member_probabilities is not None:
-                for members, values in zip(member_probabilities, probabilities.tolist(), strict=True):
+                for members, values in zip(
+                    member_probabilities, probabilities.tolist(), strict=True
+                ):
                     members.append(values)
             if member_logs is not None:
                 for members, values in zip(member_logs, log_probabilities.tolist(), strict=True):
@@ -509,36 +577,54 @@ def evaluate(plan, output_dir):
     records = _decisions(records, target, threshold)
     if inference_only:
         return _finish_inference(
-            plan, folder, records, method=method, checkpoints=checkpoints,
-            input_hash=input_hash, member_evidence=member_evidence,
+            plan,
+            folder,
+            records,
+            method=method,
+            checkpoints=checkpoints,
+            input_hash=input_hash,
+            member_evidence=member_evidence,
         )
-    try:
-        patients = _decisions(patient_predictions(records, patient_aggregation), target, threshold)
-        patient_metrics = evaluation_metrics(patients, target, threshold)
-    except ValueError as error:
-        if target["unit"] == "patient":
-            raise
-        patients, patient_metrics = [], {"available": False, "count": 0, "reason": str(error)}
+    if slide_unit:
+        patients, patient_metrics = (
+            [],
+            {
+                "available": False,
+                "count": 0,
+                "reason": "Patient analysis is disabled for slide-level experiments.",
+            },
+        )
+    else:
+        try:
+            patients = _decisions(
+                patient_predictions(records, patient_aggregation), target, threshold
+            )
+            patient_metrics = evaluation_metrics(patients, target, threshold)
+        except ValueError as error:
+            if target["unit"] == "patient":
+                raise
+            patients, patient_metrics = [], {"available": False, "count": 0, "reason": str(error)}
     slide_metrics = evaluation_metrics(records, target, threshold)
     metrics = {
         "unit": target["unit"],
         "classOrder": classes,
         "positiveClass": target.get("positiveClass"),
         "decisionThreshold": threshold,
-        "patientAggregation": "mean_logits"
+        "patientAggregation": None
+        if slide_unit
+        else "mean_logits"
         if patient_aggregation == "mean_logits"
         else "mean_probabilities",
+        **({"splitUnit": plan["splitUnit"]} if "splitUnit" in plan else {}),
         **({"ensembleAggregation": aggregation} if aggregation == "mean_logit" else {}),
         "slide": slide_metrics,
         "patient": patient_metrics,
         "selected": patient_metrics if target["unit"] == "patient" else slide_metrics,
     }
-    if plan.get("analysis") is not None:
+    if not slide_unit and plan.get("analysis") is not None:
         from histopilot.statistics import patient_analysis
 
-        metrics["patientAnalysis"] = patient_analysis(
-            records, patients, target, plan["analysis"]
-        )
+        metrics["patientAnalysis"] = patient_analysis(records, patients, target, plan["analysis"])
         intervals = metrics["patientAnalysis"]["uncertainty"].get("intervals")
         if intervals:
             patient_metrics["confidenceIntervals"] = intervals
@@ -548,13 +634,14 @@ def evaluate(plan, output_dir):
     )
     write_json(folder / "metrics.json", metrics)
     _write_csv(folder / "slide-predictions.csv", records, classes)
-    _write_csv(folder / "patient-predictions.csv", patients, classes, patient=True)
+    if not slide_unit:
+        _write_csv(folder / "patient-predictions.csv", patients, classes, patient=True)
     artifacts = {}
     for name in (
         "predictions.json",
         "metrics.json",
         "slide-predictions.csv",
-        "patient-predictions.csv",
+        *(() if slide_unit else ("patient-predictions.csv",)),
     ):
         path = folder / name
         artifacts[name] = {

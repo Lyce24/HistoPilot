@@ -125,7 +125,8 @@ class CleanupService:
         self.compute = compute or ComputeJobService(store, filesystem)
         self.evaluation_batches = evaluation_batches or BulkEvaluationService(store, filesystem)
 
-    def _catalog(self):
+    def _catalog(self, *, graph=True):
+        """``graph=False`` skips the dependency graph for job-status views."""
         snapshot = self.metadata.read()
         items, documents, aliases = {}, {}, {}
 
@@ -167,7 +168,9 @@ class CleanupService:
                 "draft", record, record["payload"].get("type", record["kind"]), record["name"]
             )
             if record["payload"].get("type") == "model-experiment":
-                items[key]["configurationLocked"] = bool(record["payload"].get("submission"))
+                items[key]["configurationLocked"] = bool(
+                    record["payload"].get("submission") or record["payload"].get("frozenSetupId")
+                )
                 submission = record["payload"].get("submission") or {}
                 from histopilot.application.experiment_policy import predictor_work_expected
 
@@ -211,6 +214,8 @@ class CleanupService:
                 or manifest["kind"].replace("-", " ").title()
             )
             key = add("configuration", record, manifest["kind"], name)
+            if manifest["kind"] == "experiment-setup":
+                items[key]["experimentKey"] = f"draft:{manifest['experimentId']}"
             if manifest["kind"] == "mil-batch":
                 owner = spec.get("experimentId")
                 if owner:
@@ -231,7 +236,8 @@ class CleanupService:
                         alive,
                         execution.get("cancelRequested", False),
                     )
-                    documents[key] = [record, _read_optional(folder / "plan.json")]
+                    if graph:
+                        documents[key] = [record, _read_optional(folder / "plan.json")]
             elif manifest["kind"] in {
                 "predictor-refit",
                 "model-evaluation",
@@ -246,8 +252,9 @@ class CleanupService:
                         or _confirmed_live(execution.get("process")),
                         execution.get("cancellationRequested", False),
                     )
-                folder = self.store.folder / "compute-jobs" / record["id"]
-                documents[key] = [record, _read_optional(folder / "plan.json")]
+                if graph:
+                    folder = self.store.folder / "compute-jobs" / record["id"]
+                    documents[key] = [record, _read_optional(folder / "plan.json")]
             elif manifest["kind"] == "evaluation-batch":
                 execution = self.evaluation_batches.get(record["id"], include_inactive=True)
                 status = execution["status"]
@@ -275,18 +282,19 @@ class CleanupService:
                     record.get("name") or f"{kind.replace('-', ' ').title()} · {record['id'][-8:]}",
                 )
                 folder = service.folder / record["id"]
-                result = _read_optional(folder / "result.json")
-                documents[key] = [record, result]
-                artifact = (result or {}).get("artifact")
-                if artifact and isinstance(artifact.get("id"), str):
-                    aliases.setdefault(artifact["id"], set()).add(key)
+                if graph:
+                    result = _read_optional(folder / "result.json")
+                    documents[key] = [record, result]
+                    artifact = (result or {}).get("artifact")
+                    if artifact and isinstance(artifact.get("id"), str):
+                        aliases.setdefault(artifact["id"], set()).add(key)
                 # Probe live identity even after a terminal result was written.
                 alive = _confirmed_live(_read_optional(folder / "process.json"))
                 self._job(items[key], presented["state"], alive, (folder / "cancelled").exists())
 
         if len(items) > 20000:
             raise StorageError("Too many records to review cleanup safely.", "CLEANUP_LIMIT", 413)
-        for key, document in documents.items():
+        for key, document in documents.items() if graph else ():
             references = set()
             for identity in _strings(document):
                 owners = aliases.get(identity, set())
@@ -342,8 +350,9 @@ class CleanupService:
         }
 
     def catalog(self):
-        with lifecycle_guard(self.store.folder):
-            return self._catalog()
+        # Read-only view: preview, apply and cancel rebuild it under the guard,
+        # and apply rejects a stale preview, so page reads never wait for writers.
+        return self._catalog()
 
     def _preview(self, selection, catalog):
         items = {item["key"]: item for item in catalog["items"]}
@@ -371,7 +380,7 @@ class CleanupService:
             if locked_members and project_key not in selected:
                 block(
                     "EXPERIMENT_CONFIGURATION_LOCKED",
-                    "Submitted batches stay with their experiment. Manage the whole experiment together, or copy it to adjust its batches.",
+                    "Frozen setup and batches stay with their experiment. Manage the whole experiment together, or copy it to adjust its batches.",
                     locked_members,
                 )
             if project_key in selected and len(selected) > 1:

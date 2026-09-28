@@ -151,7 +151,19 @@ describe('experiment tracking', () => {
     expect(html.match(/class="experiment-run-select"/g)).toHaveLength(50);
     expect(html).toMatch(/aria-pressed="true"[^>]*>Config 1 · Fold 1 · Train seed 3 · Split seed 7/);
     expect(html).toContain('aria-label="Selected run details"');
-    expect(html).not.toContain('Train seed 50 ·');
+    expect(html).not.toMatch(/class="experiment-run-select"[^>]*>Config 1 · Fold 1 · Train seed 50 ·/);
+  });
+
+  it('maps runs by test fold and training seed, with test AUROC once a fold finishes', () => {
+    const details = { unit: 'slide', classOrder: ['low', 'high'], positiveClass: 'high', patientAggregation: 'mean_probabilities', slide: { available: true, auroc: 0.9312 }, patient: { available: false }, selected: { available: true, auroc: 0.9312 } } as NonNullable<TrainingRun['metrics']>['assessment'];
+    const done: TrainingRun = { ...run, id: 'run-a', status: 'completed', trainingSeed: 7, metrics: { validation: details, assessment: details }, result: { bestEpoch: 4, epochsCompleted: 9 } };
+    const runs = [{ ...batch.manifest.runs[0], id: 'run-a', trainingSeed: 7 }, { ...batch.manifest.runs[0], id: 'run-b', trainingSeed: 8 }];
+    const html = renderToStaticMarkup(<RunTable batch={{ ...batch, manifest: { ...batch.manifest, runs } }} execution={{ ...execution, runs: [done] }} />);
+    expect(html).toContain('Runs by test fold and training seed');
+    expect(html).toMatch(/experiment-run-cell is-completed[^>]*>.*0\.931.*epoch 4 of 9/);
+    expect(html).toMatch(/experiment-run-cell is-planned[^>]*>.*Planned/);
+    const many = Array.from({ length: 241 }, (_, index) => ({ ...batch.manifest.runs[0], id: `many-${index}`, trainingSeed: index % 5 }));
+    expect(renderToStaticMarkup(<RunTable batch={{ ...batch, manifest: { ...batch.manifest, runs: many } }} execution={execution} />)).not.toContain('Runs by test fold and training seed');
   });
 
   it('keeps checkpoint evidence and artifacts in separate accessible panels while overview is selected', () => {

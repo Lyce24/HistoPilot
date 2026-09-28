@@ -52,6 +52,6 @@ export default function BatchPredictorFields({ value, onChange, configurationCou
       {splitSeedCount !== undefined && foldCount !== undefined ? <span>{groups.toLocaleString()} fold groups · {(groups * foldCount).toLocaleString()} fold runs</span> : <span>The total also depends on the split seeds saved in Inputs. Check batch to confirm the frozen groups.</span>}
       {refit ? <span>{groups.toLocaleString()} additional refit training run{groups === 1 ? '' : 's'}{splitSeedCount === undefined ? ' per split seed' : ''} after cross-validation.</span> : null}
     </div> : <p className="muted">Complete the parameter values and training seeds to see the planned predictor count.</p>}
-    <p className="muted">{value.method === 'skip' ? 'This batch finishes after cross-validation. To create predictors later, copy it into a new experiment and change this choice.' : 'Predictors are created automatically. Refits use this batch’s saved compute resources and add training work after the source folds finish.'}</p>
+    <p className="muted">{value.method === 'skip' ? 'This batch finishes after cross-validation. To create predictors later, copy it into a new experiment and change this choice.' : 'Predictors are created automatically. Refits add training work to the Task Center queue after the source folds finish.'}</p>
   </section>;
 }

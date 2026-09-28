@@ -1,4 +1,5 @@
 import { request } from './client';
+import type { RecordTaskView } from './trident';
 
 export type ArchiveAction = 'export' | 'verify' | 'restore';
 export interface OperationJob {
@@ -19,7 +20,11 @@ export interface SourceInventory {
 }
 export interface ArchiveJob {
   id: string; action: ArchiveAction; status: string; createdAt: string;
-  sessionName: string; logPath: string; error: string | null;
+  /** Null for Task Center operations, which have no tmux session. */
+  sessionName: string | null; logPath: string; error: string | null;
+  /** Task Center operations: the task view and why a queued operation waits. */
+  executor?: 'task-center' | 'tmux'; executionMode?: 'task-center'; ownerKey?: string;
+  task?: RecordTaskView | null; waitingReason?: string | null;
   progress?: { stage: string; completed: number; total: number; file: string };
   result: { verified: boolean; fileCount: number; totalBytes: number; archivePath?: string;
     destinationPath?: string; originalPath?: string; relocated?: boolean; note?: string;

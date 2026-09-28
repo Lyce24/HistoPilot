@@ -64,7 +64,7 @@ describe('BLCA synthetic walkthrough', () => {
   it('labels the source basis, synthetic values, and absence of real study artifacts', () => {
     const html = renderToStaticMarkup(<BlcaDemoOverview workspace={workspace} />);
     expect(html).toContain('138');
-    expect(html).toContain('7 + 1');
+    expect(html).toContain('<dt>Pipeline stages</dt><dd>7</dd>');
     expect(html).toContain('Aggregate workflow shape only.');
     expect(html).toContain('not real study results');
     expect(html).toContain('real feature tensors');

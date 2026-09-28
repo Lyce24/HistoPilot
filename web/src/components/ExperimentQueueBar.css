@@ -1,0 +1,2 @@
+.experiment-queue-bar { display: grid; gap: 8px; margin: 0 0 18px; min-width: 0; }
+.experiment-queue-bar > .callout { margin: 0; }

@@ -25,17 +25,23 @@ export function MetricEvidence({ details }: { details?: TrainingMetricDetails })
   return <details><summary>{details.unit} scoring details</summary><p>Class order: {details.classOrder.join(', ')}{details.positiveClass ? ` · Positive class: ${details.positiveClass}` : ''}</p><p>Slide: {metricsText(details.slide)}</p><p>Patient ({details.patientAggregation.replaceAll('_', ' ')}): {metricsText(details.patient)}</p><PatientAnalysisResults value={details.patientAnalysis} />{details.selected.missingClasses?.length ? <p>Missing classes: {details.selected.missingClasses.join(', ')}. AUROC may be unavailable.</p> : null}</details>;
 }
 
-function RunDiagnostics({ run, peakRamGb }: { run?: TrainingRun; peakRamGb?: number }) {
+/**
+ * Optimizer state for a run. Runs of Task Center experiments leave GPU memory, RAM, attempts
+ * and logs to the Task Center (`taskCenterHref`); older runs keep their own measurements here.
+ */
+function RunDiagnostics({ run, peakRamGb, taskCenterHref }: { run?: TrainingRun; peakRamGb?: number; taskCenterHref?: string }) {
   const progress = run?.progress;
-  const available = [progress?.learningRate, progress?.globalStep, progress?.cudaPeakAllocatedBytes, progress?.cudaPeakReservedBytes, peakRamGb].some(finiteNumber);
+  const resources = !taskCenterHref;
+  const available = [progress?.learningRate, progress?.globalStep, ...(resources ? [progress?.cudaPeakAllocatedBytes, progress?.cudaPeakReservedBytes, peakRamGb] : [])].some(finiteNumber);
   return <><h4>Training diagnostics</h4>{available ? <dl className="experiment-run-facts">
     <div><dt>Learning rate</dt><dd>{finiteNumber(progress?.learningRate) ? progress.learningRate.toExponential(3) : 'Unavailable'}</dd></div>
     <div><dt>Global step</dt><dd>{finiteNumber(progress?.globalStep) ? progress.globalStep.toLocaleString() : 'Unavailable'}</dd></div>
-    <div><dt>CUDA allocated peak</dt><dd>{gib(finiteNumber(progress?.cudaPeakAllocatedBytes) ? progress.cudaPeakAllocatedBytes / 2 ** 30 : undefined)}</dd></div>
+    {resources ? <><div><dt>CUDA allocated peak</dt><dd>{gib(finiteNumber(progress?.cudaPeakAllocatedBytes) ? progress.cudaPeakAllocatedBytes / 2 ** 30 : undefined)}</dd></div>
     <div><dt>CUDA reserved peak</dt><dd>{gib(finiteNumber(progress?.cudaPeakReservedBytes) ? progress.cudaPeakReservedBytes / 2 ** 30 : undefined)}</dd></div>
-    <div><dt>Process-tree RAM peak</dt><dd>{gib(peakRamGb)}</dd></div>
+    <div><dt>Process-tree RAM peak</dt><dd>{gib(peakRamGb)}</dd></div></> : null}
   </dl> : <p className="muted">No training diagnostics have been recorded for this run.</p>}
-    {finiteNumber(peakRamGb) ? <p className="muted">Process-tree RAM is sampled. Shared pages may be counted more than once.</p> : null}
+    {resources && finiteNumber(peakRamGb) ? <p className="muted">Process-tree RAM is sampled. Shared pages may be counted more than once.</p> : null}
+    {taskCenterHref ? <p className="muted">GPU memory, RAM, attempts and the log of each run are in the <a className="text-link" href={taskCenterHref}>Task Center →</a></p> : null}
   </>;
 }
 
@@ -102,7 +108,7 @@ export function runStoppingMetric(run: TrainingRun, recipe?: TrainingRecipe, his
     detail: `Of ${stopping.patience} without sufficient validation improvement.${floorPending ? ` Minimum epochs delay stopping until epoch ${stopping.minEpochs}.` : ''}` };
 }
 
-interface RunDetailsProps { batch: FrozenBatch; run?: TrainingRun; peakRamGb?: number; project?: string; history?: TrainingHistory; illustrative?: boolean }
+interface RunDetailsProps { batch: FrozenBatch; run?: TrainingRun; peakRamGb?: number; project?: string; history?: TrainingHistory; illustrative?: boolean; taskCenterHref?: string }
 
 /** A single history request supplies both the patience tile and the epoch charts. */
 function LiveRunDetails(props: RunDetailsProps & { project: string; run: TrainingRun }) {
@@ -123,7 +129,7 @@ export function RunDetails(props: RunDetailsProps) {
     ? <LiveRunDetails {...props} project={props.project} run={props.run} /> : <RunDetailsContent {...props} />;
 }
 
-function RunDetailsContent({ batch, run, peakRamGb, project, history, illustrative = false, historyPending = false, historyError = null, onHistoryRetry }: RunDetailsProps & { historyPending?: boolean; historyError?: Error | null; onHistoryRetry?: () => void }) {
+function RunDetailsContent({ batch, run, peakRamGb, project, history, illustrative = false, historyPending = false, historyError = null, onHistoryRetry, taskCenterHref }: RunDetailsProps & { historyPending?: boolean; historyError?: Error | null; onHistoryRetry?: () => void }) {
   const [tab, setTab] = useState<DetailTab>('overview');
   const id = useId();
   if (!run) return <p className="muted">This run has not been queued yet.</p>;
@@ -161,7 +167,7 @@ function RunDetailsContent({ batch, run, peakRamGb, project, history, illustrati
       <p className="muted">{latestCheckpoint ? 'The nnMIL protocol selects the latest completed epoch. Validation monitors training.' : 'Validation selects the checkpoint.'} Held-out assessment measures the saved checkpoint on the assessment partition.</p>
       <div className="experiment-checkpoint-grid"><section><h5>Checkpoint validation</h5><p>Checkpoint validation: {metricsText(run.metrics?.validation.selected)}</p><MetricEvidence details={run.metrics?.validation} /></section><section><h5>Held-out assessment</h5><p>Held-out assessment: {metricsText(run.metrics?.assessment.selected)}</p><MetricEvidence details={run.metrics?.assessment} /></section></div>
     </div>
-    <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-diagnostics`} aria-labelledby={`${id}-tab-diagnostics`} hidden={tab !== 'diagnostics'} tabIndex={0}><RunDiagnostics run={run} peakRamGb={peakRamGb} /></div>
+    <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-diagnostics`} aria-labelledby={`${id}-tab-diagnostics`} hidden={tab !== 'diagnostics'} tabIndex={0}><RunDiagnostics run={run} peakRamGb={peakRamGb} taskCenterHref={taskCenterHref} /></div>
     <div className="experiment-run-panel" role="tabpanel" id={`${id}-panel-artifacts`} aria-labelledby={`${id}-tab-artifacts`} hidden={tab !== 'artifacts'} tabIndex={0}>
       <h4>Run artifacts</h4>{illustrative && run.checkpointPath ? <p className="muted">Reference only; no checkpoint file</p> : null}<dl className="experiment-run-facts experiment-artifact-paths"><div><dt>Run ID</dt><dd><code>{run.id}</code></dd></div>{run.checkpointPath ? <div><dt>Checkpoint</dt><dd><code>{run.checkpointPath}</code></dd></div> : null}{run.outputPath ? <div><dt>Output</dt><dd><code>{run.outputPath}</code></dd></div> : null}</dl>
       {!run.checkpointPath && !run.outputPath ? <p className="muted">No checkpoint or output path has been recorded for this run.</p> : null}
@@ -169,7 +175,51 @@ function RunDetailsContent({ batch, run, peakRamGb, project, history, illustrati
   </section>;
 }
 
-export function RunTable({ batch, execution, project, histories, illustrative = false }: { batch: FrozenBatch; execution?: TrainingExecution | null; project?: string; histories?: Record<string, TrainingHistory>; illustrative?: boolean }) {
+const RUN_MAP_LIMIT = 240;
+const runStatusText: Record<string, string> = { planned: 'Planned', queued: 'Queued', running: 'Running', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted' };
+
+/**
+ * Every planned run of a batch on one grid: test folds down, training seeds across, one
+ * grid per configuration. A finished cell shows its test-fold AUROC and checkpoint epoch;
+ * a running one its epoch. Selecting a cell opens that run below.
+ */
+export function RunMap({ batch, execution, selected, onSelect }: { batch: FrozenBatch; execution?: TrainingExecution | null; selected?: string; onSelect: (id: string) => void }) {
+  const actual = new Map(execution?.runs.map((run) => [run.id, run]) ?? []);
+  const splits = [...batch.manifest.splitPlans].sort((a, b) => (a.seed ?? 0) - (b.seed ?? 0) || (a.fold ?? 0) - (b.fold ?? 0));
+  const seeds = [...new Set(batch.manifest.runs.map((run) => run.trainingSeed))].sort((a, b) => a - b);
+  const planned = new Map(batch.manifest.runs.map((run) => [`${run.candidateId}|${run.splitPlanId}|${run.trainingSeed}`, run]));
+  const splitSeeds = new Set(splits.map((split) => split.seed)).size;
+  const configurations = [...batch.manifest.configurations].sort((a, b) => a.number - b.number);
+  // Large grids stay in the paged table; a map of thousands of cells would not be readable.
+  if (!splits.length || !seeds.length || batch.manifest.runs.length > RUN_MAP_LIMIT || seeds.length > 12) return null;
+  return <div className="experiment-run-map">
+    {configurations.map((configuration) => <figure key={configuration.id}>
+      {configurations.length > 1 ? <figcaption>Configuration {configuration.number}</figcaption> : null}
+      <div className="experiment-run-map-scroll"><table>
+        <caption className="sr-only">Runs by test fold and training seed{configurations.length > 1 ? ` for configuration ${configuration.number}` : ''}</caption>
+        <thead><tr><th scope="col">Test fold</th>{seeds.map((seed) => <th scope="col" key={seed}>Seed {seed}</th>)}</tr></thead>
+        <tbody>{splits.map((split) => <tr key={split.id}>
+          <th scope="row">{finiteNumber(split.fold) ? `Fold ${split.fold + 1}` : split.planId}{splitSeeds > 1 ? <small>split seed {split.seed}</small> : null}</th>
+          {seeds.map((seed) => {
+            const plan = planned.get(`${configuration.id}|${split.id}|${seed}`);
+            if (!plan) return <td key={seed} className="muted">—</td>;
+            const run = actual.get(plan.id);
+            const status = run?.status ?? 'planned';
+            const auroc = run?.metrics?.assessment?.selected?.auroc;
+            const epochs = run?.result?.bestEpoch ? `epoch ${run.result.bestEpoch}${run.result.epochsCompleted ? ` of ${run.result.epochsCompleted}` : ''}` : '';
+            return <td key={seed}><button type="button" className={`experiment-run-cell is-${status}`} aria-pressed={selected === plan.id} title={runLabel(batch, plan)} onClick={() => onSelect(plan.id)}>
+              <strong>{status === 'completed' && finiteNumber(auroc) ? auroc.toFixed(3) : runStatusText[status] ?? status}</strong>
+              <small>{status === 'completed' ? epochs || 'Completed' : status === 'running' && run?.progress ? `epoch ${run.progress.epoch} / ${run.progress.maxEpochs}` : '\u00a0'}</small>
+            </button></td>;
+          })}
+        </tr>)}</tbody>
+      </table></div>
+    </figure>)}
+    <p className="experiment-tracking-hint">Finished cells show that run’s test-fold AUROC and the epoch its checkpoint came from. Seed averages and intervals are under Results.</p>
+  </div>;
+}
+
+export function RunTable({ batch, execution, project, histories, illustrative = false, taskCenterHref }: { batch: FrozenBatch; execution?: TrainingExecution | null; project?: string; histories?: Record<string, TrainingHistory>; illustrative?: boolean; taskCenterHref?: string }) {
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -185,6 +235,10 @@ export function RunTable({ batch, execution, project, histories, illustrative = 
   const selected = visible.find((planned) => planned.id === selection) ?? visible.find((planned) => actual.get(planned.id)?.status === 'running') ?? visible[0];
   return <div className="experiment-run-tracker">
     <div className="experiment-tracking-heading"><div><h3>Runs <span className="muted">({batch.manifest.runs.length})</span></h3><p className="experiment-tracking-hint">Select a run to inspect its metrics, checkpoints, and diagnostics.</p></div></div>
+    <RunMap batch={batch} execution={execution} selected={selected?.id} onSelect={(runId) => {
+      // Show the chosen run even when a filter or another page hides it.
+      setFilter('all'); setSearch(''); setPage(Math.max(0, Math.floor(batch.manifest.runs.findIndex((planned) => planned.id === runId) / 50))); setSelection(runId);
+    }} />
     <div className="experiment-run-toolbar">
       <label className="experiment-run-search" htmlFor={`${id}-search`}><span>Search runs</span><input type="search" id={`${id}-search`} className="field" placeholder="Configuration, fold, seed, or run ID" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></label>
       <label className="experiment-run-filter" htmlFor={`${id}-filter`}>Status<select id={`${id}-filter`} className="field" value={filter} onChange={(event) => { setFilter(event.target.value); setPage(0); }}><option value="all">All statuses</option>{['planned', 'queued', 'running', 'completed', 'failed', 'cancelled', 'interrupted'].map((status) => <option key={status} value={status}>{status.charAt(0).toUpperCase() + status.slice(1)}</option>)}</select></label>
@@ -198,6 +252,6 @@ export function RunTable({ batch, execution, project, histories, illustrative = 
     {!filtered.length ? <p className="muted">No runs match these filters.</p> : null}
     <p className="experiment-tracking-hint">Epoch progress counts completed epochs; early stopping can finish before the maximum.</p>
     {pages > 1 ? <div className="inline-actions"><button type="button" className="btn btn-secondary btn-small" disabled={!current} onClick={() => setPage(current - 1)}>Previous</button><span>Page {current + 1} of {pages}</span><button type="button" className="btn btn-secondary btn-small" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>Next</button></div> : null}
-    {selected ? <RunDetails key={selected.id} project={project} batch={batch} run={actual.get(selected.id)} peakRamGb={execution?.telemetry?.peak.runRssGb[selected.id]} history={histories?.[selected.id]} illustrative={illustrative} /> : null}
+    {selected ? <RunDetails key={selected.id} project={project} batch={batch} run={actual.get(selected.id)} peakRamGb={execution?.telemetry?.peak.runRssGb[selected.id]} history={histories?.[selected.id]} illustrative={illustrative} taskCenterHref={taskCenterHref} /> : null}
   </div>;
 }

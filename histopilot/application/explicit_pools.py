@@ -85,14 +85,16 @@ def select_pools(groups, pools, evaluator, finding, fixed_assignments):
     return assignments, direct, expanded, remaining
 
 
-def pool_counts(groups, assignments, classes):
+def pool_counts(groups, assignments, classes, *, split_unit="patient"):
     result = {}
     for role in POOL_ROLES:
         patients = [patient for patient in sorted(groups) if assignments.get(patient) == role]
         rows = [row for patient in patients for row in groups[patient]]
         counts = group_class_counts(groups, set(patients))
         result[role] = {
-            "patients": sum(
+            "patients": 0
+            if split_unit == "slide"
+            else sum(
                 groups[patient][0].get("patientIdSource") != "slide_fallback"
                 for patient in patients
             ),
@@ -128,7 +130,7 @@ def explicit_assignments(spec, groups, assignments, evaluator, finding, max_memb
                     "pool": "external_test",
                     "partition": "train",
                     "slideId": row["slideId"],
-                    "patientId": patient,
+                    "patientId": row.get("patientId") if spec.splitUnit == "slide" else patient,
                     "patientIdSource": row.get("patientIdSource", "source"),
                     "label": row["label"],
                 }

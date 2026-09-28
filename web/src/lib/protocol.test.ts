@@ -1,21 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { ProtocolSpec } from '../api/scientific';
-import { datasetProtocolSpec, inferTargetSettings, newDevelopmentSplit, preservePositiveClass } from './protocol';
+import { inferTargetSettings, newDevelopmentSplit, preservePositiveClass } from './protocol';
 
 describe('new development protocols', () => {
-  it('resumes a feature-bound draft as dataset-only without mutating frozen provenance', () => {
-    const original: ProtocolSpec = {
-      datasetId: 'dataset', split: newDevelopmentSplit(), eligibility: [], predictors: [],
-      constraints: { minPatientsPerClass: 1, minPatientsPerPartition: 1 },
-      target: { field: 'diagnosis', task: 'binary_classification', unit: 'patient', classes: ['no', 'yes'], labels: { no: 'no', yes: 'yes' }, missing: 'block', unmapped: 'block' },
-      featureBundleId: 'old-bundle', featureSetId: 'old-feature', featurePackId: 'old-pack', featureCoverage: 'restrict',
-    };
-    const editable = datasetProtocolSpec(original);
-    expect(editable).toEqual({ datasetId: 'dataset', split: original.split, eligibility: [], predictors: [], constraints: original.constraints, target: original.target });
-    expect(original.featureBundleId).toBe('old-bundle');
-    expect(original.featureCoverage).toBe('restrict');
-  });
-
   it('starts with all eligible training records and no reserved population', () => {
     expect(newDevelopmentSplit([9, 27], 3)).toMatchObject({
       version: 4, mode: 'kfold', folds: 3, seeds: [9, 27],

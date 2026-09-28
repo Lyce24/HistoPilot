@@ -3,12 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider, type QueryObserverOptions } from '@tanstack/react-query';
 import type { GallerySlide, Interpretation, InterpretationExecution, VisualizeSelection } from '../api/interpretation';
 import type { Workspace } from '../api/types';
-import { adoptSavedInterpretation, replaceWizardContext, initialWizardDraft, persistWizardDraft, restoreWizardDraft, selectedBatchReady, wizardResources, wizardRoute, wizardStage, type InterpretationWizardDraft, type SelectedStudyState } from '../lib/interpretationWizard';
+import { adoptSavedInterpretation, replaceWizardContext, initialWizardDraft, persistWizardDraft, predictionCounts, restoreWizardDraft, selectedBatchReady, slideProgress, wizardResources, wizardRoute, wizardStage, type InterpretationWizardDraft, type SelectedStudyState } from '../lib/interpretationWizard';
 import LocalInterpretation from './LocalInterpretation';
 
 const workspace = { project: { id: 'p' } } as Workspace;
 const selectedSlide = (id: string): GallerySlide => ({ slideId: id, slidePath: `/slides/${id}.svs`, name: id, relativePath: `${id}.svs`, available: true, reason: null, patchCount: 2 });
-const result = (id: string) => ({ slideId: id, patchCount: 2, probabilities: [.4, .6], attentionArtifact: 'slide-0.json', members: [{ index: 0, checkpointSha256: 'hash', probabilities: [.4, .6] }] });
+const result = (id: string) => ({ slideId: id, patchCount: 2, probabilities: [.4, .6], attentionArtifact: 'slide-0.json', members: [{ index: 0, checkpointSha256: 'hash', probabilities: [.4, .6] }], prediction: { predictedIndex: 1, predictedLabel: 'high', confidence: .6, margin: .2 } });
 const execution = (id: string, status: InterpretationExecution['status'] = 'completed'): InterpretationExecution => ({ status, result: status === 'completed' ? { slides: [result(id)] } : null });
 function record(id: string, status: InterpretationExecution['status'] = 'completed'): Interpretation {
   return { id: `study-${id}`, createdAt: '', contentHash: id, lifecycleState: 'active', execution: execution(id, status), manifest: { kind: 'model-interpretation', name: `Attention ${id}`, predictorId: 'predictor', experimentId: 'experiment', encoderId: 'uni', method: 'refit', memberCount: 1, slides: [{ ...selectedSlide(id), patchCount: 2, featurePath: `/features/${id}.h5`, featureKey: 'features', coordinatesKey: 'coords', coordinateSpace: 'level0', confirmRowAlignment: true, width: 1000, height: 1000, backend: 'test', levelDownsamples: [1], dimensions: 1024, dtype: 'float32', patchWidthLevel0: 256, patchHeightLevel0: 256, alignment: 'embedded_verified' }] } };
@@ -29,7 +29,7 @@ function storage(hash: string) {
 function render(stage: string, value = draft(), records = [record('one'), record('two')], model = 'abmil') {
   storage(`#interpretation?predictor=predictor&${stage}`); persistWizardDraft('p', value);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); clients.push(client);
-  client.setQueryData(['predictors', 'p'], { items: [{ id: 'predictor', lifecycleState: 'active', manifest: { name: 'Selected refit', method: 'refit', experimentId: 'experiment', recipe: { model }, inputs: { features: { bundle: { id: 'bundle' }, encoderId: 'uni', dimensions: 1024, dtype: 'float32' }, loading: {} } } }] });
+  client.setQueryData(['predictors', 'p'], { items: [{ id: 'predictor', lifecycleState: 'active', manifest: { name: 'Selected refit', method: 'refit', experimentId: 'experiment', recipe: { model }, target: { field: 'grade', task: 'binary_classification', unit: 'slide', classes: ['low', 'high'], positiveClass: 'high', labels: {} }, checkpoints: [{ runId: 'r', path: '/w.ckpt', sha256: 'h', bytes: 1 }], inputs: { features: { bundle: { id: 'bundle' }, encoderId: 'uni', dimensions: 1024, dtype: 'float32' }, loading: {} } } }] });
   client.setQueryData(['interpretation-sources', 'p'], { items: [{ id: 'bundle', name: 'Frozen bundle', current: true, findings: [], encoderId: 'uni', dimensions: 1024, dtype: 'float32', slideCount: 2, featureSetId: 'features', packs: [], datasetId: 'data', datasetName: 'Imported slides', slideFolder: '/slides' }] });
   for (const key of ['model-evaluations', 'clinical-analyses']) client.setQueryData([key, 'p'], { items: [] });
   client.setQueryData(['interpretations', 'p'], { items: records });
@@ -49,14 +49,16 @@ describe('interpretation stages and resumable context', () => {
     persistWizardDraft('p', value);
     expect(restoreWizardDraft('p', parameters)).toMatchObject({ search: 'retained search', offset: 24, batch: { uncertain: true, pending: { operationId: 'pending-review' } } });
   });
-  it('preserves lineage in stage URLs and supports legacy saved-study links', () => {
+  it('drops evaluation and clinical links from stage URLs and opens legacy stage links in the review', () => {
     const query = new URLSearchParams('experiment=exp&predictor=predictor&evaluation=eval&clinical=report');
-    const route = wizardRoute(query, 'viewer', { predictorId: 'predictor', evaluationId: 'eval', clinicalId: 'report' }, 'study 1', 'Slide A');
+    const route = wizardRoute(query, 'review', { predictorId: 'predictor' }, 'study 1', 'Slide A');
     const parsed = new URLSearchParams(route.split('?')[1]);
-    expect(parsed.get('experiment')).toBe('exp'); expect(parsed.get('stage')).toBe('viewer'); expect(parsed.get('slide')).toBe('Slide A');
-    expect(wizardStage(new URLSearchParams('interpretation=old-study'))).toBe('viewer');
+    expect(parsed.get('experiment')).toBe('exp'); expect(parsed.get('stage')).toBe('review'); expect(parsed.get('slide')).toBe('Slide A');
+    expect(parsed.has('evaluation')).toBe(false); expect(parsed.has('clinical')).toBe(false);
+    for (const legacy of ['compute', 'results', 'viewer', 'review']) expect(wizardStage(new URLSearchParams(`stage=${legacy}`))).toBe('review');
+    expect(wizardStage(new URLSearchParams('interpretation=old-study'))).toBe('review');
     expect(wizardStage(new URLSearchParams('stage=select&interpretation=old-study'))).toBe('select');
-    expect(wizardRoute(parsed, 'results', { predictorId: 'predictor', evaluationId: 'eval', clinicalId: 'report' })).not.toContain('interpretation=');
+    expect(wizardRoute(parsed, 'select', { predictorId: 'predictor' })).not.toContain('interpretation=');
   });
   it('restores selection/search and the exact uncertain operation after reload, without serializing heavy record contents', () => {
     const values = storage('#interpretation'); const value = draft();
@@ -100,14 +102,18 @@ describe('interpretation stages and resumable context', () => {
     expect(adoptSavedInterpretation(previous, saved)).toBe(previous);
   });
   it('persists an explicit selection context and replaces its URL before a reload', () => {
-    storage('#interpretation?stage=select&predictor=old&evaluation=old-evaluation');
+    const values = storage('#interpretation?stage=select&predictor=old&evaluation=old-evaluation');
     const history = { state: null, replaceState: vi.fn((_state: unknown, _title: string, route: string) => { window.location.hash = route; }) };
     Object.assign(window, { history, dispatchEvent: vi.fn() });
-    const next = { ...draft(), predictorId: 'new-model', evaluationId: 'new-evaluation', clinicalId: '', selected: [], batch: null };
+    const next = { ...draft(), predictorId: 'new-model', selected: [], batch: null };
     replaceWizardContext('p', next, new URLSearchParams('stage=select&predictor=old&evaluation=old-evaluation'), 'select');
     const query = new URLSearchParams(window.location.hash.split('?')[1]);
-    expect(query.get('predictor')).toBe('new-model'); expect(query.get('evaluation')).toBe('new-evaluation');
-    expect(restoreWizardDraft('p', query)).toMatchObject({ predictorId: 'new-model', evaluationId: 'new-evaluation', batch: null });
+    expect(query.get('predictor')).toBe('new-model'); expect(query.has('evaluation')).toBe(false);
+    expect(restoreWizardDraft('p', query)).toMatchObject({ predictorId: 'new-model', batch: null });
+    // Drafts saved before this change carried evidence links; they restore without them.
+    const key = [...values.keys()][0];
+    values.set(key, JSON.stringify({ ...next, evaluationId: 'legacy-evaluation', clinicalId: 'legacy-report' }));
+    expect(restoreWizardDraft('p', query)).not.toHaveProperty('evaluationId');
     expect(history.replaceState).toHaveBeenCalledOnce();
   });
   it('requires every selected completed result and rejects failed, missing, unrelated or unverified results', () => {
@@ -119,6 +125,17 @@ describe('interpretation stages and resumable context', () => {
     states.set('/slides/two.svs', { hasRecord: true, execution: execution('two'), error: new Error('Receipt changed') }); expect(selectedBatchReady(selected, states)).toBe(false);
     states.delete('/slides/two.svs'); expect(selectedBatchReady(selected, states)).toBe(false);
   });
+  it('reports per-slide review progress and predicted-label counts in class order', () => {
+    const selected = ['one', 'two', 'three', 'four', 'five'].map(selectedSlide);
+    const states = new Map<string, SelectedStudyState>([
+      ['/slides/one.svs', { hasRecord: true, execution: execution('one') }],
+      ['/slides/two.svs', { hasRecord: true, execution: execution('two', 'running') }],
+      ['/slides/three.svs', { hasRecord: true, execution: execution('three', 'failed') }],
+      ['/slides/four.svs', { hasRecord: true, execution: execution('unrelated') }],
+    ]);
+    expect(selected.map((slide) => slideProgress(slide, states.get(slide.slidePath)))).toEqual(['ready', 'computing', 'failed', 'failed', 'waiting']);
+    expect(predictionCounts(selected, states, ['low', 'high'])).toEqual([['high', 1]]);
+  });
 });
 describe('focused interpretation screens', () => {
   it('allows a frozen nnMIL predictor to use attention interpretation', () => {
@@ -128,29 +145,49 @@ describe('focused interpretation screens', () => {
     expect(html).not.toContain('attention unsupported');
     expect(render('stage=select', draft(), [], 'mean_pool').html).toContain('attention unsupported');
   });
-  it('keeps the results page limited to selected slides and separates the focused viewer from setup', () => {
-    const results = render('stage=results', draft(), [record('one'), record('two'), record('unselected')]).html;
-    expect(results).toContain('Attention results'); expect(results).toContain('Open attention viewer for one'); expect(results).not.toContain('unselected');
-    expect(results).not.toContain('Choose model and shared features'); expect(results).not.toContain('Search slides');
-    const viewer = render('stage=viewer&interpretation=study-one&slide=one').html;
-    expect(viewer).toContain('Attention one'); expect(viewer).toContain('Back to results');
-    expect(viewer).not.toContain('Choose model and shared features'); expect(viewer).not.toContain('Search slides'); expect(viewer).not.toContain('Compute slide attention');
+  it('reviews only the selected slides in a Datasets-style list with predicted labels, apart from setup', () => {
+    const review = render('stage=review', draft(), [record('one'), record('two'), record('unselected')]).html;
+    expect(review).toContain('Attention review'); expect(review).toContain('aria-label="Slides in this attention batch"');
+    expect(review).toMatch(/<strong>2<\/strong> of 2 slides ready/); expect(review).not.toContain('unselected');
+    expect(review).toContain('Predicted high (2)'); expect(review).toMatch(/interpretation-prediction-chip[^]*<strong>high<\/strong><span>60%<\/span>/);
+    expect(review).not.toContain('Load model weights and features'); expect(review).not.toContain('Search slides');
+    expect(review).not.toContain('Evidence links'); expect(review).not.toContain('evaluation');
+    const legacy = render('stage=viewer&interpretation=study-two&slide=two').html;
+    expect(legacy).toContain('Attention review'); expect(legacy).toContain('Back to slide selection');
+    expect(legacy).toMatch(/aria-pressed="true"><strong>two<\/strong>/); expect(legacy).toContain('Attention workspace for two');
+    expect(legacy).toContain('aria-label="Predicted label and class probabilities"'); expect(legacy).toContain('Predicted high · decision margin 0.20');
   });
-  it('registers every selected running job independently of result-card visibility and blocks results until all finish', () => {
+  it('polls every selected running job and lets finished slides open before the whole batch completes', () => {
     const ids = Array.from({ length: 12 }, (_, index) => `slide-${index}`);
-    const value = draft(ids); const records = ids.map((id) => record(id, 'running'));
-    const { client, html } = render('stage=compute', value, records);
-    expect(html).toContain('0 / 12 selected slides completed'); expect(html).not.toContain('class="slide-gallery-image"');
+    const value = draft(ids); const records = ids.map((id, index) => record(id, index ? 'running' : 'completed'));
+    const { client, html } = render('stage=review', value, records);
+    expect(html).toMatch(/<strong>1<\/strong> of 12 slides ready/); expect(html).toContain('11 computing');
+    expect(html).toContain('Attention workspace for slide-0'); expect(html).not.toContain('class="slide-gallery-image"');
     const jobs = client.getQueryCache().findAll({ queryKey: ['compute-job', 'p', 'interpretation'] });
     expect(jobs).toHaveLength(12);
     for (const job of jobs) { const interval = (job.options as QueryObserverOptions).refetchInterval; expect(typeof interval).toBe('function'); }
-    expect(render('stage=results', value, records).html).toContain('Selected attention is not ready');
+    const waiting = render('stage=review&slide=slide-3', value, records).html;
+    expect(waiting).toMatch(/aria-pressed="true"><strong>slide-3<\/strong>/); expect(waiting).toContain('other slides can be reviewed meanwhile');
+  });
+  it('takes slides from a chosen frozen dataset when the feature bundle is scoped to a slide store', () => {
+    storage('#interpretation?predictor=predictor&stage=select');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); clients.push(client);
+    client.setQueryData(['predictors', 'p'], { items: [{ id: 'predictor', lifecycleState: 'active', manifest: { name: 'GEJ refit', method: 'refit', experimentId: 'experiment', recipe: { model: 'abmil' }, target: { classes: ['HG', 'IND', 'LG', 'ND'] }, checkpoints: [{}], inputs: { features: { bundle: { id: 'bundle' }, encoderId: 'uni', dimensions: 1024, dtype: 'float32' }, loading: {} } } }] });
+    const warning = { severity: 'warning', code: 'DATASET_SLIDE_FOLDER_UNAVAILABLE', message: 'These features are scoped to a slide store, not a frozen dataset.' };
+    client.setQueryData(['interpretation-sources', 'p'], { items: [{ id: 'bundle', name: 'Store features', current: true, findings: [warning], encoderId: 'uni', dimensions: 1024, dtype: 'float32', slideCount: 1111, featureSetId: 'features', packs: [], datasetId: null, datasetName: 'No dataset', slideFolder: null, slideFolderFinding: warning }] });
+    client.setQueryData(['interpretation-datasets', 'p'], { items: [{ datasetId: 'gej', datasetName: 'gej dataset', slideFolder: '/data/slides/gej', slideFolderSource: 'dataset_import', slideFolderFinding: null, slideCount: 1111 }] });
+    client.setQueryData(['interpretations', 'p'], { items: [] });
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalInterpretation workspace={workspace} /></QueryClientProvider>);
+    expect(html).toContain('<option value="gej" selected="">gej dataset · 1,111 slides</option>');
+    expect(html).toContain('gej dataset · 1,111 slides · /data/slides/gej');
+    expect(html).not.toContain('scoped to a slide store'); expect(html).toContain('Search slides');
   });
   it('locks context mutations and saved-study entry points while preserving an uncertain request', () => {
     const value = draft(); value.batch!.pending = { selection: value.batch!.request!, operationId: 'stable' };
     const { html } = render('stage=select', value);
     expect(html).toContain('<fieldset class="interpretation-sources" disabled="">');
-    expect(html).toContain('<fieldset class="chain-fields" disabled=""><legend class="sr-only">Evidence links');
+    expect(html).not.toContain('Evidence links'); expect(html).not.toContain('Linked evaluation');
+    expect(html).toContain('Model weights'); expect(html).toContain('refit model, 1 checkpoint · predicts low / high');
     expect(html).toMatch(/<button class="text-button" disabled="">Attention one/);
     expect(html).not.toContain('Slide folder on the server'); expect(html).toContain('Imported slides');
   });

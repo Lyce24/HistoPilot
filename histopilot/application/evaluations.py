@@ -231,6 +231,20 @@ class EvaluationService:
             self.protocols._load_dataset(identity)
             for identity in (spec.datasetIds or [spec.datasetId])
         ]
+        if spec.sourceTargetSplitId:
+            from histopilot.application.target_split_source import restrict_target_split_rows
+
+            dataset, dictionary, records = datasets[0]
+            records = restrict_target_split_rows(
+                self.store,
+                spec.sourceTargetSplitId,
+                spec.datasetId,
+                spec.target,
+                records,
+                "test",
+                split_unit=spec.splitUnit,
+            )
+            datasets = [(dataset, dictionary, records)]
         fields, rows = {}, []
         for _dataset, dictionary, records in datasets:
             fields.update(dictionary)
@@ -299,8 +313,11 @@ class EvaluationService:
         )
         groups = defaultdict(list)
         for row in included:
-            groups[row.get("patientId")].append(row)
-        self.protocols._identity_findings(included, groups, finding)
+            groups[row["slideId"] if spec.splitUnit == "slide" else row.get("patientId")].append(
+                row
+            )
+        if spec.splitUnit != "slide":
+            self.protocols._identity_findings(included, groups, finding)
         if (
             target
             and target.unit == "patient"
@@ -324,7 +341,7 @@ class EvaluationService:
             "target": target.model_dump(mode="json") if target else None,
             "summary": {
                 "includedSlides": len(included),
-                "includedPatients": len(set(groups) - {None}),
+                "includedPatients": 0 if spec.splitUnit == "slide" else len(set(groups) - {None}),
                 "excludedSlides": excluded,
                 "labeledSlides": sum(counts.values()),
                 "classCounts": {label: counts[label] for label in target.classes} if target else {},
@@ -349,6 +366,15 @@ class EvaluationService:
             "bindings": {
                 "dataset": _reference(datasets[0][0]),
                 "datasets": [_reference(item[0]) for item in datasets],
+                **(
+                    {
+                        "targetSplit": _reference(
+                            self.store.get_configuration(spec.sourceTargetSplitId)
+                        )
+                    }
+                    if spec.sourceTargetSplitId
+                    else {}
+                ),
             },
             "compatibility": {},
             "pack": None,
@@ -385,6 +411,16 @@ class EvaluationService:
             raise StorageError(
                 "The development target is invalid.", "INVALID_PROTOCOL", 422
             ) from error
+        if spec.splitUnit != protocol_manifest.get("spec", {}).get("splitUnit", "patient"):
+            finding(
+                "SPLIT_UNIT_MISMATCH",
+                "The test cohort must use the predictor's slide or patient split unit.",
+            )
+        if spec.splitUnit == "slide" and target.unit != "slide":
+            finding(
+                "SPLIT_UNIT_MISMATCH",
+                "Slide-level experiments require slide-level prediction targets.",
+            )
         purpose_findings(spec, finding)
         if spec.purpose == "review" and target.unit != "slide":
             finding(
@@ -394,17 +430,20 @@ class EvaluationService:
         datasets, fields, rows = self._load_datasets(spec)
         dataset = datasets[0][0]
         same_dataset = protocol_manifest["datasetId"] in (spec.datasetIds or [spec.datasetId])
-        if same_dataset and spec.patientIdentifiers == "independent":
+        if spec.splitUnit != "slide" and same_dataset and spec.patientIdentifiers == "independent":
             finding(
                 "SHARED_PATIENT_NAMESPACE", "The same dataset must use shared patient identifiers."
             )
-        elif spec.patientIdentifiers == "independent":
+        elif spec.splitUnit != "slide" and spec.patientIdentifiers == "independent":
             finding(
                 "PATIENT_OVERLAP_UNVERIFIABLE",
                 "Separate patient identifier namespaces were declared. Patient overlap cannot be verified across these datasets; exact slide IDs are still checked.",
                 "warning",
             )
-        if spec.inference.patientAggregation not in {"mean", "mean_logits"}:
+        if spec.splitUnit != "slide" and spec.inference.patientAggregation not in {
+            "mean",
+            "mean_logits",
+        }:
             finding(
                 "PATIENT_AGGREGATION_UNSUPPORTED",
                 "Choose mean probabilities or mean logits to match the frozen predictor's patient scoring rule.",
@@ -474,8 +513,11 @@ class EvaluationService:
             finding("DUPLICATE_SLIDE_ID", "Selected test slides have duplicate slide identifiers.")
         groups = defaultdict(list)
         for row in included:
-            groups[row.get("patientId")].append(row)
-        self.protocols._identity_findings(included, groups, finding)
+            groups[row["slideId"] if spec.splitUnit == "slide" else row.get("patientId")].append(
+                row
+            )
+        if spec.splitUnit != "slide":
+            self.protocols._identity_findings(included, groups, finding)
         if target.unit == "patient" and spec.target:
             if any(
                 len({row["label"] for row in group if row["label"] is not None}) > 1
@@ -498,7 +540,7 @@ class EvaluationService:
         slide_overlap = sorted(selected_ids & development_slides)
         patient_overlap = (
             sorted((set(groups) - {None}) & development_patients)
-            if same_dataset or spec.patientIdentifiers == "shared"
+            if spec.splitUnit != "slide" and (same_dataset or spec.patientIdentifiers == "shared")
             else []
         )
         inference = is_inference_purpose(spec.purpose)
@@ -686,7 +728,7 @@ class EvaluationService:
             "target": target.model_dump(mode="json"),
             "summary": {
                 "includedSlides": len(included),
-                "includedPatients": len(set(groups) - {None}),
+                "includedPatients": 0 if spec.splitUnit == "slide" else len(set(groups) - {None}),
                 "excludedSlides": excluded,
                 "labeledSlides": sum(counts.values()),
                 "classCounts": {label: counts[label] for label in target.classes},
@@ -703,7 +745,8 @@ class EvaluationService:
             "overlap": {
                 "slideIds": slide_overlap,
                 "patientIds": patient_overlap,
-                "patientsComparable": same_dataset or spec.patientIdentifiers == "shared",
+                "patientsComparable": spec.splitUnit != "slide"
+                and (same_dataset or spec.patientIdentifiers == "shared"),
                 **({"sourceSlideIds": source_overlap} if source_overlap else {}),
                 **({"duplicateSourceSlideIds": duplicate_sources} if duplicate_sources else {}),
             },

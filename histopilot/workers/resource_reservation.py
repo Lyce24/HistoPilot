@@ -1,11 +1,20 @@
-"""Use the existing cross-project CPU/RAM/GPU leases for preparation workers."""
+"""Use the existing cross-project CPU/RAM/GPU leases for preparation workers.
+
+Only workers launched outside the Task Center lease themselves. Under the Task Center
+(``HISTOPILOT_TASK_MANAGED=1``) the runner admits the task and publishes its lease, so
+``reserve_preparation`` does nothing.
+"""
 
 import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from histopilot.adapters.trident.performance import execution_device_count, resolve_max_workers
+from histopilot.adapters.trident.performance import (
+    estimate_vram_gb,
+    execution_device_count,
+    resolve_max_workers,
+)
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import _capacity, _leases, available_device
 from histopilot.workers.training_process import (
@@ -15,6 +24,17 @@ from histopilot.workers.training_process import (
     process_identity,
     stop_owned_processes,
 )
+
+# An extraction shares its GPU like a Task Center task does (the default "parallel GPU
+# tasks" setting), instead of claiming it exclusively: HEST segmentation, the largest
+# stage, uses about 9 of 24 GiB. ``runsPerGpu`` 1 made training and extraction block
+# each other in both directions (the legacy scheduler admits by the smallest runsPerGpu
+# on a GPU, and the Task Center treats a foreign runsPerGpu 1 lease as exclusive).
+SHARED_RUNS_PER_GPU = 4
+
+
+def managed() -> bool:
+    return os.environ.get("HISTOPILOT_TASK_MANAGED") == "1"
 
 
 def preparation_resources(kind, options=None):
@@ -29,7 +49,8 @@ def preparation_resources(kind, options=None):
     return {
         "maxConcurrentRuns": 1,
         "gpuIds": gpus,
-        "runsPerGpu": 1,
+        "runsPerGpu": SHARED_RUNS_PER_GPU,
+        "vramGb": estimate_vram_gb(options) if gpus else 0.0,
         "cpuThreadsPerRun": devices,
         "dataLoaderWorkers": workers * devices,
         "ramGbPerRun": float(4 * devices if kind == "extraction" else 1),
@@ -58,6 +79,10 @@ class Reservation:
 @contextmanager
 def reserve_preparation(folder, kind, resources, cancelled):
     folder = Path(folder)
+    if managed():
+        # The Task Center runner admitted this task and holds its lease.
+        yield Reservation([], [])
+        return
     requested = list(resources["gpuIds"])
     paths, values = [], []
     reservation = Reservation(paths, values)
@@ -90,7 +115,9 @@ def reserve_preparation(folder, kind, resources, cancelled):
                             "gpu": selected,
                             "cpus": cpu_slots_per_run(policy),
                             "ramGb": policy["ramGbPerRun"],
-                            "runsPerGpu": 1,
+                            # Historical plans lack the key; they keep their exclusive GPU.
+                            "runsPerGpu": int(policy.get("runsPerGpu") or 1),
+                            "vramGb": float(policy.get("vramGb") or 0.0),
                             "kind": kind,
                             "batchId": folder.name,
                             "runId": folder.name,

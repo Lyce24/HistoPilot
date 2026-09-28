@@ -5,6 +5,7 @@ evidence determines progress; idempotent receipts recover partial dispatch. Olde
 batches and saved plans remain readable without rewriting their evidence.
 """
 
+import sqlite3
 from copy import deepcopy
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -16,7 +17,7 @@ from histopilot.application.experiment_policy import (
     resolve_batch_policy,
     submission_policies,
 )
-from histopilot.application.feature_bundles import _hash
+from histopilot.application.feature_bundles import FeatureBundleService, _hash
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.schemas.model_experiments import ExperimentPredictorPolicy
@@ -126,6 +127,133 @@ def aggregate_status(batches, has_plan=False):
     return "partial"
 
 
+# One execution status for a submitted experiment, shown by the library, the detail
+# header and the setup list. Live work first, then anything that needs a person.
+EXECUTION_STATUSES = (
+    "running",
+    "queued",
+    "held",
+    "waiting",
+    "needs-attention",
+    "cancelled",
+    "completed",
+)
+LIVE_EXECUTION = frozenset({"running", "queued", "held", "waiting"})
+# Batch, submission, predictor-coordinator and Task Center states in that vocabulary.
+_EXECUTION_STATUS = {
+    "running": "running",
+    "cancelling": "running",
+    "starting": "running",
+    "stopping": "running",
+    "queued": "queued",
+    "scheduled": "queued",
+    "launching": "queued",
+    "held": "held",
+    "waiting": "waiting",
+    "blocked": "waiting",
+    "needs-attention": "needs-attention",
+    "attention": "needs-attention",
+    "failed": "needs-attention",
+    "interrupted": "needs-attention",
+    "unknown": "needs-attention",
+    "cancelled": "cancelled",
+    "completed": "completed",
+    "succeeded": "completed",
+}
+
+
+def execution_status(statuses):
+    """The most urgent execution status among parts; ``None`` if none has run."""
+    found = {_EXECUTION_STATUS.get(status) for status in statuses} - {None}
+    return next((status for status in EXECUTION_STATUSES if status in found), None)
+
+
+def _task_batch(task):
+    """The training batch of a task, as the Task Center's rollups read it."""
+    group = task.get("group") or {}
+    return (
+        (group.get("id") if group.get("kind") == "mil-batch" else None)
+        or (task.get("adapterData") or {}).get("batchId")
+        or (task.get("labels") or {}).get("batchId")
+    )
+
+
+def _task_counts(task, batch_ids):
+    """Whether a task still speaks for its experiment (mirrors the Task Center rollups).
+
+    Live work always counts. A progress collection that stopped short is superseded by
+    its batch's final collection, and a finished task of a batch outside ``batch_ids``
+    (trashed, or left behind) no longer describes the experiment.
+    """
+    from histopilot.taskcenter.model import LIVE, awaiting_requeue
+
+    if task["state"] in LIVE or awaiting_requeue(task):
+        return True
+    if (
+        task.get("kind") == "mil-collect"
+        and (task.get("adapterData") or {}).get("final") in (False, 0)
+        and task["state"] in {"failed", "cancelled", "interrupted"}
+    ):
+        return False
+    batch = _task_batch(task)
+    return batch_ids is None or batch is None or batch in batch_ids
+
+
+def current_batch_ids(batches, submission):
+    """The batches whose Task Center tasks still speak for an experiment: those its
+    training may still resume (``require_training_action``), never a trashed one.
+
+    ``batches`` are rows with ``id`` and lifecycle ``state``. A submitted experiment has
+    only ever run its submitted batches (their records exist before they are submitted);
+    one without a submission keeps its own batches.
+    """
+    trashed = {batch["id"] for batch in batches if batch["state"] == "trashed"}
+    if submission:
+        return set(submission.get("batchIds") or []) - trashed
+    return {batch["id"] for batch in batches} - trashed
+
+
+def task_execution(tasks, *, held=False, runner_alive=True, batch_ids=None):
+    """``(status, reason)`` for one Task Center owner's tasks; ``None`` without tasks.
+
+    A failed coordinator reads as needing attention, not as a failed experiment, and
+    work the runner will requeue (a busy project, an OOM retry) reads as waiting.
+    ``batch_ids`` (the experiment's current batches) leaves out finished tasks of other
+    batches; see ``_task_counts``.
+    """
+    from histopilot.taskcenter.model import ACTIVE, PENDING, awaiting_requeue
+
+    tasks = [task for task in tasks if _task_counts(task, batch_ids)]
+    if not tasks:
+        return None
+    pending = [task for task in tasks if task["state"] in PENDING]
+    awaiting = [task for task in tasks if awaiting_requeue(task)]
+    if any(task["state"] in ACTIVE for task in tasks):
+        return "running", None
+    if pending or awaiting:
+        if held:
+            return "held", "Held in the Task Center. It starts after it is released there."
+        if not runner_alive:
+            return "waiting", "The Task Center runner is stopped; queued work starts once it runs."
+        reason = next(
+            (task["waitingReason"] for task in pending if task.get("waitingReason")), None
+        )
+        if any(task["state"] == "queued" for task in pending):
+            return "queued", reason
+        return "waiting", reason or (
+            "Waiting for earlier tasks to finish."
+            if pending
+            else "Retrying automatically after a temporary problem."
+        )
+    failed = [task for task in tasks if task["state"] in {"failed", "interrupted"}]
+    if failed:
+        error = failed[0].get("error")
+        return "needs-attention", error if isinstance(error, str) and error else None
+    if any(task["state"] == "cancelled" for task in tasks):
+        return "cancelled", None
+    return "completed", None
+
+
 def experiment_stage(batches, submission=None, *, legacy=False):
     # Hidden evidence must never reopen a submitted experiment. Unknown evidence
     # also locks fail-closed; it is not proof that training never started.
@@ -137,14 +265,31 @@ def experiment_stage(batches, submission=None, *, legacy=False):
     complete_intent = all(row.get("batchId") for row in publications)
     actual = {row["id"] for row in batches}
     stage_batches = [row for row in batches if row["id"] in expected] if submission else batches
+    # Task Center submissions stay resumable: a cancelled batch keeps the stage running.
+    settled = (
+        {"completed"}
+        if (submission or {}).get("executionMode") == "task-center"
+        else {"completed", "cancelled"}
+    )
     finished = (
         bool(stage_batches)
         and (not submission or submission.get("status") == "submitted")
         and complete_intent
         and expected <= actual
-        and all(row["status"] in {"completed", "cancelled"} for row in stage_batches)
+        and all(row["status"] in settled for row in stage_batches)
     )
     return ("finished" if finished else "running"), True
+
+
+def predictors_settled(submission, execution) -> bool:
+    """Whether predictor creation lets the experiment finish.
+
+    Task Center experiments stay resumable after their predictors are cancelled.
+    """
+    managed = (submission or {}).get("executionMode") == "task-center" or (
+        execution.get("executor") == "task-center"
+    )
+    return execution["status"] in ({"completed"} if managed else {"completed", "cancelled"})
 
 
 def execution_contract(plan):
@@ -187,6 +332,54 @@ class ModelExperimentService:
                 self.store, self.filesystem, training=self.training
             )
         return self.predictor_execution
+
+    def task_batch_ids(self, identity):
+        """``current_batch_ids`` of one experiment, read without the project lock (a Task
+        Center owner retry resumes only these batches)."""
+        record = self.store.get_draft(identity, include_inactive=True)
+        submission = record["payload"].get("submission")
+        states = self.store.lifecycle.read()["records"]
+        ids = (
+            submission.get("batchIds") or []
+            if submission
+            else [batch["id"] for batch in self._owned_batches(identity)]
+        )
+        return current_batch_ids(
+            [
+                {"id": batch, "state": states.get(f"configuration:{batch}", {}).get("state")}
+                for batch in ids
+            ],
+            submission,
+        )
+
+    def _task_execution(self, identity, batch_ids=None):
+        """The experiment owner's Task Center status, read without any project lock.
+
+        ``None`` when the owner has no tasks or the task store cannot be read; the
+        batch and coordinator evidence then decide the status alone. ``batch_ids``: the
+        batches whose finished tasks still count (``task_execution``).
+        """
+        from histopilot.taskcenter import ids
+
+        try:
+            client = getattr(self.training, "task_center", None)
+            if client is None:
+                from histopilot.taskcenter.client import default_client
+
+                client = default_client()
+            key = ids.owner_key("experiment", identity, str(self.store.folder))
+            tasks = client.store.list(owner_key=key, limit=None)
+            if not tasks:
+                return None
+            owner = client.store.owner(key) or {}
+            return task_execution(
+                tasks,
+                held=bool(owner.get("held")),
+                runner_alive=bool(client.runner_alive()),
+                batch_ids=batch_ids,
+            )
+        except (StorageError, OSError, ValueError, sqlite3.Error):
+            return None
 
     def _start_predictors(self, identity, submission):
         if not predictor_work_expected(submission):
@@ -231,7 +424,7 @@ class ModelExperimentService:
             )
         if not metadata_only and self._configuration_locked(record):
             raise StorageError(
-                "This experiment has been submitted. Copy it to adjust inputs or batches.",
+                "This experimental setup is frozen or submitted. Copy it to adjust inputs or batches.",
                 "EXPERIMENT_CONFIGURATION_LOCKED",
                 409,
             )
@@ -245,7 +438,7 @@ class ModelExperimentService:
         ]
 
     def _configuration_locked(self, record):
-        if record["payload"].get("submission"):
+        if record["payload"].get("submission") or record["payload"].get("frozenSetupId"):
             return True
         for batch in self._owned_batches(record["id"]):
             try:
@@ -295,6 +488,8 @@ class ModelExperimentService:
 
     def create(self, request):
         values = request.model_dump(exclude={"operationId"})
+        if values.get("setupVersion") is None:
+            values.pop("setupVersion", None)
         if values.get("sourceExperimentId") is None:
             values.pop("sourceExperimentId", None)
         digest = _hash(values)
@@ -320,6 +515,9 @@ class ModelExperimentService:
                         "Restore the source experiment before copying it.", "RECORD_TRASHED", 409
                     )
                 values["inputs"] = deepcopy(source["inputs"])
+                if source.get("setupVersion") or source.get("setupDesign"):
+                    values["setupVersion"] = 1
+                    values["setupDesign"] = deepcopy(source.get("setupDesign"))
                 values["predictorPolicy"] = deepcopy(
                     source["predictorPolicy"] or ExperimentPredictorPolicy().model_dump()
                 )
@@ -389,7 +587,7 @@ class ModelExperimentService:
                 request.name,
                 {
                     "type": EXPERIMENT_TYPE,
-                    "version": 2,
+                    "version": 3 if values.get("setupVersion") else 2,
                     **{
                         key: value
                         for key, value in values.items()
@@ -413,8 +611,17 @@ class ModelExperimentService:
                 for key in ("inputs", "batchPlans", "predictorPolicy")
             ):
                 raise StorageError(
-                    "Submitted inputs, batch plans and predictor choices cannot change. Copy this experiment to adjust them.",
+                    "Frozen inputs, batch plans and predictor choices cannot change. Copy this experiment to adjust them.",
                     "EXPERIMENT_CONFIGURATION_LOCKED",
+                    409,
+                )
+            if (record["payload"].get("setupVersion") or record["payload"].get("setupDesign")) and (
+                "inputs" in request.model_fields_set
+                and request.model_dump()["inputs"] != record["payload"].get("inputs")
+            ):
+                raise StorageError(
+                    "Choose dataset, targets, features and training design through Experimental Setup.",
+                    "EXPERIMENT_SETUP_INPUTS_REQUIRED",
                     409,
                 )
             if request.inputs:
@@ -443,6 +650,268 @@ class ModelExperimentService:
                 expected_revision=request.expectedRevision,
                 name=request.name,
                 payload={**record["payload"], **values},
+            )
+            return self.get(identity)
+
+    def setup_inputs(self, identity, request):
+        from histopilot.application.mil_inputs import MILInputService
+        from histopilot.application.target_splits import TargetSplitService
+
+        with lifecycle_guard(self.store.folder):
+            record = self.require_editable(identity, request.expectedRevision)
+            if request.trainingSplit.mode != "kfold":
+                raise StorageError(
+                    "Experimental Setup currently supports k-fold training. Choose k-fold before verifying inputs.",
+                    "TRAINING_SPLIT_UNSUPPORTED",
+                    422,
+                )
+            target_split = self.store.get_configuration(request.targetSplitId)
+            manifest = target_split["manifest"]
+            if manifest.get("kind") != "target-split":
+                raise StorageError(
+                    "Choose frozen targets and train/test populations.", "INVALID_TARGET_SPLIT", 422
+                )
+            if manifest.get("datasetId") != request.datasetId:
+                raise StorageError(
+                    "The target split belongs to a different dataset.",
+                    "EXPERIMENT_DATASET_MISMATCH",
+                    422,
+                )
+            self.store.get_dataset(request.datasetId)
+            protocol = TargetSplitService(self.store, self.filesystem).derive_protocol(
+                request.targetSplitId, request.trainingSplit
+            )
+            inputs = MILInputSpec(
+                protocolId=protocol["id"],
+                featureBundleId=request.featureBundleId,
+                loadingPolicy=request.loadingPolicy,
+                packArtifactId=request.packArtifactId,
+            )
+            self._require_input_compatibility(
+                MILInputService(self.store, self.filesystem).preview(inputs)
+            )
+            design = {
+                "datasetId": request.datasetId,
+                "targetSplitId": request.targetSplitId,
+                "splitUnit": manifest["spec"].get("splitUnit", "patient"),
+                "trainingSplit": request.trainingSplit.model_dump(mode="json"),
+            }
+            plans = self._normalize_plans(
+                record["payload"].get("batchPlans", []),
+                identity=identity,
+                revision=record["revision"] + 1,
+                name=record["name"],
+                inputs=inputs.model_dump(),
+                predictor_policy=record["payload"].get("predictorPolicy"),
+            )
+            self.store.update_draft(
+                identity,
+                expected_revision=request.expectedRevision,
+                name=record["name"],
+                payload={
+                    **record["payload"],
+                    "version": 3,
+                    "setupVersion": 1,
+                    "setupDesign": design,
+                    "inputs": inputs.model_dump(),
+                    "batchPlans": plans,
+                },
+            )
+            return self.get(identity)
+
+    @staticmethod
+    def _require_input_compatibility(review):
+        if not review["canPlan"]:
+            raise StorageError(
+                "Resolve experiment input compatibility: "
+                + "; ".join(
+                    row["message"] for row in review["findings"] if row["severity"] == "error"
+                ),
+                "EXPERIMENT_INPUTS_INVALID",
+                422,
+            )
+
+    def _frozen_setup(self, record):
+        identity = record["payload"].get("frozenSetupId")
+        if not identity:
+            raise StorageError(
+                "Freeze Experimental Setup before starting this experiment.",
+                "EXPERIMENT_SETUP_REQUIRED",
+                409,
+            )
+        document = self.store.get_configuration(identity)
+        manifest = document["manifest"]
+        if (
+            manifest.get("kind") != "experiment-setup"
+            or manifest.get("experimentId") != record["id"]
+        ):
+            raise StorageError(
+                "The frozen setup does not belong to this experiment.",
+                "EXPERIMENT_SETUP_CHANGED",
+                409,
+            )
+        for key in ("inputs", "setupDesign", "batchPlans", "predictorPolicy"):
+            if record["payload"].get(key) != manifest.get(key):
+                raise StorageError(
+                    "The experimental setup no longer matches its frozen configuration.",
+                    "EXPERIMENT_SETUP_CHANGED",
+                    409,
+                )
+        return document
+
+    def freeze_setup(self, identity, request):
+        from histopilot.application.development import DevelopmentService
+        from histopilot.application.mil_inputs import MILInputService
+
+        with lifecycle_guard(self.store.folder):
+            record = self.require_editable(identity, metadata_only=True)
+            previous = record["payload"].get("setupFreeze")
+            if record["payload"].get("frozenSetupId"):
+                if previous != request.model_dump():
+                    raise StorageError(
+                        "This setup is already frozen. Copy it to make changes.",
+                        "EXPERIMENT_SETUP_FROZEN",
+                        409,
+                    )
+                self._frozen_setup(record)
+                return self.get(identity)
+            record = self.require_editable(identity, request.expectedRevision)
+            payload = record["payload"]
+            if not payload.get("setupDesign") or not payload.get("inputs"):
+                raise StorageError(
+                    "Save the dataset, target split, features and training design first.",
+                    "EXPERIMENT_SETUP_INPUTS_REQUIRED",
+                    422,
+                )
+            operation = "experiment-setup-" + _hash(
+                {"experimentId": identity, "operationId": request.operationId}
+            )
+            prior = self.store.configuration_publication(operation)
+            if prior:
+                manifest = prior["manifest"]
+                if (
+                    manifest.get("experimentId") != identity
+                    or manifest.get("setupFreeze") != request.model_dump()
+                ):
+                    raise StorageError(
+                        "This operation belongs to another setup request.",
+                        "OPERATION_CONFLICT",
+                        409,
+                    )
+                for key in ("setupDesign", "inputs", "predictorPolicy"):
+                    if manifest.get(key) != payload.get(key):
+                        raise StorageError(
+                            "The setup changed after its publication.",
+                            "EXPERIMENT_SETUP_CHANGED",
+                            409,
+                        )
+                frozen = prior
+            else:
+                self._require_input_compatibility(
+                    MILInputService(self.store, self.filesystem).preview(
+                        MILInputSpec.model_validate(payload["inputs"])
+                    )
+                )
+                target_split = self.store.get_configuration(payload["setupDesign"]["targetSplitId"])
+                if target_split["manifest"].get("datasetId") != payload["setupDesign"]["datasetId"]:
+                    raise StorageError(
+                        "The target split belongs to a different dataset.",
+                        "EXPERIMENT_DATASET_MISMATCH",
+                        422,
+                    )
+                plans = self._normalize_plans(
+                    payload.get("batchPlans", []),
+                    identity=identity,
+                    revision=record["revision"],
+                    name=record["name"],
+                    inputs=payload["inputs"],
+                    predictor_policy=payload.get("predictorPolicy"),
+                )
+                states = self.store.lifecycle.read()["records"]
+                batches = [
+                    batch
+                    for batch in self._owned_batches(identity)
+                    if states.get(f"configuration:{batch['id']}", {}).get("state", "active")
+                    == "active"
+                ]
+                if not plans and not batches:
+                    raise StorageError(
+                        "Save at least one batch plan before freezing setup.",
+                        "EXPERIMENT_BATCHES_REQUIRED",
+                        422,
+                    )
+                development = DevelopmentService(self.store, self.filesystem)
+                previews = []
+                for plan in plans:
+                    preview = development._preview(
+                        DevelopmentBatchSpec.model_validate(plan["spec"], context={"legacy": True}),
+                        experiment_record=record,
+                    )
+                    if not preview["canFreeze"]:
+                        raise StorageError(
+                            "Resolve batch findings before freezing setup: "
+                            + "; ".join(
+                                row["message"]
+                                for row in preview["findings"]
+                                if row["severity"] == "error"
+                            ),
+                            "BATCH_PREFLIGHT_BLOCKED",
+                            422,
+                        )
+                    previews.append({"planId": plan["id"], "previewHash": preview["previewHash"]})
+                if any(
+                    batch["manifest"].get("spec", {}).get("inputs") != payload["inputs"]
+                    for batch in batches
+                ):
+                    raise StorageError(
+                        "Existing batches use different experiment inputs.",
+                        "EXPERIMENT_BATCH_INPUTS_MISMATCH",
+                        409,
+                    )
+                manifest = {
+                    "kind": "experiment-setup",
+                    "version": 1,
+                    "experimentId": identity,
+                    "datasetId": payload["setupDesign"]["datasetId"],
+                    "setupDesign": deepcopy(payload["setupDesign"]),
+                    "inputs": deepcopy(payload["inputs"]),
+                    "inputSnapshot": input_snapshot(self.store, payload["inputs"]),
+                    "targetSplit": {key: target_split[key] for key in ("id", "contentHash")},
+                    "batchPlans": plans,
+                    "batchPreviews": previews,
+                    "batches": [
+                        {key: batch[key] for key in ("id", "contentHash")} for batch in batches
+                    ],
+                    "predictorPolicy": deepcopy(payload.get("predictorPolicy")),
+                    "setupFreeze": request.model_dump(),
+                    "experiment": {
+                        "id": identity,
+                        "revision": record["revision"],
+                        "name": record["name"],
+                        "payload": {
+                            key: deepcopy(payload.get(key, [] if key == "tags" else ""))
+                            for key in ("notes", "tags")
+                        },
+                    },
+                }
+                bundle_service = FeatureBundleService(self.store, self.filesystem)
+                bundle = bundle_service.get(payload["inputs"]["featureBundleId"])
+                feature = self.store.get_configuration(bundle["manifest"]["spec"]["featureSetId"])
+                freshness = bundle_service._freshness_guard(feature, bundle["manifest"])
+                frozen = self.store.publish_configuration(
+                    manifest=manifest, operation_id=operation, before_publish=freshness
+                )
+            self.store.update_draft(
+                identity,
+                expected_revision=record["revision"],
+                name=record["name"],
+                payload={
+                    **payload,
+                    "setupVersion": 1,
+                    "batchPlans": frozen["manifest"]["batchPlans"],
+                    "frozenSetupId": frozen["id"],
+                    "setupFreeze": request.model_dump(),
+                },
             )
             return self.get(identity)
 
@@ -497,20 +966,41 @@ class ModelExperimentService:
                     self._start_predictors(identity, submission)
                     return self.get(identity)
             else:
-                record = self.require_editable(identity, request.expectedRevision)
+                pipeline = bool(
+                    record["payload"].get("setupVersion") or record["payload"].get("setupDesign")
+                )
+                frozen_setup = self._frozen_setup(record)["manifest"] if pipeline else None
+                record = self.require_editable(
+                    identity, request.expectedRevision, metadata_only=pipeline
+                )
+                experiment_record = frozen_setup["experiment"] if frozen_setup else record
+                if (
+                    frozen_setup
+                    and input_snapshot(self.store, frozen_setup["inputs"])
+                    != frozen_setup["inputSnapshot"]
+                ):
+                    raise StorageError(
+                        "The frozen setup inputs changed. Copy the setup and review the current inputs.",
+                        "EXPERIMENT_SETUP_CHANGED",
+                        409,
+                    )
                 if not record["payload"].get("inputs"):
                     raise StorageError(
                         "Choose experiment inputs before submission.",
                         "EXPERIMENT_INPUTS_REQUIRED",
                         422,
                     )
-                plans = self._normalize_plans(
-                    record["payload"].get("batchPlans", []),
-                    identity=identity,
-                    revision=record["revision"],
-                    name=record["name"],
-                    inputs=record["payload"]["inputs"],
-                    predictor_policy=record["payload"].get("predictorPolicy"),
+                plans = (
+                    deepcopy(frozen_setup["batchPlans"])
+                    if frozen_setup
+                    else self._normalize_plans(
+                        record["payload"].get("batchPlans", []),
+                        identity=identity,
+                        revision=record["revision"],
+                        name=record["name"],
+                        inputs=record["payload"]["inputs"],
+                        predictor_policy=record["payload"].get("predictorPolicy"),
+                    )
                 )
                 states = self.store.lifecycle.read()["records"]
                 owned_batches = self._owned_batches(identity)
@@ -520,6 +1010,21 @@ class ModelExperimentService:
                     if states.get(f"configuration:{batch['id']}", {}).get("state", "active")
                     == "active"
                 ]
+                if frozen_setup:
+                    batches = []
+                    for expected in frozen_setup["batches"]:
+                        batch = self.store.get_configuration(expected["id"])
+                        if (
+                            batch["contentHash"] != expected["contentHash"]
+                            or states.get(f"configuration:{batch['id']}", {}).get("state", "active")
+                            != "active"
+                        ):
+                            raise StorageError(
+                                "A batch in this frozen setup changed or is inactive.",
+                                "EXPERIMENT_SETUP_CHANGED",
+                                409,
+                            )
+                        batches.append(batch)
                 if any(
                     batch["manifest"].get("spec", {}).get("inputs") != record["payload"]["inputs"]
                     for batch in batches
@@ -541,7 +1046,11 @@ class ModelExperimentService:
                     spec = DevelopmentBatchSpec.model_validate(
                         plan["spec"], context={"legacy": True}
                     )
-                    preview = development.preview(spec)
+                    preview = (
+                        development._preview(spec, experiment_record=experiment_record)
+                        if frozen_setup
+                        else development.preview(spec)
+                    )
                     if not preview["canFreeze"]:
                         raise StorageError(
                             "Resolve batch findings before submission: "
@@ -551,6 +1060,16 @@ class ModelExperimentService:
                                 if row["severity"] == "error"
                             ),
                             "BATCH_PREFLIGHT_BLOCKED",
+                            409,
+                        )
+                    if (
+                        frozen_setup
+                        and {"planId": plan["id"], "previewHash": preview["previewHash"]}
+                        not in frozen_setup["batchPreviews"]
+                    ):
+                        raise StorageError(
+                            "The batch no longer matches its frozen experimental setup.",
+                            "EXPERIMENT_SETUP_CHANGED",
                             409,
                         )
                     manifest = {
@@ -620,15 +1139,25 @@ class ModelExperimentService:
                         for batch in batches
                     },
                     "error": None,
+                    **(
+                        {"executionMode": "task-center"}
+                        if getattr(self.training, "mode", None) == "task-center"
+                        else {}
+                    ),
                     "experiment": {
                         "id": identity,
-                        "revision": record["revision"],
-                        "name": record["name"],
+                        "revision": experiment_record["revision"],
+                        "name": experiment_record["name"],
                         "payload": {
-                            key: record["payload"].get(key, [] if key == "tags" else "")
+                            key: experiment_record["payload"].get(key, [] if key == "tags" else "")
                             for key in ("notes", "tags")
                         },
                     },
+                    **(
+                        {"frozenSetupId": record["payload"]["frozenSetupId"]}
+                        if frozen_setup
+                        else {}
+                    ),
                 }
                 # All scientific/runtime checks precede the irreversible receipt.
                 # It is durable before any publication or external worker launch.
@@ -750,8 +1279,10 @@ class ModelExperimentService:
                     resolvedInputs=manifest.get("resolvedInputs", {}),
                     configurations=manifest.get("configurations", []),
                     trainingSeeds=manifest["spec"].get("trainingSeeds", []),
-                    resources=manifest["spec"].get("resources", {}),
                 )
+                # New specs leave parallelism to the Task Center and carry no resources.
+                if "resources" in manifest["spec"]:
+                    snapshot["resources"] = manifest["spec"]["resources"]
             except StorageError:
                 # A historical record remains discoverable even if its old inputs
                 # cannot be resolved. Its original manifest is still returned.
@@ -798,6 +1329,68 @@ class ModelExperimentService:
             }
         return result
 
+    def _execution_status(
+        self, identity, record, stage, batches, drafts, inputs, submission, predictor_execution
+    ):
+        """``(status, reason)``: planning statuses before submission, then one execution status.
+
+        Task Center experiments take live states (running, queued, held, waiting) from
+        the owner's tasks; batch, submission and coordinator evidence add what needs a
+        person. Other experiments derive everything from that evidence.
+        """
+        retained = [batch for batch in batches if batch["state"] != "trashed"]
+        payload = record.get("payload", {})
+        if stage == "planning":
+            if payload.get("frozenSetupId") and not submission:
+                return "ready", None
+            return aggregate_status(retained, inputs is not None or bool(drafts)), None
+        parts = [batch["status"] for batch in retained]
+        reasons = {}
+        if submission and submission.get("status") != "submitted":
+            # A completed batch cannot hide an unresolved submission receipt. Keep
+            # acknowledgement recovery visible even if all runs finished while the
+            # final launch response was being lost.
+            attention = submission.get("status") == "attention"
+            parts.append("attention" if attention else "launching")
+            if attention:
+                reasons["needs-attention"] = (submission.get("error") or {}).get("message")
+        if predictor_execution:
+            parts.append(predictor_execution["status"])
+            if predictor_execution["status"] in {"attention", "interrupted"}:
+                reasons.setdefault(
+                    "needs-attention", (predictor_execution.get("error") or {}).get("message")
+                )
+            elif predictor_execution["status"] == "waiting":
+                reasons["waiting"] = (
+                    predictor_execution.get("waitingReason")
+                    or "Waiting for the experiment's fold batches to finish."
+                )
+        # Tasks of trashed batches, like the batches themselves, no longer count.
+        tasks = (
+            self._task_execution(identity, current_batch_ids(batches, submission))
+            if (submission or {}).get("executionMode") == "task-center"
+            else None
+        )
+        if tasks is not None:
+            if tasks[0] in LIVE_EXECUTION:
+                return tasks
+            # No live task: saved evidence cannot claim work is still moving.
+            parts = [part for part in parts if _EXECUTION_STATUS.get(part) not in LIVE_EXECUTION]
+            parts.append(tasks[0])
+            if tasks[1]:
+                reasons.setdefault(tasks[0], tasks[1])
+        status = execution_status(parts)
+        if status is None:
+            return aggregate_status(retained, inputs is not None or bool(drafts)), None
+        if status == "needs-attention" and not reasons.get(status):
+            unreadable = next(
+                (batch["executionError"] for batch in retained if batch.get("executionError")), None
+            )
+            reasons[status] = (unreadable or {}).get(
+                "message", "A run stopped before finishing. Review it, then resume."
+            )
+        return status, reasons.get(status)
+
     def _record(self, record, batches, drafts, states, predictors, *, legacy=False, summary=False):
         resource_type = "configuration" if "manifest" in record else "draft"
         key = f"{resource_type}:{record['id']}"
@@ -817,6 +1410,15 @@ class ModelExperimentService:
             predictor_ids.setdefault(item["method"], item["id"])
         submission = payload.get("submission")
         stage, locked = experiment_stage(batches, submission, legacy=legacy)
+        frozen_setup = None
+        if payload.get("frozenSetupId"):
+            locked = True
+            try:
+                frozen_setup = self.store.get_configuration(
+                    payload["frozenSetupId"], include_inactive=True
+                )
+            except StorageError:
+                pass
         predictor_policy = (
             submission.get("predictorPolicy")
             if submission
@@ -864,28 +1466,11 @@ class ModelExperimentService:
                     },
                     summary=summary,
                 )
-            if stage == "finished" and predictor_execution["status"] not in {
-                "completed",
-                "cancelled",
-            }:
+            if stage == "finished" and not predictors_settled(submission, predictor_execution):
                 stage = "running"
-        status_rows = batches
-        if submission and submission.get("status") != "submitted":
-            # A completed batch cannot hide an unresolved submission receipt.
-            # Keep acknowledgement recovery visible even if all runs finished
-            # while the final launch response was being lost.
-            status_rows = [
-                *status_rows,
-                {
-                    "state": "active",
-                    "status": "failed" if submission.get("status") == "attention" else "queued",
-                },
-            ]
-        if predictor_execution:
-            predictor_status = {"waiting": "queued", "attention": "failed"}.get(
-                predictor_execution["status"], predictor_execution["status"]
-            )
-            status_rows = [*status_rows, {"state": "active", "status": predictor_status}]
+        status, status_reason = self._execution_status(
+            identity, record, stage, batches, drafts, inputs, submission, predictor_execution
+        )
         public_submission = (
             None
             if not submission
@@ -916,8 +1501,15 @@ class ModelExperimentService:
             "tags": payload.get("tags", []),
             "revision": record.get("revision", 1),
             "state": states.get(key, {}).get("state", "active"),
-            "status": aggregate_status(status_rows, inputs is not None or bool(drafts)),
+            "status": status,
+            # Why the experiment waits or needs attention, when one reason is known.
+            "statusReason": status_reason,
             "stage": stage,
+            "setupVersion": payload.get("setupVersion"),
+            "setupDesign": deepcopy(payload.get("setupDesign")),
+            "setupStatus": "frozen" if payload.get("frozenSetupId") else "draft",
+            "frozenSetupId": payload.get("frozenSetupId"),
+            "frozenSetup": frozen_setup,
             "configurationLocked": locked,
             "predictorPolicy": predictor_policy,
             "predictorPolicies": public_policies,
@@ -942,105 +1534,104 @@ class ModelExperimentService:
         }
 
     def list(self, *, state="all", summary=False, _identity=None):
-        with lifecycle_guard(self.store.folder):
-            states = self.store.lifecycle.read()["records"]
-            drafts = self.store.list_drafts(include_inactive=True)
-            configurations = self.store.list_configurations(include_inactive=True)
-            records = [
-                record for record in drafts if record["payload"].get("type") == EXPERIMENT_TYPE
-            ]
-            known = {record["id"] for record in records}
-            batches, saved, legacy = {}, {}, []
-            predictors = {}
-            for record in configurations:
-                manifest = record["manifest"]
-                if manifest.get("kind") == "frozen-predictor" and manifest.get("experimentId"):
-                    predictors.setdefault(manifest["experimentId"], []).append(
-                        {
-                            "id": record["id"],
-                            "method": manifest.get("method", "ensemble"),
-                            "batchId": manifest.get("batchId"),
-                            "candidateId": manifest.get("candidateId"),
-                            "trainingSeed": manifest.get("trainingSeed"),
-                            "splitSeed": manifest.get("splitSeed"),
-                            "lifecycleState": states.get(f"configuration:{record['id']}", {}).get(
-                                "state", "active"
-                            ),
-                        }
-                    )
-            for record in configurations:
-                if record["manifest"].get("kind") != "mil-batch":
-                    continue
-                owner = record["manifest"].get("spec", {}).get("experimentId")
-                owned = isinstance(owner, str) and owner in known
-                row_id = owner if owned else legacy_experiment_id(record["id"])
-                if _identity is not None and row_id != _identity:
-                    continue
-                presented = self._batch(record, states, summary=summary)
-                if owned:
-                    batches.setdefault(owner, []).append(presented)
-                else:
-                    legacy.append(
-                        self._record(
-                            record,
-                            [presented],
-                            [],
-                            states,
-                            predictors,
-                            legacy=True,
-                            summary=summary,
-                        )
-                    )
-            for record in drafts:
-                payload = record["payload"]
-                if payload.get("type") not in LEGACY_DRAFT_TYPES:
-                    continue
-                owner = payload.get("experimentId") or _mapping(payload.get("spec")).get(
-                    "experimentId"
+        """Read-only: parallel page reads never wait for, or block, project writers."""
+        states = self.store.lifecycle.read()["records"]
+        drafts = self.store.list_drafts(include_inactive=True)
+        configurations = [
+            *self.store.list_configurations("frozen-predictor", include_inactive=True),
+            *self.store.list_configurations("mil-batch", include_inactive=True),
+        ]
+        records = [record for record in drafts if record["payload"].get("type") == EXPERIMENT_TYPE]
+        known = {record["id"] for record in records}
+        batches, saved, legacy = {}, {}, []
+        predictors = {}
+        for record in configurations:
+            manifest = record["manifest"]
+            if manifest.get("kind") == "frozen-predictor" and manifest.get("experimentId"):
+                predictors.setdefault(manifest["experimentId"], []).append(
+                    {
+                        "id": record["id"],
+                        "method": manifest.get("method", "ensemble"),
+                        "batchId": manifest.get("batchId"),
+                        "candidateId": manifest.get("candidateId"),
+                        "trainingSeed": manifest.get("trainingSeed"),
+                        "splitSeed": manifest.get("splitSeed"),
+                        "lifecycleState": states.get(f"configuration:{record['id']}", {}).get(
+                            "state", "active"
+                        ),
+                    }
                 )
-                owned = isinstance(owner, str) and owner in known
-                row_id = owner if owned else legacy_experiment_id(record["id"])
-                if _identity is not None and row_id != _identity:
-                    continue
-                presented = {
-                    **record,
-                    "state": states.get(f"draft:{record['id']}", {}).get("state", "active"),
-                }
-                if summary:
-                    presented = {key: value for key, value in presented.items() if key != "payload"}
-                if owned:
-                    saved.setdefault(owner, []).append(presented)
-                else:
-                    legacy.append(
-                        self._record(
-                            record,
-                            [],
-                            [presented],
-                            states,
-                            predictors,
-                            legacy=True,
-                            summary=summary,
-                        )
+        for record in configurations:
+            if record["manifest"].get("kind") != "mil-batch":
+                continue
+            owner = record["manifest"].get("spec", {}).get("experimentId")
+            owned = isinstance(owner, str) and owner in known
+            row_id = owner if owned else legacy_experiment_id(record["id"])
+            if _identity is not None and row_id != _identity:
+                continue
+            presented = self._batch(record, states, summary=summary)
+            if owned:
+                batches.setdefault(owner, []).append(presented)
+            else:
+                legacy.append(
+                    self._record(
+                        record,
+                        [presented],
+                        [],
+                        states,
+                        predictors,
+                        legacy=True,
+                        summary=summary,
                     )
-            items = [
-                self._record(
-                    record,
-                    batches.get(record["id"], []),
-                    saved.get(record["id"], []),
-                    states,
-                    predictors,
-                    summary=summary,
                 )
-                for record in records
-                if _identity is None or record["id"] == _identity
-            ] + legacy
-            return {
-                "items": sorted(
-                    [item for item in items if state == "all" or item["state"] == state],
-                    key=lambda item: (item["createdAt"], item["id"]),
-                    reverse=True,
-                )
+        for record in drafts:
+            payload = record["payload"]
+            if payload.get("type") not in LEGACY_DRAFT_TYPES:
+                continue
+            owner = payload.get("experimentId") or _mapping(payload.get("spec")).get("experimentId")
+            owned = isinstance(owner, str) and owner in known
+            row_id = owner if owned else legacy_experiment_id(record["id"])
+            if _identity is not None and row_id != _identity:
+                continue
+            presented = {
+                **record,
+                "state": states.get(f"draft:{record['id']}", {}).get("state", "active"),
             }
+            if summary:
+                presented = {key: value for key, value in presented.items() if key != "payload"}
+            if owned:
+                saved.setdefault(owner, []).append(presented)
+            else:
+                legacy.append(
+                    self._record(
+                        record,
+                        [],
+                        [presented],
+                        states,
+                        predictors,
+                        legacy=True,
+                        summary=summary,
+                    )
+                )
+        items = [
+            self._record(
+                record,
+                batches.get(record["id"], []),
+                saved.get(record["id"], []),
+                states,
+                predictors,
+                summary=summary,
+            )
+            for record in records
+            if _identity is None or record["id"] == _identity
+        ] + legacy
+        return {
+            "items": sorted(
+                [item for item in items if state == "all" or item["state"] == state],
+                key=lambda item: (item["createdAt"], item["id"]),
+                reverse=True,
+            )
+        }
 
     def get(self, identity):
         for record in self.list(_identity=identity)["items"]:

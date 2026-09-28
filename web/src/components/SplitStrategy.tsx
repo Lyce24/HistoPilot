@@ -43,6 +43,8 @@ export function SplitStrategy({
   rules,
   imported,
   pools,
+  supportedModes,
+  splitUnit = 'patient',
 }: {
   split: Split;
   onChange: (value: Partial<Split>) => void;
@@ -53,6 +55,8 @@ export function SplitStrategy({
   rules: ReactNode;
   imported: ReactNode;
   pools?: ReactNode;
+  supportedModes?: readonly Split['mode'][];
+  splitUnit?: 'slide' | 'patient' | 'unknown';
 }) {
   const strategyGroup = useId();
   const explicitPools = (split.version ?? 1) >= 3;
@@ -107,6 +111,7 @@ export function SplitStrategy({
               name={strategyGroup}
               value={value}
               checked={split.mode === value}
+              disabled={Boolean(supportedModes && !supportedModes.includes(value as Split['mode']))}
               onChange={(event) =>
                 onChange(changeSplitStrategy(split, event.target.value as Split['mode']))
               }
@@ -120,7 +125,7 @@ export function SplitStrategy({
               ))}
             </span>
             <strong>{name}</strong>
-            <small>{strategyDescriptions[value as Split['mode']]}</small>
+            <small>{supportedModes && !supportedModes.includes(value as Split['mode']) ? 'Training support is not available yet.' : strategyDescriptions[value as Split['mode']]}</small>
           </label>
         ))}
       </fieldset>
@@ -151,8 +156,7 @@ export function SplitStrategy({
         </div> : null}
       </div>
       <p className="split-group-note">
-        <span>Patient grouping</span> Known patients stay together. Each confirmed Slide ID
-        fallback forms one group. Training seeds and stopping metrics belong to Experiments.
+        {splitUnit === 'slide' ? split.groupByPatient ? <><span>Slide labels, case-grouped folds</span> Each slide keeps its own label and is scored on its own; all slides of a case share one fold and one side of early-stop validation.</> : <><span>Slide splitting</span> Each slide is assigned independently to folds and early-stop validation.</> : splitUnit === 'patient' ? <><span>Patient grouping</span> Known patients stay together. Each confirmed Slide ID fallback forms one group.</> : <><span>Split unit</span> Choose saved targets and splits to establish the unit used for folds and early-stop validation.</>} Choose training seeds and stopping metrics in the hyperparameters step.
       </p>
       <div className="science-grid-two">
         <label className="label">
@@ -255,9 +259,20 @@ export function SplitStrategy({
         />
         <span>
           Stratify by target class
-          <small>Keep class proportions similar where groups and set sizes allow.</small>
+          <small>{splitUnit === 'slide' && !split.groupByPatient ? 'Keep slide class proportions similar where set sizes allow.' : splitUnit === 'patient' || split.groupByPatient ? 'Keep class proportions similar where groups and set sizes allow.' : 'Keep class proportions similar where set sizes allow.'}</small>
         </span>
       </label>
+      {development && splitUnit === 'slide' ? <label className="science-check">
+        <input
+          type="checkbox"
+          checked={Boolean(split.groupByPatient)}
+          onChange={(event) => onChange({ groupByPatient: event.target.checked || undefined })}
+        />
+        <span>
+          Keep all slides of a case in the same fold
+          <small>Uses each slide's case identifier from the dataset (for example Unik#). No case is both trained on and assessed, which matches applying the model to new cases. Labels, targets and scoring stay per slide; a case whose parts have different grades keeps each slide's grade. Every training slide needs a case identifier.</small>
+        </span>
+      </label> : null}
       {showPercentages && !(explicitPools && split.pools?.validationSource === 'fixed') ? (
         <AllocationPreview
           train={(1 - test) * (1 - validation)}
@@ -266,11 +281,17 @@ export function SplitStrategy({
           nested={split.mode === 'nested_kfold'}
           trainingOnly={explicitPools}
           development={development}
+          splitUnit={splitUnit}
         />
       ) : null}
       {split.mode === 'kfold' ? (
         <p className="callout">
-          {development
+          {splitUnit === 'slide'
+            ? split.groupByPatient
+              ? 'Every training case rotates through one assessment fold per split seed, taking all its slides with it. Early-stop validation is drawn from the remaining fitting cases.'
+              : 'Every training slide rotates through one assessment fold per split seed. Early-stop validation is drawn from the remaining fitting slides.'
+            : splitUnit === 'unknown' ? 'Each split seed creates assessment folds and early-stop validation from the selected training records.'
+            : development
             ? 'Every development group rotates through one assessment fold per split seed. Early-stop validation is drawn from the fitting groups or uses your fixed validation source.'
             : explicitPools
             ? 'Rotate assessment folds within your training set. Your selected test set stays reserved for final evaluation.'
@@ -335,8 +356,7 @@ export function SplitStrategy({
         </>
       ) : null}
       <p className="muted">
-        Preview & validate calculates exact group assignments, class counts and feasibility.
-        Percentages are approximate because a group stays intact.
+        {splitUnit === 'slide' ? 'Preview calculates exact slide assignments, class counts and feasibility. Percentages are rounded to whole slides.' : splitUnit === 'patient' ? 'Preview & validate calculates exact group assignments, class counts and feasibility. Percentages are approximate because a group stays intact.' : 'Preview calculates exact assignments, class counts and feasibility for the saved split unit.'}
       </p>
     </div>
   );
@@ -375,6 +395,7 @@ function AllocationPreview({
   nested,
   trainingOnly = false,
   development = false,
+  splitUnit = 'patient',
 }: {
   train: number;
   val: number;
@@ -382,6 +403,7 @@ function AllocationPreview({
   nested: boolean;
   trainingOnly?: boolean;
   development?: boolean;
+  splitUnit?: 'slide' | 'patient' | 'unknown';
 }) {
   if (![train, val, test].every((value) => Number.isFinite(value) && value >= 0 && value <= 1))
     return null;
@@ -420,7 +442,7 @@ function AllocationPreview({
       </div>
       <small className="muted">
         {development
-          ? 'Assessment groups stay separate from fitting and early stopping. Percentages are applied within the selected development cohort.'
+          ? `Assessment ${splitUnit === 'slide' ? 'slides' : splitUnit === 'patient' ? 'groups' : 'records'} stay separate from fitting and early stopping. Percentages are applied within the selected development cohort.`
           : trainingOnly
           ? 'The final test set is separate. Within each CV plan, take early-stop validation from the remaining training fold.'
           : 'Remove the test set first, then take the selected validation percentage from the remaining training pool.'}

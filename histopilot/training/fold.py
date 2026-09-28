@@ -181,6 +181,7 @@ class _HistoryWriter(L.Callback):
 
 def _validate_plan(plan):
     rows = plan["data"]["memberships"]
+    slide_unit = plan.get("splitUnit") == "slide"
     partitions = {"train": set(), "val": set(), "test": set()}
     slides = set()
     for row in rows:
@@ -191,9 +192,9 @@ def _validate_plan(plan):
         if row["slideId"] in slides:
             raise ValueError("A run cannot contain the same slide more than once.")
         slides.add(row["slideId"])
-        if not row.get("patientId"):
+        if not slide_unit and not row.get("patientId"):
             raise ValueError("Every training-plan slide requires a frozen grouping identity.")
-        partitions[row["partition"]].add(row["patientId"])
+        partitions[row["partition"]].add(row["slideId" if slide_unit else "patientId"])
         if row["label"] not in plan["target"]["classes"]:
             raise ValueError("A run label is outside the frozen target classes.")
         if row.get("phase") == "final" or row.get("pool") == "external_test":
@@ -207,7 +208,7 @@ def _validate_plan(plan):
         raise ValueError(
             "Patient groups overlap between the run's fitting, validation or assessment partitions."
         )
-    validate_training_controls(plan.get("effectiveRecipe", plan["recipe"]), plan["target"], rows)
+    validate_training_controls(plan.get("effectiveRecipe", plan["recipe"]), plan["target"], rows, split_unit=plan.get("splitUnit"))
 
 
 def _predict(model, loader, target, device, precision="32-true"):
@@ -281,7 +282,7 @@ def train_fold(plan: dict, output_dir: Path, *, checkpoint_path=None) -> dict:
     L.seed_everything(plan["trainingSeed"], workers=True)
     if device_name == "cuda":
         torch.cuda.reset_peak_memory_stats()
-    effective, _ = resolve_stopping(recipe, plan["target"], plan["data"]["memberships"])
+    effective, _ = resolve_stopping(recipe, plan["target"], plan["data"]["memberships"], split_unit=plan.get("splitUnit"))
     datamodule = MILDataModule({**plan, **plan["data"], "recipe": effective})
     try:
         return _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path)
@@ -294,7 +295,7 @@ def train_fold(plan: dict, output_dir: Path, *, checkpoint_path=None) -> dict:
 def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
     requested_recipe = recipe
     recipe, stopping_decision = resolve_stopping(
-        recipe, plan["target"], plan["data"]["memberships"]
+        recipe, plan["target"], plan["data"]["memberships"], split_unit=plan.get("splitUnit")
     )
     target = plan["target"]
     device_name = plan.get("device", "cpu")
@@ -308,6 +309,7 @@ def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
         class_weights=datamodule.training_class_weights(),
         class_weight_unit=datamodule.training_class_weight_unit(),
         clinical_preprocessor=datamodule.clinical_preprocessor,
+        split_unit=plan.get("splitUnit"),
     )
     monitor = recipe["checkpointMetric"]
     mode = "min" if monitor == "validation_loss" else "max"
@@ -428,12 +430,14 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
     if fit is None:
         fit = _fit(plan, output_dir, recipe, datamodule, checkpoint_path)
     effective_recipe, stopping_decision = resolve_stopping(
-        recipe, target, plan["data"]["memberships"]
+        recipe, target, plan["data"]["memberships"], split_unit=plan.get("splitUnit")
     )
     aggregation = recipe.get("patientAggregation", "mean_probabilities")
     best, last = Path(fit["best"]["path"]), Path(fit["last"]["path"])
     _write_json(output_dir / "history.json", fit["history"])
     selected = MILTrainModule.load_from_checkpoint(str(best), map_location="cpu", weights_only=True)
+    if selected.split_unit != plan.get("splitUnit"):
+        raise ValueError("Selected checkpoint split unit differs from the frozen plan.")
     if selected.clinical_preprocessor != datamodule.clinical_preprocessor:
         raise ValueError("Selected checkpoint clinical preprocessing differs from the fitting partition.")
     device = torch.device(device_name)
@@ -452,6 +456,7 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
         metrics[split] = classification_metrics(
             records, target, aggregation, analysis=recipe.get("analysis"),
             decision_threshold=recipe.get("decisionThreshold", 0.5),
+            split_unit=plan.get("splitUnit"),
         )
         patient_available = metrics[split]["patient"]["available"]
         path = output_dir / f"{split}-predictions.json"

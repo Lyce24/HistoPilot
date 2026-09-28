@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import DevelopmentBatches, { BatchPlanSettings, BatchPredictorSummary, ExperimentBatchOverview, batchConfigurationCount, batchTemplate, updateBatchPlans } from './DevelopmentBatches';
-import { defaultRecipe } from '../api/development';
+import { defaultRecipe, defaultResources } from '../api/development';
+import type { BatchEditorDraft } from '../lib/batchEditorDraft';
+import { sessionDraftKey } from '../lib/sessionDraft';
 import type { ExperimentBatch, ModelExperiment } from '../api/experiments';
 
 const inputs = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native' as const, packArtifactId: null };
@@ -14,6 +16,8 @@ function render(record = experiment, tab: 'batches' | 'runs' | 'results' = 'batc
     return renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" record={record} experimentStage={record.stage} inputs={inputs} experimentName={record.name} experimentId={record.id} experimentRevision={record.revision} ownedBatches={record.batches} ownedDrafts={[]} tab={tab} onOpenSetup={() => {}} /></QueryClientProvider>);
   } finally { client.clear(); }
 }
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('editable experiment batch plans', () => {
   it('keeps adding a plan separate from submission and offers editable templates', () => {
@@ -31,13 +35,14 @@ describe('editable experiment batch plans', () => {
     expect(html).not.toContain('Clone batch');
   });
 
-  it('organizes search, training and compute with accessible mode choices and no invented fold count', () => {
+  it('organizes search, training and predictors with accessible mode choices and no invented fold count', () => {
     const html = render();
     expect(html).toContain('<legend>Configuration mode</legend>');
     expect(html).toMatch(/<input(?=[^>]*value="single")(?=[^>]*checked="")[^>]*>/);
     expect(html).toContain('Custom configurations');
     expect(html).toContain('Parameter search &amp; repeats');
-    expect(html).toContain('Compute &amp; parallelism');
+    expect(html).toContain('Model selection and prediction methods');
+    for (const removed of ['Compute &amp; parallelism', 'Run on', 'Concurrent runs', 'Runs per GPU', 'Allowed GPU IDs', 'RAM reservation per run']) expect(html).not.toContain(removed);
     expect(html).toContain('1 configuration × 1 training seed = 1 training group');
     expect(html).toContain('Check batch to confirm the total fold runs.');
     expect(html).not.toContain('5 planned runs');
@@ -61,10 +66,10 @@ describe('editable experiment batch plans', () => {
     expect(batchConfigurationCount({ ...plans[0].spec, mode: 'explicit', configurations: [recipe, legacy, { ...recipe, learningRate: 0.001 }] })).toBe(2);
   });
 
-  it('separates each batch into configuration, training, compute and review pages while retaining form state', () => {
+  it('separates each batch into configuration, training, predictor and review pages while retaining form state', () => {
     const html = render();
     const editor = html.slice(html.indexOf('Add a training batch'));
-    const sections = ['Start from a template', '>Batch name<', 'Parameter search &amp; repeats', 'aria-label="Settings"', 'Compute &amp; parallelism', 'Configure predictors', '>Add batch to plan<'];
+    const sections = ['Start from a template', '>Batch name<', 'Parameter search &amp; repeats', 'aria-label="Settings"', '<h3>Model selection</h3>', 'Configure predictors', '>Add batch to plan<'];
     const positions = sections.map((label) => editor.indexOf(label));
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
@@ -108,7 +113,7 @@ describe('editable experiment batch plans', () => {
   });
 
   it('blocks planning runs and results for direct component navigation', () => {
-    for (const tab of ['runs', 'results'] as const) expect(render(experiment, tab)).toContain('Runs unlock after submission. Results unlock when the experiment finishes.');
+    for (const tab of ['runs', 'results'] as const) expect(render(experiment, tab)).toContain('Runs and results unlock after submission.');
   });
 
   it('edits one recipe without changing sibling plans and preserves the ID across uncertain saves', () => {
@@ -131,7 +136,7 @@ describe('editable experiment batch plans', () => {
     const quick = batchTemplate('quick', inputs, 'Study');
     expect(quick.recipe.maxEpochs).toBe(5);
     expect(quick.recipe.bagSize).toBe(1024);
-    expect(quick.resources.maxConcurrentRuns).toBe(1);
+    expect(quick).not.toHaveProperty('resources');
   });
 
   it('shows incomplete and unavailable batches without inventing completion', () => {
@@ -144,5 +149,34 @@ describe('editable experiment batch plans', () => {
     expect(html).toContain('Status unavailable');
     expect(html).toContain('1 failed');
     expect(html.match(/<progress /g)).toHaveLength(1);
+  });
+
+  it('shows saved compute settings of older plans read-only and none for new plans', () => {
+    const legacy = { ...plans[0].spec, resources: { ...defaultResources(), gpuIds: [0, 1], maxConcurrentRuns: 4 } };
+    const html = renderToStaticMarkup(<BatchPlanSettings spec={legacy} />);
+    expect(html).toContain('<dt>Saved compute settings</dt>');
+    expect(html).toContain('GPU 0, 1 · 4 concurrent runs · 2 CPU threads · 8 GiB RAM per run');
+    expect(html).toContain('Legacy; the Task Center now decides parallelism.');
+    expect(html).not.toContain('<input');
+    const current = renderToStaticMarkup(<BatchPlanSettings spec={plans[0].spec} />);
+    expect(current).not.toContain('Saved compute settings');
+    expect(current).not.toContain('Reservation per run');
+    expect(current).not.toContain('"resources"');
+  });
+
+  it('opens the predictor step of a recovered draft without compute fields and notes legacy settings being dropped', () => {
+    const key = sessionDraftKey('p', 'study', 'batch-editor');
+    const draft: BatchEditorDraft = { version: 1, editorRevision: 2, inputs, workingPlan: 'baseline', name: 'Baseline', editorOpen: true, batchPage: 3, templateId: 'saved', predictorPolicy: { method: 'ensemble', refitPercentile: null }, recipe: defaultRecipe(), mode: 'single', rows: [{ id: 0, recipe: defaultRecipe() }], explicitInitialized: false, seeds: '42', lrs: '0.0003', wds: '0.0001', epochs: '40', notes: '', numericDrafts: {} };
+    const stub = (value: BatchEditorDraft) => vi.stubGlobal('window', { location: { hash: '' }, sessionStorage: { getItem: (requested: string) => requested === key ? JSON.stringify({ version: 1, value }) : null, setItem: () => {}, removeItem: () => {} } });
+    stub(draft);
+    const html = render();
+    expect(html).toMatch(/data-batch-step="3"(?! hidden)/);
+    expect(html).toContain('<h3>Model selection</h3>');
+    expect(html).not.toContain('Run on');
+    expect(html).not.toContain('This batch was saved with compute settings');
+    stub({ ...draft, resources: defaultResources(), gpus: '0' });
+    const legacy = render();
+    expect(legacy).toContain('This batch was saved with compute settings (GPU 0 · 1 concurrent run · 2 CPU threads · 8 GiB RAM per run)');
+    expect(legacy).toContain('the Task Center decides parallelism');
   });
 });

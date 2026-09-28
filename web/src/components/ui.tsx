@@ -54,6 +54,7 @@ const paths: Record<string, ReactNode> = {
   plus: <path d="M12 5v14M5 12h14" />,
   minus: <path d="M5 12h14" />,
   download: <path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5" />,
+  alert: <path d="M12 3.5 2.5 20h19zM12 10v4.5M12 17.2v.01" />,
   info: (
     <>
       <circle cx="12" cy="12" r="9" />

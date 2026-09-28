@@ -22,9 +22,7 @@ import JobTray from ${source('components/JobTray.tsx')};
 import { scientific } from ${source('api/scientific.ts')};
 import { bundles } from ${source('api/bundles.ts')};
 import { trident } from ${source('api/trident.ts')};
-import { development } from ${source('api/development.ts')};
-import { predictors, modelEvaluations } from ${source('api/predictors.ts')};
-import { interpretations } from ${source('api/interpretation.ts')};
+import { taskCenter } from ${source('api/taskCenter.ts')};
 import ${source('styles.css')};
 import ${source('local-workspace.css')};
 import ${source('scientific.css')};
@@ -49,8 +47,11 @@ state.extractions = [extraction('extract/first', 'uni_v2', 'first', 12), extract
 scientific.datasets = async () => ({ datasets: [] });
 scientific.configurations = async () => ({ configurations: [] });
 bundles.list = async () => ({ items: [] });
-development.list = async () => ({ items: [], executionImplemented: true, executions: [] });
-predictors.refits = modelEvaluations.list = interpretations.list = async () => ({ items: [] });
+taskCenter.summary = async () => ({ runner: { alive: true, heartbeatAt: null, pid: 1, state: 'running', message: null, codeHash: 'fixture', codeCurrent: true, autostart: true }, paused: false,
+  capacity: { gpus: [], cpu: { logical: 8, physical: 4, committedThreads: 0, reserveThreads: 2, cpuTaskSlots: 2, usedCpuTasks: 0 }, ram: { totalGb: 32, availableGb: 24, reserveGb: 2 } },
+  counts: {}, eta: null, foreignLeases: [], workspace: '/workspace', updatedAt: '2026-09-25T10:05:00Z' });
+taskCenter.rollup = async (scope) => ({ scope: scope ?? {}, state: 'not-started', counts: {}, byKind: {}, progress: null, live: 0, active: 0, pending: 0, held: false, position: null, queuePosition: null, waitingReason: null, eta: null, runnerAlive: true, paused: false, stopRequest: null, lastFailure: null, recentFailures: 0, current: null, startedAt: null, finishedAt: null, ownerKey: null, ownerKind: null, ownerId: null, title: null, projectId: null, projectName: null, href: '#task-center', updatedAt: '2026-09-25T10:05:00Z' });
+taskCenter.tasks = async () => ({ tasks: [] });
 trident.catalog = async () => ({ source: '#catalog', schemaVersion: 1, defaults: { task: 'all', patch_encoder: 'uni_v2' },
   options: [{ name: 'task', flag: '--task', label: 'Task', group: 'execution', type: 'string', default: 'all', advanced: false, description: '' }],
   patchEncoders: ['uni_v1', 'uni_v2'], slideEncoders: [], runtime: { ready: true, available: true } });
@@ -149,7 +150,7 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: pathToFileURL(join(dist, 'index.html')).href + '#features' });
   await waitFor('document.querySelectorAll(".pfm-extraction-run").length === 2', 'active extractions in empty feature library');
-  await waitFor('document.querySelector(".job-tray").innerText.includes("2 active jobs")');
+  await waitFor('document.querySelector(".job-tray").innerText.includes("0 running · 0 queued · 2 extractions")');
   assert.equal(await evaluate('document.body.innerText.includes("Create your first feature bundle")'), false, 'Active extraction must replace the first-bundle empty state');
   assert.equal(await evaluate('document.querySelector(".pfm-extraction-runs").innerText.includes("12 of 100 slides processed")'), true, 'Landing page shows extraction progress');
   await screenshot('01-extraction-library');
@@ -183,7 +184,7 @@ try {
   await screenshot('02-selected-extraction');
   const updateAt = await evaluate(`(() => { const item = window.workflow.extractions[0]; item.state = 'succeeded'; item.progress.completed = 100; item.progress.percent = 100; item.progress.label = 'Complete'; item.progress.stages = item.progress.stages.map(stage => ({ ...stage, status: 'complete' })); return performance.now(); })()`);
   await waitFor('document.querySelector(".trident-job-detail").innerText.includes("Extraction complete")', 'polled terminal extraction status');
-  await waitFor('document.querySelector(".job-tray").innerText.includes("1 active job")', 'tray active count refresh');
+  await waitFor('document.querySelector(".job-tray").innerText.includes("0 running · 0 queued · 1 extraction")', 'tray active count refresh');
   const lastPoll = await evaluate('window.workflow.calls.filter(call => call.method === "job" && call.id === "extract/first").at(-1).at');
   assert.ok(lastPoll > updateAt && lastPoll - updateAt < 5000, 'Job detail automatically refreshes on the three-second timer');
   await screenshot('03-completed-extraction');

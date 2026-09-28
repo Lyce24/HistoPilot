@@ -9,10 +9,11 @@ export function evidenceLink(module: string, context: EvidenceContext = {}) {
   if (module === 'post-development') { module = 'experiments'; query.set('tab', 'predictors'); }
   return `#${module}${query.size ? `?${query}` : ''}`;
 }
-/** Labeled evidence reaches clinical utility; unlabeled inference goes straight to attention. */
+/** Labeled evidence reaches clinical utility; unlabeled inference stands alone. Model
+ * interpretation needs only trained weights, a dataset and its features, so it is not a step here. */
 export default function EvidenceChain({ current, inference = current === 'inference', ...context }: EvidenceContext & { current: Step; inference?: boolean }) {
   const steps = inference
-    ? [['experiments', 'Experiments'], ['inference', 'Run inference'], ['interpretation', 'Model interpretation']] as const
-    : [['experiments', 'Experiments'], ['evaluation', 'Model evaluation'], ['clinical-utility', 'Clinical utility'], ['interpretation', 'Model interpretation']] as const;
+    ? [['experiments', 'Experiments'], ['inference', 'Run inference']] as const
+    : [['experiments', 'Experiments'], ['evaluation', 'Model evaluation'], ['clinical-utility', 'Clinical utility']] as const;
   return <nav className="chain-banner" aria-label="Model evidence workflow">{steps.map(([module, label], index) => <span className="evidence-chain-step" key={module}>{index ? <span aria-hidden="true">→</span> : null}{(current === 'post-development' ? 'experiments' : current) === module ? <strong aria-current="step">{label}</strong> : <a href={evidenceLink(module, context)}>{label}</a>}</span>)}</nav>;
 }

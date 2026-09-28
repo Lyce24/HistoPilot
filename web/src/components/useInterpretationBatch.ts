@@ -5,6 +5,7 @@ import { interpretations, type GallerySlide, type Interpretation, type Visualize
 import { computeActive } from '../api/predictors';
 import { mergeVisualizationItems, visualizationRequest } from '../lib/interpretationGallery';
 import { persistWizardDraft, selectedBatchReady, type InterpretationWizardDraft, type SelectedStudyState } from '../lib/interpretationWizard';
+import { useRunRollup } from './RunStatusChip';
 
 export function useInterpretationBatch(project: string, draft: InterpretationWizardDraft, setDraft: Dispatch<SetStateAction<InterpretationWizardDraft>>) {
   const client = useQueryClient();
@@ -23,7 +24,21 @@ export function useInterpretationBatch(project: string, draft: InterpretationWiz
   const items = batch?.items ?? [];
   const ids = [...new Set(items.map((item) => item.interpretationId).filter((id): id is string => Boolean(id)))];
   const documents = useQueries({ queries: ids.map((id) => ({ queryKey: ['interpretation', project, id], queryFn: () => interpretations.get(project, id), staleTime: 60000 })) });
-  const jobs = useQueries({ queries: ids.map((id) => ({ queryKey: ['compute-job', project, 'interpretation', id], queryFn: () => interpretations.execution(project, id), refetchInterval: (query: { state: { data?: import('../api/interpretation').InterpretationExecution } }) => !query.state.data || computeActive(query.state.data) ? 2500 : false })) });
+  // One rollup follows every slide's attention job in the task store; a slide's own record is
+  // re-read only when another job of the batch ends (or, for jobs outside the Task Center, polled).
+  const statusScope = ids.length ? { recordKind: 'interpretation', recordIds: ids.join(','), project } : null;
+  const rollup = useRunRollup(statusScope);
+  const ended = rollup.data ? ['succeeded', 'failed', 'cancelled', 'interrupted'].reduce((sum, state) => sum + (rollup.data!.counts[state as 'succeeded'] ?? 0), 0) : null;
+  const jobs = useQueries({ queries: ids.map((id) => ({ queryKey: ['compute-job', project, 'interpretation', id], queryFn: () => interpretations.execution(project, id), refetchInterval: (query: { state: { data?: import('../api/interpretation').InterpretationExecution } }) => computeActive(query.state.data) && query.state.data?.executor !== 'task-center' ? 5000 : false })) });
+  const lastEnded = useRef<number | null>(null);
+  const idKey = ids.join(',');
+  useEffect(() => {
+    if (ended === null) return;
+    if (lastEnded.current !== null && lastEnded.current !== ended) {
+      for (const id of idKey.split(',').filter(Boolean)) void client.invalidateQueries({ queryKey: ['compute-job', project, 'interpretation', id] });
+    }
+    lastEnded.current = ended;
+  }, [ended, idKey, project, client]);
   const records = new Map<string, Interpretation>();
   const states = new Map<string, SelectedStudyState>();
   items.forEach((item) => {
@@ -64,5 +79,5 @@ export function useInterpretationBatch(project: string, draft: InterpretationWiz
   function retryExact() { const latest = currentDraft.current.batch; if (latest?.pending) void execute(latest.id, latest.pending); }
   function retrySlides(selection: VisualizeSelection) { const latest = currentDraft.current.batch; if (latest && !latest.pending) void execute(latest.id, visualizationRequest(selection, crypto.randomUUID())); }
   function refresh() { void Promise.all([...documents, ...jobs].map((query) => query.refetch())); }
-  return { batch, records, states, ready, start, retryExact, retrySlides, refresh, busy: Boolean(batch?.pending && !batch.uncertain), locked: Boolean(batch?.pending), selectedCount: batch?.selected.length ?? 0 };
+  return { batch, records, states, ready, start, retryExact, retrySlides, refresh, statusScope, busy: Boolean(batch?.pending && !batch.uncertain), locked: Boolean(batch?.pending), selectedCount: batch?.selected.length ?? 0 };
 }

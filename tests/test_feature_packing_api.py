@@ -42,10 +42,14 @@ def post(client, path, data, status=200):
 
 
 @pytest.mark.parametrize("action", ["pack", "validate"])
-def test_frozen_features_worker_receipt_preflight_and_reopen(tmp_path, monkeypatch, action):
+def test_frozen_features_worker_receipt_and_reopen(tmp_path, monkeypatch, action):
     executor = FakeExecutor()
     monkeypatch.setattr(
         "histopilot.application.feature_packs.TmuxPackingExecutor", lambda: executor
+    )
+    # This test exercises the legacy tmux launch path of the API.
+    monkeypatch.setattr(
+        "histopilot.application.task_records.default_execution_mode", lambda: "tmux"
     )
     settings = Settings(workspace=tmp_path / "registry", data_roots=(tmp_path,))
     app = create_app(settings)
@@ -134,12 +138,6 @@ def test_frozen_features_worker_receipt_preflight_and_reopen(tmp_path, monkeypat
             },
             operation_id="protocol",
         )
-        preflight = client.get(base + f"/protocols/{protocol['id']}/preflight").json()
-        assert "tensorValidationComplete" not in preflight
-        assert preflight["scope"] == "protocol"
-        assert preflight["protocolReady"]
-        assert not preflight["executionReady"]
-        assert not preflight["scientificReady"]
         bundle_spec = {"featureSetId": feature_id}
         bundle_preview = post(client, base + "/feature-bundles/preview", bundle_spec)
         bundle = post(
@@ -161,10 +159,6 @@ def test_frozen_features_worker_receipt_preflight_and_reopen(tmp_path, monkeypat
             },
             operation_id="bundle-protocol",
         )
-        bundle_preflight = client.get(base + f"/protocols/{bundle_protocol['id']}/preflight").json()
-        assert bundle_preflight["scope"] == "protocol"
-        assert bundle_preflight["protocolReady"]
-        assert "featureSource" not in bundle_preflight
         assert store.get_configuration(bundle_protocol["id"])["manifest"]["spec"] == {
             "featureBundleId": bundle["id"]
         }
@@ -189,12 +183,6 @@ def test_frozen_features_worker_receipt_preflight_and_reopen(tmp_path, monkeypat
                 },
                 operation_id="packed-protocol",
             )
-            packed_preflight = client.get(
-                base + f"/protocols/{packed_protocol['id']}/preflight"
-            ).json()
-            assert packed_preflight["scope"] == "protocol"
-            assert packed_preflight["protocolReady"]
-            assert "featureSource" not in packed_preflight
             assert client.put(selection_url, json={"artifactId": None}).status_code == 200
             # Editing the preference must not alter a representation pinned in a protocol.
             assert (
@@ -240,9 +228,6 @@ def test_frozen_features_worker_receipt_preflight_and_reopen(tmp_path, monkeypat
             # Historical packed bytes remain valid when the external source changes.
             assert validate_pack(destination)["id"] == artifact["id"]
             assert not client.get(selection_url).json()["current"]
-            stale_pack = client.get(base + f"/protocols/{packed_protocol['id']}/preflight").json()
-            assert stale_pack["protocolReady"]
-            assert stale_pack["findings"] == []
     reopened_app = create_app(replace(settings, workspace=tmp_path / "another-registry"))
     with TestClient(reopened_app, base_url="http://127.0.0.1:8787") as client:
         auth(client)

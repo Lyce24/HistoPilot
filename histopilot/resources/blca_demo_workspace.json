@@ -2256,8 +2256,8 @@
       {
         "id": "blca-protocol",
         "module": "cohort",
-        "name": "Grade 1/3 development protocol",
-        "description": "Freeze the binary target, eligible development slides and five assessment folds.",
+        "name": "Grade 1/3 training · Grade 2 testing",
+        "description": "Freeze the binary target and fixed training/testing membership using dataset records only.",
         "tags": [
           "Synthetic",
           "Read only"
@@ -2268,6 +2268,10 @@
             "title": "Target",
             "description": "Predict low versus high grade; high is the positive class.",
             "facts": [
+              {
+                "label": "Dataset",
+                "value": "BLCA synthetic slides"
+              },
               {
                 "label": "Target column",
                 "value": "grade_binary"
@@ -2283,21 +2287,1101 @@
               {
                 "label": "Unit",
                 "value": "Slide"
-              },
-              {
-                "label": "Development",
-                "value": "Grade 1 and Grade 3"
               }
             ],
-            "notice": "Grade 2 slides are reserved for the later test cohort. Their binary labels are supplied separately in this synthetic example."
+            "notice": "This construction needs the dataset and labels only. Features and training-fold choices belong to Experimental Setup."
           },
           {
             "id": "splits",
-            "title": "Splits",
-            "description": "Five slide-disjoint assessment folds with separate checkpoint-validation subsets.",
+            "title": "Training and testing sets",
+            "description": "Use the dataset grade column to assign Grade 1/3 to training and reserve Grade 2 for testing.",
             "facts": [
               {
-                "label": "Eligible slides",
+                "label": "Training slides",
+                "value": "62"
+              },
+              {
+                "label": "Training low",
+                "value": "33"
+              },
+              {
+                "label": "Training high",
+                "value": "29"
+              },
+              {
+                "label": "Testing slides",
+                "value": "76"
+              },
+              {
+                "label": "Testing low",
+                "value": "54"
+              },
+              {
+                "label": "Testing high",
+                "value": "22"
+              },
+              {
+                "label": "Overlap",
+                "value": "0"
+              },
+              {
+                "label": "Grouping",
+                "value": "slide_id fallback"
+              }
+            ],
+            "notice": "Groups are synthetic slide fallbacks. No verified patient identifiers are provided; slide-disjoint folds do not establish patient independence.",
+            "table": {
+              "columns": [
+                "Synthetic slide",
+                "Label",
+                "Grade",
+                "Fixed set"
+              ],
+              "rows": [
+                [
+                  "BLCA-DEMO-001",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-002",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-003",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-004",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-005",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-006",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-007",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-008",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-009",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-010",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-011",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-012",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-013",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-014",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-015",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-016",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-017",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-018",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-019",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-020",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-021",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-022",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-023",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-024",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-025",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-026",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-027",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-028",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-029",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-030",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-031",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-032",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-033",
+                  "low",
+                  "1",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-034",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-035",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-036",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-037",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-038",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-039",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-040",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-041",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-042",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-043",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-044",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-045",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-046",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-047",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-048",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-049",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-050",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-051",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-052",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-053",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-054",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-055",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-056",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-057",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-058",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-059",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-060",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-061",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-062",
+                  "high",
+                  "3",
+                  "training"
+                ],
+                [
+                  "BLCA-DEMO-063",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-064",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-065",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-066",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-067",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-068",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-069",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-070",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-071",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-072",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-073",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-074",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-075",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-076",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-077",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-078",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-079",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-080",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-081",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-082",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-083",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-084",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-085",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-086",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-087",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-088",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-089",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-090",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-091",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-092",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-093",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-094",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-095",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-096",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-097",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-098",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-099",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-100",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-101",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-102",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-103",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-104",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-105",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-106",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-107",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-108",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-109",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-110",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-111",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-112",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-113",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-114",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-115",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-116",
+                  "low",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-117",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-118",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-119",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-120",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-121",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-122",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-123",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-124",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-125",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-126",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-127",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-128",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-129",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-130",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-131",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-132",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-133",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-134",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-135",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-136",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-137",
+                  "high",
+                  "2",
+                  "testing"
+                ],
+                [
+                  "BLCA-DEMO-138",
+                  "high",
+                  "2",
+                  "testing"
+                ]
+              ]
+            }
+          },
+          {
+            "id": "frozen",
+            "title": "Frozen targets and splits",
+            "description": "Both sets stay fixed across baseline setups. Training folds are designed later, using only the training set.",
+            "table": {
+              "columns": [
+                "Input",
+                "Rule"
+              ],
+              "rows": [
+                [
+                  "Training",
+                  "62 Grade 1/3 slides"
+                ],
+                [
+                  "Testing",
+                  "76 Grade 2 slides reserved for later evaluation"
+                ],
+                [
+                  "Features",
+                  "Not required to construct or freeze these memberships"
+                ],
+                [
+                  "Next stage",
+                  "Experimental Setup adds features, training folds and recipes"
+                ],
+                [
+                  "Patient independence",
+                  "Not established"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "blca-features",
+        "module": "features",
+        "name": "UNI v1 feature bundle",
+        "description": "Explain feature attachment and coverage without publishing embeddings.",
+        "tags": [
+          "Synthetic",
+          "Read only"
+        ],
+        "steps": [
+          {
+            "id": "source",
+            "title": "Feature source",
+            "description": "The project uses existing UNI v1 embeddings with 1024 dimensions.",
+            "facts": [
+              {
+                "label": "Encoder",
+                "value": "UNI v1"
+              },
+              {
+                "label": "Dimensions",
+                "value": "1024"
+              },
+              {
+                "label": "Coverage",
+                "value": "138 synthetic slide references"
+              },
+              {
+                "label": "Mode",
+                "value": "Metadata only"
+              }
+            ],
+            "notice": "No feature tensors, patch coordinates, encoder weights or real artifact paths are bundled."
+          },
+          {
+            "id": "validation",
+            "title": "Validation",
+            "description": "A real bundle checks dimensions, finite values, slide IDs and optional coordinates before training.",
+            "table": {
+              "columns": [
+                "Check",
+                "Demo representation"
+              ],
+              "rows": [
+                [
+                  "Dimensions",
+                  "1024, illustrative metadata"
+                ],
+                [
+                  "ID coverage",
+                  "138 unique synthetic references"
+                ],
+                [
+                  "Tensor integrity",
+                  "Not executed; no tensors included"
+                ],
+                [
+                  "Patch coordinates",
+                  "Not included"
+                ],
+                [
+                  "Slide matching",
+                  "Synthetic identifiers only"
+                ]
+              ]
+            }
+          },
+          {
+            "id": "bundle",
+            "title": "Bundle",
+            "description": "A shared feature contract links the development and test stages.",
+            "facts": [
+              {
+                "label": "Development",
+                "value": "62"
+              },
+              {
+                "label": "Test",
+                "value": "76"
+              },
+              {
+                "label": "Loading",
+                "value": "Native, illustrative"
+              },
+              {
+                "label": "Pack",
+                "value": "Not required"
+              }
+            ],
+            "notice": "This sample bundle is documentation metadata and is not an executable or verified scientific artifact."
+          }
+        ]
+      },
+      {
+        "id": "blca-setup-v2",
+        "module": "experimental-setup",
+        "name": "BLCA baseline v2 setup",
+        "description": "Combine the saved dataset, targets/splits and features, then freeze the training design.",
+        "tags": [
+          "Synthetic",
+          "Frozen setup",
+          "5 folds",
+          "ABMIL"
+        ],
+        "steps": [
+          {
+            "id": "inputs",
+            "title": "Inputs",
+            "description": "Bind the dataset and its fixed training/testing split to the feature bundle.",
+            "facts": [
+              {
+                "label": "Dataset",
+                "value": "BLCA synthetic slides"
+              },
+              {
+                "label": "Targets and splits",
+                "value": "Grade 1/3 training · Grade 2 testing"
+              },
+              {
+                "label": "Features",
+                "value": "UNI v1 · 1024 dimensions"
+              },
+              {
+                "label": "Training slides",
+                "value": "62"
+              },
+              {
+                "label": "Reserved testing slides",
+                "value": "76"
+              },
+              {
+                "label": "Target",
+                "value": "low / high · high is positive"
+              }
+            ],
+            "notice": "Groups are synthetic slide fallbacks. No verified patient identifiers are provided; slide-disjoint folds do not establish patient independence."
+          },
+          {
+            "id": "compatibility",
+            "title": "Compatibility",
+            "description": "Experimental Setup checks the bound features against every frozen training slide before freezing the design.",
+            "table": {
+              "columns": [
+                "Check",
+                "Illustrative requirement"
+              ],
+              "rows": [
+                [
+                  "Dataset",
+                  "Matches the dataset used by Targets & splits"
+                ],
+                [
+                  "Training coverage",
+                  "All 62 frozen training slides; never shrink membership"
+                ],
+                [
+                  "Feature integrity",
+                  "Current verified source, UNI v1, 1024 dimensions"
+                ],
+                [
+                  "Loading",
+                  "Native representation; no packed artifact selected"
+                ],
+                [
+                  "Testing coverage",
+                  "Checked separately when evaluating the 76 reserved slides"
+                ]
+              ]
+            },
+            "notice": "These checks explain the real workflow. No tensors are included, so this synthetic example cannot verify features or freeze an executable setup."
+          },
+          {
+            "id": "splits",
+            "title": "Training folds",
+            "description": "Divide only the 62 training slides into five assessment folds and separate checkpoint-validation subsets.",
+            "facts": [
+              {
+                "label": "Training slides",
                 "value": "62"
               },
               {
@@ -2319,6 +3403,10 @@
               {
                 "label": "Grouping",
                 "value": "slide_id fallback"
+              },
+              {
+                "label": "Reserved testing overlap",
+                "value": "0"
               }
             ],
             "notice": "Groups are synthetic slide fallbacks. No verified patient identifiers are provided; slide-disjoint folds do not establish patient independence.",
@@ -2643,173 +3731,9 @@
             }
           },
           {
-            "id": "frozen",
-            "title": "Frozen protocol",
-            "description": "The example protocol fixes memberships before comparing baseline configurations.",
-            "table": {
-              "columns": [
-                "Input",
-                "Rule"
-              ],
-              "rows": [
-                [
-                  "Development",
-                  "Grade 1/3 only"
-                ],
-                [
-                  "Assessment",
-                  "Each eligible slide appears in exactly one fold"
-                ],
-                [
-                  "Validation",
-                  "Checkpoint selection inside the remaining development slides"
-                ],
-                [
-                  "Test",
-                  "Grade 2 held aside"
-                ],
-                [
-                  "Patient independence",
-                  "Not established"
-                ]
-              ]
-            }
-          }
-        ]
-      },
-      {
-        "id": "blca-features",
-        "module": "features",
-        "name": "UNI v1 feature bundle",
-        "description": "Explain feature attachment and coverage without publishing embeddings.",
-        "tags": [
-          "Synthetic",
-          "Read only"
-        ],
-        "steps": [
-          {
-            "id": "source",
-            "title": "Feature source",
-            "description": "The project uses existing UNI v1 embeddings with 1024 dimensions.",
-            "facts": [
-              {
-                "label": "Encoder",
-                "value": "UNI v1"
-              },
-              {
-                "label": "Dimensions",
-                "value": "1024"
-              },
-              {
-                "label": "Coverage",
-                "value": "138 synthetic slide references"
-              },
-              {
-                "label": "Mode",
-                "value": "Metadata only"
-              }
-            ],
-            "notice": "No feature tensors, patch coordinates, encoder weights or real artifact paths are bundled."
-          },
-          {
-            "id": "validation",
-            "title": "Validation",
-            "description": "A real bundle checks dimensions, finite values, slide IDs and optional coordinates before training.",
-            "table": {
-              "columns": [
-                "Check",
-                "Demo representation"
-              ],
-              "rows": [
-                [
-                  "Dimensions",
-                  "1024, illustrative metadata"
-                ],
-                [
-                  "ID coverage",
-                  "138 unique synthetic references"
-                ],
-                [
-                  "Tensor integrity",
-                  "Not executed; no tensors included"
-                ],
-                [
-                  "Patch coordinates",
-                  "Not included"
-                ],
-                [
-                  "Slide matching",
-                  "Synthetic identifiers only"
-                ]
-              ]
-            }
-          },
-          {
-            "id": "bundle",
-            "title": "Bundle",
-            "description": "A shared feature contract links the development and test stages.",
-            "facts": [
-              {
-                "label": "Development",
-                "value": "62"
-              },
-              {
-                "label": "Test",
-                "value": "76"
-              },
-              {
-                "label": "Loading",
-                "value": "Native, illustrative"
-              },
-              {
-                "label": "Pack",
-                "value": "Not required"
-              }
-            ],
-            "notice": "This sample bundle is documentation metadata and is not an executable or verified scientific artifact."
-          }
-        ]
-      },
-      {
-        "id": "blca-baseline-v2",
-        "module": "experiments",
-        "name": "BLCA baseline v2",
-        "description": "Inspect a five-fold ABMIL plan, synthetic run curves and predictor creation.",
-        "tags": [
-          "Synthetic",
-          "ABMIL",
-          "5 folds",
-          "Ensemble + P75 refit"
-        ],
-        "steps": [
-          {
-            "id": "inputs",
-            "title": "Inputs",
-            "description": "Protocol and slide feature bundle stay linked to the batch.",
-            "facts": [
-              {
-                "label": "Protocol",
-                "value": "Grade 1/3 development"
-              },
-              {
-                "label": "Features",
-                "value": "UNI v1 · 1024 dimensions"
-              },
-              {
-                "label": "Development",
-                "value": "62 synthetic slides"
-              },
-              {
-                "label": "Target",
-                "value": "low / high · high is positive"
-              }
-            ],
-            "notice": "Groups are synthetic slide fallbacks. No verified patient identifiers are provided; slide-disjoint folds do not establish patient independence."
-          },
-          {
             "id": "batches",
-            "title": "Batches",
-            "description": "The plan mirrors the Bladder baseline recipe; no compute is launched.",
+            "title": "Training recipe",
+            "description": "Plan the five-fold ABMIL batch and predictor policy before any run is submitted.",
             "facts": [
               {
                 "label": "Model",
@@ -2836,16 +3760,12 @@
                 "value": "0.25"
               },
               {
-                "label": "Folds",
-                "value": "5"
-              },
-              {
                 "label": "Training seed",
                 "value": "42"
               },
               {
-                "label": "Split seed",
-                "value": "42"
+                "label": "Predictor policy",
+                "value": "Ensemble + P75 refit"
               }
             ],
             "table": {
@@ -2891,6 +3811,80 @@
             "notice": "Synthetic illustration, not measured performance. All identifiers, predictions, loss curves, resource samples and artifact references are invented. No training runs."
           },
           {
+            "id": "frozen",
+            "title": "Freeze setup",
+            "description": "A frozen setup locks the inputs, training folds, batch recipes and predictor policy. Execution is a separate action in Experiments.",
+            "facts": [
+              {
+                "label": "Setup",
+                "value": "BLCA baseline v2 setup"
+              },
+              {
+                "label": "Status",
+                "value": "Illustrative frozen setup"
+              },
+              {
+                "label": "Planned runs",
+                "value": "5"
+              },
+              {
+                "label": "Runs started by freezing",
+                "value": "0"
+              },
+              {
+                "label": "Next stage",
+                "value": "Experiments · submit the frozen setup"
+              }
+            ],
+            "notice": "The demo is read-only. Its frozen state is an illustration, not a stored scientific configuration or a runnable job."
+          }
+        ]
+      },
+      {
+        "id": "blca-baseline-v2",
+        "module": "experiments",
+        "name": "BLCA baseline v2",
+        "description": "Follow a frozen setup through explicit submission, synthetic run monitoring and results.",
+        "tags": [
+          "Synthetic",
+          "ABMIL",
+          "5 folds",
+          "Ensemble + P75 refit"
+        ],
+        "steps": [
+          {
+            "id": "submission",
+            "title": "Submit frozen setup",
+            "description": "Experiments uses the exact saved setup, rechecks current features and runtime availability, then starts work only after explicit submission.",
+            "facts": [
+              {
+                "label": "Frozen setup",
+                "value": "BLCA baseline v2 setup"
+              },
+              {
+                "label": "Training slides",
+                "value": "62"
+              },
+              {
+                "label": "Reserved testing slides",
+                "value": "76"
+              },
+              {
+                "label": "Planned runs",
+                "value": "5"
+              },
+              {
+                "label": "Scientific design",
+                "value": "Locked; copy the setup to change it"
+              },
+              {
+                "label": "Execution",
+                "value": "Illustrative completed runs; no actual compute"
+              }
+            ],
+            "notice": "Synthetic illustration, not measured performance. All identifiers, predictions, loss curves, resource samples and artifact references are invented. No training runs."
+          },
+          {
             "id": "runs",
             "title": "Runs",
             "description": "Runs first, resource usage below, then predictor creation.",
@@ -2908,7 +3902,7 @@
                     "experimentName": "BLCA baseline v2",
                     "batchName": "ABMIL baseline · synthetic",
                     "inputs": {
-                      "protocolId": "blca-protocol",
+                      "protocolId": "blca-training-protocol",
                       "featureBundleId": "blca-features",
                       "loadingPolicy": "native",
                       "packArtifactId": null
@@ -3024,7 +4018,7 @@
                   "splitPlans": [
                     {
                       "id": "blca-demo-split-1",
-                      "planId": "blca-protocol",
+                      "planId": "blca-training-protocol",
                       "seed": 42,
                       "fold": 0,
                       "phase": "development",
@@ -3037,7 +4031,7 @@
                     },
                     {
                       "id": "blca-demo-split-2",
-                      "planId": "blca-protocol",
+                      "planId": "blca-training-protocol",
                       "seed": 42,
                       "fold": 1,
                       "phase": "development",
@@ -3050,7 +4044,7 @@
                     },
                     {
                       "id": "blca-demo-split-3",
-                      "planId": "blca-protocol",
+                      "planId": "blca-training-protocol",
                       "seed": 42,
                       "fold": 2,
                       "phase": "development",
@@ -3063,7 +4057,7 @@
                     },
                     {
                       "id": "blca-demo-split-4",
-                      "planId": "blca-protocol",
+                      "planId": "blca-training-protocol",
                       "seed": 42,
                       "fold": 3,
                       "phase": "development",
@@ -3076,7 +4070,7 @@
                     },
                     {
                       "id": "blca-demo-split-5",
-                      "planId": "blca-protocol",
+                      "planId": "blca-training-protocol",
                       "seed": 42,
                       "fold": 4,
                       "phase": "development",
@@ -8803,7 +9797,7 @@
           {
             "id": "results",
             "title": "Results",
-            "description": "Out-of-fold assessment summarizes synthetic held-out slides, separate from checkpoint validation.",
+            "description": "Out-of-fold assessment summarizes synthetic training slides held out by each fold, separate from checkpoint validation and the reserved testing set.",
             "facts": [
               {
                 "label": "Assessment unit",
@@ -9213,33 +10207,41 @@
         ]
       },
       {
-        "id": "blca-baseline-v3",
-        "module": "experiments",
-        "name": "BLCA baseline v3",
-        "description": "Inspect a five-fold ABMIL plan, synthetic run curves and predictor creation.",
+        "id": "blca-setup-v3",
+        "module": "experimental-setup",
+        "name": "BLCA baseline v3 setup",
+        "description": "Combine the saved dataset, targets/splits and features, then freeze the training design.",
         "tags": [
           "Synthetic",
-          "ABMIL",
+          "Frozen setup",
           "5 folds",
-          "P50 refit"
+          "ABMIL"
         ],
         "steps": [
           {
             "id": "inputs",
             "title": "Inputs",
-            "description": "Protocol and slide feature bundle stay linked to the batch.",
+            "description": "Bind the dataset and its fixed training/testing split to the feature bundle.",
             "facts": [
               {
-                "label": "Protocol",
-                "value": "Grade 1/3 development"
+                "label": "Dataset",
+                "value": "BLCA synthetic slides"
+              },
+              {
+                "label": "Targets and splits",
+                "value": "Grade 1/3 training · Grade 2 testing"
               },
               {
                 "label": "Features",
                 "value": "UNI v1 · 1024 dimensions"
               },
               {
-                "label": "Development",
-                "value": "62 synthetic slides"
+                "label": "Training slides",
+                "value": "62"
+              },
+              {
+                "label": "Reserved testing slides",
+                "value": "76"
               },
               {
                 "label": "Target",
@@ -9249,9 +10251,398 @@
             "notice": "Groups are synthetic slide fallbacks. No verified patient identifiers are provided; slide-disjoint folds do not establish patient independence."
           },
           {
+            "id": "compatibility",
+            "title": "Compatibility",
+            "description": "Experimental Setup checks the bound features against every frozen training slide before freezing the design.",
+            "table": {
+              "columns": [
+                "Check",
+                "Illustrative requirement"
+              ],
+              "rows": [
+                [
+                  "Dataset",
+                  "Matches the dataset used by Targets & splits"
+                ],
+                [
+                  "Training coverage",
+                  "All 62 frozen training slides; never shrink membership"
+                ],
+                [
+                  "Feature integrity",
+                  "Current verified source, UNI v1, 1024 dimensions"
+                ],
+                [
+                  "Loading",
+                  "Native representation; no packed artifact selected"
+                ],
+                [
+                  "Testing coverage",
+                  "Checked separately when evaluating the 76 reserved slides"
+                ]
+              ]
+            },
+            "notice": "These checks explain the real workflow. No tensors are included, so this synthetic example cannot verify features or freeze an executable setup."
+          },
+          {
+            "id": "splits",
+            "title": "Training folds",
+            "description": "Divide only the 62 training slides into five assessment folds and separate checkpoint-validation subsets.",
+            "facts": [
+              {
+                "label": "Training slides",
+                "value": "62"
+              },
+              {
+                "label": "Low",
+                "value": "33"
+              },
+              {
+                "label": "High",
+                "value": "29"
+              },
+              {
+                "label": "Folds",
+                "value": "5"
+              },
+              {
+                "label": "Split seed",
+                "value": "42"
+              },
+              {
+                "label": "Grouping",
+                "value": "slide_id fallback"
+              },
+              {
+                "label": "Reserved testing overlap",
+                "value": "0"
+              }
+            ],
+            "notice": "Groups are synthetic slide fallbacks. No verified patient identifiers are provided; slide-disjoint folds do not establish patient independence.",
+            "table": {
+              "columns": [
+                "Synthetic slide",
+                "Label",
+                "Assessment fold"
+              ],
+              "rows": [
+                [
+                  "BLCA-DEMO-001",
+                  "low",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-002",
+                  "low",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-003",
+                  "low",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-004",
+                  "low",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-005",
+                  "low",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-006",
+                  "low",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-007",
+                  "low",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-008",
+                  "low",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-009",
+                  "low",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-010",
+                  "low",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-011",
+                  "low",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-012",
+                  "low",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-013",
+                  "low",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-014",
+                  "low",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-015",
+                  "low",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-016",
+                  "low",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-017",
+                  "low",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-018",
+                  "low",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-019",
+                  "low",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-020",
+                  "low",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-021",
+                  "low",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-022",
+                  "low",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-023",
+                  "low",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-024",
+                  "low",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-025",
+                  "low",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-026",
+                  "low",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-027",
+                  "low",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-028",
+                  "low",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-029",
+                  "low",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-030",
+                  "low",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-031",
+                  "low",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-032",
+                  "low",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-033",
+                  "low",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-034",
+                  "high",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-035",
+                  "high",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-036",
+                  "high",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-037",
+                  "high",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-038",
+                  "high",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-039",
+                  "high",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-040",
+                  "high",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-041",
+                  "high",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-042",
+                  "high",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-043",
+                  "high",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-044",
+                  "high",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-045",
+                  "high",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-046",
+                  "high",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-047",
+                  "high",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-048",
+                  "high",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-049",
+                  "high",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-050",
+                  "high",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-051",
+                  "high",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-052",
+                  "high",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-053",
+                  "high",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-054",
+                  "high",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-055",
+                  "high",
+                  5
+                ],
+                [
+                  "BLCA-DEMO-056",
+                  "high",
+                  4
+                ],
+                [
+                  "BLCA-DEMO-057",
+                  "high",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-058",
+                  "high",
+                  2
+                ],
+                [
+                  "BLCA-DEMO-059",
+                  "high",
+                  3
+                ],
+                [
+                  "BLCA-DEMO-060",
+                  "high",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-061",
+                  "high",
+                  1
+                ],
+                [
+                  "BLCA-DEMO-062",
+                  "high",
+                  4
+                ]
+              ]
+            }
+          },
+          {
             "id": "batches",
-            "title": "Batches",
-            "description": "The plan mirrors the Bladder baseline recipe; no compute is launched.",
+            "title": "Training recipe",
+            "description": "Plan the five-fold ABMIL batch and predictor policy before any run is submitted.",
             "facts": [
               {
                 "label": "Model",
@@ -9278,16 +10669,12 @@
                 "value": "0.25"
               },
               {
-                "label": "Folds",
-                "value": "5"
-              },
-              {
                 "label": "Training seed",
                 "value": "42"
               },
               {
-                "label": "Split seed",
-                "value": "42"
+                "label": "Predictor policy",
+                "value": "P50 refit"
               }
             ],
             "table": {
@@ -9333,6 +10720,80 @@
             "notice": "Synthetic illustration, not measured performance. All identifiers, predictions, loss curves, resource samples and artifact references are invented. No training runs."
           },
           {
+            "id": "frozen",
+            "title": "Freeze setup",
+            "description": "A frozen setup locks the inputs, training folds, batch recipes and predictor policy. Execution is a separate action in Experiments.",
+            "facts": [
+              {
+                "label": "Setup",
+                "value": "BLCA baseline v3 setup"
+              },
+              {
+                "label": "Status",
+                "value": "Illustrative frozen setup"
+              },
+              {
+                "label": "Planned runs",
+                "value": "5"
+              },
+              {
+                "label": "Runs started by freezing",
+                "value": "0"
+              },
+              {
+                "label": "Next stage",
+                "value": "Experiments · submit the frozen setup"
+              }
+            ],
+            "notice": "The demo is read-only. Its frozen state is an illustration, not a stored scientific configuration or a runnable job."
+          }
+        ]
+      },
+      {
+        "id": "blca-baseline-v3",
+        "module": "experiments",
+        "name": "BLCA baseline v3",
+        "description": "Follow a frozen setup through explicit submission, synthetic run monitoring and results.",
+        "tags": [
+          "Synthetic",
+          "ABMIL",
+          "5 folds",
+          "P50 refit"
+        ],
+        "steps": [
+          {
+            "id": "submission",
+            "title": "Submit frozen setup",
+            "description": "Experiments uses the exact saved setup, rechecks current features and runtime availability, then starts work only after explicit submission.",
+            "facts": [
+              {
+                "label": "Frozen setup",
+                "value": "BLCA baseline v3 setup"
+              },
+              {
+                "label": "Training slides",
+                "value": "62"
+              },
+              {
+                "label": "Reserved testing slides",
+                "value": "76"
+              },
+              {
+                "label": "Planned runs",
+                "value": "5"
+              },
+              {
+                "label": "Scientific design",
+                "value": "Locked; copy the setup to change it"
+              },
+              {
+                "label": "Execution",
+                "value": "Illustrative completed runs; no actual compute"
+              }
+            ],
+            "notice": "Synthetic illustration, not measured performance. All identifiers, predictions, loss curves, resource samples and artifact references are invented. No training runs."
+          },
+          {
             "id": "runs",
             "title": "Runs",
             "description": "Runs first, resource usage below, then predictor creation.",
@@ -9350,7 +10811,7 @@
                     "experimentName": "BLCA baseline v3",
                     "batchName": "ABMIL baseline · synthetic",
                     "inputs": {
-                      "protocolId": "blca-protocol",
+                      "protocolId": "blca-training-protocol",
                       "featureBundleId": "blca-features",
                       "loadingPolicy": "native",
                       "packArtifactId": null
@@ -9466,7 +10927,7 @@
                   "splitPlans": [
                     {
                       "id": "blca-demo-split-1",
-                      "planId": "blca-protocol",
+                      "planId": "blca-training-protocol",
                       "seed": 42,
                       "fold": 0,
                       "phase": "development",
@@ -9479,7 +10940,7 @@
                     },
                     {
                       "id": "blca-demo-split-2",
-                      "planId": "blca-protocol",
+                      "planId": "blca-training-protocol",
                       "seed": 42,
                       "fold": 1,
                       "phase": "development",
@@ -9492,7 +10953,7 @@
                     },
                     {
                       "id": "blca-demo-split-3",
-                      "planId": "blca-protocol",
+                      "planId": "blca-training-protocol",
                       "seed": 42,
                       "fold": 2,
                       "phase": "development",
@@ -9505,7 +10966,7 @@
                     },
                     {
                       "id": "blca-demo-split-4",
-                      "planId": "blca-protocol",
+                      "planId": "blca-training-protocol",
                       "seed": 42,
                       "fold": 3,
                       "phase": "development",
@@ -9518,7 +10979,7 @@
                     },
                     {
                       "id": "blca-demo-split-5",
-                      "planId": "blca-protocol",
+                      "planId": "blca-training-protocol",
                       "seed": 42,
                       "fold": 4,
                       "phase": "development",
@@ -14929,7 +16390,7 @@
           {
             "id": "results",
             "title": "Results",
-            "description": "Out-of-fold assessment summarizes synthetic held-out slides, separate from checkpoint validation.",
+            "description": "Out-of-fold assessment summarizes synthetic training slides held out by each fold, separate from checkpoint validation and the reserved testing set.",
             "facts": [
               {
                 "label": "Assessment unit",
@@ -15340,9 +16801,9 @@
       },
       {
         "id": "blca-test-cohort",
-        "module": "test-data",
+        "module": "evaluation",
         "name": "Grade 2 test cohort",
-        "description": "A separate set of 76 synthetic slides illustrates later evaluation.",
+        "description": "Use the 76 testing slides already reserved by Targets & splits for model evaluation.",
         "tags": [
           "Synthetic",
           "Read only"
@@ -15351,7 +16812,7 @@
           {
             "id": "selection",
             "title": "Selection",
-            "description": "Keep Grade 2 slides outside baseline development and checkpoint selection.",
+            "description": "Load the exact frozen testing membership; Grade 2 never enters training folds or checkpoint selection.",
             "facts": [
               {
                 "label": "Test slides",
@@ -15375,7 +16836,7 @@
           {
             "id": "labels",
             "title": "Labels",
-            "description": "Map the binary target and freeze slide membership independently of feature preparation.",
+            "description": "Inspect the frozen labels and membership inherited from Targets & splits.",
             "table": {
               "columns": [
                 "Synthetic slide",
@@ -15765,7 +17226,7 @@
                 ]
               ]
             },
-            "notice": "A test cohort can be prepared before features or predictors are ready. Evaluation checks feature compatibility later."
+            "notice": "Targets & splits already froze these testing slides without features. Evaluation now checks complete testing coverage and a compatible predictor."
           },
           {
             "id": "frozen",
@@ -15805,7 +17266,7 @@
           {
             "id": "plan",
             "title": "Plan",
-            "description": "Pair the baseline v2 P75 refit example with the Grade 2 test cohort.",
+            "description": "Pair the baseline v2 P75 refit with the frozen Grade 2 testing set, then check target and feature compatibility before scoring.",
             "facts": [
               {
                 "label": "Predictor",
@@ -16626,6 +18087,437 @@
               ]
             },
             "notice": "Groups are synthetic slide fallbacks. No verified patient identifiers are provided; slide-disjoint folds do not establish patient independence."
+          }
+        ]
+      },
+      {
+        "id": "blca-inference",
+        "module": "inference",
+        "name": "Label-free predictor application",
+        "description": "Inspect prediction-only outputs without targets or evaluation metrics.",
+        "tags": [
+          "Synthetic",
+          "Read only"
+        ],
+        "steps": [
+          {
+            "id": "inputs",
+            "title": "Inference inputs",
+            "description": "Apply a ready predictor to compatible slide features without requiring a target column or a testing split.",
+            "facts": [
+              {
+                "label": "Predictor",
+                "value": "Baseline v2 · P75 refit"
+              },
+              {
+                "label": "Features",
+                "value": "UNI v1 · 1024 dimensions · metadata only"
+              },
+              {
+                "label": "Synthetic slides",
+                "value": "76"
+              },
+              {
+                "label": "Labels",
+                "value": "Not supplied to inference"
+              }
+            ],
+            "notice": "This guide reuses the same 76 invented Grade 2 slide scores with their labels omitted. It introduces no new subjects or model execution."
+          },
+          {
+            "id": "predictions",
+            "title": "Predictions",
+            "description": "Export slide probabilities and predicted classes. Without labels, inference does not report accuracy, AUROC or calibration.",
+            "table": {
+              "columns": [
+                "Synthetic slide",
+                "P(high)",
+                "Predicted at 0.5"
+              ],
+              "rows": [
+                [
+                  "BLCA-DEMO-063",
+                  0.01609,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-064",
+                  0.043357,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-065",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-066",
+                  0.50893,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-067",
+                  0.350932,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-068",
+                  0.556609,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-069",
+                  0.310915,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-070",
+                  0.293513,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-071",
+                  0.429483,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-072",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-073",
+                  0.093203,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-074",
+                  0.171476,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-075",
+                  0.392903,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-076",
+                  0.194013,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-077",
+                  0.454973,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-078",
+                  0.035807,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-079",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-080",
+                  0.146745,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-081",
+                  0.423452,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-082",
+                  0.146667,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-083",
+                  0.013614,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-084",
+                  0.065715,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-085",
+                  0.261998,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-086",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-087",
+                  0.538631,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-088",
+                  0.247418,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-089",
+                  0.376481,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-090",
+                  0.322633,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-091",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-092",
+                  0.101016,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-093",
+                  0.545387,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-094",
+                  0.532991,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-095",
+                  0.458902,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-096",
+                  0.270931,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-097",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-098",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-099",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-100",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-101",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-102",
+                  0.139014,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-103",
+                  0.288534,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-104",
+                  0.413108,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-105",
+                  0.358978,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-106",
+                  0.207773,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-107",
+                  0.574026,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-108",
+                  0.414874,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-109",
+                  0.228085,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-110",
+                  0.078314,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-111",
+                  0.081392,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-112",
+                  0.014905,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-113",
+                  0.589749,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-114",
+                  0.122983,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-115",
+                  0.328498,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-116",
+                  0.01,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-117",
+                  0.581984,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-118",
+                  0.9717,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-119",
+                  0.36457,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-120",
+                  0.99,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-121",
+                  0.99,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-122",
+                  0.99,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-123",
+                  0.522783,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-124",
+                  0.964482,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-125",
+                  0.958676,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-126",
+                  0.99,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-127",
+                  0.480747,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-128",
+                  0.99,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-129",
+                  0.442053,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-130",
+                  0.404043,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-131",
+                  0.553948,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-132",
+                  0.707903,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-133",
+                  0.702227,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-134",
+                  0.846376,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-135",
+                  0.858455,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-136",
+                  0.99,
+                  "high"
+                ],
+                [
+                  "BLCA-DEMO-137",
+                  0.467077,
+                  "low"
+                ],
+                [
+                  "BLCA-DEMO-138",
+                  0.688664,
+                  "high"
+                ]
+              ]
+            },
+            "notice": "Synthetic illustration, not measured performance. All identifiers, predictions, loss curves, resource samples and artifact references are invented. No training runs."
           }
         ]
       },

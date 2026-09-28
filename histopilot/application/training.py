@@ -4,6 +4,7 @@ import hashlib
 import os
 import signal
 import subprocess
+from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.development import development_plans
@@ -21,6 +22,10 @@ from histopilot.schemas.training_controls import (
 )
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError, ensure_managed_directory, writer_lock
+from histopilot.taskcenter import ids as task_ids
+from histopilot.taskcenter import paths as task_paths
+from histopilot.taskcenter.model import ACTIVE as TASK_ACTIVE
+from histopilot.taskcenter.model import LIVE as TASK_LIVE
 from histopilot.workers.compute_archive import prepare_compute_archive
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import (
@@ -63,11 +68,73 @@ def run_processes(run: dict) -> list:
     return owned_processes(process, process["pid"] if process else None)
 
 
+MANAGED = "task-center"
+TASK_GROUP = "mil-batch"
+
+
+def session_name(folder, *, managed: bool) -> str:
+    prefix = "tc-" if managed else "hp-train-"
+    return prefix + hashlib.sha256(str(folder).encode()).hexdigest()[:16]
+
+
+def task_folder(folder) -> str:
+    """Task Center ids name a batch by its absolute resolved folder."""
+    return str(Path(folder).resolve())
+
+
 class TrainingService:
-    def __init__(self, store, filesystem, executor=None, runtime=None):
+    def __init__(
+        self,
+        store,
+        filesystem,
+        executor=None,
+        runtime=None,
+        *,
+        execution_mode=None,
+        task_center=None,
+    ):
         self.store, self.filesystem = store, filesystem
+        # An injected legacy executor keeps the tmux scheduler unless a mode is explicit.
+        self.mode = execution_mode or (
+            "tmux" if executor is not None else task_paths.execution_mode()
+        )
         self.executor = executor or TmuxTrainingExecutor()
         self.runtime = runtime or training_runtime
+        self._task_center = task_center
+        self._default_task_center = task_center is None
+
+    @property
+    def task_center(self):
+        if self._task_center is None:
+            from histopilot.taskcenter.client import default_client
+
+            self._task_center = default_client()
+        return self._task_center
+
+    def _task_group(self, identity, state):
+        """The batch's Task Center group, or ``{"error": ...}`` when the store is unreadable."""
+        project = (state.get("taskGroup") or {}).get("projectFolder") or str(self.store.folder)
+        try:
+            return self.task_center.group(TASK_GROUP, identity, project)
+        except (StorageError, OSError) as error:
+            return {"error": str(error)}
+
+    def _task_summary(self, group):
+        if group is None or "error" in group:
+            return None
+        counts = group["counts"]
+        try:
+            runner_alive = bool(self.task_center.runner_alive())
+        except (StorageError, OSError):
+            runner_alive = False
+        return {
+            "runnerAlive": runner_alive,
+            "queued": counts["blocked"] + counts["queued"],
+            "running": sum(counts[state] for state in TASK_ACTIVE),
+            "held": group["held"],
+            "waitingReason": group["waitingReason"],
+            "ownerKey": group["owner"]["key"] if group["owner"] else None,
+        }
 
     def _batch(self, identity, *, include_inactive=False):
         configuration = self.store.get_configuration(identity, include_inactive=include_inactive)
@@ -89,6 +156,11 @@ class TrainingService:
         if not (folder / "state.json").exists():
             return None
         state = read_json(folder / "state.json")
+        managed = state.get("executor") == MANAGED
+        # Task Center batches have no scheduler process or session: the task store says
+        # whether work is still queued or running. Unknown task state never reads as idle.
+        group = self._task_group(identity, state) if managed else None
+        known = group is not None and "error" not in group
         scheduler_alive = process_alive(state.get("process"))
         children = [run for run in state["runs"] if run_processes(run)]
         if scheduler_alive or children:
@@ -96,7 +168,7 @@ class TrainingService:
             # after writing failure while isolated loader descendants survive.
             if state["status"] not in ACTIVE:
                 state["status"] = "running"
-            if children and not scheduler_alive:
+            if children and not scheduler_alive and (not managed or (known and not group["live"])):
                 state["findings"] = [
                     *[
                         item
@@ -109,7 +181,11 @@ class TrainingService:
                         "message": "Training workers are still running without their scheduler. Cancel this batch and wait for its workers to stop before resuming.",
                     },
                 ]
-        elif state["status"] in ACTIVE and not self.executor.running(state["sessionName"]):
+        elif state["status"] in ACTIVE and (
+            self._managed_idle(group, folder)
+            if managed
+            else not self.executor.running(state["sessionName"])
+        ):
             if not scheduler_alive and not children:
                 # Return a reconciled view. Only the scheduler writes active state.
                 state["status"] = (
@@ -121,6 +197,18 @@ class TrainingService:
                 from histopilot.workers.training_process import counts
 
                 state["runCounts"] = counts(state["runs"])
+        if managed:
+            state["taskCenter"] = self._task_summary(group)
+            if not known:
+                state["findings"] = [
+                    *state.get("findings", []),
+                    {
+                        "severity": "warning",
+                        "code": "TASK_CENTER_UNAVAILABLE",
+                        "message": "The Task Center cannot be read, so this batch shows its last "
+                        f"saved status. {(group or {}).get('error', '')}".strip(),
+                    },
+                ]
         state["cancelRequested"] = (folder / "cancel.json").exists()
         if include_progress:
             for run in state["runs"]:
@@ -130,6 +218,19 @@ class TrainingService:
                 if warning:
                     run["progressWarning"] = warning
         return state
+
+    @staticmethod
+    def _managed_idle(group, folder) -> bool:
+        """No task can still move this batch: nothing is live, or a cancel left no fold."""
+        if group is None or "error" in group:
+            return False
+        if not group["live"]:
+            return True
+        # A cancelled batch whose final collection waits (for example behind a hold)
+        # reads as cancelled; that collection only rewrites results with the same status.
+        return (folder / "cancel.json").exists() and not any(
+            task["kind"] == "mil-fold" and task["state"] in TASK_LIVE for task in group["tasks"]
+        )
 
     def list(self, *, include_inactive=False):
         lifecycle = LifecycleStore(self.store.folder, self.store.project_id).read()["records"]
@@ -152,27 +253,52 @@ class TrainingService:
             return {**read_json(path), "status": state["status"] if state else "planned"}
         return {"status": state["status"] if state else "planned", "candidates": [], "oof": []}
 
+    def _managed_launch(self, batch) -> bool:
+        """Whether this launch runs under the Task Center; a saved plan keeps its mode."""
+        path = self.store.folder / "training" / batch["id"] / "plan.json"
+        if path.exists():
+            return read_json(path).get("executionMode") == MANAGED
+        return self.mode == MANAGED
+
     def _prepare(self, batch):
         manifest = batch["manifest"]
         spec = DevelopmentBatchSpec.model_validate(manifest["spec"], context={"legacy": True})
         runtime = self.runtime()
         if not runtime["available"]:
             raise StorageError(runtime["findings"][0]["message"], "TRAINING_RUNTIME_UNAVAILABLE")
-        resources = spec.resources.model_dump()
-        if resources["gpuIds"] and (
-            not runtime["cudaAvailable"] or max(resources["gpuIds"]) >= runtime["gpuCount"]
-        ):
-            raise StorageError(
-                "The requested GPU is unavailable. Choose available GPU IDs or CPU execution (an empty GPU list).",
-                "TRAINING_GPU_UNAVAILABLE",
+        if self._managed_launch(batch):
+            # Design section 4.7: a frozen setup's legacy resources are read but ignored under
+            # the Task Center. The device kind follows this machine and threads and loader
+            # workers the Task Center defaults; the Task Center places and paces every run.
+            # The loader worker count does not change augmentation random streams.
+            resources = self._default_resources(runtime)
+        else:
+            resources = (
+                spec.resources.model_dump()
+                if spec.resources is not None
+                else self._default_resources(runtime)
             )
+            if resources["gpuIds"] and (
+                not runtime["cudaAvailable"] or max(resources["gpuIds"]) >= runtime["gpuCount"]
+            ):
+                raise StorageError(
+                    "The requested GPU is unavailable. Choose available GPU IDs or CPU execution (an empty GPU list).",
+                    "TRAINING_GPU_UNAVAILABLE",
+                )
         host = host_snapshot()
         if cpu_slots_per_run(resources) > host["cpuCount"]:
             raise StorageError(
                 "CPU threads plus overlapping training and validation data workers exceed the available CPU capacity per run.",
                 "TRAINING_RESOURCES_UNAVAILABLE",
             )
-        if resources["ramGbPerRun"] > host["availableRamGb"]:
+        if self._managed_launch(batch):
+            # The Task Center waits for free memory; refuse only a run that can never fit.
+            if resources["ramGbPerRun"] > host["totalRamGb"]:
+                raise StorageError(
+                    "Requested RAM per run exceeds this workstation's memory.",
+                    "TRAINING_RESOURCES_UNAVAILABLE",
+                )
+        elif resources["ramGbPerRun"] > host["availableRamGb"]:
             raise StorageError(
                 "Requested RAM per run exceeds currently available memory.",
                 "TRAINING_RESOURCES_UNAVAILABLE",
@@ -346,6 +472,8 @@ class TrainingService:
             ],
             "featureBundleContentHash": bundle["contentHash"],
             "target": target,
+            **({"splitUnit": protocol["spec"]["splitUnit"]} if "splitUnit" in protocol["spec"] else {}),
+            **({"groupByPatient": True} if protocol["spec"]["split"].get("groupByPatient") else {}),
             **({"selectionMetric": spec.selectionMetric} if spec.selectionMetric else {}),
             **({"candidateSelection": spec.candidateSelection} if spec.candidateSelection else {}),
             "resources": resources,
@@ -357,6 +485,269 @@ class TrainingService:
             **({"nnmilPlanning": resolutions} if resolutions else {}),
         }
         return plan, bundles._freshness_guard(feature, bundle["manifest"])
+
+    def _default_resources(self, runtime):
+        """Per-run settings for specs without resources; the Task Center sets parallelism."""
+        defaults = {"cpuThreadsPerRun": 2, "dataLoaderWorkers": 2}
+        try:
+            defaults.update(self.task_center.store.settings()["defaults"])
+        except (StorageError, OSError, AttributeError, KeyError, TypeError):
+            pass  # an unavailable store keeps the documented defaults
+        return {
+            "maxConcurrentRuns": 1,
+            "gpuIds": [0]
+            if runtime.get("cudaAvailable") and runtime.get("gpuCount", 0) > 0
+            else [],
+            "runsPerGpu": 1,
+            "cpuThreadsPerRun": int(defaults["cpuThreadsPerRun"]),
+            "dataLoaderWorkers": int(defaults["dataLoaderWorkers"]),
+            "ramGbPerRun": 8.0,
+        }
+
+    # -- Task Center ---------------------------------------------------------------------
+
+    def _task_owner(self, identity, batch):
+        spec = batch["manifest"]["spec"]
+        batch_name = spec.get("batchName") or identity
+        experiment = spec.get("experimentId")
+        common = {
+            "projectId": self.store.project_id,
+            "projectFolder": str(self.store.folder),
+            "workspace": None,
+            "labels": {
+                **({"experimentId": experiment} if experiment else {}),
+                "batchName": batch_name,
+            },
+        }
+        if experiment:
+            title = (batch["manifest"].get("experiment") or {}).get("name") or spec.get(
+                "experimentName"
+            )
+            return {"kind": "experiment", "id": experiment, "title": title or experiment, **common}
+        return {"kind": TASK_GROUP, "id": identity, "title": batch_name, **common}
+
+    def _task_graph(self, identity, batch, folder, plan):
+        """One task per fold in plan order, then the final results collection."""
+        from histopilot.taskcenter import estimator
+
+        spec = batch["manifest"]["spec"]
+        batch_name = spec.get("batchName") or identity
+        experiment = spec.get("experimentId")
+        resources = plan["resources"]
+        threads = int(resources["cpuThreadsPerRun"])
+        workers = int(resources["dataLoaderWorkers"])
+        lane = "gpu" if resources.get("gpuIds") else "cpu"
+        key_folder = task_folder(folder)
+        python = plan["runtime"]["python"]
+        plan_path = str(folder / "plan.json")
+        compute = str(folder / "compute")
+        environment = {
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+            "OMP_NUM_THREADS": str(threads),
+            "MKL_NUM_THREADS": str(threads),
+            "OPENBLAS_NUM_THREADS": str(threads),
+        }
+        data = plan["data"]
+        configurations = {row["id"]: row for row in plan["configurations"]}
+        splits = {row["id"]: row for row in plan["splitPlans"]}
+        group = {"kind": TASK_GROUP, "id": identity}
+        workloads, tasks = {}, []
+        for index, run in enumerate(plan["runs"]):
+            candidate = configurations[run["candidateId"]]
+            split = splits[run["splitPlanId"]]
+            pair = (run["candidateId"], run["splitPlanId"])
+            if pair not in workloads:
+                try:
+                    workloads[pair] = estimator.fold_workloads(
+                        candidate["recipe"],
+                        plan["memberships"][run["splitPlanId"]],
+                        data["featureFiles"],
+                        data["loadingPolicy"],
+                    )
+                except (ValueError, KeyError, TypeError):
+                    workloads[pair] = None  # unmeasurable folds keep a conservative default
+            workload = workloads[pair]
+            vram = 0.0
+            # An enqueue-time guess: the runner replaces RAM and VRAM with the estimator's
+            # evidence-based request before admitting the fold.
+            if lane == "gpu":
+                try:
+                    vram = round(estimator.gpu_estimate(workload), 3) if workload else 3.0
+                except (ValueError, KeyError, TypeError, ZeroDivisionError):
+                    vram = 3.0
+            fold = split.get("fold")
+            fold_number = fold + 1 if isinstance(fold, int) else fold
+            run_folder = folder / "runs" / run["id"]
+            tasks.append(
+                {
+                    "id": task_ids.fold_task_id(key_folder, run["id"]),
+                    "kind": "mil-fold",
+                    "adapter": "mil-fold",
+                    "title": f"{batch_name} · Config {candidate.get('number', '?')} · "
+                    f"Fold {fold_number} · Train seed {run['trainingSeed']} · "
+                    f"Split seed {split.get('seed')}",
+                    "group": group,
+                    "planOrder": index,
+                    "labels": {
+                        "batchId": identity,
+                        "batchName": batch_name,
+                        "runId": run["id"],
+                        "candidateId": run["candidateId"],
+                        "configurationNumber": candidate.get("number"),
+                        "fold": fold_number,
+                        "trainingSeed": run["trainingSeed"],
+                        "splitSeed": split.get("seed"),
+                        "model": candidate["recipe"].get("model", "abmil"),
+                        **({"experimentId": experiment} if experiment else {}),
+                    },
+                    "request": {
+                        "lane": lane,
+                        "cpuThreads": threads,
+                        "dataWorkers": workers,
+                        "ramGb": 6.0,
+                        "vramGb": vram,
+                        "sharedFiles": [data["packPath"]] if data.get("packPath") else [],
+                        "workloadKey": workload["key"] if workload else None,
+                        "workload": workload,
+                    },
+                    "command": {
+                        "argv": [
+                            python,
+                            "-u",
+                            "-m",
+                            "histopilot.workers.managed_fold",
+                            plan_path,
+                            run["id"],
+                        ],
+                        "cwd": compute,
+                        "env": environment,
+                        "log": str(run_folder / "run.log"),
+                        "progress": str(run_folder / "progress.json"),
+                        "result": str(run_folder / "result.json"),
+                    },
+                    "adapterData": {
+                        "batchFolder": key_folder,
+                        "runId": run["id"],
+                        "batchId": identity,
+                        "final": False,
+                    },
+                }
+            )
+        tasks.append(
+            {
+                "id": task_ids.collect_task_id(key_folder, True),
+                "kind": "mil-collect",
+                "adapter": "mil-collect",
+                "title": f"{batch_name} · Final results",
+                "group": group,
+                # Partial collections take the slot just before it (see the fold adapter).
+                "planOrder": len(plan["runs"]) + 1,
+                "priority": "interactive",
+                "exclusiveKey": "collect:" + key_folder,
+                "labels": {
+                    "batchId": identity,
+                    "batchName": batch_name,
+                    **({"experimentId": experiment} if experiment else {}),
+                },
+                "dependsOn": [{"task": task["id"], "condition": "terminal"} for task in tasks],
+                "request": {"lane": "cpu", "cpuThreads": 1, "dataWorkers": 0, "ramGb": 3.0},
+                "command": {
+                    "argv": [
+                        python,
+                        "-u",
+                        "-m",
+                        "histopilot.workers.managed_collect",
+                        plan_path,
+                        "--final",
+                    ],
+                    "cwd": compute,
+                    "env": {
+                        **environment,
+                        "OMP_NUM_THREADS": "1",
+                        "MKL_NUM_THREADS": "1",
+                        "OPENBLAS_NUM_THREADS": "1",
+                    },
+                    "log": str(folder / "batch.log"),
+                    "progress": None,
+                    "result": str(folder / "collect-result.json"),
+                },
+                "adapterData": {"batchFolder": key_folder, "batchId": identity, "final": True},
+            }
+        )
+        return tasks
+
+    def _submit_tasks(self, identity, batch, folder, plan, state, *, resume):
+        """Enqueue the batch's task graph, or requeue its unfinished tasks on resume."""
+        client = self.task_center
+        project = state["taskGroup"]["projectFolder"]
+        key_folder = task_folder(folder)
+        if resume:
+            client.requeue_group(
+                TASK_GROUP, identity, project, kinds=("mil-fold", "mil-collect"), reason="resume"
+            )
+            pending = [
+                task_ids.fold_task_id(key_folder, run["id"])
+                for run in state["runs"]
+                if run["status"] != "completed"
+            ]
+            # A fold recorded as succeeded while its run is not completed must run again.
+            client.store.requeue(pending, reason="resume", include_succeeded=True)
+            final = task_ids.collect_task_id(key_folder, True)
+            client.store.requeue([final], reason="resume", include_succeeded=True)
+            # A final collection still waiting from the previous attempt (for example
+            # behind a hold) must wait for the requeued folds again.
+            if any(client.store.get(task) is not None for task in pending):
+                client.store.transition(
+                    final,
+                    from_states=("queued",),
+                    to_state="blocked",
+                    waiting_reason=None,
+                    detail={"reason": "resume"},
+                )
+            present = {task["id"] for task in client.group(TASK_GROUP, identity, project)["tasks"]}
+            expected = {task_ids.fold_task_id(key_folder, run["id"]) for run in plan["runs"]}
+            if expected <= present:
+                return
+        client.enqueue(
+            self._task_owner(identity, batch), self._task_graph(identity, batch, folder, plan)
+        )
+
+    def _task_accepted(self, identity, folder, state, *, resume) -> bool:
+        try:
+            group = self.task_center.group(
+                TASK_GROUP, identity, state["taskGroup"]["projectFolder"]
+            )
+        except (StorageError, OSError):
+            return False
+        if group["live"]:
+            return True
+        # Tasks may already have finished and recorded their outcome in state.json.
+        return bool(group["tasks"]) and not resume
+
+    def _require_idle_tasks(self, identity):
+        """A managed (re)launch never overlaps a running task or a queued fold of the batch."""
+        group = self.task_center.group(TASK_GROUP, identity, str(self.store.folder))
+        if any(
+            task["state"] in TASK_ACTIVE
+            or (task["kind"] == "mil-fold" and task["state"] in TASK_LIVE)
+            for task in group["tasks"]
+        ):
+            raise StorageError(
+                "Tasks of this batch are still queued or running in the Task Center.",
+                "TRAINING_ACTIVE",
+            )
+
+    def _wake_runner(self):
+        """The first submission starts the runner; failures only delay queued work."""
+        if not self._default_task_center:
+            return
+        try:
+            from histopilot.taskcenter.launcher import ensure_runner
+
+            ensure_runner()
+        except Exception:  # never fail an accepted launch because tmux misbehaved
+            pass
 
     @staticmethod
     def _operation(folder, operation_id, action):
@@ -438,9 +829,13 @@ class TrainingService:
             plan, freshness = self._prepare(batch)
             prepared_runtime = plan["runtime"]
             provenance = {"at": now(), "host": host_snapshot(), **gpu_snapshot()}
-            session = "hp-train-" + hashlib.sha256(str(folder).encode()).hexdigest()[:16]
+            original_plan = read_json(folder / "plan.json") if resume else None
+            # A saved plan keeps the execution mode it was launched with.
+            managed = (
+                original_plan.get("executionMode") == MANAGED if resume else self.mode == MANAGED
+            )
+            session = session_name(folder, managed=managed)
             if resume:
-                original_plan = read_json(folder / "plan.json")
                 if _hash(original_plan) != previous.get("planHash"):
                     raise StorageError(
                         "The saved execution plan changed after launch; it cannot be resumed.",
@@ -463,6 +858,8 @@ class TrainingService:
                 # retain the exact scientific execution plan and record the new attempt.
                 plan = original_plan
             else:
+                if managed:
+                    plan["executionMode"] = MANAGED
                 plan.update(outputPath=str(folder), sessionName=session)
             submission = (experiment_record or {}).get("payload", {}).get("submission")
             if submission:
@@ -478,7 +875,9 @@ class TrainingService:
                 require_execution_contract(submission.get("executionContract"), contract)
             package_root = prepare_compute_archive(folder, plan.get("code", {}))
             freshness()
-            if self.executor.running(session):
+            if managed:
+                self._require_idle_tasks(identity)
+            elif self.executor.running(session):
                 raise StorageError("A worker for this batch is still running.", "TRAINING_ACTIVE")
             prior_runs = {row["id"]: row for row in previous["runs"]} if previous else {}
             runs = []
@@ -508,10 +907,21 @@ class TrainingService:
                 "planHash": _hash(plan),
                 "provenance": provenance,
                 "provenancePath": str(folder / "attempts.jsonl"),
-                "resourcePlan": resource_plan(plan["resources"], provenance["host"], len(runs)),
                 "computePath": str(package_root),
                 "computeVersion": plan["code"]["sha256"],
             }
+            if managed:
+                # Parallelism belongs to the Task Center, so there is no per-batch plan.
+                state["executor"] = MANAGED
+                state["taskGroup"] = {
+                    "kind": TASK_GROUP,
+                    "id": identity,
+                    "projectFolder": str(self.store.folder),
+                }
+            else:
+                state["resourcePlan"] = resource_plan(
+                    plan["resources"], provenance["host"], len(runs)
+                )
             if previous and previous.get("telemetry"):
                 state["telemetry"] = previous["telemetry"]
             if plan["code"] != compute_snapshot():
@@ -554,6 +964,34 @@ class TrainingService:
                 },
             )
             save_state(folder, state)
+            if managed:
+                try:
+                    self._submit_tasks(identity, batch, folder, plan, state, resume=resume)
+                except (OSError, ValueError, KeyError, TypeError) as error:
+                    # A committed enqueue owns this batch; never overwrite worker evidence.
+                    if not self._task_accepted(identity, folder, state, resume=resume):
+                        state.update(
+                            status="failed",
+                            findings=[
+                                {
+                                    "severity": "error",
+                                    "code": "TRAINING_LAUNCH_FAILED",
+                                    "message": str(error),
+                                }
+                            ],
+                        )
+                        save_state(folder, state)
+                        raise StorageError(
+                            f"Training tasks could not be queued: {error}",
+                            "TRAINING_LAUNCH_FAILED",
+                        ) from error
+                    operations[operation_id] = action
+                    write_json(path, operations)
+                    return self.execution(identity)
+                operations[operation_id] = action
+                write_json(path, operations)
+                self._wake_runner()
+                return state
             try:
                 self.executor.launch(
                     session,
@@ -615,40 +1053,170 @@ class TrainingService:
         with writer_lock(folder, timeout=5):
             path, operations, replay = self._operation(folder, operation_id, "cancel")
             state = self.execution(identity, include_inactive=True)
-            busy = state and (
-                state["status"] in ACTIVE
-                or process_alive(state.get("process"))
-                or any(run_processes(run) for run in state["runs"])
-            )
-            if not replay and busy:
-                write_json(
-                    folder / "cancel.json", {"requestedAt": now(), "operationId": operation_id}
+            if state and state.get("executor") == MANAGED:
+                if not replay:
+                    self._cancel_managed(identity, folder, state, operation_id)
+            else:
+                busy = state and (
+                    state["status"] in ACTIVE
+                    or process_alive(state.get("process"))
+                    or any(run_processes(run) for run in state["runs"])
                 )
-                if not process_alive(state.get("process")):
-                    # A scheduler can disappear while its independently isolated children
-                    # survive. Signal only the recorded process groups whose identity still
-                    # matches; a cancel marker alone cannot reach an orphaned child.
-                    orphans = [run["process"] for run in state["runs"] if run_processes(run)]
-                    errors = []
-                    # Signal all groups before waiting: a stubborn first group
-                    # must not prevent cancellation from reaching later folds.
-                    for process in orphans:
-                        try:
-                            os.killpg(process["pid"], signal.SIGTERM)
-                        except ProcessLookupError:
-                            pass
-                        except OSError as error:
-                            errors.append(error)
-                    for process in orphans:
-                        try:
-                            stop_owned_processes(process)
-                        except (OSError, ValueError) as error:
-                            errors.append(error)
-                    if errors:
-                        raise StorageError(
-                            "Cancellation was requested for every orphan worker, but some workers could not be confirmed stopped. Their reservations are retained.",
-                            "TRAINING_CLEANUP_FAILED",
-                        ) from errors[0]
+                if not replay and busy:
+                    write_json(
+                        folder / "cancel.json", {"requestedAt": now(), "operationId": operation_id}
+                    )
+                    if not process_alive(state.get("process")):
+                        # A scheduler can disappear while its independently isolated children
+                        # survive. Signal only the recorded process groups whose identity still
+                        # matches; a cancel marker alone cannot reach an orphaned child.
+                        self._stop_orphans(
+                            [run["process"] for run in state["runs"] if run_processes(run)]
+                        )
             operations[operation_id] = "cancel"
             write_json(path, operations)
         return self.execution(identity, include_inactive=True)
+
+    def _cancel_managed(self, identity, folder, state, operation_id):
+        """Cancel pending folds at once; the runner stops running ones after cancel.json."""
+        project = (state.get("taskGroup") or {}).get("projectFolder") or str(self.store.folder)
+        try:
+            group = self.task_center.group(TASK_GROUP, identity, project)
+        except (StorageError, OSError):
+            group = None
+        live_runs = [run for run in state["runs"] if run_processes(run)]
+        if not (state["status"] in ACTIVE or live_runs or (group and group["live"])):
+            return
+        # The marker precedes every stop request: stopped folds are then classified as
+        # cancelled and queued folds are never started.
+        write_json(folder / "cancel.json", {"requestedAt": now(), "operationId": operation_id})
+        cancelled = set()
+        if group is not None:
+            try:
+                # A second pass catches folds the runner started during the first one.
+                for _ in range(2):
+                    result = self.task_center.cancel_group(
+                        TASK_GROUP, identity, project, exclude_kinds=("mil-collect",)
+                    )
+                    cancelled.update(result["cancelled"])
+                group = self.task_center.group(TASK_GROUP, identity, project)
+            except (StorageError, OSError):
+                group = None
+        key_folder = task_folder(folder)
+        if cancelled:
+            self._record_cancelled_before_start(folder, cancelled)
+        running = (
+            {task["id"] for task in group["tasks"] if task["state"] in TASK_ACTIVE}
+            if group is not None
+            else set()
+        )
+        # Workers no task tracks (or that an unreadable store cannot stop) are signalled here.
+        self._stop_orphans(
+            [
+                run["process"]
+                for run in live_runs
+                if task_ids.fold_task_id(key_folder, run["id"]) not in running
+            ]
+        )
+        self._wake_runner()
+
+    @staticmethod
+    def _record_cancelled_before_start(folder, tasks) -> None:
+        """Queued runs whose fold tasks (by id) will not start are recorded as cancelled."""
+        key_folder = task_folder(folder)
+        state = read_json(folder / "state.json")
+        at, changed = now(), False
+        for run in state["runs"]:
+            if run["status"] == "queued" and task_ids.fold_task_id(key_folder, run["id"]) in tasks:
+                run.update(status="cancelled", finishedAt=at, error="Cancelled before start.")
+                changed = True
+        if changed:
+            save_state(folder, state)
+
+    def cancel_runs(self, identity, run_ids, operation_id):
+        """Cancel single runs of a Task Center batch while its other runs continue.
+
+        No batch cancel marker is written: the batch finishes as cancelled and a resume
+        runs the cancelled runs again.
+        """
+        with lifecycle_guard(self.store.folder, timeout=5):
+            return self._cancel_runs(identity, list(dict.fromkeys(run_ids)), operation_id)
+
+    def _cancel_runs(self, identity, run_ids, operation_id):
+        folder = self._folder(identity, include_inactive=True)
+        if not (folder / "state.json").exists():
+            raise StorageError("This batch has not been launched.", "TRAINING_NOT_LAUNCHED")
+        if not run_ids:
+            raise StorageError("Choose at least one run to cancel.", "TRAINING_RUNS_REQUIRED", 422)
+        # The receipt names the runs, so a reused operation ID for other runs conflicts.
+        digest = hashlib.sha256("\0".join(sorted(run_ids)).encode()).hexdigest()[:16]
+        action = f"cancel-runs:{digest}"
+        with writer_lock(folder, timeout=5):
+            state = read_json(folder / "state.json")
+            if state.get("executor") != MANAGED:
+                raise StorageError(
+                    "Single runs can be cancelled only in batches run by the Task Center. "
+                    "Cancel the whole batch instead.",
+                    "TRAINING_ACTION_UNSUPPORTED",
+                    409,
+                )
+            path, operations, replay = self._operation(folder, operation_id, action)
+            if not replay:
+                known = {run["id"] for run in state["runs"]}
+                unknown = [run_id for run_id in run_ids if run_id not in known]
+                if unknown:
+                    raise StorageError(
+                        f"Run {unknown[0]} is not part of this batch.",
+                        "TRAINING_RUN_NOT_FOUND",
+                        404,
+                    )
+                self._cancel_managed_runs(folder, run_ids)
+                operations[operation_id] = action
+                write_json(path, operations)
+        return self.execution(identity, include_inactive=True)
+
+    def _cancel_managed_runs(self, folder, run_ids):
+        """Pending folds are cancelled at once; the runner stops running ones."""
+        key_folder = task_folder(folder)
+        tasks = [task_ids.fold_task_id(key_folder, run_id) for run_id in run_ids]
+        store = self.task_center.store
+        try:
+            cancelled = set(store.cancel_pending(tasks))
+            # Both steps are state-guarded: a fold started in between is stopped instead.
+            store.request_stop([task for task in tasks if task not in cancelled], "cancel")
+            current = {task: store.get(task) for task in tasks}
+        except OSError as error:
+            raise StorageError(
+                f"The Task Center store is unavailable: {error}", "TASK_CENTER_UNAVAILABLE", 503
+            ) from error
+        # A fold with no active task never starts again: its requeue (after a pause, for
+        # example) needs this lock and then finds the run cancelled. A running fold is
+        # recorded when it stops.
+        idle = cancelled | {
+            task for task, row in current.items() if row is None or row["state"] not in TASK_ACTIVE
+        }
+        self._record_cancelled_before_start(folder, idle)
+        self._wake_runner()
+
+    @staticmethod
+    def _stop_orphans(processes):
+        errors = []
+        # Signal all groups before waiting: a stubborn first group
+        # must not prevent cancellation from reaching later folds.
+        for process in processes:
+            try:
+                os.killpg(process["pid"], signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                errors.append(error)
+        for process in processes:
+            try:
+                stop_owned_processes(process)
+            except (OSError, ValueError) as error:
+                errors.append(error)
+        if errors:
+            raise StorageError(
+                "Cancellation was requested for every orphan worker, but some workers could not be confirmed stopped. Their reservations are retained.",
+                "TRAINING_CLEANUP_FAILED",
+            ) from errors[0]

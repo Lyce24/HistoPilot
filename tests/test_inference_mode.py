@@ -696,3 +696,38 @@ def test_export_rejects_repeated_attributes_and_protects_dynamic_headers(inferen
     assert rows[0]["Attribute: Predicted [part]"] == "A"
     assert "'=1+1" in rows[0]
     assert "Attribute: '=1+1 [escaped]" in rows[0]
+
+
+def test_explicit_slide_run_blocks_patient_review_analysis_and_exports(inference_run, monkeypatch):
+    service = inference_run.service
+    manifest = {
+        **inference_run.evaluation["manifest"],
+        "splitUnit": "slide",
+        # Old descriptive overlap evidence cannot re-enable patient analysis.
+        "overlap": {"patientsComparable": True, "patientIds": ["p1"], "slideIds": []},
+    }
+    evaluation = inference_run.store.publish_configuration(
+        manifest=manifest, operation_id="explicit-slide-analysis"
+    )
+    inference_run.install(evaluation, json.loads(inference_run.payload))
+    monkeypatch.setattr(
+        "histopilot.application.case_review._patient_records",
+        lambda *_: pytest.fail("Slide experiments must never aggregate patient predictions"),
+    )
+    result = service.summary(evaluation["id"], InferenceSummaryQuery())
+    assert result["unit"] == "slide"
+    assert result["count"] == 4
+    assert result["patients"] == 0
+    assert result["development"] == {"comparable": False}
+    assert service.cases.query(evaluation["id"], CaseReviewQuery())["total"] == 4
+    assert service.export(evaluation["id"], InferenceExportQuery())
+    operations = [
+        lambda: service.summary(evaluation["id"], InferenceSummaryQuery(unit="patient")),
+        lambda: service.export(evaluation["id"], InferenceExportQuery(unit="patient")),
+        lambda: service.cases.query(evaluation["id"], CaseReviewQuery(unit="patient")),
+        lambda: service.cases.export(evaluation["id"], CaseReviewQuery(unit="patient")),
+    ]
+    for operation in operations:
+        with pytest.raises(StorageError) as caught:
+            operation()
+        assert caught.value.code == "PATIENT_ANALYSIS_DISABLED"

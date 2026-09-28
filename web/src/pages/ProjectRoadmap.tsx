@@ -6,7 +6,7 @@ import { Icon } from '../components/ui';
 export type Roadmap = ReturnType<typeof useRoadmap>;
 type Module = Roadmap['modules'][number];
 export const moduleIcons: Record<string, string> = {
-  dataset: 'dataset', cohort: 'cohort', features: 'features', experiments: 'experiments',
+  'experimental-setup': 'branch', dataset: 'dataset', cohort: 'cohort', features: 'features', experiments: 'experiments',
   'source-cv': 'evaluation', selection: 'experiments', predictor: 'experiments',
   'test-data': 'folder', evaluation: 'evaluation', inference: 'inference', reports: 'provenance',
   'clinical-utility': 'evaluation', interpretation: 'explorer',
@@ -21,10 +21,14 @@ export function ModuleStatus({ status, completedLabel = 'Complete & frozen' }: {
 }
 
 const phases = [
-  { id: 'prepare', title: 'Prepare', step: '01' },
-  { id: 'develop', title: 'Develop', step: '02' },
-  { id: 'evaluate', title: 'Evaluate', step: '03' },
-] as const;
+  { id: 'datasets', title: 'Datasets', step: '01', modules: ['dataset'] },
+  { id: 'prepare', title: 'Prepare in parallel', step: '02', modules: ['features', 'cohort'] },
+  { id: 'setup', title: 'Experimental Setup', step: '03', modules: ['experimental-setup'] },
+  { id: 'develop', title: 'Experiments', step: '04', modules: ['experiments'] },
+  { id: 'evaluate', title: 'Evaluate models & run inference', step: '05', modules: ['evaluation', 'inference'] },
+  { id: 'clinical', title: 'Clinical utility', step: '06', modules: ['clinical-utility'] },
+  { id: 'interpret', title: 'Interpretation', step: '07', modules: ['interpretation'] },
+];
 
 /** Modules a project must complete; the optional analyses are not counted. */
 const requiredModules = (modules: Module[]) => modules.filter((module) => !module.optional);
@@ -32,7 +36,7 @@ const requiredModules = (modules: Module[]) => modules.filter((module) => !modul
 /** The modules this one is still waiting for, named, or null when it can proceed. */
 function missingInputs(module: Module, modules: Module[]): string | null {
   const inputs = module.blockers.map((id) => modules.find((item) => item.id === id)?.shortTitle).filter(Boolean);
-  return inputs.length ? inputs.join(' and ') : null;
+  return inputs.length ? inputs.length > 2 ? `${inputs.slice(0, -1).join(', ')} and ${inputs.at(-1)}` : inputs.join(' and ') : null;
 }
 
 /**
@@ -112,13 +116,11 @@ export function RoadmapLauncher({ modules, demo = false }: { modules: Module[]; 
         {/* The step number is decoration drawn by CSS, so the heading's own text
             stays the phase name for assistive technology and tests. */}
         <h2 id={`roadmap-${phase.id}`} data-step={phase.step}>{phase.title}</h2>
-        <ul>{modules.filter((module) => module.phase === phase.id).map((module) => <LauncherItem key={module.id} module={module} modules={modules} demo={demo} next={module.id === next?.id} />)}</ul>
+        {phase.id === 'prepare' ? <p className="muted roadmap-parallel-note">Slide features and Targets &amp; splits are independent. Prepare either one first, or work on both together.</p> : null}
+        <ul>{modules.filter((module) => phase.modules.includes(module.id)).map((module) => <LauncherItem key={module.id} module={module} modules={modules} demo={demo} next={module.id === next?.id} />)}</ul>
       </section>)}
     </div>
-    <section className="roadmap-analysis" aria-labelledby="roadmap-analysis-title">
-      <h2 id="roadmap-analysis-title">Optional analyses</h2>
-      <ul>{modules.filter((module) => module.phase === 'insights').map((module) => <LauncherItem key={module.id} module={module} modules={modules} demo={demo} />)}</ul>
-    </section>
+
   </>;
 }
 

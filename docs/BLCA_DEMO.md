@@ -8,7 +8,7 @@ It follows the current Bladder project's aggregate cohort structure, target defi
 
 | Population | Slides | WHO 2022 low | WHO 2022 high |
 | --- | ---: | ---: | ---: |
-| Development | 62 | 33 | 29 |
+| Training / development | 62 | 33 | 29 |
 | Grade-2 test cohort | 76 | 54 | 22 |
 | Total | 138 | 87 | 51 |
 
@@ -18,7 +18,7 @@ Patient identity is unverified in the reference workflow: its slide/case identif
 
 ## Visual tour
 
-**Current interface · Synthetic BLCA example.** These screenshots use the current React interface and packaged demo. Records, scores, learning curves and resource histories are illustrative; they contain no real clinical rows or slide pixels. Click an image to open the full-size capture.
+**Earlier interface · Synthetic BLCA example.** This gallery was captured before the seven-stage pipeline redesign. It preserves the same illustrative data and results; the current module order and separation of Targets & splits, Experimental Setup and Experiments are described below. Records, scores, learning curves and resource histories are illustrative; they contain no real clinical rows or slide pixels. Click an image to open the full-size capture.
 
 | Project overview | Dataset review |
 | :---: | :---: |
@@ -49,26 +49,31 @@ From the repository root, with frontend dependencies and a Playwright Chromium h
 node web/scripts/verify-blca-demo.mjs --readme
 ```
 
+For verification without replacing the gallery, omit `--readme`; screenshots and the report are written to a temporary directory.
+
 The [capture script](../web/scripts/verify-blca-demo.mjs) builds an offline fixture from the current React source, verifies the BLCA walkthrough on desktop and mobile, then refreshes [the screenshot gallery](assets/blca/). It starts no HistoPilot server and reads no research project. Set `HISTOPILOT_CHROMIUM` to use a different Chromium executable. [Capture metadata](assets/blca/captures.json) records the source, routes and captured regions.
 
 </details>
 
 ## Walk through the pipeline
 
-Each module opens a Stage 0 record library. Search or filter the examples, open a record, then use Back and Next to review one step at a time. The demo is read-only: it explains completed work without creating projects, changing records or launching compute jobs.
+The pipeline has seven stages and nine modules: Datasets; Slide features and Targets & splits in parallel; Experimental Setup; Experiments; Evaluate models and Run inference; Clinical utility; Model interpretation. Each module opens a Stage 0 record library. Search or filter the examples, open a record, then use Back and Next to review one step at a time. The demo is read-only: it explains completed work without creating projects, changing records or launching compute jobs.
 
 | Module | What to inspect | What it explains |
 | --- | --- | --- |
 | Datasets | Synthetic slide records, grade fields and identity notes | Importing a source table, reviewing mappings and freezing the dataset |
-| Targets & splits | Development membership, binary target and five folds | Separating target labels, cohort eligibility, fitting/validation roles and development assessment |
 | Slide features | UNI metadata with 1,024 feature dimensions and bundle evidence | Attaching or extracting representations, validating coverage and freezing a feature bundle |
-| Experiments | Input references, ABMIL recipes, runs and predictor choices | Following one frozen configuration through training, checkpoints and predictor creation |
-| Test cohorts | The separate 76-slide WHO 1973 grade-2 population | Freezing an evaluation population independently of model selection |
-| Evaluate models | Synthetic predictions and metrics for the baseline v2 P75 refit | Applying a ready predictor to the separate test cohort and inspecting errors |
+| Targets & splits | Binary target, 62 Grade 1/3 training slides and 76 Grade 2 testing slides | Fixing target labels and training/testing membership using only dataset records |
+| Experimental Setup | Input compatibility, five training folds, ABMIL recipes and predictor policies | Checking feature coverage, designing training and freezing the setup without starting runs |
+| Experiments | Frozen setup submission, run histories and predictor outputs | Starting a frozen design explicitly, then monitoring execution and results |
+| Evaluate models | The reserved 76-slide cohort, synthetic predictions and metrics for the baseline v2 P75 refit | Checking testing inputs and applying a ready predictor independently of model selection |
+| Run inference | Probabilities and predicted classes with labels omitted | Applying a predictor without targets or evaluation metrics |
 | Clinical utility | Synthetic calibration, operating-point and utility summaries | Looking beyond discrimination to confidence, false positives, false negatives and threshold tradeoffs |
 | Model interpretation | An explanatory schematic | Where slide attention belongs in the pipeline and what additional inputs it requires |
 
 ### Development and predictor creation
+
+Targets & splits fixes the training/testing population before features are bound. The two Experimental Setup examples check every training slide against the feature bundle and design folds only within the 62 training slides. The 76 testing slides remain reserved. Freezing a setup starts zero runs; Experiments illustrates the separate submission and execution steps.
 
 The recipe follows the reference configuration: UNI patch features, gated ABMIL, five development folds, training and split seed 42, a maximum of 40 epochs and a training bag limit of 4,096 patches. These describe the illustrative recipe; the demo does not contain feature tensors or execute training.
 
@@ -77,6 +82,8 @@ Runs appear before predictor creation. Select a run to inspect synthetic loss hi
 The baseline v2 example includes a fold ensemble and a P75 refit; baseline v3 illustrates a P50 refit. A fold ensemble combines the saved fold predictors. Refit trains one predictor on the development population using a budget derived from the best fold epochs: P50 is the median and P75 is the 75th percentile. The demo's chosen epochs and derived refit budgets are invented. In a real project these operations require verified checkpoints and a compatible training runtime; the demo only explains their records and relationships.
 
 ### Reading the results
+
+The label-free inference example reuses the same 76 invented testing scores with their labels omitted. It adds no subjects, model executions or performance estimates.
 
 Synthetic development predictions illustrate very strong development discrimination. The separate grade-2 test example is strong but imperfect, with false positives and false negatives that make calibration and threshold review meaningful. This qualitative pattern follows the reference workflow, but every displayed probability and derived metric is generated for the demo. No displayed score is a report of real Bladder performance.
 
@@ -115,11 +122,9 @@ From the repository root:
 ```bash
 uv sync --locked
 npm --prefix web ci
-npm --prefix web run build
-uv run python scripts/bundle_web.py
 ```
 
-Then start the service manually:
+Then start the service manually. The first start builds the frontend:
 
 ```bash
 bash serve.sh

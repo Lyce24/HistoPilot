@@ -5,7 +5,15 @@ from __future__ import annotations
 import math
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, Field, JsonValue, StrictInt, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    Field,
+    JsonValue,
+    StrictInt,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from histopilot.schemas.version_labels import FreezeVersionLabel
 from histopilot.schemas.workspace import RequestModel, Seed
@@ -235,6 +243,17 @@ class SplitSpec(RequestModel):
     heldOutDomains: list[str] = Field(default_factory=list, max_length=100)
     heldOutSource: Literal["fractions", "rules", "imported"] = "fractions"
     pools: PoolSpec | None = None
+    # Slide targets may keep each patient's (case's) slides in one assessment fold
+    # and on one side of early-stop validation. Labels and scoring stay per slide.
+    groupByPatient: bool = False
+
+    @model_serializer(mode="wrap")
+    def omit_default_grouping(self, handler):
+        # Historical designs never carried this field; keep their hashes unchanged.
+        serialized = handler(self)
+        if not self.groupByPatient:
+            serialized.pop("groupByPatient", None)
+        return serialized
 
     @model_validator(mode="before")
     @classmethod
@@ -273,6 +292,8 @@ class SplitSpec(RequestModel):
             raise ValueError("Choose one of the five evaluation strategies.")
         if (self.version >= 3) != (self.pools is not None):
             raise ValueError("Versions 3 and 4 require explicit source selection settings.")
+        if self.groupByPatient and self.version != 4:
+            raise ValueError("Keeping each patient's slides together applies to development training designs.")
         if self.version >= 3 and any(
             getattr(self.rules, role) for role in ("train", "val", "test")
         ):
@@ -348,6 +369,22 @@ class DatasetConstructionRequest(RequestModel):
 
 
 class ProtocolSpec(DatasetConstructionRequest):
+    splitUnit: Literal["slide", "patient"] = "patient"
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_split_unit(self, handler):
+        serialized = handler(self)
+        if "splitUnit" not in self.model_fields_set:
+            serialized.pop("splitUnit", None)
+        return serialized
+
+    @model_validator(mode="after")
+    def explicit_unit_matches_target(self):
+        if "splitUnit" in self.model_fields_set and self.target.unit != self.splitUnit:
+            raise ValueError("The prediction target must use the selected split unit.")
+        return self
+
+    sourceTargetSplitId: str | None = Field(default=None, pattern=r"^configuration-[a-f0-9]{64}$")
     datasetId: str = Field(pattern=r"^dataset-[a-f0-9]{64}$")
     target: TargetSpec
     predictors: list[str] = Field(default_factory=list, max_length=100)
@@ -369,8 +406,12 @@ class ProtocolExploreRequest(DatasetConstructionRequest):
     """Read-only cohort feedback, independent of completed target/feature configuration."""
 
     datasetId: str = Field(pattern=r"^dataset-[a-f0-9]{64}$")
+    # Dataset/cohort editing validates eligibility only. Split controls, target
+    # fields and patient-group readiness belong to their later workflow stages.
+    cohortOnly: bool = False
     targetField: str | None = Field(default=None, min_length=1, max_length=128)
     eligibility: Conditions = Field(default_factory=list)
+    # Ignored since live counts cover version 4 splits only; kept so existing clients validate.
     rules: FixedRules = Field(default_factory=FixedRules)
     splitMode: Literal[
         "rules",

@@ -51,7 +51,7 @@ export function experimentPredictorCount(record: ModelExperiment, fallback?: Exp
     add(countsFor(configurations * summary.trainingSeedCount * splitSeeds, summary.runCount, policy));
   }
   // Submitted records retain their planning recipes as history: never count them twice.
-  if (!record.configurationLocked && !record.submission && (record.batchPlans?.length ?? 0) > 0) {
+  if ((!record.configurationLocked || (record.frozenSetupId && record.stage === 'planning')) && !record.submission && (record.batchPlans?.length ?? 0) > 0) {
     if (!protocol || protocol.split.mode !== 'kfold') return null;
     for (const plan of record.batchPlans ?? []) {
       add(plannedBatchPredictorCount(plan.spec, protocol, fallback ?? record.predictorPolicy)!);

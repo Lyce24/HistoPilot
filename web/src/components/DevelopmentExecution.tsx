@@ -1,9 +1,11 @@
 import { formatStatistic } from '../api/statistics';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { development, trainingActive, latestExecution } from '../api/development';
+import { development, managedByTaskCenter, trainingActive, latestExecution } from '../api/development';
+import { taskCenterHref } from '../api/taskCenter';
 import type { CandidateResult, DevelopmentResults, FrozenBatch, TrainingExecution, TrainingRuntime } from '../api/development';
 import { Badge, ErrorNotice } from './ui';
+import { ConfirmAction } from '../lib/taskCenterActions';
 import { Findings } from './ScientificUI';
 import { downloadJSON } from '../lib/download';
 import { gib, metricValue, metricsText, MetricEvidence, ResourceCards, RunTable } from './ExperimentTracking';
@@ -26,21 +28,28 @@ export default function DevelopmentExecution({ project, batch, implemented, know
   const client = useQueryClient();
   const canChange = allowChanges && !readOnly && stage !== 'finished' && stage !== 'planning';
   const trackingEnabled = implemented && stage !== 'planning';
-  const resultsEnabled = trackingEnabled && view === 'results' && stage !== 'running';
+  const resultsEnabled = trackingEnabled && view === 'results';
   const [error, setError] = useState<Error | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const operationIds = useRef<Partial<Record<'launch' | 'cancel' | 'resume', string>>>({});
   const submitting = useRef(false);
-  const runtime = useQuery({ queryKey: ['training-runtime', project], queryFn: () => development.runtime(project), enabled: trackingEnabled && canChange, staleTime: 30000 });
+  // Task Center batches are started, stopped and resumed from the Task Center (and the
+  // experiment's one Resume); only batches with their own tmux worker need the runtime check.
+  const knownManaged = managedByTaskCenter(knownExecution);
+  const runtime = useQuery({ queryKey: ['training-runtime', project], queryFn: () => development.runtime(project), enabled: trackingEnabled && canChange && !knownManaged, staleTime: 30000 });
   const executionQuery = useQuery({
     queryKey: ['training-execution', project, batch.id], queryFn: () => development.execution(project, batch.id), enabled: trackingEnabled,
-    refetchInterval: (query) => trainingActive(latestExecution(query.state.data, knownExecution)) ? 3000 : false,
+    refetchInterval: (query) => trainingActive(latestExecution(query.state.data, knownExecution)) ? 5000 : false,
   });
   const execution = latestExecution(executionQuery.data, knownExecution);
+  const managed = managedByTaskCenter(execution) || knownManaged;
+  const ownerKey = execution?.taskCenter?.ownerKey ?? knownExecution?.taskCenter?.ownerKey ?? null;
+  const taskCenterLink = managed ? taskCenterHref(ownerKey ? { owner: ownerKey } : {}) : undefined;
   const results = useQuery({
     queryKey: ['development-results', project, batch.id], queryFn: () => development.results(project, batch.id),
     enabled: resultsEnabled,
-    refetchInterval: trainingActive(execution) ? 3000 : false,
+    // Partial results change only when a group's last fold finishes.
+    refetchInterval: trainingActive(execution) ? 10000 : false,
   });
   const status = execution?.status;
   useEffect(() => {
@@ -68,22 +77,35 @@ export default function DevelopmentExecution({ project, batch, implemented, know
   }
   if (stage === 'planning') return <p className="muted">Inputs and batches remain editable until the experiment is submitted. Runs and results are locked during planning.</p>;
   return <div className="development-execution">
-    <ErrorNotice error={error ?? executionQuery.error ?? (canChange ? runtime.error : null) ?? (resultsEnabled ? results.error : null)} />
+    <ErrorNotice error={error ?? executionQuery.error ?? (canChange && !managed ? runtime.error : null) ?? (resultsEnabled ? results.error : null)} />
     {implemented ? <>
       {view !== 'results' ? <>
-        <TrainingControls execution={execution} runtime={runtime.data} checking={executionQuery.isPending || executionQuery.isError} pending={pending} onAction={(action) => void act(action)} allowLaunch={stage === undefined} readOnly={!canChange} />
+        {managed ? <ManagedBatchCancel execution={execution} pending={pending} readOnly={!canChange} onCancel={() => void act('cancel')} /> : <TrainingControls execution={execution} runtime={runtime.data} checking={executionQuery.isPending || executionQuery.isError} pending={pending} onAction={(action) => void act(action)} allowLaunch={stage === undefined} readOnly={!canChange} />}
         {executionQuery.isError ? <p className="callout callout-warning" role="status">Tracking could not refresh. Any run status and measurements shown are the last known values.</p> : null}
-        {executionQuery.isError || (canChange && runtime.isError) ? <button type="button" className="btn btn-secondary btn-small" onClick={() => { void executionQuery.refetch(); if (canChange) void runtime.refetch(); }}>Retry training status</button> : null}
+        {executionQuery.isError || (canChange && !managed && runtime.isError) ? <button type="button" className="btn btn-secondary btn-small" onClick={() => { void executionQuery.refetch(); if (canChange && !managed) void runtime.refetch(); }}>Retry training status</button> : null}
         {execution ? <ExecutionStatus execution={execution} /> : <p className="muted">{stage ? 'This submitted batch has not been queued yet.' : 'This batch is frozen and has not been launched.'}</p>}
       </> : null}
     </> : <p className="muted">Training execution is unavailable from this service. Frozen plans remain available for review and export.</p>}
-    {view === 'runs' ? <RunTable project={trackingEnabled ? project : undefined} batch={batch} execution={execution} /> : null}
-    {implemented && view !== 'results' ? execution ? <ExecutionEvidence project={trackingEnabled ? project : undefined} execution={execution} runtime={canChange ? runtime.data : undefined} showStatus={false} /> : canChange && runtime.data ? <DeviceRuntime runtime={runtime.data} /> : null : null}
-    {view === 'results' ? stage === 'running' ? <p className="muted">Results unlock when the experiment finishes.</p> : <>
+    {view === 'runs' ? <RunTable project={trackingEnabled ? project : undefined} batch={batch} execution={execution} taskCenterHref={taskCenterLink} /> : null}
+    {implemented && view !== 'results' && !managed ? execution ? <ExecutionEvidence project={trackingEnabled ? project : undefined} execution={execution} runtime={canChange ? runtime.data : undefined} showStatus={false} /> : canChange && runtime.data ? <DeviceRuntime runtime={runtime.data} /> : null : null}
+    {view === 'results' ? <>
+      {/* The experiment can keep running (other batches, predictors) after this batch's folds are done. */}
+      {stage !== 'finished' && (trainingActive(execution) || (stage === 'running' && !execution)) ? <p className="callout" role="status">Partial results: groups appear as their folds finish.</p> : null}
       {resultsEnabled && results.isError ? <><p className="callout callout-warning" role="status">Results could not refresh.{results.data ? ' Showing the last successfully loaded results.' : ''}</p><button type="button" className="btn btn-secondary btn-small" onClick={() => void results.refetch()}>Retry results</button></> : null}
       {!results.isError || results.data ? <ResultsTable project={trackingEnabled ? project : undefined} batch={batch} results={results.data} loading={resultsEnabled && results.isPending} /> : null}
     </> : null}
   </div>;
+}
+
+/**
+ * One batch of a Task Center experiment can be cancelled on its own: the Task Center offers
+ * the whole experiment or single folds, but no batch-wide action. The experiment's one Resume
+ * (status row above) resumes it.
+ */
+export function ManagedBatchCancel({ execution, pending, readOnly, onCancel }: { execution?: TrainingExecution | null; pending: string | null; readOnly: boolean; onCancel: () => void }) {
+  if (readOnly || !trainingActive(execution)) return null;
+  if (execution?.cancelRequested) return <p className="muted" role="status">Cancelling this batch. Runs stop after saving what they can.</p>;
+  return <div className="inline-actions"><ConfirmAction label="Cancel batch" busy={pending === 'cancel'} busyLabel="Requesting cancellation…" disabled={Boolean(pending)} question="Cancel this batch? Its runs stop after saving what they can; other batches keep running." confirmLabel="Cancel batch" onConfirm={onCancel} /></div>;
 }
 
 export function TrainingControls({ execution, runtime, checking, pending, onAction, allowLaunch = true, readOnly = false }: {
@@ -134,7 +156,7 @@ export function ExecutionEvidence({ execution, project, runtime, showStatus = tr
       {telemetry.latest.runs.length ? <div className="development-table"><table><thead><tr><th>Run</th><th>{trainingActive(execution) ? 'Latest' : 'Last recorded'} process-tree RAM</th><th>Observed peak RAM</th></tr></thead><tbody>{telemetry.latest.runs.map((run) => <tr key={run.runId}><td><code>{run.runId}</code></td><td>{gib(run.rssGb)}</td><td>{gib(telemetry.peak.runRssGb[run.runId])}</td></tr>)}</tbody></table></div> : <p className="muted">No active run measurements. Saved per-run peaks are available under Runs.</p>}
       </> : null}
     </details> : null}
-    <details className="experiment-worker-details"><summary>Worker and saved artifacts</summary><dl className="development-paths"><dt>Session</dt><dd><code>{execution.sessionName}</code></dd><dt>Worker log</dt><dd><code>{execution.logPath}</code></dd><dt>Output directory</dt><dd><code>{execution.outputPath}</code></dd>{execution.computePath ? <><dt>Pinned training code</dt><dd><code>{execution.computePath}</code></dd></> : null}{execution.provenancePath ? <><dt>Attempt and driver history</dt><dd><code>{execution.provenancePath}</code></dd></> : null}{telemetry?.path ? <><dt>Resource history</dt><dd><code>{telemetry.path}</code></dd></> : null}<dt>Updated</dt><dd>{execution.updatedAt}</dd></dl></details>
+    <details className="experiment-worker-details"><summary>Worker and saved artifacts</summary><dl className="development-paths">{managedByTaskCenter(execution) ? <><dt>Execution</dt><dd>Managed by the Task Center</dd></> : <><dt>Session</dt><dd><code>{execution.sessionName}</code></dd></>}<dt>Worker log</dt><dd><code>{execution.logPath}</code></dd><dt>Output directory</dt><dd><code>{execution.outputPath}</code></dd>{execution.computePath ? <><dt>Pinned training code</dt><dd><code>{execution.computePath}</code></dd></> : null}{execution.provenancePath ? <><dt>Attempt and driver history</dt><dd><code>{execution.provenancePath}</code></dd></> : null}{telemetry?.path ? <><dt>Resource history</dt><dd><code>{telemetry.path}</code></dd></> : null}<dt>Updated</dt><dd>{execution.updatedAt}</dd></dl></details>
     <DeviceRuntime execution={execution} runtime={runtime} />
   </section>;
 }
@@ -145,7 +167,7 @@ export function candidateDisplayMetrics(result: CandidateResult, unit: ResultSco
   return unit === 'selected' ? result.metrics : result.metricDetails?.[unit] ?? null;
 }
 
-export function OOFPredictionDownloads({ project, batchId, candidate }: { project: string; batchId: string; candidate: CandidateResult }) {
+export function OOFPredictionDownloads({ project, batchId, candidate, units = ['patient', 'slide'] }: { project: string; batchId: string; candidate: CandidateResult; units?: ('slide' | 'patient')[] }) {
   const [pending, setPending] = useState<'slide' | 'patient' | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const inFlight = useRef(false);
@@ -157,7 +179,7 @@ export function OOFPredictionDownloads({ project, batchId, candidate }: { projec
     catch (reason) { setError(reason instanceof Error ? reason : new Error('Could not download OOF predictions.')); }
     finally { inFlight.current = false; setPending(null); }
   }
-  return <div><ErrorNotice error={error} /><div className="inline-actions">{(['patient', 'slide'] as const).map((unit) => <button key={unit} type="button" className="btn btn-secondary btn-small" disabled={pending !== null} onClick={() => void download(unit)}>{pending === unit ? 'Downloading…' : `Download ${unit} OOF predictions`}</button>)}</div></div>;
+  return <div><ErrorNotice error={error} /><div className="inline-actions">{units.map((unit) => <button key={unit} type="button" className="btn btn-secondary btn-small" disabled={pending !== null} onClick={() => void download(unit)}>{pending === unit ? 'Downloading…' : `Download ${unit} OOF predictions`}</button>)}</div></div>;
 }
 
 export function ResultsTable({ project, batch, results, loading }: { project?: string; batch: FrozenBatch; results?: DevelopmentResults; loading: boolean }) {

@@ -9,11 +9,9 @@ Use Python 3.11+, uv, Node.js 24, and npm. From the repository root:
 ```bash
 uv sync --locked
 npm --prefix web ci
-npm --prefix web run build
-uv run python scripts/bundle_web.py
 ```
 
-Then start the server yourself in a normal terminal:
+Then start the server yourself in a normal terminal. The first start builds the frontend:
 
 ```bash
 bash serve.sh
@@ -21,7 +19,14 @@ bash serve.sh
 
 Open `http://127.0.0.1:8787`. Choose **Open BLCA demo** for the bundled synthetic walkthrough, or create/load your own project. The demo requires no source data, model weights, training environment or GPU. Its direct link is `http://127.0.0.1:8787/?project=blca-demo-v1#overview`; see [BLCA demo](BLCA_DEMO.md).
 
-The repository's [`serve.sh`](../serve.sh) checks for `uv`, a prepared Python environment and the built frontend, then runs the service in the foreground. It neither installs dependencies nor builds assets. Missing prerequisites produce setup instructions. `bash serve.sh --help` works before setup and does not start a server.
+The repository's [`serve.sh`](../serve.sh) checks for `uv` and a prepared Python environment, brings the frontend bundle up to date, then runs the service in the foreground. The bundle in `histopilot/static` records a fingerprint of the `web/` sources it was built from. When `web/` has changed, or no bundle exists, the launcher runs `npm run build` and bundles the result; otherwise it starts at once.
+
+The launcher keeps a few guarantees:
+- A failed build never starts the service, and the existing bundle is replaced only after a successful build.
+- It never rebuilds while another service from the same checkout is running, because that service serves the same `histopilot/static`. Stop it first, or pass `--no-build` to start with the existing bundle.
+- It never installs dependencies. `web/node_modules` may be shared between worktrees.
+
+Missing prerequisites produce setup instructions. `bash serve.sh --help` works before setup and does not start a server. `histopilot serve` started directly prints a warning when its bundle is older than `web/`. `uv run python scripts/bundle_web.py --check` reports the state without changing anything.
 
 Pass normal service options through the launcher:
 
@@ -31,7 +36,7 @@ bash serve.sh --data-root /path/to/research-data --port 8788
 
 From another directory, use `bash /path/to/HistoPilot/serve.sh`. Relative option paths resolve from the repository root. The launcher defaults to `--no-browser`; pass `--browser` to open the URL automatically. It honors `UV_PROJECT_ENVIRONMENT` and uses the existing environment without syncing or downloading. The direct command `uv run histopilot serve --no-browser` remains available.
 
-Server startup and restart are manual. Builds and verification do not launch or restart HistoPilot, and the server is not hosted in tmux. After updating source, rebuild and bundle the frontend, then stop the existing service in its terminal and start it again when ready. Refresh the browser afterward. Avoid starting a second service against the same workspace.
+Server startup and restart are manual. Builds and verification do not launch or restart HistoPilot, and the server is not hosted in tmux. After updating source, stop the existing service in its terminal and start it again with `bash serve.sh` when ready. The launcher rebuilds the frontend if needed, and the service loads the current Python code. Refresh the browser afterward. Avoid starting a second service against the same workspace.
 
 ## Frontend development with Vite
 
@@ -120,7 +125,7 @@ Then open `http://127.0.0.1:8787` on the laptop. The folder picker still shows c
 
 Non-loopback hosts such as `0.0.0.0` are rejected because authenticated network deployment is not implemented. SSH forwarding preserves the supported local service boundary.
 
-Start and manage the HistoPilot service in your own terminal. The application uses tmux for supported long-running extraction, packing and training workers; that is separate from server hosting. Before manually launching any long-running compute job, check existing sessions to avoid duplicates, retain persistent logs, and use the job's checkpoint/resume support. tmux protects those workers against client disconnection, not workstation reboot or power loss. Updating HistoPilot does not automatically restart existing workers.
+Start and manage the HistoPilot service in your own terminal. Long-running extraction, packing, training, evaluation and archive work runs through the machine-level [Task Center](TASK_CENTER_DESIGN.md): `histopilot serve` starts its runner in the `hp-runner-<uid>` tmux session (`--no-runner` skips this), and `histopilot runner status|stop` manages it. That is separate from server hosting. Tasks run in their own process groups and survive client disconnection and service or runner restarts; after a workstation reboot, interrupted tasks are queued again (auto-resume, on by default) and resume from their checkpoints when the service starts. Jobs launched before the Task Center keep their own tmux sessions; before manually launching any long-running compute job, check existing sessions to avoid duplicates, retain persistent logs, and use the job's checkpoint/resume support. Updating HistoPilot does not change the code of running workers; `histopilot serve` restarts the runner when its code changed, after the current step.
 
 ## Diagnostics and experiment commands
 

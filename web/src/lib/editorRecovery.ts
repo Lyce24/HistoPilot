@@ -20,7 +20,7 @@ export interface EditorRecovery<S, D = ScientificDraft<S>> {
   step: number;
 }
 
-export type EditorRecoveryKind = 'dataset' | 'protocol' | 'test-cohort';
+export type EditorRecoveryKind = 'dataset' | 'protocol' | 'target-split' | 'test-cohort';
 
 export const editorRecoveryKey = (project: string, kind: EditorRecoveryKind) =>
   `histopilot:editor-draft:v1:${encodeURIComponent(project)}:${kind}`;

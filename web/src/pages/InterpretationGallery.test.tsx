@@ -78,7 +78,8 @@ describe('gallery controls and lazy slide cards', () => {
     const html = renderToStaticMarkup(<QueryClientProvider client={queryClient}><GalleryWorkspace project="p" source={source} selected={[]} search="" offset={0} locked={false} canContinue onSelection={() => {}} onSearch={() => {}} onPage={() => {}} onContinue={() => {}} /></QueryClientProvider>);
     expect(html.indexOf('Search slides')).toBeLessThan(html.indexOf('Select one.svs'));
     expect(html).toContain('No exact slide ID in this feature bundle.');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*><span>Continue with 0 selected/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*><span>Compute &amp; review 0 selected/);
+    expect(html).toMatch(/<button class="btn btn-secondary">Select all on this page<\/button>/);
     expect(html).not.toContain('checked=""');
     expect(html).not.toContain('Review attention study');
     const thumbnailQueries = queryClient.getQueryCache().findAll({ queryKey: ['interpretation-gallery-thumbnail'] });

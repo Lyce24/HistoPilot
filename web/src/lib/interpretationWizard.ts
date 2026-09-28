@@ -1,20 +1,25 @@
-import type { GallerySlide, Interpretation, InterpretationExecution, VisualizeItem, VisualizeSelection } from '../api/interpretation';
+import type { GallerySlide, Interpretation, InterpretationExecution, InterpretationSlideResult, VisualizeItem, VisualizeSelection } from '../api/interpretation';
 import type { ResourcePolicy } from '../api/development';
-export type InterpretationStage = 'select' | 'compute' | 'results' | 'viewer';
+import { computeActive } from '../api/predictors';
+/** Set up model weights, features and slides; then review attention like Datasets visual QC. */
+export type InterpretationStage = 'select' | 'review';
 export interface ResourceDraft { device: 'cpu' | 'gpu'; gpu: string; threads: string; ram: string; width: string; height: string }
 export interface InterpretationBatch { id: string; selected: GallerySlide[]; request: VisualizeSelection | null; items: VisualizeItem[]; pending: { selection: VisualizeSelection; operationId: string } | null; uncertain?: boolean; error?: string | null }
+/** Interpretation needs model weights, a dataset and its features only; no evaluation or clinical links. */
 export interface InterpretationWizardDraft {
-  version: 1; predictorId: string; bundleId: string | null; packChoice: string | null; evaluationId: string; clinicalId: string;
+  /** datasetId null follows the bundle's own dataset, or the only usable one. */
+  version: 1; predictorId: string; datasetId: string | null; bundleId: string | null; packChoice: string | null;
   selected: GallerySlide[]; search: string; offset: number; resources: ResourceDraft; batch: InterpretationBatch | null;
 }
 export const defaultResourceDraft = (): ResourceDraft => ({ device: 'cpu', gpu: '0', threads: '4', ram: '8', width: '', height: '' });
+/** Older links used separate compute, results and viewer stages; all now open the review. */
 export function wizardStage(parameters: URLSearchParams): InterpretationStage {
   const value = parameters.get('stage');
-  if (value === 'compute' || value === 'results' || value === 'viewer') return value;
-  return value === 'select' ? 'select' : parameters.get('interpretation') ? 'viewer' : 'select';
+  if (value === 'review' || value === 'compute' || value === 'results' || value === 'viewer') return 'review';
+  return value === 'select' ? 'select' : parameters.get('interpretation') ? 'review' : 'select';
 }
 export function initialWizardDraft(parameters: URLSearchParams): InterpretationWizardDraft {
-  return { version: 1, predictorId: parameters.get('predictor') ?? '', bundleId: null, packChoice: null, evaluationId: parameters.get('evaluation') ?? '', clinicalId: parameters.get('clinical') ?? '', selected: [], search: (parameters.get('search') ?? '').slice(0, 200), offset: 0, resources: defaultResourceDraft(), batch: null };
+  return { version: 1, predictorId: parameters.get('predictor') ?? '', datasetId: null, bundleId: null, packChoice: null, selected: [], search: (parameters.get('search') ?? '').slice(0, 200), offset: 0, resources: defaultResourceDraft(), batch: null };
 }
 const storageKey = (project: string) => `histopilot:interpretation-wizard:v1:${project}`;
 const objectValue = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -44,10 +49,10 @@ export function restoreWizardDraft(project: string, parameters: URLSearchParams)
     if (storedResources.device === 'gpu') resources.device = 'gpu';
     for (const key of ['gpu', 'threads', 'ram', 'width', 'height'] as const) if (typeof storedResources[key] === 'string') resources[key] = storedResources[key];
     const restored: InterpretationWizardDraft = { ...fallback, predictorId: value.predictorId, selected: value.selected, search: value.search, offset: value.offset as number, resources, batch: value.batch as InterpretationBatch | null ?? null,
-      bundleId: typeof value.bundleId === 'string' ? value.bundleId : null, packChoice: typeof value.packChoice === 'string' ? value.packChoice : null,
-      evaluationId: typeof value.evaluationId === 'string' ? value.evaluationId : '', clinicalId: typeof value.clinicalId === 'string' ? value.clinicalId : '' };
+      datasetId: typeof value.datasetId === 'string' ? value.datasetId : null,
+      bundleId: typeof value.bundleId === 'string' ? value.bundleId : null, packChoice: typeof value.packChoice === 'string' ? value.packChoice : null };
     if (restored.batch?.pending) restored.batch.uncertain = true;
-    else if ((fallback.predictorId && fallback.predictorId !== restored.predictorId) || (fallback.evaluationId && fallback.evaluationId !== restored.evaluationId) || (fallback.clinicalId && fallback.clinicalId !== restored.clinicalId)) return fallback;
+    else if (fallback.predictorId && fallback.predictorId !== restored.predictorId) return fallback;
     else if (parameters.has('search') && fallback.search !== restored.search) return { ...restored, search: fallback.search, offset: 0 };
     return restored;
   } catch { return fallback; }
@@ -58,10 +63,12 @@ export function persistWizardDraft(project: string, draft: InterpretationWizardD
     window.sessionStorage?.setItem(storageKey(project), JSON.stringify(compact));
   } catch { /* The in-memory wizard remains usable when storage is full or disabled. */ }
 }
-export function wizardRoute(parameters: URLSearchParams, stage: InterpretationStage, context: { predictorId: string; evaluationId: string; clinicalId: string }, studyId?: string, slideId?: string) {
+export function wizardRoute(parameters: URLSearchParams, stage: InterpretationStage, context: { predictorId: string }, studyId?: string, slideId?: string) {
   const next = new URLSearchParams(parameters);
   next.set('stage', stage);
-  for (const [key, value] of [['predictor', context.predictorId], ['evaluation', context.evaluationId], ['clinical', context.clinicalId]] as const) if (value) next.set(key, value); else next.delete(key);
+  if (context.predictorId) next.set('predictor', context.predictorId); else next.delete('predictor');
+  // Links from evaluation or clinical pages may carry their IDs; interpretation does not use them.
+  next.delete('evaluation'); next.delete('clinical');
   if (studyId) next.set('interpretation', studyId); else next.delete('interpretation');
   if (slideId) next.set('slide', slideId); else next.delete('slide');
   return `#interpretation?${next}`;
@@ -78,7 +85,7 @@ export function adoptSavedInterpretation(current: InterpretationWizardDraft, rec
   const commonOverride = objectValue(first) && typeof first.patchWidthLevel0 === 'number' && Number.isFinite(first.patchWidthLevel0) && first.patchWidthLevel0 > 0
     && typeof first.patchHeightLevel0 === 'number' && Number.isFinite(first.patchHeightLevel0) && first.patchHeightLevel0 > 0
     && inputs.every((input) => objectValue(input) && input.patchWidthLevel0 === first.patchWidthLevel0 && input.patchHeightLevel0 === first.patchHeightLevel0);
-  return { ...current, predictorId: record.manifest.predictorId, evaluationId: record.manifest.evaluationId ?? '', clinicalId: record.manifest.clinicalAnalysisId ?? '', bundleId, packChoice,
+  return { ...current, predictorId: record.manifest.predictorId, datasetId: null, bundleId, packChoice,
     selected: bundleId ? selected : [], search: '', offset: 0,
     resources: { ...current.resources, width: commonOverride ? String(first.patchWidthLevel0) : '', height: commonOverride ? String(first.patchHeightLevel0) : '' },
     batch: { id: `saved-${record.id}`, selected, request: null, pending: null, items: selected.map((slide) => ({ slidePath: slide.slidePath, slideId: slide.slideId, interpretationId: record.id, interpretation: record, status: record.execution?.status ?? 'not_started', reused: true })) } };
@@ -94,7 +101,30 @@ export function wizardResources(draft: ResourceDraft): ResourcePolicy {
   return { maxConcurrentRuns: 1, gpuIds: draft.device === 'gpu' ? [draft.gpu.trim() ? Number(draft.gpu) : NaN] : [], runsPerGpu: 1, cpuThreadsPerRun: Number(draft.threads), dataLoaderWorkers: 0, ramGbPerRun: Number(draft.ram) };
 }
 export interface SelectedStudyState { item?: VisualizeItem; execution?: InterpretationExecution; error?: Error | null; hasRecord: boolean }
+/** A verified completed result for exactly this slide, or nothing. */
+export function completedSlideResult(slide: GallerySlide, state?: SelectedStudyState): InterpretationSlideResult | undefined {
+  if (!state?.hasRecord || state.error || state.execution?.status !== 'completed') return undefined;
+  return state.execution.result?.slides?.find((item) => item.slideId === slide.slideId);
+}
 /** Only the requested selection determines readiness; cached extras and missing/failed jobs cannot advance. */
 export function selectedBatchReady(selected: GallerySlide[], states: Map<string, SelectedStudyState>) {
-  return selected.length > 0 && selected.every((slide) => { const state = states.get(slide.slidePath); return Boolean(state?.hasRecord && !state.error && state.execution?.status === 'completed' && state.execution.result?.slides?.some((item) => item.slideId === slide.slideId)); });
+  return selected.length > 0 && selected.every((slide) => Boolean(completedSlideResult(slide, states.get(slide.slidePath))));
+}
+export type SlideProgress = 'ready' | 'computing' | 'failed' | 'waiting';
+/** One review-list status per selected slide; a completed job without this slide's result is not ready. */
+export function slideProgress(slide: GallerySlide, state: SelectedStudyState | undefined): SlideProgress {
+  if (completedSlideResult(slide, state)) return 'ready';
+  const execution = state?.execution;
+  if (execution && computeActive(execution)) return 'computing';
+  if (state?.error || state?.item?.error || (execution && execution.status !== 'not_started')) return 'failed';
+  return 'waiting';
+}
+/** Predicted-label counts across ready slides, in class order when known. */
+export function predictionCounts(selected: GallerySlide[], states: Map<string, SelectedStudyState>, classOrder: readonly string[] = []) {
+  const counts = new Map<string, number>(classOrder.map((label) => [label, 0]));
+  for (const slide of selected) {
+    const label = completedSlideResult(slide, states.get(slide.slidePath))?.prediction?.predictedLabel;
+    if (label) counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return [...counts].filter(([, count]) => count > 0);
 }

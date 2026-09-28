@@ -16,7 +16,9 @@ export function bundleReviewInvalidated(error: unknown): error is ApiError {
     && (error.code === 'PREVIEW_STALE' || error.code === 'FEATURE_BUNDLE_INVALID');
 }
 
-export default function FeatureBundlePreparation({ project, configuration, configurations, initialPackIds = [], onSelectVersion, onFrozen, page, onPageChange, onReviewReadyChange, onBusyChange, showSteps = true }: {
+export default function FeatureBundlePreparation({ project, configuration, configurations, initialPackIds = [], onSelectVersion, onFrozen, page, onPageChange, onReviewReadyChange, onBusyChange, showSteps = true, requestedPackingJob }: {
+  /** A packing job to open (a Task Center back-link: `#features?source=…&packing=…`). */
+  requestedPackingJob?: string;
   page?: 'packing' | 'review';
   onPageChange?: (page: 'packing' | 'review') => void;
   onReviewReadyChange?: (ready: boolean) => void;
@@ -73,7 +75,7 @@ export default function FeatureBundlePreparation({ project, configuration, confi
     <StagePage pageKey={activePage}>
     <div hidden={activePage !== 'packing'} className="pfm-content stack">
     <fieldset className="science-fieldset stack" disabled={busy || naming}>
-    <FeaturePacking onBusyChange={setPackingBusy} project={project} configuration={configuration} configurations={configurations} onSelectVersion={onSelectVersion} selectedPackIds={packIds} onSelectedPackIdsChange={changePacks} />
+    <FeaturePacking requestedJob={requestedPackingJob} onBusyChange={setPackingBusy} project={project} configuration={configuration} configurations={configurations} onSelectVersion={onSelectVersion} selectedPackIds={packIds} onSelectedPackIdsChange={changePacks} />
     <section className="feature-bundle-freeze" aria-label="Freeze feature bundle">
       <div><h3>Continue to bundle review</h3><p>{slideFeatures ? 'Save the verified slide embeddings as one immutable input. Slide embeddings are not packed.' : 'Save the feature source and the packs included with it as one immutable input. A features-only bundle includes no pack.'}</p></div>
       <p className="muted">{slideFeatures ? 'Full validation checks one nonempty vector per slide and records its source identity.' : 'Full feature validation is required. Existing packs must match all feature values and coordinates; newly created packs must finish verification.'}</p>

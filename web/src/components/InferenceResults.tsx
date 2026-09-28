@@ -5,7 +5,7 @@ import { computeActive, modelEvaluations, type ModelEvaluation } from '../api/pr
 import type { CaseQuery } from '../api/caseReview';
 import { downloadJSON } from '../lib/download';
 import { comparableRuns, countBelow, decimal, percent } from '../lib/inference';
-import ComputeJobControls from './ComputeJobControls';
+import ComputeJobControls, { computeExecutionQuery } from './ComputeJobControls';
 import CaseReviewWorkspace from './CaseReviewWorkspace';
 import { evidenceLink } from './EvidenceChain';
 import { AgreementBars, ComparisonMatrix, CompositionTable, Histogram, PredictedClassBars, ThresholdTable } from './InferenceCharts';
@@ -54,7 +54,8 @@ export function InferenceRunDetail({ project, record, runs }: { project: string;
   const client = useQueryClient();
   const trashed = record.lifecycleState === 'trashed';
   const shouldPoll = !trashed || computeActive(record.execution);
-  const execution = useQuery({ queryKey: ['compute-job', project, 'evaluation', record.id], queryFn: () => modelEvaluations.execution(project, record.id), initialData: record.execution, enabled: shouldPoll, refetchInterval: (query) => shouldPoll && computeActive(query.state.data) ? 3000 : false });
+  // Shared with the controls below; read on mount, since the list may predate a change made in the Task Center.
+  const execution = useQuery(computeExecutionQuery(project, 'evaluation', record.id, record.execution, shouldPoll));
   const current = shouldPoll ? execution.data : record.execution;
   const completed = !execution.isError && current?.status === 'completed';
   const [unit, setUnit] = useState<'selected' | 'slide' | 'patient'>('selected');

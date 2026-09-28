@@ -6,6 +6,8 @@ import LocalExperiments, { ExperimentDetail, ExperimentSubmissionControl, Loadin
 import type { Configuration } from '../api/scientific';
 import type { FeatureBundle } from '../api/bundles';
 import type { ModelExperiment } from '../api/experiments';
+import { fixtureRollup } from '../testFixtures/taskCenter';
+import { taskCenterKeys } from '../api/taskCenter';
 
 describe('MIL experiment loading ownership', () => {
   it('validates recovered input drafts with their baseline before rendering', () => {
@@ -120,7 +122,11 @@ describe('MIL experiment loading ownership', () => {
       expect(running).toContain('Submitted plan');
       expect(running).toContain('aria-label="Experiment views"');
       expect(running).not.toContain('aria-label="Experiment setup"');
-      expect(running).toMatch(/id="development-tab-results"[^>]*disabled=""/);
+      // Results fill in seed by seed while the experiment runs; predictors have their own view.
+      expect(running).not.toMatch(/id="development-tab-results"[^>]*disabled=""/);
+      expect(running).toContain('Partial results: training seeds appear as their folds finish.');
+      expect(running).toContain('Results fill in as test folds and training seeds finish.');
+      expect(running).toMatch(/id="development-tab-predictors"/);
       expect(running).toMatch(/<fieldset class="mil-plan-fields" disabled=""/);
       expect(running).toContain('retained-protocol');
       expect(running).not.toContain('Check &amp; continue');
@@ -128,11 +134,41 @@ describe('MIL experiment loading ownership', () => {
       expect(finished).toMatch(/id="development-tab-results"[^>]*aria-current="page"/);
       expect(finished).not.toMatch(/id="development-tab-results"[^>]*disabled=""/);
       expect(finished).toContain('Inputs, batches and runs are read-only');
+      expect(finished).toContain('ready predictors are under Predictors');
+      expect(finished).toContain('Continue to predictors');
       expect(finished).not.toContain('Review &amp; submit');
     } finally { client.clear(); }
     expect(availableExperimentTab('planning', 'results')).toBe('batches');
-    expect(availableExperimentTab('running', 'results')).toBe('runs');
+    expect(availableExperimentTab('running', 'results')).toBe('results');
     expect(availableExperimentTab('finished', 'setup')).toBe('setup');
+    expect(availableExperimentTab('planning', 'predictors')).toBe('batches');
+    expect(availableExperimentTab('finished', 'predictors')).toBe('predictors');
+  });
+
+  it('opens partial results while running and shows the experiment queue bar in Runs only', () => {
+    const workspace = { project: { id: 'project', name: 'BLCA', config: {} } } as Workspace;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: [] });
+    client.setQueryData(['feature-bundles', 'project'], { items: [] });
+    client.setQueryData(['predictors', 'project'], { items: [] });
+    client.setQueryData(taskCenterKeys.rollup({ ownerKind: 'experiment', ownerId: 'one', project: 'project' }), fixtureRollup({ state: 'queued', active: 0, queuePosition: 1, waitingReason: null, eta: null }));
+    const record = { id: 'one', key: 'draft:one', name: 'Queued study', notes: '', tags: [], revision: 2, state: 'active', status: 'running', stage: 'running', configurationLocked: true, frozenSetupId: 'setup', legacy: false, createdAt: '', updatedAt: '', inputs: { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native', packArtifactId: null }, batches: [], drafts: [], predictorId: null, submission: { operationId: 'op', expectedRevision: 1, submittedAt: '', status: 'submitted', batchIds: [], error: null, retryable: false } } as ModelExperiment;
+    const render = (tab: 'runs' | 'results' | 'predictors') => renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentDetail mode="execution" workspace={workspace} record={record} initialTab={tab} onBack={() => {}} onOpen={() => {}} /></QueryClientProvider>);
+    try {
+      const runs = render('runs');
+      expect(runs).toContain('#1 in line');
+      expect(runs).toContain('href="#task-center?owner=owner-1&amp;project=project"');
+      const results = render('results');
+      expect(results).toMatch(/id="development-tab-results"[^>]*aria-current="page"/);
+      expect(results).not.toContain('#1 in line');
+      // The results view replaces the old per-batch picker and predictor library.
+      expect(results).toContain('Loading results…');
+      expect(results).not.toContain('Choose a batch in this experiment');
+      expect(results).not.toContain('ready to evaluate');
+      const predictors = render('predictors');
+      expect(predictors).toMatch(/id="development-tab-predictors"[^>]*aria-current="page"/);
+      expect(predictors).toContain('ready to evaluate');
+    } finally { client.clear(); }
   });
 
   it('provides a controlled retry for partially submitted experiments without reopening configuration', () => {
@@ -151,7 +187,7 @@ describe('MIL experiment loading ownership', () => {
     expect(experimentRoute('#experiments')).toEqual({ id: '', tab: 'setup' });
     expect(experimentRoute('#experiments?experiment=one%2Ftwo&tab=runs')).toEqual({ id: 'one/two', tab: 'runs' });
     expect(experimentRoute('#experiments?experiment=one&tab=inputs')).toEqual({ id: 'one', tab: 'setup' });
-    expect(experimentRoute('#experiments?experiment=one&tab=predictors')).toEqual({ id: 'one', tab: 'results' });
+    expect(experimentRoute('#experiments?experiment=one&tab=predictors')).toEqual({ id: 'one', tab: 'predictors' });
     expect(experimentRoute('#experiments?experiment=one&tab=review')).toEqual({ id: 'one', tab: 'review' });
     expect(experimentRoute('#source-cv', 'results')).toEqual({ id: '', tab: 'results' });
   });

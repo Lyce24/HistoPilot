@@ -15,7 +15,20 @@ def validate_selection_metric(metric, target, rows):
         )
 
 
-def resolve_stopping(recipe, target, rows):
+def validate_split_unit(recipe, target, split_unit=None):
+    """Explicit slide experiments must never invoke patient-based computation."""
+    if split_unit not in {None, "slide", "patient"}:
+        raise ValueError("Choose slide-level or patient-level splitting.")
+    if split_unit is not None and target["unit"] != split_unit:
+        raise ValueError("The target unit must match the frozen split unit.")
+    if split_unit == "slide":
+        if recipe.get("samplingStrategy", "slide_uniform") != "slide_uniform":
+            raise ValueError("Slide-level experiments require slide-uniform sampling; patient sampling is unavailable.")
+        if recipe.get("inputMode", "image") != "image" or recipe.get("clinicalFields"):
+            raise ValueError("Patient-based clinical preprocessing is unavailable for slide-level experiments.")
+
+
+def resolve_stopping(recipe, target, rows, *, split_unit=None):
     """Resolve explicit epoch budgets and small-validation fallback policies."""
     threshold = recipe.get("minValidationPositives")
     budget = recipe.get("fixedEpochBudget")
@@ -24,19 +37,22 @@ def resolve_stopping(recipe, target, rows):
     if threshold is not None and target["task"] != "binary_classification":
         raise ValueError("The minimum validation positives fallback requires a binary target.")
     positive = target.get("positiveClass")
-    patients = {
-        row["patientId"] for row in rows if row["partition"] == "val" and row["label"] == positive
+    units = {
+        row["slideId" if split_unit == "slide" else "patientId"]
+        for row in rows if row["partition"] == "val" and row["label"] == positive
     }
-    if threshold is not None and len(patients) >= threshold:
+    if threshold is not None and len(units) >= threshold:
         return recipe, None
     if not budget:
         raise ValueError("Too few validation positives: provide a fixed epoch budget.")
     decision = {
         "reason": "explicit_fixed_epoch_budget"
         if threshold is None
-        else "insufficient_validation_positive_patients",
+        else f"insufficient_validation_positive_{'slides' if split_unit == 'slide' else 'patients'}",
         **(
-            {"positivePatients": len(patients), "minimumPositivePatients": threshold}
+            ({"positiveSlides": len(units), "minimumPositiveSlides": threshold}
+             if split_unit == "slide" else
+             {"positivePatients": len(units), "minimumPositivePatients": threshold})
             if threshold is not None
             else {}
         ),
@@ -67,8 +83,9 @@ def sampling_memberships(rows, recipe, cohort_values):
     return [{**row, "cohort": values.get(row["slideId"])} for row in rows]
 
 
-def validate_training_controls(recipe, target, rows):
+def validate_training_controls(recipe, target, rows, *, split_unit=None):
     """Fail before launching workers when a choice cannot use these folds."""
+    validate_split_unit(recipe, target, split_unit)
     classes = target["classes"]
     if recipe.get("lossType") == "bce" and target["task"] != "binary_classification":
         raise ValueError("Single-logit BCE requires a binary classification target.")
@@ -112,7 +129,7 @@ def validate_training_controls(recipe, target, rows):
             raise ValueError(
                 "Cohort-label sampling requires both binary classes in every training cohort."
             )
-    resolved, decision = resolve_stopping(recipe, target, rows)
+    resolved, decision = resolve_stopping(recipe, target, rows, split_unit=split_unit)
     if resolved["checkpointMetric"] == "validation_auroc" and {
         row["label"] for row in rows if row["partition"] == "val"
     } != set(classes):

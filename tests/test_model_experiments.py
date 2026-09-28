@@ -224,7 +224,7 @@ def test_running_batch_protects_experiment_upstream(prepared):
     assert any(item["code"] == "JOBS_ACTIVE" for item in review["blockers"])
 
 
-def test_unreadable_execution_stays_visible_as_unknown_not_planned(prepared, monkeypatch):
+def test_unreadable_execution_stays_visible_as_needing_attention_not_planned(prepared, monkeypatch):
     service, development, spec, experiment, _source = prepared
     preview = development.preview(spec)
     frozen = development.freeze(spec, preview["previewHash"], "batch", {"tag": "Batch"})
@@ -234,7 +234,9 @@ def test_unreadable_execution_stays_visible_as_unknown_not_planned(prepared, mon
 
     monkeypatch.setattr(service.training, "execution", unreadable)
     record = service.get(experiment["id"])
-    assert record["status"] == "unknown"
+    # Unknown evidence is not proof of idle work: the experiment needs attention.
+    assert record["status"] == "needs-attention"
+    assert "Execution status is unavailable" in record["statusReason"]
     assert record["batches"][0]["id"] == frozen["id"]
     assert record["batches"][0]["executionError"]["code"] == "TRAINING_STATE_INVALID"
 

@@ -31,6 +31,8 @@ def predicted_index(probabilities, target, inference):
 
 def development_patients(manifest):
     """Patients shared with development, or None when overlap cannot be compared."""
+    if manifest.get("splitUnit") == "slide":
+        return None
     overlap = manifest.get("overlap") or {}
     if not overlap.get("patientsComparable"):
         return None
@@ -177,6 +179,16 @@ class CaseReviewService:
             ):
                 raise ValueError("Saved member probabilities must match the same frozen ensemble for every slide.")
             actual_unit = target["unit"] if unit == "selected" else unit
+            slide_experiment = (
+                manifest.get("splitUnit") == "slide"
+                or cohort["manifest"].get("spec", {}).get("splitUnit") == "slide"
+            )
+            if actual_unit == "patient" and slide_experiment:
+                raise StorageError(
+                    "Patient analysis is disabled for slide-level experiments. Choose slide review.",
+                    "PATIENT_ANALYSIS_DISABLED",
+                    409,
+                )
             if actual_unit == "patient":
                 if any(not row.get("patientId") or row.get("patientIdSource") == "slide_fallback" for row in membership.values()):
                     raise ValueError("Patient review requires verified patient identities. Choose slide review for this cohort.")

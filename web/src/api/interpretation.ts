@@ -17,9 +17,15 @@ export interface InterpretationSelection {
   name: string; predictorId: string; evaluationId?: string | null; clinicalAnalysisId?: string | null;
   encoderId: string; slides: InterpretationSlideInput[]; resources?: ResourcePolicy;
 }
+/** The predictor's frozen decision for one slide, attached by the service when a job completes. */
+export interface SlidePrediction {
+  predictedIndex: number; predictedLabel: string; confidence: number; margin: number;
+  memberAgreement?: { agree: number; total: number; spread: number };
+}
 export interface InterpretationSlideResult {
   slideId: string; patchCount: number; probabilities: number[]; attentionArtifact: string;
   members: { index: number; checkpointSha256: string; probabilities: number[] }[];
+  prediction?: SlidePrediction;
 }
 export interface InterpretationExecution extends ComputeExecution {
   result?: { slides?: InterpretationSlideResult[]; classOrder?: string[]; [key: string]: unknown } | null;
@@ -45,6 +51,11 @@ export interface InterpretationSource {
   datasetId?: string; datasetName?: string; slideFolder?: string | null; slideFolderSource?: 'dataset_import' | 'dataset_records' | null; slideFolderFinding?: Finding | null;
   packs: { id: string; name: string; outputDtype: string }[];
 }
+/** A frozen dataset as the slide source; features come separately from a compatible bundle. */
+export interface InterpretationDatasetSource {
+  datasetId: string; datasetName: string; slideFolder: string | null;
+  slideFolderSource: 'dataset_import' | 'dataset_records' | null; slideFolderFinding: Finding | null; slideCount: number | null;
+}
 export interface GallerySource { slideFolder: string; featureBundleId: string; packArtifactId?: string | null; predictorId: string }
 export interface GallerySlide { slideId: string; slidePath: string; relativePath: string; name: string; available: boolean; reason: string | null; patchCount: number | null }
 export interface SlideGallery {
@@ -63,6 +74,7 @@ const slide = (project: string, id: string, slideId: string) => `${record(projec
 const post = (value: unknown) => ({ method: 'POST', body: JSON.stringify(value) });
 export const interpretations = {
   sources: (project: string) => request<{ items: InterpretationSource[] }>(`${base(project)}/sources`),
+  datasets: (project: string) => request<{ items: InterpretationDatasetSource[] }>(`${base(project)}/datasets`),
   gallery: (project: string, source: GallerySource, search: string, offset: number, signal?: AbortSignal) => request<SlideGallery>(`${base(project)}/gallery`, { ...post({ ...source, search, offset, limit: 24 }), signal }),
   galleryThumbnail: (project: string, path: string, signal?: AbortSignal) => fetchArtifactBlob(`${base(project)}/gallery/thumbnail?${new URLSearchParams({ path, max_size: '320' })}`, signal),
   visualize: (project: string, selection: VisualizeSelection, operationId: string) => request<VisualizeResult>(`${base(project)}/visualize`, post({ ...selection, operationId })),

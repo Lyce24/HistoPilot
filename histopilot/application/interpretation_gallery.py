@@ -195,7 +195,9 @@ class InterpretationGalleryService:
                     "name": (bundle.get("versionLabel") or {}).get("tag")
                     or manifest.get("name")
                     or f"Bundle {bundle['id'][-8:]}",
-                    "current": bundle["current"] and not folder_findings,
+                    # A store-scoped bundle only warns: its slides come from a chosen dataset.
+                    "current": bundle["current"]
+                    and not any(item["severity"] == "error" for item in folder_findings),
                     "findings": [*bundle["findings"], *folder_findings],
                     **dataset_source,
                     "encoderId": encoder,
@@ -212,6 +214,20 @@ class InterpretationGalleryService:
                         for row in manifest["packs"]
                     ],
                 }
+            )
+        return {"items": items}
+
+    def dataset_sources(self):
+        """Frozen datasets as slide sources: features may come from any compatible bundle."""
+        items = []
+        for dataset in self.store.list_datasets():
+            try:
+                records = self._records(dataset["id"])
+            except (StorageError, ValueError):
+                records = None
+            source = self.dataset_source(dataset["id"], records=records)
+            items.append(
+                {**source, "slideCount": len(records) if isinstance(records, list) else None}
             )
         return {"items": items}
 

@@ -1,14 +1,19 @@
 """Durable, isolated predictor build and test evaluation jobs.
 
-The API never imports Torch. Workers share the training resource lease registry
-and keep a verified source archive so an interrupted job can resume safely.
+The API never imports Torch. New jobs run as Task Center tasks: the runner admits them
+and holds their resource lease. Jobs whose pinned archive predates the Task Center keep
+their tmux worker, which leases itself in the shared training registry. Every job keeps
+a verified source archive so an interrupted job can resume safely.
 """
 
+import hashlib
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
+from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.feature_bundles import _hash
@@ -20,6 +25,8 @@ from histopilot.storage.project_lock import (
     ensure_managed_directory,
     writer_lock,
 )
+from histopilot.taskcenter import ids, paths
+from histopilot.taskcenter.model import LIVE, awaiting_requeue, normalize_command
 from histopilot.workers.compute_archive import prepare_compute_archive
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import (
@@ -35,10 +42,168 @@ from histopilot.workers.training_process import (
     stop_owned_processes,
 )
 
+ACTIVE_STATUSES = {"queued", "running"}
+FINISHED_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
+PROTOCOL_PATTERN = re.compile(rb"^TASK_CENTER_PROTOCOL\s*=\s*(\d+)\s*$", re.MULTILINE)
+KIND_TITLES = {"refit": "Refit", "evaluation": "Evaluation", "interpretation": "Attention"}
+INTERACTIVE_KINDS = frozenset({"evaluation", "interpretation"})
+DEFAULT_TASK_RAM_GB = 6.0
+EVALUATION_TASK_VRAM_GB = 2.0
+DEFAULT_REFIT_VRAM_GB = 4.0
+
 
 def job_processes(state):
     """Track an isolated worker group even if its parent died before its loaders."""
     return owned_processes(state.get("process"), state.get("processGroupId"), descendants=True)
+
+
+def archive_protocol(module_path) -> int | None:
+    """The Task Center protocol a pinned archive module declares, read without importing it."""
+    try:
+        match = PROTOCOL_PATTERN.search(Path(module_path).read_bytes())
+    except OSError:
+        return None
+    return int(match.group(1)) if match else None
+
+
+def refit_vram_gb(plan) -> float:
+    """A refit trains every development slide with its fold recipe; size it like a fold."""
+    from histopilot.taskcenter import estimator
+
+    try:
+        data = plan["data"]
+        files = dict(data["featureFiles"])
+        rows = [{**row, "partition": "train"} for row in data["memberships"]]
+        largest = max(rows, key=lambda row: files[row["slideId"]]["patchCount"])
+        # The fold formula needs an evaluation stream; a copy of the largest slide
+        # stands in for it, so the training stream is sized from every refit slide.
+        proxy = "\0refit-evaluation-proxy"
+        files[proxy] = files[largest["slideId"]]
+        rows.append({**largest, "slideId": proxy, "partition": "val"})
+        workload = estimator.fold_workloads(
+            plan.get("effectiveRecipe") or plan["recipe"],
+            rows,
+            files,
+            data.get("loadingPolicy") or "native",
+        )
+        return round(max(1.0, estimator.gpu_estimate(workload)), 2)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return DEFAULT_REFIT_VRAM_GB
+
+
+def compute_request(plan) -> dict:
+    """Task Center admission request for a frozen compute plan; plan resources stay untouched."""
+    resources = plan["resources"]
+    gpu = bool(resources.get("gpuIds"))
+    kind = plan.get("kind")
+    ram = float(resources["ramGbPerRun"]) if kind == "interpretation" else DEFAULT_TASK_RAM_GB
+    vram = 0.0
+    if gpu:
+        vram = refit_vram_gb(plan) if kind == "refit" else EVALUATION_TASK_VRAM_GB
+    return {
+        "lane": "gpu" if gpu else "cpu",
+        "cpuThreads": int(resources["cpuThreadsPerRun"]),
+        "dataWorkers": int(resources["dataLoaderWorkers"]),
+        "ramGb": ram,
+        "vramGb": vram,
+    }
+
+
+def compute_priority(plan, owner) -> str:
+    """A single evaluation or interpretation is short work someone is waiting for, so it goes
+    ahead of queued training (never preempting it); refits and bulk members keep their turn."""
+    if plan.get("kind") in INTERACTIVE_KINDS and owner.get("kind") != "evaluation-batch":
+        return "interactive"
+    return "normal"
+
+
+def wake_runner(default_client: bool) -> None:
+    """The first submission starts the runner; failures only delay queued work.
+
+    Injected clients (tests) never start one. Neither does code running inside a task
+    (the coordinator's refits, bulk submission): it may be a pinned archive, and a runner
+    started from there would run that old code.
+    """
+    if not default_client or os.environ.get("HISTOPILOT_TASK_ID"):
+        return
+    try:
+        from histopilot.taskcenter.launcher import ensure_runner
+
+        ensure_runner()
+    except Exception:  # never fail an accepted submission because tmux misbehaved
+        pass
+
+
+def submit_task(client, owner, spec, *, reason, active_message, active_code):
+    """Enqueue a task, or requeue its finished predecessor with a refreshed command.
+
+    A live task means another launch owns the record; the caller reconciles it like a
+    tmux session that already exists.
+    """
+    existing = client.task(spec["id"])
+    if existing is None:
+        client.enqueue(owner, [spec])
+        return
+    if existing["state"] in LIVE:
+        raise StorageError(active_message, active_code)
+    client.store.set_fields(
+        spec["id"],
+        title=spec["title"],
+        labels=spec.get("labels") or {},
+        request=spec["request"],
+        command=normalize_command(spec["command"]),
+        **({"priority": spec["priority"]} if spec.get("priority") else {}),
+    )
+    client.store.requeue([spec["id"]], reason=reason, include_succeeded=True)
+
+
+def task_view(client, task_id):
+    """A managed job's task, or ``{"unknown": True}`` when the Task Center cannot answer.
+
+    ``runnerAlive`` is None when the runner lock cannot be probed.
+    """
+    try:
+        task = client.task(task_id) if task_id else None
+        if task is None:
+            return None
+        owner = client.store.owner(task["ownerKey"])
+    except (StorageError, OSError) as error:
+        return {
+            "id": task_id,
+            "state": None,
+            "unknown": True,
+            "error": str(error),
+            "runnerAlive": None,
+        }
+    try:
+        runner_alive = bool(client.runner_alive())
+    except (StorageError, OSError):
+        runner_alive = None
+    return {
+        "id": task["id"],
+        "state": task["state"],
+        "attempt": task["attempt"],
+        "waitingReason": task["waitingReason"],
+        "held": bool(owner and owner["held"]),
+        "ownerKey": task["ownerKey"],
+        "runnerAlive": runner_alive,
+    }
+
+
+def task_pending(view) -> bool:
+    """Whether a managed job may still start or is starting; unknown never reads as stopped."""
+    return bool(view) and (view.get("unknown") or view["state"] in LIVE)
+
+
+def host_gpu_argv(argv) -> list[str]:
+    """Run a CPU-lane orchestration command with the host's GPU visibility restored.
+
+    The runner hides every GPU from CPU-lane tasks (``CUDA_VISIBLE_DEVICES=""``). The
+    predictor coordinator and bulk submission never use a GPU themselves, but they probe
+    the training runtime to plan GPU work for other tasks; hidden GPUs would read as
+    ``cudaAvailable: False`` and refuse or silently downgrade that work.
+    """
+    return [shutil.which("env") or "/usr/bin/env", "-u", "CUDA_VISIBLE_DEVICES", *argv]
 
 
 class TmuxComputeExecutor(TmuxTrainingExecutor):
@@ -68,11 +233,160 @@ class TmuxComputeExecutor(TmuxTrainingExecutor):
         )
 
 
+class TaskCenterComputeExecutor:
+    """Queue compute workers in the machine-wide Task Center instead of tmux."""
+
+    managed = True
+
+    def __init__(self, client=None):
+        self._client = client
+        self._default_client = client is None
+
+    @property
+    def client(self):
+        if self._client is None:
+            from histopilot.taskcenter.client import default_client
+
+            self._client = default_client()
+        return self._client
+
+    def available(self):
+        return True
+
+    def running(self, session):
+        task = self.client.by_session(session)
+        return bool(task and task["state"] in LIVE)
+
+    def launch(self, session, python, plan, log, *, package_root, task_id, owner, title, frozen):
+        folder = Path(plan).parent
+        kind = frozen["kind"]
+        existing = self.client.task(task_id)
+        # A resume keeps the owner the task was queued under (for example a bulk batch,
+        # whose members keep their turn), whoever resumes it.
+        owner = (existing and self.client.store.owner(existing["ownerKey"])) or owner
+        labels = {
+            "recordId": frozen["recordId"],
+            "computeKind": kind,
+            **({"purpose": frozen["purpose"]} if frozen.get("purpose") else {}),
+            **({"experimentId": owner["id"]} if owner["kind"] == "experiment" else {}),
+        }
+        spec = {
+            "id": task_id,
+            "kind": "compute-job",
+            "adapter": "compute-job",
+            "title": title,
+            "group": {"kind": kind, "id": frozen["recordId"]},
+            "sessionName": session,
+            "labels": labels,
+            "priority": compute_priority(frozen, owner),
+            "request": compute_request(frozen),
+            "command": {
+                "argv": [python, "-u", "-m", "histopilot.workers.compute_job", str(plan)],
+                "cwd": str(package_root),
+                "env": {"PYTHONDONTWRITEBYTECODE": "1", "HISTOPILOT_TASK_MANAGED": "1"},
+                "log": str(log),
+                "progress": str(folder / "progress.json"),
+                "result": str(folder / "result.json"),
+            },
+            "adapterData": {
+                "computeFolder": str(folder),
+                "recordId": frozen["recordId"],
+                "kind": kind,
+            },
+        }
+        submit_task(
+            self.client,
+            owner,
+            spec,
+            reason="launch",
+            active_message="This compute task is already queued or running.",
+            active_code="COMPUTE_ACTIVE",
+        )
+        wake_runner(self._default_client)
+
+
 class ComputeJobService:
-    def __init__(self, store, filesystem=None, executor=None, runtime=None):
+    def __init__(
+        self,
+        store,
+        filesystem=None,
+        executor=None,
+        runtime=None,
+        *,
+        execution_mode=None,
+        task_center=None,
+    ):
         self.store, self.filesystem = store, filesystem
-        self.executor = executor or TmuxComputeExecutor()
+        # An injected executor keeps its caller on the legacy path unless a mode is named.
+        self.mode = execution_mode or ("tmux" if executor is not None else paths.execution_mode())
+        if executor is None:
+            executor = (
+                TaskCenterComputeExecutor(task_center)
+                if self.mode == "task-center"
+                else TmuxComputeExecutor()
+            )
+        self.executor = executor
+        # Records launched before the Task Center, and archives without its protocol.
+        self.legacy_executor = TmuxComputeExecutor() if self._managed_executor else executor
+        self._task_center = task_center
         self.runtime = runtime or training_runtime
+
+    @property
+    def _managed_executor(self):
+        return bool(getattr(self.executor, "managed", False))
+
+    @property
+    def task_center(self):
+        if self._task_center is None:
+            if self._managed_executor:
+                self._task_center = self.executor.client
+            else:
+                from histopilot.taskcenter.client import default_client
+
+                self._task_center = default_client()
+        return self._task_center
+
+    def _task_owner(self, record, owner):
+        manifest = record["manifest"]
+        owner = owner or {
+            "kind": manifest["kind"],
+            "id": record["id"],
+            "title": manifest.get("name") or record["id"],
+        }
+        return {
+            "workspace": None,
+            "labels": {},
+            **owner,
+            "title": str(owner.get("title") or owner["id"])[:200],
+            "projectId": self.store.project_id,
+            "projectFolder": str(self.store.folder),
+        }
+
+    @staticmethod
+    def _task_title(record, plan):
+        manifest = record["manifest"]
+        kind = (
+            "Inference"
+            if plan.get("purpose") == "inference"
+            else KIND_TITLES.get(plan["kind"], "Compute")
+        )
+        return f"{kind} · {manifest.get('name') or record['id']}"[:200]
+
+    def _task(self, state):
+        """The Task Center view of a managed job (None for tmux jobs and missing tasks)."""
+        if state.get("executor") != "task-center":
+            return None
+        try:
+            client = self.task_center
+        except (StorageError, OSError) as error:
+            return {
+                "id": state.get("taskId"),
+                "state": None,
+                "unknown": True,
+                "error": str(error),
+                "runnerAlive": None,
+            }
+        return task_view(client, state.get("taskId"))
 
     def folder(self, identity):
         if not re.fullmatch(r"configuration-[a-f0-9]{64}", identity):
@@ -116,16 +430,34 @@ class ComputeJobService:
         cancellation_requested = (folder / "cancel.requested").exists()
         live_processes = job_processes(state)
         live = bool(live_processes)
-        if state["status"] in {"queued", "running"} and not live:
-            if not self.executor.running(state["sessionName"]):
-                state = {
-                    **state,
-                    "status": "cancelled" if cancellation_requested else "interrupted",
-                    "error": "The compute worker stopped after cancellation was requested."
-                    if cancellation_requested
-                    else "The compute worker stopped. Resume to continue from saved work.",
-                }
-        elif live and state["status"] not in {"queued", "running"}:
+        managed = state.get("executor") == "task-center"
+        task = self._task(state)
+        stopped = {
+            "status": "cancelled" if cancellation_requested else "interrupted",
+            "error": "The compute worker stopped after cancellation was requested."
+            if cancellation_requested
+            else "The compute worker stopped. Resume to continue from saved work.",
+        }
+        if state["status"] in ACTIVE_STATUSES and not live:
+            if managed:
+                if not task_pending(task):
+                    # The worker may have recorded its outcome and exited since the first read.
+                    latest = read_json(folder / "state.json")
+                    if (
+                        latest.get("recordId") == identity
+                        and latest.get("planHash") == state["planHash"]
+                        and latest.get("status") in FINISHED_STATUSES
+                    ):
+                        state = latest
+                        live_processes = job_processes(state)
+                        live = bool(live_processes)
+                        if live:
+                            state = {**state, "status": "running"}
+                    else:
+                        state = {**state, **stopped}
+            elif not self.legacy_executor.running(state["sessionName"]):
+                state = {**state, **stopped}
+        elif live and state["status"] not in ACTIVE_STATUSES:
             # A receipt does not prove its writer has exited.
             state = {**state, "status": "running"}
         if state["status"] == "completed":
@@ -137,15 +469,28 @@ class ComputeJobService:
             ):
                 raise StorageError("Compute result evidence changed.", "COMPUTE_RESULT_CHANGED")
         progress, warning = read_progress(folder / "progress.json")
+        queue = {}
+        if managed:
+            queue["task"] = task
+            if task and state["status"] in ACTIVE_STATUSES and not live:
+                queue["waitingReason"] = (
+                    f"The Task Center is unavailable: {task['error']}"
+                    if task.get("unknown")
+                    else task["waitingReason"]
+                )
         return {
             **state,
+            "executor": "task-center" if managed else "tmux",
+            **queue,
             "liveProcesses": live_processes,
             "progress": progress,
             **({"progressWarning": warning} if warning else {}),
             "cancellationRequested": cancellation_requested,
         }
 
-    def replay_launch(self, identity, operation_id, *, resume=False, resources=None, record_kind=None):
+    def replay_launch(
+        self, identity, operation_id, *, resume=False, resources=None, record_kind=None
+    ):
         """Return an accepted launch without rebuilding or revalidating its inputs.
 
         This performs no new execution. The immutable owning record, saved plan,
@@ -155,7 +500,9 @@ class ComputeJobService:
         with lifecycle_guard(self.store.folder):
             record = self._record(identity)
             if record_kind is not None and record["manifest"].get("kind") != record_kind:
-                raise StorageError("Compute record type does not match this operation.", "COMPUTE_NOT_FOUND", 404)
+                raise StorageError(
+                    "Compute record type does not match this operation.", "COMPUTE_NOT_FOUND", 404
+                )
             self.store.lifecycle.assert_document_usable(record)
             folder = self.folder(identity)
             if not (folder / "state.json").exists():
@@ -174,37 +521,75 @@ class ComputeJobService:
                     or frozen.get("projectFolder") != str(self.store.folder)
                 ):
                     raise StorageError("The saved execution plan changed.", "COMPUTE_PLAN_CHANGED")
-                if resources is not None and ResourcePolicy.model_validate(resources).model_dump() != frozen["resources"]:
-                    raise StorageError("This operation belongs to another compute request.", "OPERATION_CONFLICT")
+                if (
+                    resources is not None
+                    and ResourcePolicy.model_validate(resources).model_dump() != frozen["resources"]
+                ):
+                    raise StorageError(
+                        "This operation belongs to another compute request.", "OPERATION_CONFLICT"
+                    )
                 actions = prior.get("operationActions", {})
                 if operation_id in actions:
                     if type(actions[operation_id]) is not bool or actions[operation_id] != resume:
-                        raise StorageError("This operation belongs to another compute request.", "OPERATION_CONFLICT")
+                        raise StorageError(
+                            "This operation belongs to another compute request.",
+                            "OPERATION_CONFLICT",
+                        )
                 else:
                     # Historical receipts hash the unnormalized request plan.
                     # Reconstruct only its known envelope/resource representations;
                     # never edit the saved plan or reinterpret an unknown receipt.
-                    base = {key: value for key, value in frozen.items() if key not in {
-                        "recordId", "recordContentHash", "projectId", "projectFolder", "runtime", "code",
-                    }}
+                    base = {
+                        key: value
+                        for key, value in frozen.items()
+                        if key
+                        not in {
+                            "recordId",
+                            "recordContentHash",
+                            "projectId",
+                            "projectFolder",
+                            "runtime",
+                            "code",
+                        }
+                    }
                     defaults = ResourcePolicy().model_dump()
-                    resource_versions = [frozen["resources"], {
-                        key: defaults[key] if key in defaults and value == defaults[key] else value
-                        for key, value in frozen["resources"].items()
-                    }]
-                    candidates = [{**base, "resources": values, **envelope}
-                                  for values in resource_versions
-                                  for envelope in ({}, {"recordId": identity,
-                                                        "recordContentHash": record["contentHash"]})]
-                    if not any(_hash({"plan": plan, "resume": resume}) == operations[operation_id]
-                               for plan in candidates):
-                        if any(_hash({"plan": plan, "resume": not resume}) == operations[operation_id]
-                               for plan in candidates):
-                            raise StorageError("This operation belongs to another compute request.", "OPERATION_CONFLICT")
+                    resource_versions = [
+                        frozen["resources"],
+                        {
+                            key: defaults[key]
+                            if key in defaults and value == defaults[key]
+                            else value
+                            for key, value in frozen["resources"].items()
+                        },
+                    ]
+                    candidates = [
+                        {**base, "resources": values, **envelope}
+                        for values in resource_versions
+                        for envelope in (
+                            {},
+                            {"recordId": identity, "recordContentHash": record["contentHash"]},
+                        )
+                    ]
+                    if not any(
+                        _hash({"plan": plan, "resume": resume}) == operations[operation_id]
+                        for plan in candidates
+                    ):
+                        if any(
+                            _hash({"plan": plan, "resume": not resume}) == operations[operation_id]
+                            for plan in candidates
+                        ):
+                            raise StorageError(
+                                "This operation belongs to another compute request.",
+                                "OPERATION_CONFLICT",
+                            )
                         return None  # Preserve full validation for other historical shapes.
                 return self.status(identity)
 
-    def launch(self, identity, plan, operation_id, *, resume=False):
+    def launch(
+        self, identity, plan, operation_id, *, resume=False, task_owner=None, task_title=None
+    ):
+        """Freeze and start one job. ``task_owner`` groups its Task Center task (for example
+        under an experiment or an evaluation batch); by default the record owns it."""
         with lifecycle_guard(self.store.folder):
             record = self._record(identity)
             self.store.lifecycle.assert_document_usable(record)
@@ -283,11 +668,43 @@ class ComputeJobService:
                         )
                     frozen = original
                 archive = prepare_compute_archive(folder, frozen["code"])
+                # Archives frozen before the Task Center keep their self-leasing tmux worker.
+                managed = (
+                    self._managed_executor
+                    and archive_protocol(archive / "histopilot" / "workers" / "compute_job.py")
+                    is not None
+                )
+                executor = self.executor if managed else self.legacy_executor
+                launch_options = {}
+                if managed:
+                    task_id = ids.compute_task_id(str(folder))
+                    existing = self.task_center.task(task_id)
+                    if existing is not None and existing["state"] in LIVE:
+                        # The previous worker exited but the runner has not recorded it
+                        # yet. Rewriting state.json now would hand this launch's state to
+                        # that attempt's exit bookkeeping.
+                        raise StorageError(
+                            "The previous attempt is still stopping. Try again in a moment.",
+                            "COMPUTE_ACTIVE",
+                        )
+                    launch_options = {
+                        "task_id": task_id,
+                        "owner": self._task_owner(record, task_owner),
+                        "title": task_title or self._task_title(record, frozen),
+                        "frozen": frozen,
+                    }
                 if not prior:
                     write_json(folder / "plan.json", frozen)
                 operations[operation_id] = request_hash
-                actions = {**(prior.get("operationActions", {}) if prior else {}), operation_id: resume}
-                session = f"hp-{plan['kind']}-{identity.removeprefix('configuration-')[:16]}"
+                actions = {
+                    **(prior.get("operationActions", {}) if prior else {}),
+                    operation_id: resume,
+                }
+                session = (
+                    f"tc-{plan['kind']}-{hashlib.sha256(str(folder).encode()).hexdigest()[:16]}"
+                    if managed
+                    else f"hp-{plan['kind']}-{identity.removeprefix('configuration-')[:16]}"
+                )
                 state = {
                     "status": "queued",
                     "recordId": identity,
@@ -303,21 +720,28 @@ class ComputeJobService:
                     "error": None,
                     "attempt": prior.get("attempt", 1) + 1 if prior else 1,
                 }
+                if managed:
+                    state.update(
+                        executor="task-center",
+                        taskId=task_id,
+                        taskAttempt=existing["attempt"] + 1 if existing else 1,
+                    )
                 (folder / "cancel.requested").unlink(missing_ok=True)
                 write_json(folder / "state.json", state)
                 try:
-                    self.executor.launch(
+                    executor.launch(
                         session,
                         runtime["python"],
                         folder / "plan.json",
                         folder / "worker.log",
                         package_root=archive,
+                        **launch_options,
                     )
                 except Exception as error:
                     # A tmux timeout can lose the acknowledgement after creating
                     # the session. Do not overwrite a worker that already began.
                     try:
-                        session_running = self.executor.running(session)
+                        session_running = executor.running(session)
                         # A fast worker may publish and exit during this probe.
                         # Its recorded identity/outcome proves launch occurred
                         # even when no process is alive by the time we read it.
@@ -340,6 +764,16 @@ class ComputeJobService:
                     ) from error
                 return state
 
+    def _awaiting_requeue(self, state) -> bool:
+        """A paused or lost managed attempt whose requeue the runner has not carried out yet."""
+        if state.get("executor") != "task-center" or not state.get("taskId"):
+            return False
+        try:
+            task = self.task_center.task(state["taskId"])
+        except (StorageError, OSError):
+            return False
+        return bool(task) and awaiting_requeue(task)
+
     def cancel(self, identity, operation_id=None):
         with lifecycle_guard(self.store.folder):
             state = self.status(identity, include_inactive=True)
@@ -347,19 +781,30 @@ class ComputeJobService:
             receipt = folder / f"cancel-{_hash(operation_id)}.json" if operation_id else None
             if receipt and receipt.exists():
                 return state
-            if state["status"] not in {"queued", "running"}:
+            if state["status"] not in {"queued", "running"} and not self._awaiting_requeue(state):
                 return state
             write_json(folder / "cancel.requested", {"at": now(), "operationId": operation_id})
             if receipt:
                 write_json(
                     receipt, {"at": now(), "operationId": operation_id, "attempt": state["attempt"]}
                 )
-            for process in state.get("liveProcesses", []):
-                if confirmed_process_alive(process):
-                    try:
-                        os.kill(process["pid"], signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
+            signalled = False
+            if state.get("executor") == "task-center":
+                # The runner drops a pending task, or stops a started worker's leader
+                # (SIGTERM, then SIGKILL to its group after the grace period).
+                try:
+                    task = self.task_center.cancel_task(state["taskId"])
+                except (StorageError, OSError):
+                    task = None
+                # A task that already finished cannot stop a worker that is still alive.
+                signalled = bool(task) and task["state"] in {"stopping", "cancelled"}
+            if not signalled:
+                for process in state.get("liveProcesses", []):
+                    if confirmed_process_alive(process):
+                        try:
+                            os.kill(process["pid"], signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
             process = state.get("process")
             if (
                 process

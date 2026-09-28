@@ -17,7 +17,8 @@ export interface BatchEditorDraft {
   selectionMetric?: DevelopmentBatchSpec['selectionMetric'];
   candidateSelection?: DevelopmentBatchSpec['candidateSelection'];
   recipe: TrainingRecipe;
-  resources: ResourcePolicy;
+  /** Present only in recovery copies saved before compute settings left the batch editor. */
+  resources?: ResourcePolicy;
   mode: DevelopmentBatchSpec['mode'];
   rows: { id: number; recipe: TrainingRecipe }[];
   explicitInitialized: boolean;
@@ -25,7 +26,7 @@ export interface BatchEditorDraft {
   lrs: string;
   wds: string;
   epochs: string;
-  gpus: string;
+  gpus?: string;
   notes: string;
   numericDrafts: NumericDrafts;
 }
@@ -85,7 +86,7 @@ export function isBatchEditorDraft(value: unknown): value is BatchEditorDraft {
     || !text(value.name, 80) || !text(value.templateId, 80) || !text(value.notes, 2000)
     || typeof value.editorOpen !== 'boolean' || !integer(value.batchPage) || value.batchPage < 1 || value.batchPage > 4
     || !['single', 'grid', 'explicit'].includes(String(value.mode)) || typeof value.explicitInitialized !== 'boolean'
-    || !recipe(value.recipe) || !resources(value.resources) || !object(value.predictorPolicy)
+    || !recipe(value.recipe) || (value.resources !== undefined && !resources(value.resources)) || !object(value.predictorPolicy)
     || (value.selectionMetric != null && !['validation_auroc', 'validation_loss', 'validation_accuracy'].includes(String(value.selectionMetric)))
     || (value.candidateSelection != null && !['best_validation', 'all'].includes(String(value.candidateSelection)))
     || !['skip', 'ensemble', 'refit', 'both'].includes(String(value.predictorPolicy.method))
@@ -93,7 +94,7 @@ export function isBatchEditorDraft(value: unknown): value is BatchEditorDraft {
     || !Array.isArray(value.rows) || value.rows.length < 1 || value.rows.length > 512
     || !value.rows.every((row) => object(row) && integer(row.id) && recipe(row.recipe))
     || new Set(value.rows.map((row) => (row as { id: number }).id)).size !== value.rows.length
-    || !['seeds', 'lrs', 'wds', 'epochs', 'gpus'].every((key) => text(value[key]))
+    || !['seeds', 'lrs', 'wds', 'epochs'].every((key) => text(value[key])) || (value.gpus !== undefined && !text(value.gpus))
     || !object(value.numericDrafts) || Object.keys(value.numericDrafts).length > 20000) return false;
   return Object.entries(value.numericDrafts).every(([key, draft]) => text(key, 256) && object(draft) && number(draft.source) && text(draft.text, 1000));
 }

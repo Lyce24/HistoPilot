@@ -92,6 +92,112 @@ def _roots_for_interpreter(python: Path) -> list[Path]:
     return roots
 
 
+def _other_checkouts(checkout: Path) -> list[Path]:
+    """TRIDENT sources in sibling HistoPilot checkouts, reported as a hint and never used.
+
+    The source is looked up per checkout, so a new worktree (or a server started from one)
+    finds none until it is configured.
+    """
+    found = []
+    try:
+        for candidate in sorted(checkout.parent.glob("*/.local/TRIDENT"))[:20]:
+            if (
+                candidate.parent.parent != checkout
+                and (candidate / "run_batch_of_slides.py").is_file()
+            ):
+                found.append(candidate)
+    except OSError:
+        pass
+    return found[:3]
+
+
+# Python modules each TRIDENT slide reader imports (trident/wsi_objects). ``image`` is
+# the fallback reader for every extension without a dedicated one.
+READER_MODULES = {
+    "openslide": ("openslide",),
+    "sdpc": ("opensdpc",),
+    "cucim": ("cucim", "cupy"),
+    "omezarr": ("zarr", "dask", "ngff_zarr", "cf_units"),
+    "czi": ("pylibCZIrw",),
+    "image": ("PIL",),
+}
+OPENSLIDE_EXTENSIONS = frozenset(
+    {".svs", ".tif", ".tiff", ".ndpi", ".vms", ".vmu", ".scn", ".mrxs", ".dcm"}
+)
+READER_BY_EXTENSION = {".sdpc": "sdpc", ".zarr": "omezarr", ".czi": "czi"}
+_PROBE_CACHE: dict = {}
+PROBE_CACHE_SECONDS = 600.0
+PROBE_TIMEOUT_SECONDS = 60.0
+_PROBE = (
+    "import importlib, json, sys\n"
+    "result = {}\n"
+    "for name in sys.argv[1:]:\n"
+    "    try:\n"
+    "        importlib.import_module(name)\n"
+    "        result[name] = None\n"
+    "    except BaseException as error:\n"
+    "        result[name] = (type(error).__name__ + ': ' + str(error))[:500]\n"
+    "print(json.dumps(result))\n"
+)
+
+
+def slide_readers(paths, reader_type: str | None = None) -> dict[str, int]:
+    """Slide count per TRIDENT reader that will open ``paths``."""
+    counts: dict[str, int] = {}
+    for path in paths:
+        if reader_type:
+            reader = reader_type
+        else:
+            extension = Path(path).suffix.lower()
+            reader = READER_BY_EXTENSION.get(
+                extension, "openslide" if extension in OPENSLIDE_EXTENSIONS else "image"
+            )
+        counts[reader] = counts.get(reader, 0) + 1
+    return counts
+
+
+def probe_reader_modules(python_path: str | Path, modules, *, cwd=None) -> dict:
+    """Import each module in TRIDENT's interpreter, with the worker's library path.
+
+    Returns ``{"modules": {name: None | error}}``, or ``{"error": message}`` when the
+    interpreter cannot be run. Results are cached for ten minutes per interpreter.
+    """
+    import subprocess
+    import time
+
+    from .runner import _worker_environment
+
+    names = tuple(sorted(set(modules)))
+    if not names:
+        return {"modules": {}}
+    try:
+        stamp = Path(python_path).stat().st_mtime_ns
+    except OSError as error:
+        return {"error": f"Cannot run the TRIDENT interpreter: {error}"}
+    key = (str(python_path), stamp, names, str(cwd))
+    cached = _PROBE_CACHE.get(key)
+    if cached is not None and time.monotonic() - cached[0] < PROBE_CACHE_SECONDS:
+        return cached[1]
+    try:
+        completed = subprocess.run(
+            [str(python_path), "-c", _PROBE, *names],
+            capture_output=True,
+            text=True,
+            timeout=PROBE_TIMEOUT_SECONDS,
+            env=_worker_environment(str(python_path), cwd=cwd),
+            cwd=cwd,
+        )
+        lines = [line for line in completed.stdout.splitlines() if line.startswith("{")]
+        value = json.loads(lines[-1]) if lines else None
+        if not isinstance(value, dict):
+            raise ValueError(completed.stderr.strip()[-500:] or "no probe output")
+        result = {"modules": {name: value.get(name) for name in names}}
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        return {"error": f"Cannot check slide reader dependencies: {error}"}
+    _PROBE_CACHE[key] = (time.monotonic(), result)
+    return result
+
+
 def discover_runtime(
     python_path: str | Path | None = None, trident_root: str | Path | None = None
 ) -> dict:
@@ -126,14 +232,26 @@ def discover_runtime(
     root = next((path for path in roots if (path / "run_batch_of_slides.py").is_file()), None)
     script = root / "run_batch_of_slides.py" if root else None
     available = bool(script and python.is_file() and os.access(python, os.X_OK))
+    elsewhere = []
     if not python.is_file() or not os.access(python, os.X_OK):
         reason = "TRIDENT Python interpreter does not exist or is not executable. Set HISTOPILOT_TRIDENT_PYTHON."
     elif script is None:
-        reason = "TRIDENT batch source was not found. Set HISTOPILOT_TRIDENT_ROOT to a checkout containing run_batch_of_slides.py."
+        checkout = Path(__file__).resolve().parents[3]
+        elsewhere = _other_checkouts(checkout)
+        reason = (
+            "TRIDENT batch source was not found"
+            + (f" (HISTOPILOT_TRIDENT_ROOT is {configured_root})" if configured_root else "")
+            + ". Set HISTOPILOT_TRIDENT_ROOT to a checkout containing run_batch_of_slides.py, "
+            f"or link one to {checkout / '.local/TRIDENT'}, then restart HistoPilot."
+        )
+        if elsewhere:
+            reason += f" A TRIDENT checkout exists at {elsewhere[0]}."
     else:
         reason = "TRIDENT source and interpreter found. Model dependencies and checkpoint access are checked in the worker."
     return {
         "available": available,
+        "searchedRoots": [str(path) for path in roots[:8]],
+        **({"otherCheckouts": [str(path) for path in elsewhere]} if elsewhere else {}),
         "pythonPath": str(python),
         "tridentRoot": str(root) if root else str(configured_root) if configured_root else None,
         "scriptPath": str(script) if script else None,

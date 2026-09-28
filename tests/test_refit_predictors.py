@@ -33,7 +33,8 @@ class FakeJobs:
     def replay_launch(self, identity, operation_id, **kwargs):
         return None
 
-    def launch(self, identity, plan, operation_id, resume=False):
+    def launch(self, identity, plan, operation_id, resume=False, **task):
+        self.task_options = task  # Task Center owner/title; the fake never queues anything.
         folder = self.folder(identity)
         folder.mkdir(parents=True, exist_ok=True)
         write_json(folder / "plan.json", plan)

@@ -3,8 +3,6 @@ import type { ProtocolSpec } from '../api/scientific';
 import {
   changeHeldOutSource,
   changeSplitStrategy,
-  changeValidationSource,
-  resetImportedForDataset,
 } from './split';
 
 const spec = (): ProtocolSpec['split'] => ({
@@ -73,45 +71,6 @@ describe('changing strategies after editing numeric settings', () => {
       ...before,
       ...changeSplitStrategy({ ...before, version: 2 }, 'held_out'),
     }).toMatchObject({ testFraction: 0 });
-  });
-});
-
-describe('fixed validation source', () => {
-  it('returns the source and hidden fraction correction together', () => {
-    const pools = spec().pools!;
-    expect(changeValidationSource(pools, 'fixed', 0)).toEqual({
-      pools: { validationSource: 'fixed', rules: pools.rules },
-      validationFraction: 0.15,
-    });
-  });
-
-  it('retains a valid fraction and leaves an invalid visible fraction editable', () => {
-    expect(
-      changeValidationSource(spec().pools!, 'fixed', 0.35).validationFraction,
-    ).toBeUndefined();
-    expect(
-      changeValidationSource(spec().pools!, 'training_fraction', 0).validationFraction,
-    ).toBeUndefined();
-  });
-});
-
-describe('predefined columns after changing datasets', () => {
-  it('keeps legacy and version 2 imported editors available with empty mappings', () => {
-    const empty = { partitionLabels: {}, foldLabels: {}, testFoldLabels: [] };
-    expect(resetImportedForDataset({ ...spec(), version: 1, mode: 'imported' })).toEqual(empty);
-    expect(
-      resetImportedForDataset({
-        ...spec(),
-        version: 2,
-        mode: 'held_out',
-        heldOutSource: 'imported',
-      }),
-    ).toEqual(empty);
-  });
-
-  it('does not add unused imported settings to version 3 or generated strategies', () => {
-    expect(resetImportedForDataset(spec())).toBeUndefined();
-    expect(resetImportedForDataset({ ...spec(), version: 2, mode: 'kfold' })).toBeUndefined();
   });
 });
 

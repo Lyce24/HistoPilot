@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { predictors, predictorMethodLabel, computeStatusLabel, type FrozenPredictor, type PredictorChoice, type RefitBuild } from '../api/predictors';
+import { predictors, predictorMethodLabel, computeActive, computePollInterval, computeStatusLabel, type FrozenPredictor, type PredictorChoice, type RefitBuild } from '../api/predictors';
 import { predictorSourceKey } from '../api/predictorBuilds';
 import { ApiError } from '../api/client';
 import type { Workspace } from '../api/types';
@@ -9,6 +9,7 @@ import { Badge, ErrorNotice, PageHeader, Panel } from '../components/ui';
 import ComputeJobControls from '../components/ComputeJobControls';
 import BulkPredictorBuilder from '../components/BulkPredictorBuilder';
 import RefitJobs from '../components/RefitJobs';
+import { useRollupSettled, useRunRollup } from '../components/RunStatusChip';
 import EvidenceChain, { evidenceLink } from '../components/EvidenceChain';
 import { cleanupLink, useHashParameters } from '../lib/hashRoute';
 import { shortRecordId } from '../lib/recordLabels';
@@ -31,9 +32,15 @@ export default function LocalPredictors({ workspace, historical = false }: { wor
 function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, sourceRefit, initialTab, historical }: { workspace: Workspace; sourceExperiment: string; sourcePredictor: string; sourceRefit: string; initialTab: 'build' | 'library' | 'refits'; historical: boolean }) {
   const project = workspace.project.id;
   const client = useQueryClient();
-  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchInterval: 10000 });
-  const choices = useQuery({ queryKey: ['predictor-choices', project], queryFn: () => predictors.choices(project), enabled: !historical, refetchInterval: historical ? false : 15000 });
-  const refits = useQuery({ queryKey: ['refit-builds', project], queryFn: () => predictors.refits(project), refetchInterval: 5000 });
+  // Poll only while refits run: new predictors appear as they finish, nothing changes otherwise.
+  const refits = useQuery({ queryKey: ['refit-builds', project], queryFn: () => predictors.refits(project), refetchInterval: (query) => computePollInterval(query.state.data?.items) === 5000 ? 10000 : false });
+  const refitsActive = (refits.data?.items ?? []).some((item) => computeActive(item.execution));
+  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchInterval: refitsActive ? 15000 : false });
+  const choices = useQuery({ queryKey: ['predictor-choices', project], queryFn: () => predictors.choices(project), enabled: !historical, refetchInterval: false });
+  // Seed groups become choices when their training ends: re-read them when this project's
+  // training settles in the Task Center, instead of polling.
+  const training = useRunRollup(historical ? null : { project, kinds: 'mil-fold,mil-collect' });
+  useRollupSettled(training.data, () => void client.invalidateQueries({ queryKey: ['predictor-choices', project] }));
   const [tab, setTab] = useState<'build' | 'library' | 'refits'>(initialTab);
   const [state, setState] = useState<LifecycleState | 'all'>(sourcePredictor ? 'all' : 'active');
   const [search, setSearch] = useState('');
@@ -61,7 +68,7 @@ function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, sour
       <div className="run-selection-bar"><strong>{visible.length} predictors</strong><a className="btn btn-primary btn-small" href="#evaluation">Run all predictors on a test cohort</a></div>
       {registry.isPending ? <p role="status">Loading predictors…</p> : !visible.length ? <p>No published predictors in this view.</p> : <div className="run-table-scroll"><table className="run-table"><thead><tr><th className="run-name">Predictor</th><th>Experiment / batch</th><th>Method / seeds</th><th className="run-number">Weights</th><th className="run-actions">Actions</th></tr></thead><tbody>{groups.map(([key,group]) => <Fragment key={key}>{group.name ? <tr className="run-group"><th colSpan={5}>{group.name} · {group.items.length} predictors</th></tr> : null}{group.items.map((item) => <PredictorRow key={item.id} predictor={item} />)}</Fragment>)}</tbody></table></div>}
     </Panel> : null}
-    {tab === 'refits' ? <><Panel title="Refit jobs" subtitle="Select several seed-specific plans to train, resume, cancel or publish together."><RefitJobs project={project} builds={builds} published={allPredictors} onOpen={setBuildId} refresh={refresh} /></Panel>{build ? <Panel title={build.manifest.name}><RefitTraining key={build.id} project={project} build={build} existing={allPredictors.find((item) => predictorSourceKey(item.manifest) === predictorSourceKey(build.manifest) && item.manifest.method === 'refit')} refresh={refresh} /></Panel> : null}</> : null}
+    {tab === 'refits' ? <><Panel title="Refit jobs" subtitle="Select several seed-specific plans to train, resume or publish together. Queue order, cancelling and logs are in the Task Center."><RefitJobs project={project} builds={builds} published={allPredictors} onOpen={setBuildId} refresh={refresh} /></Panel>{build ? <Panel title={build.manifest.name}><RefitTraining key={build.id} project={project} build={build} existing={allPredictors.find((item) => predictorSourceKey(item.manifest) === predictorSourceKey(build.manifest) && item.manifest.method === 'refit')} refresh={refresh} /></Panel> : null}</> : null}
   </div>;
 }
 
@@ -85,7 +92,7 @@ export function RefitTraining({ project, build, existing, refresh }: { project: 
     finally { setBusy(false); }
     await refresh();
   }
-  return <div className="refit-detail"><PredictorEvidence manifest={build.manifest} />{build.manifest.resources ? <p className="muted">Resources: {build.manifest.resources.gpuIds.length ? `GPU ${build.manifest.resources.gpuIds.join(', ')}` : 'CPU'} · {build.manifest.resources.cpuThreadsPerRun} CPU threads · {build.manifest.resources.dataLoaderWorkers} data workers · {build.manifest.resources.ramGbPerRun} GB RAM reservation.</p> : null}<ComputeJobControls project={project} id={build.id} kind="refit" initial={build.execution} readOnly={build.lifecycleState !== 'active' || Boolean(ready)} readOnlyReason={ready ? 'This configuration and seed already have a refit predictor. Use or restore that predictor.' : undefined} />
+  return <div className="refit-detail"><PredictorEvidence manifest={build.manifest} /><ComputeJobControls project={project} id={build.id} kind="refit" initial={build.execution} readOnly={build.lifecycleState !== 'active' || Boolean(ready)} readOnlyReason={ready ? 'This configuration and seed already have a refit predictor. Use or restore that predictor.' : undefined} />
     <ErrorNotice error={error} />
     {ready ? <p className={`callout ${ready.lifecycleState !== 'trashed' ? 'science-success' : ''}`}>{ready.manifest.refitId === build.id ? 'This plan’s refit predictor is published.' : 'This configuration and seed already have a refit predictor from another plan.'} {ready.lifecycleState === 'trashed' ? <a href={cleanupLink(ready.id)}>Restore {ready.manifest.name} from Trash</a> : <a href={`#evaluation?predictor=${encodeURIComponent(ready.id)}`}>Evaluate {ready.manifest.name}</a>}</p> : build.execution?.status === 'completed' && build.lifecycleState === 'active' ? <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void publish()}>{busy ? 'Verifying checkpoint…' : operation ? 'Retry publication' : 'Publish refit predictor'}</button> : null}
     <p><a href={cleanupLink(build.id)}>{build.lifecycleState === 'active' ? 'Archive / delete refit plan' : 'Restore / manage refit plan'}</a></p>

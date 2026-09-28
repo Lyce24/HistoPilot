@@ -18,7 +18,6 @@ import { lazyPage, PageLoading } from './components/LazyPage';
 const Start = lazyPage(() => import('./pages/Start'));
 const Dataset = lazyPage(() => import('./pages/Dataset'));
 const Cohort = lazyPage(() => import('./pages/Cohort'));
-const Features = lazyPage(() => import('./pages/Features'));
 const Experiments = lazyPage(() => import('./pages/Experiments'));
 const System = lazyPage(() => import('./pages/System'));
 const EvaluationPage = lazyPage<{ workspace: Workspace }>(() => import('./pages/Results').then((module) => ({ default: module.EvaluationPage })));
@@ -26,7 +25,8 @@ const ExplorerPage = lazyPage<{ workspace: Workspace }>(() => import('./pages/Re
 const ProvenancePage = lazyPage<{ workspace: Workspace }>(() => import('./pages/Results').then((module) => ({ default: module.ProvenancePage })));
 const LocalWorkspace = lazyPage(() => import('./pages/LocalWorkspace'));
 const LocalDataset = lazyPage(() => import('./pages/LocalDataset'));
-const LocalProtocol = lazyPage(() => import('./pages/LocalProtocol'));
+const LocalTargetSplit = lazyPage(() => import('./pages/LocalTargetSplit'));
+const HistoricalProtocols = lazyPage(() => import('./pages/HistoricalProtocols'));
 const LocalFeatures = lazyPage(() => import('./pages/LocalFeatures'));
 const LocalExperiments = lazyPage(() => import('./pages/LocalExperiments'));
 const LocalEvaluationSetup = lazyPage(() => import('./pages/LocalEvaluationSetup'));
@@ -36,6 +36,7 @@ const LocalInference = lazyPage(() => import('./pages/LocalInference'));
 const LocalClinicalUtility = lazyPage(() => import('./pages/LocalClinicalUtility'));
 const LocalInterpretation = lazyPage(() => import('./pages/LocalInterpretation'));
 const LocalOperations = lazyPage(() => import('./pages/LocalOperations'));
+const TaskCenter = lazyPage(() => import('./pages/TaskCenter'));
 const RoadmapModule = lazyPage(() => import('./pages/RoadmapModule'));
 const BlcaDemo = lazyPage(() => import('./pages/BlcaDemo'));
 const BlcaDemoOverview = lazyPage<{ workspace: Workspace }>(() => import('./pages/BlcaDemo').then((module) => ({ default: module.BlcaDemoOverview })));
@@ -43,22 +44,25 @@ const BlcaDemoOverview = lazyPage<{ workspace: Workspace }>(() => import('./page
 const pages: Record<Page, string> = {
   overview: 'Project roadmap', dataset: 'Datasets',
   cohort: 'Targets & splits', features: 'Slide features',
-  experiments: 'Experiments', 'source-cv': 'Development results',
+  'experimental-setup': 'Experimental Setup', 'legacy-protocol': 'Historical protocols', experiments: 'Experiments', 'source-cv': 'Development results',
   'post-development': 'Historical predictors',
   selection: 'Experiments', predictor: 'Experiments',
   'test-data': 'Test cohorts', evaluation: 'Evaluate models', inference: 'Run inference',
   'clinical-utility': 'Clinical utility', interpretation: 'Model interpretation',
   reports: 'Metrics, clinical analyses and reports', 'example-results': 'Illustrative results', explorer: 'Slide explorer',
-  provenance: 'Provenance', cleanup: 'Workspace cleanup', operations: 'Jobs & study backups', system: 'System & storage',
+  provenance: 'Provenance', cleanup: 'Workspace cleanup', operations: 'Study backups & sources', 'task-center': 'Task Center', system: 'System & storage',
 };
+const toolIcons: Partial<Record<Page, string>> = { operations: 'folder', 'task-center': 'clock' };
 export function pageFromHash(value: string): Page {
   const hash = value.replace(/^#/, '').split('?')[0];
   if (['selection', 'predictor', 'predictors', 'build-predictors'].includes(hash)) return 'post-development';
+  if (['setup', 'setups', 'experiment-setup'].includes(hash)) return 'experimental-setup';
   if (hash === 'test-cohorts') return 'test-data';
   if (hash === 'evaluate-models') return 'evaluation';
   if (hash === 'predict' || hash === 'run-inference') return 'inference';
   if (hash === 'clinical') return 'clinical-utility';
   if (hash === 'interpret') return 'interpretation';
+  if (hash === 'tasks') return 'task-center';
   return Object.hasOwn(pages, hash) ? (hash as Page) : 'overview';
 }
 function currentPage(): Page { return pageFromHash(window.location.hash); }
@@ -68,6 +72,7 @@ export function projectFromUrl(href = window.location.href): string | null {
   return params.get('project') ?? params.get('experiment');
 }
 export function moduleForPage(page: Page) {
+  if (page === 'legacy-protocol') return 'cohort';
   return ['selection', 'predictor', 'post-development', 'source-cv'].includes(page) ? 'experiments' : page === 'reports' ? 'evaluation' : page;
 }
 /**
@@ -95,7 +100,7 @@ export function ModulePrerequisites({ module, roadmap }: { module?: Roadmap['mod
 }
 export function Content({ page, workspace, roadmap }: { page: Page; workspace: Workspace; roadmap: Roadmap }) {
   const stage = moduleForPage(page);
-  const stageNames: Partial<Record<Page, string>> = { dataset: 'datasets', cohort: 'protocols', features: 'feature bundles', experiments: 'experiments', 'test-data': 'test cohorts', evaluation: 'evaluations', inference: 'inference runs', 'clinical-utility': 'clinical analyses' };
+  const stageNames: Partial<Record<Page, string>> = { dataset: 'datasets', cohort: 'targets and splits', 'experimental-setup': 'setups', features: 'feature bundles', experiments: 'experiments', 'test-data': 'test cohorts', evaluation: 'evaluations', inference: 'inference runs', 'clinical-utility': 'clinical analyses' };
   const stageName = stageNames[stage];
   return <Suspense fallback={<PageLoading name={pages[page]} />}>{workspace.mode === 'local' && stageName
     ? <RecordManagementScope key={`${workspace.project.id}:${stage}`} project={workspace.project.id} backLabel={`Back to ${stageName}`}><StageContent page={page} workspace={workspace} roadmap={roadmap} /></RecordManagementScope>
@@ -110,6 +115,8 @@ function StageContent({ page, workspace, roadmap }: { page: Page; workspace: Wor
     return module ? <BlcaDemo key={module.id} pipeline={workspace.demoPipeline} module={module.id} /> : <BlcaDemoOverview workspace={workspace} />;
   }
   if (page === 'cleanup' && workspace.mode === 'local') return <WorkspaceCleanup workspace={workspace} />;
+  // The Task Center is machine-wide, so it stays reachable from a project in Trash.
+  if (page === 'task-center' && workspace.mode === 'local') return <TaskCenter workspace={workspace} />;
   if (workspace.mode === 'local' && workspace.project.lifecycleState === 'trashed') return <div className="roadmap-loading" role="status">
     <h1>This project is in Trash</h1>
     <p>Its records and files have been retained. Restore the project in Workspace cleanup before continuing your work.</p>
@@ -133,19 +140,20 @@ function StageContent({ page, workspace, roadmap }: { page: Page; workspace: Wor
     if (page === 'inference') return <LocalInference workspace={workspace} />;
     if (page === 'clinical-utility') return <LocalClinicalUtility workspace={workspace} />;
     if (page === 'interpretation') return <LocalInterpretation workspace={workspace} />;
-    if (page === 'source-cv') return <LocalExperiments workspace={workspace} initialTab="results" />;
+    if (page === 'source-cv') return <LocalExperiments workspace={workspace} mode="execution" initialTab="results" />;
     if (['post-development', 'selection', 'predictor'].includes(page)) return <LegacyPredictorRoute workspace={workspace} />;
     if (page === 'dataset') return <LocalDataset workspace={workspace} />;
-    if (page === 'cohort') return <LocalProtocol workspace={workspace} />;
+    if (page === 'cohort') return <LocalTargetSplit workspace={workspace} />;
+    if (page === 'legacy-protocol') return <HistoricalProtocols workspace={workspace} />;
+    if (page === 'experimental-setup') return <LocalExperiments mode="setup" workspace={workspace} />;
     if (page === 'features') return <LocalFeatures workspace={workspace} />;
-    if (page === 'experiments') return <LocalExperiments workspace={workspace} />;
+    if (page === 'experiments') return <LocalExperiments mode="execution" workspace={workspace} />;
     if (moduleId === 'evaluation') return <LocalModelEvaluation workspace={workspace} />;
     if (page !== 'system') return <LocalWorkspace page={page} workspace={workspace} />;
   }
   switch (page) {
     case 'dataset': return <Dataset workspace={workspace} />;
     case 'cohort': return <Cohort workspace={workspace} />;
-    case 'features': return <Features workspace={workspace} />;
     case 'experiments': return <Experiments workspace={workspace} />;
     case 'evaluation': return <EvaluationPage workspace={workspace} />;
     case 'explorer': return <ExplorerPage workspace={workspace} />;
@@ -199,6 +207,7 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
   const roadmap = useRoadmap(w);
   const blcaDemo = w.mode === 'synthetic-demo' && Boolean(w.demoPipeline);
   const [page, setPage] = useState(currentPage);
+  const shownPage = useRef(page);
   const [menu, setMenu] = useState(false);
   const [mobile, setMobile] = useState(() => matchMedia('(max-width: 720px)').matches);
   const main = useRef<HTMLElement>(null);
@@ -206,7 +215,12 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     function route() {
-      setPage(currentPage()); setMenu(false); window.scrollTo({ top: 0 });
+      const next = currentPage();
+      // The Task Center keeps its filters and open task in the URL: moving between them,
+      // or Back closing its task drawer, keeps the scroll position and focus.
+      if (next === 'task-center' && shownPage.current === 'task-center') { setMenu(false); return; }
+      shownPage.current = next;
+      setPage(next); setMenu(false); window.scrollTo({ top: 0 });
       main.current?.focus({ preventScroll: true });
     }
     function escape(event: KeyboardEvent) {
@@ -229,7 +243,7 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
   const showState = roadmap.hasData;
   // The floating job tray overlays the page; reserve a matching scroll gutter so
   // it never covers the last actions or the footer.
-  const floatingJobTray = !blcaDemo && page !== 'dataset' && page !== 'cohort';
+  const floatingJobTray = !blcaDemo && page !== 'dataset' && page !== 'cohort' && page !== 'task-center';
   return <>
     <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); main.current?.focus(); }}>Skip to content</a>
     <div className={`app-shell research-shell ${menu ? 'nav-open' : ''}${floatingJobTray ? ' has-job-tray' : ''}`}>
@@ -244,19 +258,19 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
             const locked = !roadmap.checksById[item.id].hasData || !item.unlocked;
             const contents = <><Icon name={moduleIcons[item.id]} size={16} /><span>{item.shortTitle}</span>{showState ? locked ? <Icon name="lock" size={12} /> : <span className={`nav-status status-${item.status}`} aria-label={blcaDemo ? 'Illustrative example' : item.status === 'complete' ? completedModuleLabel(item.id) : item.status === 'draft' ? 'Saved work' : 'Not started'} /> : null}</>;
             return locked ? <div key={item.id} className="nav-link nav-locked" aria-disabled="true" title={showState ? `Requires ${item.blockers.map((id) => roadmap.modules.find((m) => m.id === id)?.shortTitle).join(' + ') || 'compatible frozen inputs'}` : 'Checking prerequisites'}>{contents}</div>
-              : <a key={item.id} className={`nav-link ${module?.id === item.id ? 'active' : ''}`} href={`#${item.id}`} onClick={(event) => { if ((w.mode === 'local' || blcaDemo) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && module?.id === item.id && ['dataset', 'cohort', 'features', 'experiments', 'source-cv', 'test-data', 'evaluation', 'inference', 'reports', 'clinical-utility'].includes(page)) { event.preventDefault(); window.dispatchEvent(new Event('histopilot:stage-library')); } }} aria-current={module?.id === item.id ? 'page' : undefined}>{contents}</a>;
+              : <a key={item.id} className={`nav-link ${module?.id === item.id ? 'active' : ''}`} href={`#${item.id}`} onClick={(event) => { if ((w.mode === 'local' || blcaDemo) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && module?.id === item.id && ['dataset', 'cohort', 'features', 'experimental-setup', 'experiments', 'source-cv', 'test-data', 'evaluation', 'inference', 'reports', 'clinical-utility'].includes(page)) { event.preventDefault(); window.dispatchEvent(new Event('histopilot:stage-library')); } }} aria-current={module?.id === item.id ? 'page' : undefined}>{contents}</a>;
           })}
           {!blcaDemo ? <div className="nav-label nav-system">PROJECT TOOLS</div> : null}
           {w.mode === 'local' ? <a className={`nav-link ${page === 'cleanup' ? 'active' : ''}`} href="#cleanup" aria-current={page === 'cleanup' ? 'page' : undefined}><Icon name="folder" size={16} /><span>Workspace cleanup</span></a> : null}
           {w.mode === 'synthetic-demo' && !blcaDemo ? <a className={`nav-link ${page === 'example-results' ? 'active' : ''}`} href="#example-results" aria-current={page === 'example-results' ? 'page' : undefined}><Icon name="evaluation" size={16} /><span>Illustrative results</span></a> : null}
-          {(blcaDemo ? [] : w.mode === 'local' ? ['operations', 'system'] as const : ['explorer', 'provenance', 'system'] as const).map((id) => <a key={id} className={`nav-link ${page === id ? 'active' : ''}`} href={`#${id}`} aria-current={page === id ? 'page' : undefined}><Icon name={id === 'operations' ? 'folder' : id} size={16} /><span>{pages[id]}</span></a>)}
+          {(blcaDemo ? [] : w.mode === 'local' ? ['task-center', 'operations', 'system'] as const : ['explorer', 'provenance', 'system'] as const).map((id) => <a key={id} className={`nav-link ${page === id ? 'active' : ''}`} href={`#${id}`} aria-current={page === id ? 'page' : undefined}><Icon name={toolIcons[id] ?? id} size={16} /><span>{pages[id]}</span></a>)}
         </nav>
         <div className="sidebar-bottom"><div className="prototype-label"><span />Local workspace <b>v0.1</b></div><p>Your data. Your infrastructure.<br />Every step, traceable.</p></div>
       </aside>
       {mobile && menu ? <button className="nav-backdrop" aria-label="Close navigation overlay" onClick={() => setMenu(false)} /> : null}
       <div className="main-shell">
         <header className="topbar"><div className="breadcrumbs"><button ref={menuButton} className="icon-button mobile-menu" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="menu" /></button><button type="button" className="breadcrumb-home" onClick={onExit}>Projects</button><Icon name="chevron" size={12} /><a href="#overview" className="breadcrumb-project">{w.project.name}</a><Icon name="chevron" size={12} /><strong>{page === 'overview' ? 'Roadmap' : module?.shortTitle ?? pages[page]}</strong></div><div className="topbar-actions"><span className="demo-indicator"><span />{w.mode === 'synthetic-demo' ? 'Synthetic demo' : 'Saved locally'}</span><button className="btn btn-secondary btn-small" aria-label="Export workspace" onClick={() => { if (w.mode === 'local') window.location.hash = 'operations'; else downloadJSON('histopilot-workspace.json', { schema_version: '0.1.0', executable: false, ...w }); }}><Icon name="download" size={15} /><span>Export</span></button></div></header>
-        <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}${['dataset', 'cohort', 'features', 'experiments', 'source-cv', 'test-data', 'evaluation', 'inference', 'reports', 'clinical-utility'].includes(page) ? ' stage-workspace' : ''}`} id="main-content" tabIndex={-1} ref={main}>
+        <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}${['dataset', 'cohort', 'features', 'experimental-setup', 'experiments', 'source-cv', 'test-data', 'evaluation', 'inference', 'reports', 'clinical-utility'].includes(page) ? ' stage-workspace' : ''}`} id="main-content" tabIndex={-1} ref={main}>
           {/* Module progress now belongs to the roadmap, and each library states its
               own records' status. A module-level chip beside a record editor described
               the wrong thing, so this strip is only the way back and the demo label. */}

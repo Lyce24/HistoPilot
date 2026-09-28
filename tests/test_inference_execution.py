@@ -28,10 +28,12 @@ from histopilot.training.inference import (  # noqa: E402
 support = runpy.run_path(str(Path(__file__).with_name("test_mil_training.py")))
 
 
-@pytest.fixture
-def plan(tmp_path):
+def _evaluation_plan(tmp_path, split_unit=None):
     training = support["tiny_plan"](tmp_path)
     training["recipe"].update(maxEpochs=1)
+    if split_unit:
+        # The checkpoint target must match the evaluated target, so train at this unit.
+        training["splitUnit"] = training["target"]["unit"] = split_unit
     result = train_fold(training, tmp_path / "fit")
     data = copy.deepcopy(training["data"])
     data["memberships"] = [row for row in data["memberships"] if row["partition"] == "test"]
@@ -61,6 +63,11 @@ def plan(tmp_path):
             "decisionThreshold": 0.75,
         },
     }
+
+
+@pytest.fixture
+def plan(tmp_path):
+    return _evaluation_plan(tmp_path)
 
 
 def test_refit_and_ensemble_predict_exact_whole_bags_and_preserve_unlabeled_rows(plan, tmp_path):
@@ -472,3 +479,42 @@ def test_evaluation_and_oversized_inference_do_not_materialize_all_member_vector
     monkeypatch.setattr(inference, "_cached_member", cached)
     result = evaluate(candidate, tmp_path / "bounded")
     assert result["artifacts"] == expected["artifacts"]
+
+
+# Labeled evaluation plans omit the purpose; only inference plans declare one.
+@pytest.mark.parametrize("purpose", [None, "inference"])
+def test_slide_unit_never_aggregates_or_analyzes_patients(tmp_path, monkeypatch, purpose):
+    import histopilot.training.inference as inference
+
+    candidate = _evaluation_plan(tmp_path, "slide")
+    candidate.update(splitUnit="slide", **({"purpose": purpose} if purpose else {}))
+    # Even a stale analysis request and aggregation setting cannot activate
+    # patient behavior in an explicit slide experiment.
+    candidate["analysis"] = {"bootstrapResamples": 200, "oneSlideSeed": 19}
+    candidate["inference"]["patientAggregation"] = "mean_logits"
+    metadata = [None, "shared", "shared", None]
+    for row, patient_id in zip(candidate["data"]["memberships"], metadata, strict=True):
+        row["patientId"] = patient_id
+        if purpose == "inference":
+            row["label"] = None
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Slide experiments must never group by or analyze patients")
+
+    monkeypatch.setattr(inference, "patient_predictions", forbidden)
+    monkeypatch.setattr(inference, "_patient_members", forbidden)
+    monkeypatch.setattr("histopilot.statistics.patient_analysis", forbidden)
+    output = tmp_path / "slide-unit"
+    result = evaluate(candidate, output)
+    assert result["patientCount"] == 0 and result["slideCount"] == 4
+    assert "patient-predictions.csv" not in result["artifacts"]
+    assert not (output / "patient-predictions.csv").exists()
+    content = json.loads((output / "predictions.json").read_text())
+    assert [row["patientId"] for row in content["records"]] == metadata
+    assert content["patientRecords"] == []
+    evidence = result["summary" if purpose == "inference" else "metrics"]
+    assert evidence["splitUnit"] == "slide"
+    assert not evidence["patient"]["available"]
+    assert "patientAnalysis" not in evidence
+    assert evidence["selected"] == evidence["slide"]
+    assert evaluate(candidate, output)["artifacts"] == result["artifacts"]

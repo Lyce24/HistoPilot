@@ -8,7 +8,6 @@ from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.development import DevelopmentService
 from histopilot.application.mil_inputs import MILInputService
 from histopilot.application.project_workspace import ProjectWorkspace
-from histopilot.application.runtime_recommendations import runtime_recommendation
 from histopilot.application.training import TrainingService
 from histopilot.application.training_exports import training_oof_csv
 from histopilot.application.training_history import training_history
@@ -89,10 +88,6 @@ def mil_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -> APIRo
     @router.post("/batches/preview")
     def preview_batch(identity: str, payload: DevelopmentBatchSpec):
         return DevelopmentService(projects.scientific_store(identity), filesystem).preview(payload)
-
-    @router.post("/batches/runtime-recommendation")
-    def recommend_resources(identity: str, payload: DevelopmentBatchSpec):
-        return runtime_recommendation(projects.scientific_store(identity), filesystem, payload)
 
     @router.post("/batches/freeze", status_code=201)
     def freeze_batch(identity: str, payload: FreezeDevelopmentBatch):

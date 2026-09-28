@@ -1,6 +1,6 @@
 # Local API foundation
 
-The implemented API serves **folder-backed experiment setup, project-local scientific storage, and an explicit synthetic demo**. CSV/XLSX import, identifier/attribute mapping, immutable publication, grouped target/split validation and existing-feature header attachment are implemented. Full tensor validation, GPU jobs and WSI tiles remain future work. React and the CLI share this service and its canonical model-run experiment schema.
+The implemented API serves **folder-backed experiment setup, project-local scientific storage, and an explicit synthetic demo**. CSV/XLSX import, identifier/attribute mapping, immutable publication, grouped target/split validation and existing-feature header attachment are implemented. React and the CLI share this service and its canonical model-run experiment schema. Feature validation and packing, extraction, training, evaluation and slide viewing are implemented by project routes; this page documents a subset of them, and compute runs through the machine-level [Task Center](#task-center) rather than the generic `/jobs` routes.
 
 All paths below are under `/api/v1`. The service validates Host/Origin and browser fetch context. Obtain a token from `GET /session`, then send it as `X-HistoPilot-Token` on protected requests. The health and session endpoints do not require that header. Tokens are local to the running service process; clients reacquire a token after a restart.
 
@@ -33,9 +33,9 @@ All paths below are under `/api/v1`. The service validates Host/Origin and brows
 | `GET /filesystem/list?path=...&purpose=source` | Bounded listing within the corresponding resolved roots; accepts `purpose=storage` for experiment folders. |
 | `POST /sources` | Validate and store a directory reference without importing/copying data. |
 | `GET /system` | Workspace/storage/control-service context and package metadata diagnostics. |
-| `GET /jobs` | Empty job list and `executionEnabled: false`. |
-| `POST /jobs` | HTTP 501; execution is not implemented and no job is submitted. |
-| `GET /jobs/events` | Reserved SSE progress endpoint; HTTP 501 until worker events are implemented. |
+| `GET /jobs` | Generic job stub: empty job list and `executionEnabled: false`. Real work is listed by the Task Center. |
+| `POST /jobs` | HTTP 501; generic job submission is not implemented and no job is submitted. Use the project feature, training, evaluation or interpretation workflows. |
+| `GET /jobs/events` | Reserved SSE progress endpoint; HTTP 501. |
 
 Unknown fields on command request schemas are rejected. This is a narrow command surface: there is no whole-workspace replacement endpoint and no arbitrary file-content or WSI upload route. Interactive OpenAPI/Swagger endpoints are not exposed by this local service.
 
@@ -94,7 +94,7 @@ Name/payload replacement is atomic and increments the revision. The client must 
 
 Storage errors return `detail` plus a stable `code`. They distinguish busy project writers, stale revisions, incompatible storage, unsafe paths and artifact problems. Project-scoped draft/dataset lookup never searches another project. The synthetic demo has no local scientific store.
 
-Dataset publication uses an internal storage boundary reached through the validated import workflow. The browser sends saved draft revision and preview hash; the server rereads sources and derives records before publishing. It never accepts browser-authored frozen records. Unresolved patient identity can be retained at import. Protocol assignment requires supplied patient identities or the explicit `patientIdFallback: "slide_id"` import choice described below; fallback is recorded separately and does not verify patient independence.
+Dataset publication uses an internal storage boundary reached through the validated import workflow. The browser sends saved draft revision and preview hash; the server rereads sources and derives records before publishing. It never accepts browser-authored frozen records. Unresolved patient identity can be retained at import. Patient-grouped assignment requires supplied patient identities or the explicit `patientIdFallback: "slide_id"` import choice described below (slide-unit target/splits do not); fallback is recorded separately and does not verify patient independence.
 
 ## Save a synthetic cohort
 
@@ -139,7 +139,7 @@ Future additions should preserve this intent-based boundary: real imports, split
 
 ## Real import, exploration and protocols (P0.1/P0.2)
 
-All routes below use `/projects/{id}` and the same session boundary. A saved import payload is `{type: "dataset-import", spec: ImportSpec}` with draft kind `import`; a protocol payload is `{type: "analysis-protocol", spec: ProtocolSpec}` with kind `experiment`. The strict intent schemas live in `histopilot/schemas/imports.py`, `protocols.py` and `features.py`.
+All routes below use `/projects/{id}` and the same session boundary. A saved import payload is `{type: "dataset-import", spec: ImportSpec}` with draft kind `import`; a historical protocol payload is `{type: "analysis-protocol", spec: ProtocolSpec}` with kind `experiment`. New work uses [targets and splits](#targets-and-splits) instead; the protocol preview, freeze and preflight routes and the project-scoped `POST /jobs` stub were removed on 2026-09-27 (see [pipeline hardening](PIPELINE_HARDENING.md) 4.1). The strict intent schemas live in `histopilot/schemas/imports.py`, `protocols.py` and `features.py`.
 
 | Method / relative path | Behavior |
 | --- | --- |
@@ -150,17 +150,13 @@ All routes below use `/projects/{id}` and the same session boundary. A saved imp
 | `POST /datasets/{datasetId}/query` | Field/compare/search/category filters plus pagination; identical server-side population for records, summary, distributions and cross-tab. |
 | `POST /features/preview` | `{datasetId,path,encoderId?,fileSuffix?,idSuffix?,recursive?}`; exact matching, HDF5 header/coverage report. |
 | `POST /features/freeze` | Same feature intent plus `{previewHash,operationId}`; recheck and publish immutable header binding. |
-| `POST /protocols/explore` | `{datasetId,targetField?,eligibility?,rules?,splitMode?,split?}`; read-only full-population target/cohort counts, direct and group-expanded rule matches, sample rows and findings. The optional partial `split` object identifies version-2 strategy behavior without requiring complete controls. No saved draft, label mapping or feature binding required. |
-| `POST /protocols/{draftId}/preview` | `{expectedRevision}`; targets, patient identities, filters, exact seed/fold memberships and feasibility findings. |
-| `POST /protocols/{draftId}/freeze` | `{expectedRevision,previewHash,operationId}`; regenerate/validate and atomically freeze protocol and draft. |
-| `GET /configurations?kind=protocol` | Frozen protocol configurations; `kind=feature` selects feature bindings. |
+| `POST /protocols/explore` | `{datasetId,cohortOnly?,targetField?,eligibility?,split?}`; read-only full-population target/cohort counts, sample rows and findings. `cohortOnly: true` validates eligibility only. Live partition counts cover version-4 development splits only; `rules` and `splitMode` are still accepted but ignored. No saved draft, label mapping or feature binding required. |
+| `GET /configurations?kind=protocol` | Frozen protocol configurations; `kind=feature` selects feature bindings and `kind=target-split` target/split versions. |
 | `GET /configurations/{configurationId}` | Checksum-verified immutable configuration envelope. |
-| `GET /protocols/{configurationId}/preflight` | Confirm the frozen protocol and dataset remain available; returns `scope:"protocol"` and `protocolReady:true`. Feature compatibility is checked in Experiments. |
-| `POST /jobs` (project-scoped) | `{protocolId}`; returns 422 directing clients to choose features and check compatibility in Experiments. No job is submitted. |
 
 Configuration envelopes contain `id`, `projectId`, `contentHash`, `manifest`, `createdAt`. The manifest distinguishes `kind:protocol` from `kind:feature` and pins `datasetId`. Protocol manifests retain the full spec, algorithm version, exact memberships, counts and findings. Publication retries use the same operation ID; changed content with that ID is rejected. See [implementation notes](p0-import-protocol-implementation.md) for limits and semantics.
 
-Targets and splits use dataset records, eligibility filters, target labels and split settings only. Legacy feature fields in construction requests are accepted and discarded; existing frozen manifests retain their original provenance. The protocol preflight response declares `scope: "protocol"`, `protocolReady: true`, `scientificReady: false` and `executionReady: false`. Experiments verifies the selected bundle, coverage of every frozen development slide and loading compatibility before training; feature availability never changes the saved cohort.
+Targets and splits use dataset records, eligibility filters, target labels and split settings only. Legacy feature fields in construction requests are accepted and discarded; existing frozen manifests retain their original provenance. Experiments verifies the selected bundle, coverage of every frozen development slide and loading compatibility before training; feature availability never changes the saved cohort.
 
 ### Explicit patient-ID fallback
 
@@ -180,6 +176,8 @@ Import summaries return `verifiedPatientCount`, `fallbackSlideCount` and `unlink
 Frozen records and mappings preserve this distinction across reloads and service registries. Older frozen records without `patientIdSource` continue to treat a non-null patient ID as supplied linkage. Revising an old dataset to acknowledge fallback creates a new dataset version; it does not rewrite existing records or automatically transfer a feature binding to another dataset ID.
 
 ### Live target, cohort and rule exploration
+
+2026-09-27: live partition counts now cover version-4 development splits only. `rules` and `splitMode` are accepted but ignored, and a non-empty split of another version returns the eligibility and target counts with `INVALID_STRATEGY_CONFIG` and `partitions: null`. The rule-mode request and partition fields below describe the earlier behaviour for historical clients.
 
 Example request to `POST /projects/{id}/protocols/explore`, using a real frozen dataset ID in place of the placeholder:
 
@@ -231,6 +229,8 @@ An invalid eligibility expression returns null cohort/partition counts instead o
 The endpoint reads checksum-verified frozen records and never creates or changes drafts or configurations. It shares the final protocol evaluator and cumulative regex budget. Its counts precede missing/unmapped-label exclusion policies and all feature/constraint checks; **Preview & preflight** remains the authoritative final included population. Field examples and declared formats shown beside UI conditions come from the frozen dictionary and dataset query route, independent of the edited rule.
 
 ### Version-1 rule-based and generated assignments
+
+The version 1–3 sections describe historical protocol records. The current UI creates [target/split](#targets-and-splits) versions, and Experimental Setup derives version-4 development protocols from their training members. Stored version 1–3 records stay readable; the HTTP routes that previewed and froze them were removed on 2026-09-27, so references below to "the current UI" or "new UI drafts" describe the retired protocol editor.
 
 `ProtocolSpec.split.mode` additionally accepts `"rules"`. In that mode:
 
@@ -335,6 +335,50 @@ CV plans carry `pool: "training"` and retain their evaluation/inner/outer phases
 New UI target fields start unconfigured; saved drafts may contain unfinished settings, while preview continues to require a valid target contract. Source-value suggestions do not alter that backend validation.
 
 Version-1 and version-2 serialized specs and hashes remain unchanged. See [split strategies](split-strategies.md) for the current UI and validation behavior.
+
+## Targets and splits
+
+A target/split draft has kind `experiment` and payload `{type: "target-split", spec: TargetSplitSpec}` (`histopilot/schemas/target_splits.py`). The spec holds `datasetId`, `splitUnit` (`slide` or `patient`; omitted in historical specs, which are patient-grouped and keep their hashes), `eligibility`, `split` (`method` `random`, `rules` or `imported`, `testFraction`, `seed`, `stratify`/`stratifyField`, `trainRules`, `testRules`, `testRemaining`, `partitionField`, `trainValues`, `testValues`), `target`, optional `testTarget` (`null` for pure inference) and a deprecated `predictors` list that must stay empty. See [split strategies](split-strategies.md).
+
+| Method / relative path | Behavior |
+| --- | --- |
+| `POST /target-splits/partition-preview` | Live partition counts and distributions for an unsaved spec; accepts an unfinished target and reports target findings in place. |
+| `POST /target-splits/{draftId}/preview` | `{expectedRevision}`; spec, summary, exact memberships, partitions, findings, `canFreeze` and `previewHash`. |
+| `POST /target-splits/{draftId}/freeze` | `{expectedRevision,previewHash,operationId,versionLabel}`; publishes the version (HTTP 201), then derives its testing cohort. The response carries `testCohort`; if the version was published but the cohort could not be derived, it adds `testCohortError: {code, message}` instead of failing. Retries with the same operation ID replay the publication. |
+| `GET /target-splits/{configurationId}` | The frozen version plus `evaluationCohortId` (null when the cohort is in Trash) and `testCohort: {required, id, state}`. Side-effect free: reading never creates the cohort. |
+| `POST /target-splits/{configurationId}/test-cohort` | Idempotently derives the evaluation (labeled) or inference (no testing target) cohort; returns `{evaluationCohortId, cohort}`. |
+
+## Feature extraction jobs
+
+| Method / relative path | Behavior |
+| --- | --- |
+| `GET /extractions/catalog` | Encoder and option catalog, the default output folder and the TRIDENT runtime (`runtime.searchedRoots`, and `runtime.otherCheckouts` when no TRIDENT checkout is found). |
+| `POST /extractions/preview` | Resolved command, slides and findings, plus `estimatedBytes` and `availableBytes`. Errors (`SLIDE_READER_UNAVAILABLE`, `INSUFFICIENT_SPACE`, …) block `canRun`; warnings (`LOW_DISK_SPACE`, `SINGLE_GPU_TASK`, …) do not. |
+| `POST /extractions` | Submit a previewed extraction (HTTP 201) as a Task Center extraction task plus a dependent validation task. |
+| `GET /extractions`, `GET /extractions/{job}` | Jobs with `executor` (`task-center` or `tmux`), `task`, `tasks.extraction`/`tasks.validation` and `ownerKey`. |
+| `POST /extractions/{job}/cancel` | Cancel the job. |
+| `POST /extractions/{job}/resume` | Task Center jobs only: requeue TRIDENT on the same output (finished slides are skipped, dead writers' locks are cleared first), which re-arms validation. Jobs from before the Task Center return 409 `EXTRACTION_RESUME_UNSUPPORTED` and resume through a new preview on the same output. |
+
+## Task Center
+
+Machine-level queue shared by every workspace of this OS user; routes are under `/api/v1/task-center` (not project-scoped). Reads use only the task store and the workspace registry, never a project lock. Actions take `{operationId}` so a retried request is applied once. See the [Task Center design](TASK_CENTER_DESIGN.md#85-stage-pages-ui-and-api).
+
+| Method / path | Behavior |
+| --- | --- |
+| `GET /task-center/summary` | Runner, capacity, task counts, ETA, foreign leases and failures of the last 24 h. |
+| `GET /task-center/snapshot` | Summary, running tasks and live owners in one read; the Task Center page polls it. |
+| `GET /task-center/rollup` | A stage page's run status. Scope with `owner`, `ownerKind`+`ownerId`, `recordKind`+`recordId` or `recordIds` (comma-separated), `project` (optionally `kinds`), or nothing for the whole machine. Returns `state` (`not-started`, `queued`, `running`, `held`, `stopping`, `attention`, `runner-stopped`, `completed`, `cancelled`), counts, progress, queue position, waiting reason, ETA, last failure and a deep link `href`. |
+| `GET /task-center/history` | Finished tasks grouped by owner, newest first; `project`, `kind`, `state`, `limit` (≤ 200), `offset`. |
+| `GET /task-center/tasks` | Tasks filtered by `state`, `owner`, `project`, `kind`; `limit` (≤ 2000); `offset` adds paging and `hasMore`. |
+| `GET /task-center/tasks/{id}` | One task: command, working folder, filtered environment, paths, progress, measured resources, labels, dependencies and dependents, attempts, events, log tail and a plain-language `failure`. |
+| `GET /task-center/tasks/{id}/log` | The whole log as text, streamed; `download=true` returns it as a file. |
+| `POST /task-center/tasks/{id}/cancel`, `/retry` | Cancel or retry one task. |
+| `GET /task-center/owners` | Owners (experiments, batches, records); `scope=live` (default) or `all`. |
+| `GET /task-center/owners/{key}` | One owner: task counts, queue position, ETA, waiting reason, back link and the actions it allows. Its tasks come from `GET /task-center/tasks?owner={key}`. |
+| `POST /task-center/owners/{key}/{action}` | `hold`, `release`, `stop` (stop and hold), `cancel`, `retry`, or `move` with `position` `top`, `up`, `down` or `bottom`. |
+| `GET /task-center/capacity` | Settings, effective limits and the parallelism suggestion with its breakdown. |
+| `PUT /task-center/capacity` | Change `parallelGpuTasks`, per-GPU `gpuSlots`, `cpuTaskSlots`, `paused`, `autoResume` or `defaults` (`cpuThreadsPerRun`, `dataLoaderWorkers`). |
+| `POST /task-center/runner/start`, `/runner/restart` | Start the runner, or restart it (for example after its code changed). |
 
 ## Inference runs (unlabeled cohorts)
 

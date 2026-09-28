@@ -1,5 +1,6 @@
 import { request } from './client';
 import type { Finding } from './scientific';
+import type { RecordTaskView } from './trident';
 
 export interface FeaturePackSpec {
   featureSetId: string;
@@ -109,7 +110,14 @@ export interface FeaturePackJob {
   spec: FeaturePackSpec;
   featureSetId: string;
   outputPath: string | null;
-  sessionName: string;
+  /** Null for Task Center jobs, which have no tmux session. */
+  sessionName: string | null;
+  /** "task-center" for jobs run as Task Center tasks; "tmux" (or absent) for older jobs. */
+  executor?: 'task-center' | 'tmux';
+  executionMode?: 'task-center';
+  ownerKey?: string;
+  task?: RecordTaskView | null;
+  waitingReason?: string | null;
   logPath: string;
   createdAt: string;
   updatedAt: string;

@@ -119,6 +119,18 @@ export interface ExtractionProgress {
   scope: 'stage' | 'batch' | null;
   warnings: string[];
 }
+/** A Task Center task as a record reports it (same shape as compute jobs' `task`). */
+export interface RecordTaskView {
+  id: string | null;
+  state: 'blocked' | 'queued' | 'starting' | 'running' | 'stopping' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted' | null;
+  attempt?: number;
+  waitingReason?: string | null;
+  held?: boolean;
+  ownerKey?: string;
+  runnerAlive?: boolean | null;
+  unknown?: boolean;
+  error?: string;
+}
 export interface ExtractionJob {
   id: string;
   state: ExtractionState;
@@ -127,7 +139,16 @@ export interface ExtractionJob {
   spec: ExtractionSpec;
   outputPath: string;
   logPath: string;
-  sessionName: string;
+  /** Null for Task Center jobs, which have no tmux session. */
+  sessionName: string | null;
+  /** "task-center" for jobs run as Task Center tasks; "tmux" (or absent) for older jobs. */
+  executor?: 'task-center' | 'tmux';
+  executionMode?: 'task-center';
+  ownerKey?: string;
+  /** The task that currently decides the state: TRIDENT, then its validation. */
+  task?: RecordTaskView | null;
+  tasks?: { extraction: RecordTaskView | null; validation: RecordTaskView | null };
+  waitingReason?: string | null;
   error?: string | null;
   logs?: string;
   outputLayout?: TridentOutputLayout;
@@ -157,6 +178,9 @@ export const trident = {
     request<ExtractionJob>(`${prefix(project)}/${encodeURIComponent(id)}`),
   cancel: (project: string, id: string) =>
     request<ExtractionJob>(`${prefix(project)}/${encodeURIComponent(id)}/cancel`, post({})),
+  /** Task Center jobs only: run TRIDENT again (finished slides are skipped), then validate. */
+  resume: (project: string, id: string) =>
+    request<ExtractionJob>(`${prefix(project)}/${encodeURIComponent(id)}/resume`, post({})),
 };
 
 /** Keep in-progress input editable; serialize each control using the server's option schema. */

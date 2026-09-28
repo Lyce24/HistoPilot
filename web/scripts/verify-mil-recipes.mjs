@@ -114,7 +114,7 @@ async function openSettings() {
   await evaluate('document.querySelectorAll("details.batch-settings-details").forEach(el => el.open = true)');
 }
 async function save() {
-  await click('Continue to compute & predictors');
+  await click('Continue to predictors');
   await click('Continue to batch review');
   await waitFor(button('Add batch to plan'));
   await click('Add batch to plan');

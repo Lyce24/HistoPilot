@@ -172,7 +172,7 @@ def test_invalid_label_requests_leave_the_version_unchanged(labelled_project, up
     assert client.get(route(project, dataset)).json() == dataset
 
 
-@pytest.mark.parametrize("kind", ["imports", "protocols", "features"])
+@pytest.mark.parametrize("kind", ["imports", "target-splits", "features"])
 @pytest.mark.parametrize("label", [None, {}, {"tag": ""}, {"tag": "   "}, {"tag": "x" * 81}])
 def test_freeze_requires_a_personal_tag_before_any_publication(labelled_project, kind, label):
     client, settings, project, store, dataset, feature, protocol = labelled_project

@@ -6,6 +6,8 @@ export type Page =
   | 'dataset'
   | 'cohort'
   | 'features'
+  | 'experimental-setup'
+  | 'legacy-protocol'
   | 'experiments'
   | 'post-development'
   | 'source-cv'
@@ -22,6 +24,7 @@ export type Page =
   | 'provenance'
   | 'cleanup'
   | 'operations'
+  | 'task-center'
   | 'system';
 export interface Patient {
   id: string;

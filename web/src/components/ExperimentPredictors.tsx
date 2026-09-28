@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
 import { experimentStage, experiments, type ExperimentPredictorExecution, type ModelExperiment } from '../api/experiments';
 import { predictors, predictorMethodLabel, type FrozenPredictor } from '../api/predictors';
+import { taskCenterHref } from '../api/taskCenter';
 import { predictorConfigurationLabel, predictorMatches } from '../lib/predictorGroups';
 import { batchPredictorPolicy } from '../lib/experimentPredictors';
 import { Badge, ErrorNotice, Panel } from './ui';
@@ -14,9 +15,17 @@ const statusLabel: Record<ExperimentPredictorExecution['status'], string> = {
 };
 const pageSize = 25;
 
-export default function ExperimentPredictors({ project, record }: { project: string; record: ModelExperiment }) {
+/**
+ * Predictors of an experiment. `progress` (the Runs tab) says how many exist and how many
+ * are still to come; Task Center experiments leave jobs, logs, cancel and resume to the Task
+ * Center and the experiment status line. `library` (the Results tab) lists ready predictors.
+ * Coordinators started before the Task Center keep their own job table and controls here.
+ */
+export default function ExperimentPredictors({ project, record, view = 'all' }: { project: string; record: ModelExperiment; view?: 'all' | 'progress' | 'library' }) {
   const stage = experimentStage(record);
-  const query = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchInterval: stage === 'running' ? 5000 : false });
+  const managed = record.predictorExecution?.executor === 'task-center';
+  const showLibrary = view !== 'progress';
+  const query = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), enabled: showLibrary || !managed, refetchInterval: stage === 'running' && showLibrary ? 30000 : false });
   const [method, setMethod] = useState('all');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState<number | null>(null);
@@ -38,12 +47,22 @@ export default function ExperimentPredictors({ project, record }: { project: str
   const configurations = new Map(record.batches.flatMap((batch) => batch.manifest.configurations.map((candidate) => [JSON.stringify([batch.id, candidate.id]), candidate.number] as const)));
   const evaluationLink = `#evaluate-models?${new URLSearchParams({ experiment: record.id })}`;
 
-  return <Panel title={stage === 'running' ? 'Predictor creation' : 'Predictors'} subtitle="One predictor per method and complete configuration / training-seed / split-seed group.">
-    {execution ? <div className="experiment-predictor-progress">
+  const creation = view !== 'library';
+  if (view === 'progress' && managed && execution) {
+    const planned = execution.counts.total - (execution.counts.skipped ?? 0);
+    return <section className="experiment-predictor-summary" aria-label="Predictor creation">
+      <strong>Predictors: {execution.counts.completed.toLocaleString()} of {planned.toLocaleString()} created</strong>
+      <progress aria-label="Predictors created" value={execution.counts.completed} max={Math.max(1, planned)} />
+      <span className="muted">{execution.counts.ensemble} ensembles · {execution.counts.refit} refits{execution.counts.waiting ? ` · ${execution.counts.waiting} wait for their batch` : ''}{execution.counts.skipped ? ` · ${execution.counts.skipped} omitted by validation selection` : ''}. Ready predictors are listed under Predictors; jobs, logs and failures are in the Task Center.</span>
+    </section>;
+  }
+  return <Panel title={creation && stage === 'running' ? 'Predictor creation' : 'Predictors'} subtitle="One predictor per method and complete configuration / training-seed / split-seed group.">
+    {execution && creation ? <div className="experiment-predictor-progress">
       <div className="inline-actions"><Badge tone={execution.status === 'completed' ? 'success' : ['attention', 'interrupted'].includes(execution.status) ? 'warning' : 'neutral'}>{statusLabel[execution.status]}</Badge><strong>{execution.counts.completed.toLocaleString()} / {(execution.counts.total - (execution.counts.skipped ?? 0)).toLocaleString()} created</strong></div>
       <progress aria-label="Predictors created" value={execution.counts.completed} max={Math.max(1, execution.counts.total - (execution.counts.skipped ?? 0))} />
       <p className="muted">{execution.counts.ensemble} ensembles · {execution.counts.refit} refits · {execution.counts.waiting} waiting · {execution.counts.active} queued or running{execution.counts.skipped ? ` · ${execution.counts.skipped} omitted by validation selection` : ''}{execution.counts.failed ? ` · ${execution.counts.failed} failed` : ''}{execution.counts.cancelled ? ` · ${execution.counts.cancelled} cancelled` : ''}</p>
-      {execution.counts.waiting ? <p className="muted">Waiting jobs need their source batch to complete or the next refit slot to become available. Refits run one at a time within this experiment.</p> : null}
+      {execution.counts.waiting ? <p className="muted">Waiting jobs need their source batch to complete. Predictor jobs run through the <a href={taskCenterHref({ project })}>Task Center</a>.</p> : null}
+      {execution.executor === 'task-center' && execution.runnerAlive === false && ['queued', 'waiting', 'running'].includes(execution.status) ? <p className="callout" role="status">The Task Center runner is not running; predictor jobs start once it runs. <a className="text-link" href={taskCenterHref({ project })}>Start it in the Task Center →</a></p> : null}
       {execution.error ? <p className="callout" role="status">{execution.error.message}</p> : null}
       {stage === 'running' && record.state === 'active' ? <PredictorActions project={project} record={record} execution={execution} /> : null}
       {execution.items?.length ? <details open={stage === 'running'}><summary>Predictor jobs · {execution.items.length}</summary>
@@ -53,13 +72,14 @@ export default function ExperimentPredictors({ project, record }: { project: str
           <td>Training {item.source.trainingSeed}<small>Split {item.source.splitSeed}</small></td>
           <td>{predictorMethodLabel(item.method)}{item.epochBudget ? <small>P{item.epochBudget.percentile} → {item.epochBudget.epochs} epochs</small> : item.refitPercentile != null ? <small>Refit budget P{item.refitPercentile}</small> : null}</td>
           <td>{item.status === 'completed' ? 'Ready' : item.status.replace(/^./, (letter) => letter.toUpperCase())}</td>
-          <td>{item.execution?.progress?.epoch !== undefined ? <>Epoch {item.execution.progress.epoch} / {item.execution.progress.maxEpochs ?? item.epochBudget?.epochs ?? '—'}{typeof item.execution.progress.trainingLoss === 'number' ? <small>Loss {item.execution.progress.trainingLoss.toFixed(4)}</small> : null}</> : item.method === 'ensemble' && item.status === 'completed' ? `${item.foldCount} checkpoints` : '—'}{item.error ? <small role="status">{item.error.message}</small> : null}{item.execution?.error ? <small>{item.execution.error}</small> : null}{item.execution?.progressWarning ? <small>{item.execution.progressWarning}</small> : null}</td>
+          <td>{item.execution?.progress?.epoch !== undefined ? <>Epoch {item.execution.progress.epoch} / {item.execution.progress.maxEpochs ?? item.epochBudget?.epochs ?? '—'}{typeof item.execution.progress.trainingLoss === 'number' ? <small>Loss {item.execution.progress.trainingLoss.toFixed(4)}</small> : null}</> : item.method === 'ensemble' && item.status === 'completed' ? `${item.foldCount} checkpoints` : '—'}{item.error ? <small role="status">{item.error.message}</small> : null}{item.execution?.error ? <small>{item.execution.error}</small> : null}{item.status === 'queued' && item.execution?.waitingReason ? <small>{item.execution.waitingReason}</small> : null}{item.execution?.progressWarning ? <small>{item.execution.progressWarning}</small> : null}</td>
         </tr>)}</tbody></table></div>
         {!workItems.length ? <p className="muted">No jobs match this status.</p> : null}
         <Pagination count={workItems.length} page={currentWorkPage} setPage={setWorkPage} label="Predictor jobs" />
       </details> : null}
-      {execution.logPath ? <details><summary>Predictor worker details</summary><code className="record-path">{execution.logPath}</code>{execution.sessionName ? <code className="record-path">tmux attach -t {execution.sessionName}</code> : null}{execution.updatedAt ? <p className="muted">Updated {execution.updatedAt}</p> : null}</details> : null}
-    </div> : skipped ? <p className="muted">Predictor creation was skipped in every batch. This experiment contains cross-validation results only.</p> : record.submission?.status !== 'submitted' && stage === 'running' ? <p className="callout">Predictor creation waits until experiment submission is complete. Resolve the submission notice above to continue.</p> : !hasPredictorPlan ? <p className="muted">Predictors from this historical experiment are retained here. <a href={`#post-development?${new URLSearchParams({ tab: 'refits', experiment: record.id })}`}>Open historical refit jobs</a></p> : null}
+      {execution.logPath ? <details><summary>Predictor worker details</summary><code className="record-path">{execution.logPath}</code>{execution.sessionName && execution.executor !== 'task-center' ? <code className="record-path">tmux attach -t {execution.sessionName}</code> : null}{execution.updatedAt ? <p className="muted">Updated {execution.updatedAt}</p> : null}</details> : null}
+    </div> : execution ? null : !creation ? null : skipped ? <p className="muted">Predictor creation was skipped in every batch. This experiment contains cross-validation results only.</p> : record.submission?.status !== 'submitted' && stage === 'running' ? <p className="callout">Predictor creation waits until experiment submission is complete. Resolve the submission notice above to continue.</p> : !hasPredictorPlan ? <p className="muted">Predictors from this historical experiment are retained here. <a href={`#post-development?${new URLSearchParams({ tab: 'refits', experiment: record.id })}`}>Open historical refit jobs</a></p> : view === 'progress' ? <p className="muted">Predictors are created after each batch’s folds finish. Ready predictors are listed under Predictors.</p> : null}
+    {showLibrary ? <>
     <ErrorNotice error={query.error} />
     <div className="experiment-predictor-tools"><strong>{ready.length.toLocaleString()} ready to evaluate</strong>{ready.length ? <a className="btn btn-primary btn-small" href={evaluationLink}>Evaluate predictors →</a> : null}</div>
     {items.length ? <>
@@ -74,6 +94,7 @@ export default function ExperimentPredictors({ project, record }: { project: str
       {!filtered.length ? <p className="muted">No predictors match these filters.</p> : null}
       <Pagination count={filtered.length} page={currentPage} setPage={setPage} label="Predictor library" />
     </> : query.isPending ? <p role="status">Loading predictors…</p> : !query.isError ? <p className="muted">{skipped ? 'To create predictors, use this experiment as a template and change the predictor choices in its batches before submission.' : 'Ready predictors appear here after their fold evidence and checkpoints are verified.'}</p> : null}
+    </> : null}
   </Panel>;
 }
 
