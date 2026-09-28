@@ -157,6 +157,10 @@ def prepare_refit(evidence, plan, folder):
         "interpolation": "linear",
         "rounding": "ceil",
         "epochIndexing": "one_based",
+        # Train for the budget along the fold models' own learning-rate schedule: the
+        # folds' best epochs were chosen under this horizon and warmup, not the budget's.
+        "scheduleHorizonEpochs": max(epochs, source_recipe["maxEpochs"]),
+        "scheduleWarmupEpochs": source_recipe.get("warmupEpochs", 0),
     }
     rows = sampling_memberships(
         sorted(members.values(), key=lambda row: row["slideId"]),

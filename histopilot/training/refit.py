@@ -138,10 +138,17 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
         raise ValueError(
             "A refit requires its reviewed schedule without validation-dependent plateau stopping."
         )
+    # Refits planned before the schedule was recorded keep their original trajectory.
+    schedule = plan["epochBudget"]
+    model_recipe = {
+        **recipe,
+        "maxEpochs": schedule.get("scheduleHorizonEpochs", epochs),
+        "warmupEpochs": schedule.get("scheduleWarmupEpochs", recipe["warmupEpochs"]),
+    }
     model = MILTrainModule(
         plan["data"]["featureDim"],
         plan["target"],
-        recipe,
+        model_recipe,
         class_weights=datamodule.training_class_weights(),
         class_weight_unit=datamodule.training_class_weight_unit(),
         clinical_preprocessor=datamodule.clinical_preprocessor,
