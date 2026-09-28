@@ -1,11 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { computePollInterval } from './predictors';
+import { computePollInterval, hasPatientPredictions } from './predictors';
 import type { ComputeExecution, EvaluationSelection } from './predictors';
 
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 const evaluation: EvaluationSelection = { predictorId: 'configuration-predictor', cohortId: 'configuration-cohort', name: 'External validation' };
 
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+
+describe('evaluation result files', () => {
+  it('offers patient predictions only when the evaluation wrote them', () => {
+    const file = { path: '/p', bytes: 1, sha256: 'x' };
+    expect(hasPatientPredictions({ artifacts: { 'slide-predictions.csv': file, 'patient-predictions.csv': file } })).toBe(true);
+    // Slide-split evaluations never write patient-predictions.csv.
+    expect(hasPatientPredictions({ artifacts: { 'slide-predictions.csv': file }, metrics: { splitUnit: 'slide' } as never })).toBe(false);
+    expect(hasPatientPredictions({ artifacts: { 'slide-predictions.csv': file } })).toBe(false);
+    // Results without an artifact list fall back to the split unit.
+    expect(hasPatientPredictions({ metrics: { splitUnit: 'slide' } as never })).toBe(false);
+    expect(hasPatientPredictions({ metrics: { splitUnit: 'patient' } as never })).toBe(true);
+    expect(hasPatientPredictions({})).toBe(true);
+  });
+});
 
 describe('experiment predictor and evaluation API contracts', () => {
   it('compares fixed evaluation identities with an authenticated read-only computation', async () => {

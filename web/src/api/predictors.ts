@@ -44,6 +44,8 @@ export interface PredictorPreview {
 }
 export interface EvaluationMetrics extends TrainingMetricDetails {
   decisionThreshold?: number;
+  /** Present on evaluations of frozen splits; slide-split evaluations have no patient results. */
+  splitUnit?: 'slide' | 'patient';
   slide: TrainingMetrics & { predictionCount?: number; unlabeledCount?: number };
   patient: TrainingMetrics & { predictionCount?: number; unlabeledCount?: number };
   selected: TrainingMetrics & { predictionCount?: number; unlabeledCount?: number };
@@ -60,6 +62,15 @@ export interface ComputeExecution {
   waitingReason?: string | null;
   result?: { metrics?: EvaluationMetrics; purpose?: 'inference'; summary?: InferenceResultSummary; [key: string]: unknown } | null;
   progress?: { epoch?: number; maxEpochs?: number; trainingLoss?: number | null; completedModels?: number; totalModels?: number; slideCount?: number; completedPairs?: number; totalPairs?: number; currentSlide?: string; completedSlides?: number; totalSlides?: number } | null;
+}
+/**
+ * Whether a completed evaluation wrote `patient-predictions.csv`. Slide-split evaluations never
+ * do; the saved artifact list says so directly, and results without one fall back to the split unit.
+ */
+export function hasPatientPredictions(result?: ComputeExecution['result']) {
+  const artifacts = result?.artifacts;
+  if (artifacts && typeof artifacts === 'object') return Object.hasOwn(artifacts, 'patient-predictions.csv');
+  return result?.metrics?.splitUnit !== 'slide';
 }
 export const computeActive = (job?: ComputeExecution) => Boolean(job && ['queued', 'running'].includes(job.status));
 /**
