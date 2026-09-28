@@ -1,190 +1,26 @@
 """Synthetic training receipts exercise promotion without launching training workers."""
 
 import copy
-import runpy
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
+from support.predictors import candidate, freeze
+from support.predictors import registry as registry
+from support.projects import lifecycle
 
-from histopilot.application.development import development_plans
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.lifecycle import CleanupService
-from histopilot.application.predictors import PredictorService
-from histopilot.application.training import membership_plan_id
-from histopilot.schemas.development import TrainingRecipe
 from histopilot.schemas.lifecycle import CleanupSelection
 from histopilot.schemas.predictors import (
     EvaluationRunSelection,
     FreezePredictor,
-    PredictorSelection,
     SaveEvaluationRun,
 )
 from histopilot.storage.project_lock import StorageError
-from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _run_plan
 from histopilot.workers.training_process import process_identity
-
-support = runpy.run_path(str(Path(__file__).with_name("test_evaluations.py")))
-
-
-@pytest.fixture
-def registry(tmp_path):
-    folder = tmp_path / "project"
-    folder.mkdir()
-    store = ScientificStore(folder, "project-predictors")
-    cohorts, spec, _source = support["setup"](store, tmp_path)
-    protocol = store.get_configuration(spec["protocolId"])
-    manifest = copy.deepcopy(protocol["manifest"])
-    manifest["spec"]["split"].update(mode="kfold", seeds=[42], folds=2)
-    manifest["memberships"] = [
-        {**row, "seed": 42, "fold": fold} for fold in (0, 1) for row in manifest["memberships"]
-    ]
-    protocol = store.publish_configuration(manifest=manifest, operation_id="kfold-protocol")
-    spec["protocolId"] = protocol["id"]
-    draft = support["draft"](cohorts, spec)
-    preview = cohorts.preview(draft["id"], 1)
-    assert preview["canFreeze"], preview["findings"]
-    cohort = cohorts.freeze(draft["id"], 1, preview["previewHash"], "test-cohort")
-    predictor = PredictorService(store, cohorts.protocols.filesystem)
-    return predictor, cohort
-
-
-def candidate(service, name="Trial", *, legacy=False, refit_ready=False, checkpoint_metric=None,
-              model="abmil", feature_bundle_id=None):
-    store = service.store
-    protocol = next(
-        item
-        for item in store.list_configurations("protocol")
-        if item["manifest"]["spec"]["split"].get("mode") == "kfold"
-    )
-    if refit_ready:
-        manifest = copy.deepcopy(protocol["manifest"])
-        labels = manifest["spec"]["target"]["classes"]
-        for row in manifest["memberships"]:
-            row["label"] = labels[int(row["slideId"].removeprefix("s")) % len(labels)]
-        protocol = store.publish_configuration(manifest=manifest, operation_id=uuid4().hex)
-    bundle = (store.get_configuration(feature_bundle_id) if feature_bundle_id
-              else store.list_configurations("feature-bundle")[0])
-    feature = store.get_configuration(bundle["manifest"]["feature"]["id"])
-    experiment = store.create_draft("experiment", name, {"type": "model-experiment"})
-    inputs = {"protocolId": protocol["id"], "featureBundleId": bundle["id"]}
-    recipe = TrainingRecipe(model=model).model_dump()
-    if checkpoint_metric is not None:
-        recipe["checkpointMetric"] = checkpoint_metric
-    candidate_id = "candidate-" + _hash(recipe)
-    splits = development_plans(protocol["manifest"])
-    runs = [
-        {
-            "id": "run-" + _hash(split),
-            "candidateId": candidate_id,
-            "trainingSeed": 11,
-            "splitPlanId": split["id"],
-            "status": "planned",
-        }
-        for split in splits
-    ]
-    spec = {"experimentName": name, "batchName": name + " batch", "inputs": inputs}
-    if not legacy:
-        spec.update(experimentId=experiment["id"], experimentRevision=1)
-    manifest = {
-        "kind": "mil-batch",
-        "datasetId": protocol["manifest"]["datasetId"],
-        "spec": spec,
-        "configurations": [{"id": candidate_id, "number": 1, "recipe": recipe}],
-        "splitPlans": splits,
-        "runs": runs,
-    }
-    batch = store.publish_configuration(manifest=manifest, operation_id=uuid4().hex)
-    folder = store.folder / "training" / batch["id"]
-    plan = {
-        "batchId": batch["id"],
-        "batchContentHash": batch["contentHash"],
-        "protocolContentHash": protocol["contentHash"],
-        "featureBundleContentHash": bundle["contentHash"],
-        "configurations": manifest["configurations"],
-        "runs": runs,
-        "splitPlans": splits,
-        "target": protocol["manifest"]["spec"]["target"],
-        **({"splitUnit": protocol["manifest"]["spec"]["splitUnit"]}
-           if "splitUnit" in protocol["manifest"]["spec"] else {}),
-        "resources": {},
-        "runtime": {"python": "/fixture/python", "versions": {"lightning": "fixture"}},
-        "code": {"sha256": "fixture"},
-        "memberships": {
-            split["id"]: [
-                row
-                for row in protocol["manifest"]["memberships"]
-                if membership_plan_id(row) == split["id"]
-            ]
-            for split in splits
-        },
-        "data": {
-            "featureDim": feature["manifest"]["files"][0]["dimensions"],
-            "featureFiles": {
-                row["slideId"]: row
-                for row in feature["manifest"]["files"]
-                if row["slideId"] in {row["slideId"] for row in protocol["manifest"]["memberships"]}
-            },
-            "sourceStamps": {
-                row["path"]: row
-                for row in feature["manifest"]["files"]
-                if row["slideId"] in {row["slideId"] for row in protocol["manifest"]["memberships"]}
-            },
-        },
-    }
-    states = []
-    for run in runs:
-        run_folder = folder / "runs" / run["id"]
-        run_folder.mkdir(parents=True)
-        checkpoint = run_folder / "best.ckpt"
-        checkpoint.write_bytes(b"Synthetic checkpoint bytes; these tests do not unpickle weights.")
-        result = {
-            "runId": run["id"],
-            "state": "succeeded",
-            "bestCheckpointPath": str(checkpoint),
-            "checkpointMetric": recipe["checkpointMetric"],
-            "bestValidationScore": 0.7,
-            "epochsCompleted": 2,
-        }
-        write_json(run_folder / "result.json", result)
-        write_json(run_folder / "plan.json", _run_plan(plan, run, None))
-        states.append({**run, "status": "completed", "result": result})
-    state = {"batchId": batch["id"], "status": "completed", "planHash": _hash(plan), "runs": states}
-    write_json(folder / "plan.json", plan)
-    write_json(folder / "state.json", state)
-    selection = PredictorSelection(
-        experimentId=f"legacy-{batch['id']}" if legacy else experiment["id"],
-        batchId=batch["id"],
-        candidateId=candidate_id,
-        trainingSeed=11,
-        splitSeed=42,
-        name=name + " predictor",
-    )
-    return selection, folder, state
-
-
-def freeze(service, selection, operation=None):
-    preview = service.preview(selection)
-    assert preview["canFreeze"], preview
-    request = FreezePredictor(
-        **selection.model_dump(),
-        previewHash=preview["previewHash"],
-        operationId=operation or uuid4().hex,
-    )
-    return service.freeze(request), request
-
-
-def lifecycle(store, document, state):
-    store.lifecycle.apply(
-        {f"configuration:{document['id']}": state},
-        operation_id=uuid4().hex,
-        request_hash=_hash({"id": document["id"], "state": state}),
-        expected_revision=store.lifecycle.read()["revision"],
-    )
 
 
 def test_complete_candidate_freezes_exact_inputs_folds_hashes_and_immutable_retry(registry):

@@ -1,14 +1,15 @@
 """Immutable import → matched folds → saved predictors → external clinical inference."""
 
 import json
-import runpy
-import sys
-from pathlib import Path
 
 import pytest
 
 pytest.importorskip("torch")
 pytest.importorskip("lightning")
+
+from support import projects  # noqa: E402
+from support.predictors import FakeJobs  # noqa: E402
+from support.training import runtime  # noqa: E402
 
 from histopilot.application.development import DevelopmentService  # noqa: E402
 from histopilot.application.evaluation_runs import EvaluationRunService  # noqa: E402
@@ -34,9 +35,6 @@ from histopilot.training.inference import evaluate  # noqa: E402
 from histopilot.training.refit import train_refit  # noqa: E402
 from histopilot.workers.packing_process import write_json  # noqa: E402
 from histopilot.workers.train_batch import _run_plan  # noqa: E402
-
-support = runpy.run_path(str(Path(__file__).with_name("test_evaluations.py")))
-refit_support = runpy.run_path(str(Path(__file__).with_name("test_refit_predictors.py")))
 
 
 @pytest.mark.slow
@@ -78,7 +76,7 @@ def test_matched_clinical_models_keep_frozen_covariates_through_publication(tmp_
         },
         artifacts={"records.json": json.dumps(rows).encode()},
     )
-    bundle, _, _ = support["bundle"](store, tmp_path, dataset, [row["slideId"] for row in rows])
+    bundle, _, _ = projects.bundle(store, tmp_path, dataset, [row["slideId"] for row in rows])
     protocols = ProtocolService(store, filesystem)
     draft = store.create_draft(
         "experiment",
@@ -87,7 +85,7 @@ def test_matched_clinical_models_keep_frozen_covariates_through_publication(tmp_
             "type": "analysis-protocol",
             "spec": {
                 "datasetId": dataset["id"],
-                "target": support["TARGET"],
+                "target": projects.TARGET,
                 "predictors": ["age", "site"],
                 "eligibility": [{"field": "cohort", "op": "eq", "value": "development"}],
                 "split": {
@@ -142,16 +140,6 @@ def test_matched_clinical_models_keep_frozen_covariates_through_publication(tmp_
         spec, preview["previewHash"], "clinical-batch", {"tag": "Matched inputs"}
     )
 
-    def runtime():
-        return {
-            "available": True,
-            "python": sys.executable,
-            "versions": {},
-            "cudaAvailable": False,
-            "gpuCount": 0,
-            "findings": [],
-        }
-
     service = TrainingService(store, filesystem, runtime=runtime)
     plan, _guard = service._prepare(batch)
     assert len(plan["data"]["clinicalValues"]) == 36
@@ -169,11 +157,11 @@ def test_matched_clinical_models_keep_frozen_covariates_through_publication(tmp_
         {"batchId": batch["id"], "status": "completed", "planHash": _hash(plan), "runs": states},
     )
     cohorts = EvaluationService(store, filesystem)
-    draft = support["draft"](
+    draft = projects.draft(
         cohorts,
         {
             "datasetId": dataset["id"],
-            "target": support["TARGET"],
+            "target": projects.TARGET,
             "eligibility": [{"field": "cohort", "op": "eq", "value": "external"}],
         },
     )
@@ -184,7 +172,7 @@ def test_matched_clinical_models_keep_frozen_covariates_through_publication(tmp_
     evaluations = EvaluationRunService(store, filesystem)
     monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", runtime)
     memberships = []
-    jobs = refit_support["FakeJobs"](store)
+    jobs = FakeJobs(store)
     refits = RefitService(store, filesystem, jobs)
     for configuration in batch["manifest"]["configurations"]:
         mode = configuration["recipe"].get("inputMode", "image")

@@ -3,7 +3,7 @@
 from copy import deepcopy
 
 import pytest
-from test_training_execution import tc_execution
+from support.training import tc_execution
 
 from histopilot.application.development import DevelopmentService
 from histopilot.schemas.development import DevelopmentBatchSpec

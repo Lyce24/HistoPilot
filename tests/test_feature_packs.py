@@ -1,8 +1,7 @@
 """Durable feature jobs honor frozen inputs, immutable outputs and cancellation.
 
-Jobs are packing tasks of the test's private Task Center; ``support.features.run_pack``
-runs one the way the runner does. ``packing``, ``submit`` and ``complete`` keep the
-legacy tmux launch path for ``test_job_lifecycle``, which imports them.
+Jobs are packing tasks of the test's private Task Center; ``support.workers.run_pack``
+runs one the way the runner does. ``test_job_lifecycle`` imports ``packs`` and ``submit``.
 """
 
 import json
@@ -13,7 +12,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
-from support.features import begin, conclude, run_pack, task_environment, worker_environment
+from support.task_center import begin, conclude, task_environment, worker_environment
+from support.workers import run_pack
 
 from histopilot.application import task_records
 from histopilot.application.feature_packs import FeaturePackService

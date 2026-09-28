@@ -1,9 +1,6 @@
 """Real slide-vector validation, three-arm fitting, publication, refit and external inference."""
 
 import json
-import runpy
-import sys
-from pathlib import Path
 
 import h5py
 import numpy as np
@@ -12,7 +9,10 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
-from support.evaluation import packing_service, run_packing  # noqa: E402
+from support import projects  # noqa: E402
+from support.predictors import FakeJobs  # noqa: E402
+from support.training import runtime  # noqa: E402
+from support.workers import run_pack  # noqa: E402
 
 from histopilot.application.development import DevelopmentService  # noqa: E402
 from histopilot.application.evaluation_runs import EvaluationRunService  # noqa: E402
@@ -44,9 +44,6 @@ from histopilot.training.refit import train_refit  # noqa: E402
 from histopilot.workers.packing_process import write_json  # noqa: E402
 from histopilot.workers.train_batch import _run_plan  # noqa: E402
 
-support = runpy.run_path(str(Path(__file__).with_name("test_evaluations.py")))
-refit_support = runpy.run_path(str(Path(__file__).with_name("test_refit_predictors.py")))
-
 
 def slide_bundle(store, filesystem, root, dataset, rows, name):
     """Publish real validation-worker receipts, never synthesize a valid bundle."""
@@ -70,12 +67,12 @@ def slide_bundle(store, filesystem, root, dataset, rows, name):
     reviewed = features.preview(spec)
     assert reviewed["canFreeze"], reviewed["findings"]
     feature = features.freeze(spec, reviewed["previewHash"], name)
-    packing = packing_service(store, filesystem)
+    packing = projects.packing_service(store, filesystem)
     request = FeaturePackSpec(featureSetId=feature["id"], action="validate")
     preview = packing.preview(request)
     assert preview["canRun"], preview["findings"]
     job = packing.submit(request, preview["previewHash"], name + "-validation")
-    result = run_packing(packing, job)
+    result = run_pack(packing.tasks.client.store, job)
     assert result["state"] == "succeeded", result
     assert result["validation"]["tensorValidationComplete"]
     assert result["validation"]["featureKind"] == "slide"
@@ -140,7 +137,7 @@ def test_slide_probes_complete_image_clinical_and_combined_studies(
             "type": "analysis-protocol",
             "spec": {
                 "datasetId": dataset["id"],
-                "target": support["TARGET"],
+                "target": projects.TARGET,
                 "predictors": ["age", "site"],
                 "eligibility": [{"field": "cohort", "op": "eq", "value": "development"}],
                 "split": {
@@ -196,16 +193,6 @@ def test_slide_probes_complete_image_clinical_and_combined_studies(
         spec, preview["previewHash"], "clinical-batch", {"tag": "Matched inputs"}
     )
 
-    def runtime():
-        return {
-            "available": True,
-            "python": sys.executable,
-            "versions": {},
-            "cudaAvailable": False,
-            "gpuCount": 0,
-            "findings": [],
-        }
-
     service = TrainingService(store, filesystem, runtime=runtime)
     plan, _guard = service._prepare(batch)
     assert len(plan["data"]["clinicalValues"]) == 36
@@ -235,11 +222,11 @@ def test_slide_probes_complete_image_clinical_and_combined_studies(
         {"batchId": batch["id"], "status": "completed", "planHash": _hash(plan), "runs": states},
     )
     cohorts = EvaluationService(store, filesystem)
-    draft = support["draft"](
+    draft = projects.draft(
         cohorts,
         {
             "datasetId": dataset["id"],
-            "target": support["TARGET"],
+            "target": projects.TARGET,
             "eligibility": [{"field": "cohort", "op": "eq", "value": "external"}],
         },
     )
@@ -250,7 +237,7 @@ def test_slide_probes_complete_image_clinical_and_combined_studies(
     evaluations = EvaluationRunService(store, filesystem)
     monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", runtime)
     memberships = []
-    jobs = refit_support["FakeJobs"](store)
+    jobs = FakeJobs(store)
     refits = RefitService(store, filesystem, jobs)
     for configuration in batch["manifest"]["configurations"]:
         mode = configuration["recipe"].get("inputMode", "image")

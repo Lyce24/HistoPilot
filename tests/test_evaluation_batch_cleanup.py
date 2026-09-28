@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from support.evaluation import compute_tasks
+from support.compute import compute_tasks
 
 from histopilot.application.lifecycle import CleanupService
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection

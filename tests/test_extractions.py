@@ -1,21 +1,16 @@
 """Extraction preflight, durable jobs, recovery and native artifacts without GPU execution.
 
 Jobs are an extraction task and its validation task in the test's private Task Center;
-``support.features`` ends them with the receipts their workers write. ``extraction`` and
-``submit`` keep the legacy tmux launch path for ``test_job_lifecycle``, which imports them.
+``support.workers`` ends them with the receipts their workers write. ``test_job_lifecycle``
+imports ``extractions`` and ``submit``.
 """
 
 import json
 from pathlib import Path
 
 import pytest
-from support.features import (
-    begin,
-    conclude,
-    finish_extraction,
-    finish_validation,
-    run_validation,
-)
+from support.task_center import begin, conclude
+from support.workers import finish_extraction, finish_validation, run_validation
 
 from histopilot.application.extractions import ExtractionService, _write
 from histopilot.schemas.extractions import ExtractionSpec

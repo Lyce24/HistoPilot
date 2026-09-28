@@ -3,7 +3,7 @@
 from copy import deepcopy
 
 import pytest
-from test_training_execution import rewrite_batch, tc_execution
+from support.training import rewrite_batch, tc_execution
 
 from histopilot.schemas.training_controls import validate_training_controls
 from histopilot.storage.project_lock import StorageError

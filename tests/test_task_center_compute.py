@@ -5,7 +5,6 @@ in-process runner; no tmux session is ever started or queried.
 """
 
 import os
-import runpy
 import signal
 import subprocess
 import sys
@@ -13,8 +12,10 @@ import time
 from pathlib import Path
 
 import pytest
+from support.predictors import candidate, create, freeze, managed, refit_candidate, registry
 from support.task_center import Center as TaskCenter
 from support.task_center import fake_host
+from support.training import runtime
 
 from histopilot.application import compute_jobs as compute_module
 from histopilot.application.compute_jobs import ComputeJobService
@@ -28,22 +29,10 @@ from histopilot.workers import compute_job as compute_worker
 from histopilot.workers.packing_process import output_lock, write_json
 from histopilot.workers.training_process import process_identity, read_json
 
-HERE = Path(__file__).parent
 UID = os.getuid()
 
 
 HOST = fake_host(gpus=0, cpus=8, available=60.0)
-
-
-def runtime():
-    return {
-        "available": True,
-        "python": sys.executable,
-        "versions": {},
-        "cudaAvailable": False,
-        "gpuCount": 0,
-        "host": {"cpuCount": 8, "totalRamGb": 16},
-    }
 
 
 class Center(TaskCenter):
@@ -862,15 +851,14 @@ def refit(tmp_path, center, monkeypatch):
     from histopilot.schemas.development import ResourcePolicy
     from histopilot.schemas.predictors import LaunchRefit
 
-    support = runpy.run_path(str(HERE / "test_refit_predictors.py"))
-    predictors, _ = support["registry"].__wrapped__(tmp_path)
-    selection, _, _ = support["refit_candidate"](predictors, epochs=(12, 12))
+    predictors, _ = registry.__wrapped__(tmp_path)
+    selection, _, _ = refit_candidate(predictors, epochs=(12, 12))
     jobs = ComputeJobService(
         predictors.store,
         runtime=lambda: {**runtime(), "host": None},
         task_center=center.client,
     )
-    refits, record, _ = support["create"](predictors, selection, jobs)
+    refits, record, _ = create(predictors, selection, jobs)
     # The worker gets a private TMPDIR: any lease it wrote would appear under it.
     private = tmp_path / "worker-tmp"
     private.mkdir(mode=0o700)
@@ -1002,11 +990,8 @@ sys.exit(int(flag.read_text()) if flag.exists() else 0)
 def coordinator(tmp_path, center):
     from histopilot.application.experiment_predictors import ExperimentPredictorService
 
-    support = runpy.run_path(str(HERE / "test_experiment_predictors.py"))
     # The managed fixture's project and collaborators, queued in this test's Task Center.
-    base, identity, *_ = support["managed"].__wrapped__(
-        support["registry"].__wrapped__(tmp_path), center
-    )
+    base, identity, *_ = managed.__wrapped__(registry.__wrapped__(tmp_path), center)
     service = ExperimentPredictorService(
         base.store,
         base.filesystem,
@@ -1190,10 +1175,9 @@ def bulk(tmp_path, monkeypatch, center):
     from histopilot.application.bulk_evaluations import BulkEvaluationService
     from histopilot.application.evaluation_runs import EvaluationRunService
 
-    registry = runpy.run_path(str(HERE / "test_predictor_registry.py"))
-    predictors, cohort = registry["registry"].__wrapped__(tmp_path)
-    selection, *_ = registry["candidate"](predictors)
-    registry["freeze"](predictors, selection)
+    predictors, cohort = registry.__wrapped__(tmp_path)
+    selection, *_ = candidate(predictors)
+    freeze(predictors, selection)
     monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", runtime)
     evaluations = EvaluationRunService(predictors.store, predictors.filesystem)
     evaluations.jobs = ComputeJobService(

@@ -10,113 +10,17 @@ import h5py
 import numpy as np
 import pytest
 from pydantic import ValidationError
-from support.interpretation import complete, compute_tasks, managed_jobs
+from support.compute import complete, compute_tasks, save_study
+from support.compute import managed_study as managed_study
 
-from histopilot.application.interpretation import InterpretationService
-from histopilot.application.predictors import checkpoint_snapshot
 from histopilot.schemas.interpretation import InterpretationSelection, SaveInterpretation
-from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
-from histopilot.storage.scientific import ScientificStore
 from histopilot.viewer.slide_images import inspect_slide, render_slide
 from histopilot.workers.compute_job import verify_plan_inputs
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json
 
 Image = pytest.importorskip("PIL.Image")
-
-
-def make_study(tmp_path, jobs):
-    """One reviewed slide and a frozen predictor; ``jobs(store)`` builds its compute jobs."""
-    (tmp_path / "project").mkdir()
-    store = ScientificStore(tmp_path / "project", "interpret-project")
-    draft = store.create_draft("import", "Development", {})
-    dataset = store.publish_dataset(
-        draft["id"],
-        expected_revision=1,
-        manifest={"name": "Development"},
-        artifacts={"slides.json": b'[{"slideId":"development-only"}]'},
-        operation_id="data",
-    )
-    batch_id = "configuration-" + "1" * 64
-    checkpoint_folder = store.folder / "training" / batch_id / "runs" / "run-one"
-    checkpoint_folder.mkdir(parents=True)
-    checkpoint_path = checkpoint_folder / "best.ckpt"
-    checkpoint_path.write_bytes(b"test evidence, never deserialized by control API")
-    predictor = store.publish_configuration(
-        manifest={
-            "kind": "frozen-predictor",
-            "datasetId": dataset["id"],
-            "name": "Model",
-            "batchId": batch_id,
-            "experimentId": "experiment-one",
-            "method": "ensemble",
-            "target": {
-                "task": "binary_classification",
-                "unit": "slide",
-                "classes": ["yes", "no"],
-                "positiveClass": "yes",
-            },
-            "recipe": {"model": "abmil", "embedDim": 8, "attentionDim": 4},
-            "inputs": {
-                "features": {"encoderId": "test-encoder", "dimensions": 4, "dtype": "float32"}
-            },
-            "checkpoints": [
-                {**checkpoint_snapshot(checkpoint_path, checkpoint_folder), "runId": "run-one"}
-            ],
-        },
-        operation_id="predictor",
-    )
-    image_path = tmp_path / "independent-slide.png"
-    Image.new("RGB", (300, 200), color="pink").save(image_path)
-    features_path = tmp_path / "features.h5"
-    with h5py.File(features_path, "w") as handle:
-        handle.create_dataset("features", data=np.arange(12, dtype=np.float32).reshape(3, 4))
-        coords = handle.create_dataset(
-            "coords", data=np.array([[0, 0], [100, 0], [100, 100]], dtype=np.int64)
-        )
-        coords.attrs["patch_size_level0"] = 100
-        handle["features"].attrs["encoder_id"] = "test-encoder"
-    selection = InterpretationSelection(
-        name="Attention",
-        predictorId=predictor["id"],
-        encoderId="test-encoder",
-        slides=[
-            {
-                "slideId": "independent",
-                "slidePath": str(image_path),
-                "featurePath": str(features_path),
-                "confirmRowAlignment": True,
-            }
-        ],
-    )
-    service = InterpretationService(store, LocalFilesystem((tmp_path,)))
-    service.jobs = jobs(store)
-    return service, selection
-
-
-@pytest.fixture
-def managed_study(tmp_path, task_center):
-    """The study with launches queued in this test's Task Center; the third item is it."""
-    service, selection = make_study(tmp_path, lambda store: managed_jobs(store, task_center))
-    return service, selection, task_center
-
-
-@pytest.fixture
-def study(tmp_path, task_center):
-    """The same study as ``managed_study``, for modules that name it ``study``."""
-    service, selection = make_study(tmp_path, lambda store: managed_jobs(store, task_center))
-    return service, selection, task_center
-
-
-def save(study):
-    service, selection, _ = study
-    preview = service.preview(selection)
-    assert preview["canSave"], preview
-    request = SaveInterpretation(
-        **selection.model_dump(), previewHash=preview["previewHash"], operationId="save-attention"
-    )
-    return service.save(request), request
 
 
 def test_arbitrary_slide_review_geometry_identity_idempotency_and_execution(managed_study):
@@ -129,7 +33,7 @@ def test_arbitrary_slide_review_geometry_identity_idempotency_and_execution(mana
     assert row["patchWidthLevel0"] == row["patchHeightLevel0"] == 100
     assert row["alignment"] == "embedded_verified" and row["patchCount"] == 3
     assert len(row["featureSha256"]) == len(row["coordinatesSha256"]) == 64
-    document, request = save(managed_study)
+    document, request = save_study(managed_study)
     assert service.save(request)["id"] == document["id"]
     assert service.list()["items"][0]["execution"]["status"] == "not_started"
     result = service.launch(document["id"], "launch")
@@ -153,7 +57,7 @@ def test_accepted_attention_retry_never_reinspects_complete_feature_arrays(
     managed_study, monkeypatch
 ):
     service, _, task_center = managed_study
-    document, _ = save(managed_study)
+    document, _ = save_study(managed_study)
     first = service.launch(document["id"], "launch")
     monkeypatch.setattr(
         service,
@@ -200,7 +104,7 @@ def test_nnmil_attention_publication_preserves_window_method_and_feature_provena
 def test_geometry_and_slide_viewport_are_exact_and_bounded(managed_study):
     service, selection, _ = managed_study
     assert service.inspect_slide(selection.slides[0].slidePath)["width"] == 300
-    document, _ = save(managed_study)
+    document, _ = save_study(managed_study)
     with Image.open(
         io.BytesIO(service.image(document["id"], "independent", max_size=128))
     ) as image:
@@ -321,7 +225,7 @@ def test_stale_feature_preview_and_modified_slide_block_launch_and_view(managed_
                 **selection.model_dump(), previewHash=preview["previewHash"], operationId="stale"
             )
         )
-    document, _ = save(managed_study)
+    document, _ = save_study(managed_study)
     Image.new("RGB", (300, 200), color="blue").save(selection.slides[0].slidePath)
     with pytest.raises(StorageError, match="changed"):
         service.launch(document["id"], "changed")
@@ -352,7 +256,7 @@ def test_prediction_and_clinical_lineage_reject_other_predictors(managed_study):
 
 def test_attention_pagination_member_viewports_and_tamper_detection(managed_study):
     service, _, task_center = managed_study
-    document, _ = save(managed_study)
+    document, _ = save_study(managed_study)
     identity = document["id"]
     service.launch(identity, "launch")
     folder = service.jobs.folder(identity)
@@ -425,7 +329,7 @@ def test_empty_explicit_resources_and_missing_geometry_infer_stable_preview(mana
     selection = InterpretationSelection.model_validate(
         {**selection.model_dump(), "resources": {"gpuIds": [], "dataLoaderWorkers": 0}}
     )
-    document, _ = save((service, selection, None))
+    document, _ = save_study((service, selection, None))
     assert document["manifest"]["resources"]["ramGbPerRun"] == 8.0
 
 
@@ -583,7 +487,7 @@ def test_mmap_attention_pages_verify_receipts_cache_stamps_and_reject_objects(
 
 def test_service_serves_indexed_mean_and_member_without_parsing_json(managed_study, monkeypatch):
     service, _, task_center = managed_study
-    document, _ = save(managed_study)
+    document, _ = save_study(managed_study)
     identity = document["id"]
     service.launch(identity, "launch")
     folder = service.jobs.folder(identity)
@@ -639,7 +543,7 @@ def test_display_copy_updates_do_not_make_saved_attention_evidence_stale(
     managed_study, monkeypatch
 ):
     service, _, task_center = managed_study
-    document, _ = save(managed_study)
+    document, _ = save_study(managed_study)
     monkeypatch.setattr(
         "histopilot.application.interpretation.EXECUTION_NOTE", "Updated help text."
     )

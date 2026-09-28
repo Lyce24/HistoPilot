@@ -4,10 +4,11 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
+from support.predictors import candidate, freeze, registry
+from support.projects import bundle, codes, preview
 from test_case_review import cases
-from test_evaluations import bundle, codes, evaluation, preview
-from test_morphology import study
-from test_predictor_registry import candidate, freeze, registry
+from test_evaluations import evaluation
+from test_morphology import managed_study
 from test_training_control_preview import preview_context
 
 from histopilot.application.development import development_plans
@@ -22,7 +23,7 @@ from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.schemas.slide_reviews import SaveSlideReview
 from histopilot.storage.project_lock import StorageError
 
-__all__ = ["cases", "evaluation", "study", "registry", "preview_context"]
+__all__ = ["cases", "evaluation", "managed_study", "registry", "preview_context"]
 
 
 def test_patch_contract_identity_stays_unchanged_and_slide_kind_is_explicit():
@@ -153,9 +154,9 @@ def test_slide_study_preflight_accepts_clinical_arm_and_rejects_patch_models(
         assert findings[0]["code"] == "TRAINING_FEATURE_KIND_MISMATCH"
 
 
-@pytest.mark.parametrize("study", ["slide"], indirect=True)
-def test_original_image_geometry_and_review_do_not_need_patch_coordinates(study):
-    service, request, _, _ = study
+@pytest.mark.parametrize("managed_study", ["slide"], indirect=True)
+def test_original_image_geometry_and_review_do_not_need_patch_coordinates(managed_study):
+    service, request, _, _ = managed_study
     quality = service.quality(request.datasetId, "a", request.featureBundleId)
     assert quality["featureKind"] == "slide"
     assert quality["width"] == quality["height"] == 64

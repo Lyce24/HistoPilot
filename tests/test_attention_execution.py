@@ -13,7 +13,8 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("lightning")
 Image = pytest.importorskip("PIL.Image")
 
-from support.interpretation import managed_jobs, run_compute_worker  # noqa: E402
+from support.compute import managed_jobs  # noqa: E402
+from support.workers import run_compute_worker  # noqa: E402
 
 from histopilot.application.predictors import checkpoint_snapshot  # noqa: E402
 from histopilot.storage.attention_inputs import file_stamp, inspect_inputs  # noqa: E402

@@ -1,11 +1,10 @@
 """Many configuration/seed groups build independently and retry without duplicates."""
 
-import copy
-import runpy
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
+from support.predictors import FakeJobs, freeze, refit_candidate, two_seeds
+from support.predictors import registry as registry
 
 from histopilot.application.feature_bundles import _hash
 from histopilot.application.predictor_builds import PredictorBuildService
@@ -16,54 +15,7 @@ from histopilot.schemas.predictors import (
 )
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.train_batch import _run_plan
 from histopilot.workers.training_process import read_json
-
-support = runpy.run_path(str(Path(__file__).with_name("test_refit_predictors.py")))
-registry = support["registry"]
-
-
-def two_seeds(service):
-    source, original_folder, original_state = support["refit_candidate"](service, epochs=(2, 4))
-    original = service.store.get_configuration(source.batchId)
-    manifest = copy.deepcopy(original["manifest"])
-    originals = manifest["runs"]
-    manifest["runs"] = [
-        {**row, "id": "run-" + _hash([row["id"], seed]), "trainingSeed": seed}
-        for seed in (11, 22)
-        for row in originals
-    ]
-    batch = service.store.publish_configuration(manifest=manifest, operation_id=uuid4().hex)
-    plan = {
-        **read_json(original_folder / "plan.json"),
-        "batchId": batch["id"],
-        "batchContentHash": batch["contentHash"],
-        "runs": manifest["runs"],
-    }
-    folder = service.store.folder / "training" / batch["id"]
-    states = []
-    for index, run in enumerate(manifest["runs"]):
-        run_folder = folder / "runs" / run["id"]
-        run_folder.mkdir(parents=True)
-        checkpoint = run_folder / "best.ckpt"
-        checkpoint.write_bytes(b"seed checkpoint")
-        result = {
-            **original_state["runs"][index % 2]["result"],
-            "runId": run["id"],
-            "bestCheckpointPath": str(checkpoint),
-        }
-        write_json(run_folder / "result.json", result)
-        write_json(run_folder / "plan.json", _run_plan(plan, run, None))
-        states.append({**run, "status": "completed", "result": result})
-    write_json(folder / "plan.json", plan)
-    write_json(
-        folder / "state.json",
-        {"batchId": batch["id"], "status": "completed", "planHash": _hash(plan), "runs": states},
-    )
-    return [
-        source.model_copy(update={"batchId": batch["id"], "trainingSeed": seed})
-        for seed in (11, 22)
-    ], folder
 
 
 def request_for(selections, **changes):
@@ -128,9 +80,9 @@ def test_both_builds_each_training_seed_and_reuses_exact_groups(registry):
 )
 def test_predictor_uniqueness_uses_every_source_coordinate(registry, field):
     service, _ = registry
-    selected, _, _ = support["refit_candidate"](service)
+    selected, _, _ = refit_candidate(service)
     selected = selected.model_copy(update={"method": "ensemble"})
-    frozen, _ = support["support"]["freeze"](service, selected)
+    frozen, _ = freeze(service, selected)
     assert service._existing(selected)["id"] == frozen["id"]
     values = selected.model_dump()
     values[field] = values[field] + 1 if isinstance(values[field], int) else "another-identity"
@@ -270,7 +222,7 @@ def test_each_seed_can_publish_its_own_refit_and_bulk_reuses_published_models(re
     request = request_for(selections)
     apply, _ = apply_request(service, request)
     built = service.apply(apply)
-    jobs = support["FakeJobs"](predictors.store)
+    jobs = FakeJobs(predictors.store)
     refits = RefitService(predictors.store, predictors.filesystem, jobs)
     models = []
     for row in built["items"]:

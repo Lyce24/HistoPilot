@@ -6,14 +6,14 @@ import hashlib
 import io
 import json
 import math
-import runpy
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from support import projects
+from support.predictors import candidate, freeze, registry
 
 from histopilot.api.app import create_app
 from histopilot.application.evaluation_runs import EvaluationRunService, run_purpose
@@ -44,9 +44,6 @@ from histopilot.schemas.predictors import (
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-
-support = runpy.run_path(str(Path(__file__).with_name("test_evaluations.py")))
-registry = runpy.run_path(str(Path(__file__).with_name("test_predictor_registry.py")))
 
 BINARY = {
     "task": "binary_classification",
@@ -161,7 +158,7 @@ def test_run_agreement_kappa_and_patient_member_rules():
 def test_inference_cohorts_are_unlabeled_and_keep_their_stored_purpose():
     base = {"datasetId": "dataset-" + "a" * 64, "eligibility": []}
     with pytest.raises(ValidationError, match="unlabeled"):
-        EvaluationSpec.model_validate({**base, "purpose": "inference", "target": support["TARGET"]})
+        EvaluationSpec.model_validate({**base, "purpose": "inference", "target": projects.TARGET})
     spec = EvaluationSpec.model_validate(
         {**base, "purpose": "inference", "target": None, "patientIdentifiers": "independent"}
     )
@@ -187,7 +184,7 @@ def test_inference_cohort_freezes_membership_without_labels(evaluation):
         "target": None,
         "eligibility": [{"field": "cohort", "op": "eq", "value": "test"}],
     }
-    draft = support["draft"](service, cohort)
+    draft = projects.draft(service, cohort)
     result = service.preview(draft["id"], 1)
     assert result["canFreeze"], result["findings"]
     assert result["summary"]["labeledSlides"] == 0 and result["summary"]["classCounts"] == {}
@@ -203,7 +200,7 @@ def test_inference_cohort_freezes_membership_without_labels(evaluation):
 def evaluation(tmp_path):
     folder = tmp_path / "project"
     folder.mkdir()
-    return support["setup"](ScientificStore(folder, "project-inference"), tmp_path)
+    return projects.setup(ScientificStore(folder, "project-inference"), tmp_path)
 
 
 @pytest.mark.parametrize("development_unit", ["slide", "patient"])
@@ -214,10 +211,10 @@ def test_inference_discloses_patient_overlap_only_for_slide_predictors(
     manifest = copy.deepcopy(service.store.get_configuration(spec["protocolId"])["manifest"])
     manifest["spec"]["target"]["unit"] = development_unit
     protocol = service.store.publish_configuration(manifest=manifest, operation_id="unit-protocol")
-    data, _ = support["dataset"](service.store, "inference-patient", [
+    data, _ = projects.dataset(service.store, "inference-patient", [
         {"slideId": "s2", "patientId": "p0", "attributes": {"label": "0", "cohort": "test"}},
     ])
-    result = support["preview"](service, {
+    result = projects.preview(service, {
         **spec, "protocolId": protocol["id"], "datasetId": data["id"], "target": None,
         "purpose": "inference",
     })
@@ -229,7 +226,7 @@ def test_inference_discloses_patient_overlap_only_for_slide_predictors(
 
 def test_inference_blocks_development_slides_and_points_to_oof_predictions(evaluation):
     service, spec, _ = evaluation
-    result = support["preview"](
+    result = projects.preview(
         service, {**spec, "purpose": "inference", "target": None, "eligibility": []}
     )
     overlap = next(item for item in result["findings"] if item["code"] == "DEVELOPMENT_SLIDE_OVERLAP")
@@ -238,11 +235,11 @@ def test_inference_blocks_development_slides_and_points_to_oof_predictions(evalu
 
 
 def test_inference_run_is_unlabeled_metric_free_and_marked_in_its_plan(tmp_path, monkeypatch):
-    predictors, bound = registry["registry"].__wrapped__(tmp_path)
-    selection, *_ = registry["candidate"](predictors)
-    predictor, _ = registry["freeze"](predictors, selection)
+    predictors, bound = registry.__wrapped__(tmp_path)
+    selection, *_ = candidate(predictors)
+    predictor, _ = freeze(predictors, selection)
     runs = EvaluationRunService(predictors.store, predictors.filesystem)
-    draft = support["draft"](runs.cohorts, {
+    draft = projects.draft(runs.cohorts, {
         "datasetId": bound["manifest"]["datasetId"], "purpose": "inference", "target": None,
         "eligibility": [{"field": "cohort", "op": "eq", "value": "test"}],
     }, "Unlabeled test slides")
@@ -277,9 +274,9 @@ def test_inference_run_is_unlabeled_metric_free_and_marked_in_its_plan(tmp_path,
 
 @pytest.mark.parametrize("unit", ["slide", "patient"])
 def test_inference_run_gates_patient_overlap_by_prediction_unit(tmp_path, monkeypatch, unit):
-    service, cohort = registry["registry"].__wrapped__(tmp_path)
-    selection, *_ = registry["candidate"](service)
-    predictor, _ = registry["freeze"](service, selection)
+    service, cohort = registry.__wrapped__(tmp_path)
+    selection, *_ = candidate(service)
+    predictor, _ = freeze(service, selection)
     runs = EvaluationRunService(service.store, service.filesystem)
     predictor = copy.deepcopy(predictor)
     altered = copy.deepcopy(runs.cohorts.get(cohort["id"]))

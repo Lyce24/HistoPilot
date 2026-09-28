@@ -1,11 +1,18 @@
 """An experiment submission locks one complete plan across retries and recovery."""
 
 import copy
-import runpy
-from pathlib import Path
 
 import pytest
-from support import t2
+from support.training import (
+    Runtime,
+    batch_tasks,
+    development_batch,
+    finish_batch,
+    launched,
+    lose_batch,
+    preflights,
+    training_service,
+)
 
 from histopilot.application.experiment_predictors import ExperimentPredictorService
 from histopilot.application.lifecycle import CleanupService
@@ -19,8 +26,6 @@ from histopilot.schemas.model_experiments import (
 )
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
-
-support = runpy.run_path(str(Path(__file__).with_name("test_development_batches.py")))
 
 
 class Training:
@@ -75,28 +80,20 @@ def plan_experiment(service, spec, **changes):
 
 
 @pytest.fixture
-def experiment(tmp_path):
-    development, spec, _ = support["batch"].__wrapped__(tmp_path)
-    training = Training(development.store)
-    service = ModelExperimentService(development.store, development.filesystem, training=training)
-    return service, development, plan_experiment(service, spec), training
-
-
-@pytest.fixture
 def managed_experiment(tmp_path, task_center, monkeypatch):
-    """``experiment`` on a Task Center TrainingService: a submission enqueues fold tasks.
+    """A planned two-batch experiment whose submission enqueues fold tasks in this Task Center.
 
     Each plan trains one configuration with one seed, so a batch is five folds and a final
     results collection. Predictors, when a plan asks for them, get a coordinator task.
     """
-    development, spec, _ = support["managed_batch"].__wrapped__(tmp_path, task_center)
+    development, spec, _ = development_batch(tmp_path)
     store, filesystem = development.store, development.filesystem
-    training = t2.training_service(store, filesystem, task_center, monkeypatch)
+    training = training_service(store, filesystem, task_center, monkeypatch)
     predictors = ExperimentPredictorService(
         store,
         filesystem,
         training=training,
-        runtime=t2.Runtime(),
+        runtime=Runtime(),
         task_center=task_center.client,
     )
     service = ModelExperimentService(
@@ -157,10 +154,10 @@ def test_all_preflight_checks_finish_before_any_configuration_is_locked(
     with pytest.raises(StorageError) as error:
         submit(service, record)
     assert error.value.code == "TRAINING_RUNTIME_UNAVAILABLE"
-    assert t2.preflights(training) == 2
+    assert preflights(training) == 2
     current = service.get(record["id"])
     assert current["stage"] == "planning" and current["submission"] is None
-    assert current["batches"] == [] and t2.launched(task_center) == []
+    assert current["batches"] == [] and launched(task_center) == []
     assert current["revision"] == record["revision"]
     assert service.store.list_configurations("mil-batch") == []
 
@@ -172,14 +169,14 @@ def test_submission_locks_inputs_batches_and_receipt_replay_never_duplicates(
     submitted = submit(service, record)
     assert submitted["stage"] == "running" and submitted["configurationLocked"]
     assert submitted["submission"]["status"] == "submitted"
-    assert len(submitted["batches"]) == len(t2.launched(task_center)) == 2
-    assert set(t2.launched(task_center)) == set(submitted["submission"]["batchIds"])
+    assert len(submitted["batches"]) == len(launched(task_center)) == 2
+    assert set(launched(task_center)) == set(submitted["submission"]["batchIds"])
     receipt = service.store.get_draft(record["id"])["payload"]["submission"]
     assert receipt["executionMode"] == "task-center"
     assert not submitted["submission"]["retryable"]
     assert "publications" not in submitted["submission"]
     assert submit(service, record)["id"] == record["id"]
-    assert len(t2.launched(task_center)) == 2 and fold_attempts(task_center) == [1] * 10
+    assert len(launched(task_center)) == 2 and fold_attempts(task_center) == [1] * 10
     for field in ({"inputs": None}, {"batchPlans": []}):
         with pytest.raises(StorageError) as error:
             service.update(
@@ -222,14 +219,16 @@ def test_partial_launch_retry_preserves_batch_ids_and_first_live_job(
     assert partial["stage"] == "running" and partial["configurationLocked"]
     assert partial["submission"]["status"] == "attention" and partial["submission"]["retryable"]
     assert partial["submission"]["error"]["code"] == "TRAINING_LAUNCH_FAILED"
-    [first] = t2.launched(task_center)
-    live = [(task["id"], task["attempt"]) for task in t2.fold_tasks(task_center, first)]
+    [first] = launched(task_center)
+    live = [(task["id"], task["attempt"]) for task in batch_tasks(task_center, first, "mil-fold")]
     recovered = submit(service, record)
     assert recovered["submission"]["batchIds"] == partial["submission"]["batchIds"]
     assert recovered["submission"]["status"] == "submitted"
-    assert len(t2.launched(task_center)) == 2 and first in t2.launched(task_center)
+    assert len(launched(task_center)) == 2 and first in launched(task_center)
     # The first batch keeps its queued tasks; only the failed start was queued again.
-    assert [(task["id"], task["attempt"]) for task in t2.fold_tasks(task_center, first)] == live
+    assert [
+        (task["id"], task["attempt"]) for task in batch_tasks(task_center, first, "mil-fold")
+    ] == live
     assert fold_attempts(task_center) == [1] * 10
 
 
@@ -253,8 +252,8 @@ def test_lost_reply_after_worker_acceptance_reuses_durable_operation(
     assert partial["submission"]["status"] == "attention"
     final = submit(service, record)
     assert final["submission"]["status"] == "submitted"
-    launched = t2.launched(task_center)
-    assert len(launched) == len(set(launched)) == 2
+    batch_ids = launched(task_center)
+    assert len(batch_ids) == len(set(batch_ids)) == 2
     assert fold_attempts(task_center) == [1] * 10
 
 
@@ -266,9 +265,9 @@ def test_completed_runs_keep_incomplete_submission_recoverable(
 
     def finish_before_reply(identity, operation, **options):
         result = original(identity, operation, **options)
-        if len(t2.launched(task_center)) == 2:
-            for batch_id in t2.launched(task_center):
-                t2.finish_batch(task_center, batch_id)
+        if len(launched(task_center)) == 2:
+            for batch_id in launched(task_center):
+                finish_batch(task_center, batch_id)
             raise OSError("Final launch was accepted, but its response was lost")
         return result
 
@@ -282,8 +281,8 @@ def test_completed_runs_keep_incomplete_submission_recoverable(
     assert recovered["submission"]["status"] == "submitted"
     assert recovered["stage"] == "finished"
     assert not recovered["submission"]["retryable"]
-    launched = t2.launched(task_center)
-    assert len(launched) == len(set(launched)) == 2
+    batch_ids = launched(task_center)
+    assert len(batch_ids) == len(set(batch_ids)) == 2
     assert fold_attempts(task_center) == [1] * 10
 
 
@@ -304,7 +303,7 @@ def test_partial_publication_retry_uses_saved_owner_after_metadata_edit(
 
     monkeypatch.setattr(service.store, "publish_configuration", publish)
     partial = submit(service, record)
-    assert partial["configurationLocked"] and t2.launched(task_center) == []
+    assert partial["configurationLocked"] and launched(task_center) == []
     changed = service.update(
         record["id"],
         UpdateModelExperiment(
@@ -315,7 +314,7 @@ def test_partial_publication_retry_uses_saved_owner_after_metadata_edit(
     )
     final = submit(service, changed)
     assert final["submission"]["status"] == "submitted"
-    assert len(final["batches"]) == len(t2.launched(task_center)) == 2
+    assert len(final["batches"]) == len(launched(task_center)) == 2
     assert all(batch["manifest"]["experiment"]["name"] == "Study" for batch in final["batches"])
 
 
@@ -325,9 +324,9 @@ def test_finished_stage_blocks_resume_and_copy_reopens_only_recipes(
     service, _, record, training = managed_experiment
     submitted = submit(service, record)
     first, second = (batch["id"] for batch in submitted["batches"])
-    t2.finish_batch(task_center, first)
+    finish_batch(task_center, first)
     training.cancel(second, "cancel")
-    t2.finish_batch(task_center, second)  # only its final collection is left to run
+    finish_batch(task_center, second)  # only its final collection is left to run
     assert [batch["status"] for batch in service.get(record["id"])["batches"]] == [
         "completed",
         "cancelled",
@@ -336,7 +335,7 @@ def test_finished_stage_blocks_resume_and_copy_reopens_only_recipes(
     assert service.get(record["id"])["stage"] == "running"
     service.require_training_action(record["id"], second, resume=True)
     training.launch(second, "resume", resume=True)
-    t2.finish_batch(task_center, second)
+    finish_batch(task_center, second)
     finished = service.get(record["id"])
     assert finished["stage"] == "finished" and finished["configurationLocked"]
     with pytest.raises(StorageError) as error:
@@ -353,7 +352,7 @@ def test_finished_stage_blocks_resume_and_copy_reopens_only_recipes(
     assert len(copied["batchPlans"]) == 2
     assert service.create(command)["id"] == copied["id"]
     assert copied["id"] != record["id"]
-    assert sorted(t2.launched(task_center)) == sorted([first, second])
+    assert sorted(launched(task_center)) == sorted([first, second])
 
 
 @pytest.mark.parametrize("outcome", ["failed", "interrupted", "unknown"])
@@ -364,9 +363,9 @@ def test_failed_interrupted_unknown_remain_recoverable_running(
     submitted = submit(service, record)
     for batch in submitted["batches"]:
         if outcome == "failed":
-            t2.finish_batch(task_center, batch["id"], fit="failed")
+            finish_batch(task_center, batch["id"], fit="failed")
         elif outcome == "interrupted":
-            t2.interrupt_batch(task_center, batch["id"])
+            lose_batch(task_center, batch["id"])
         else:
             # An unreadable execution receipt is unknown evidence, not a settled batch.
             (service.store.folder / "training" / batch["id"] / "state.json").write_text("{")
@@ -380,7 +379,7 @@ def test_submitted_batch_cannot_be_hidden_to_reopen_experiment(managed_experimen
     service, _, record, training = managed_experiment
     submitted = submit(service, record)
     for batch in submitted["batches"]:
-        t2.finish_batch(task_center, batch["id"])
+        finish_batch(task_center, batch["id"])
     cleanup = CleanupService(service.store, service.filesystem, training=training)
     for action in ("archive", "trash", "restore"):
         preview = cleanup.preview(
@@ -529,7 +528,7 @@ def test_old_frozen_batch_with_other_inputs_must_be_resolved_before_submission(
     with pytest.raises(StorageError) as error:
         submit(service, updated)
     assert error.value.code == "EXPERIMENT_BATCH_INPUTS_MISMATCH"
-    assert t2.launched(task_center) == []
+    assert launched(task_center) == []
     current = service.get(record["id"])
     assert current["stage"] == "planning" and current["submission"] is None
     assert service.store.get_configuration(batch["id"])["manifest"] == batch["manifest"]
@@ -544,7 +543,7 @@ def test_preflight_environment_drift_does_not_lock_or_publish(managed_experiment
     assert error.value.code == "EXPERIMENT_RUNTIME_CHANGED"
     current = service.get(record["id"])
     assert current["stage"] == "planning" and not current["configurationLocked"]
-    assert current["batches"] == [] and t2.launched(task_center) == []
+    assert current["batches"] == [] and launched(task_center) == []
     assert service.store.list_configurations("mil-batch") == []
 
 
@@ -572,7 +571,7 @@ def test_copy_merges_equivalent_saved_frozen_and_legacy_draft_recipes(
     assert copied["batches"] == [] and copied["drafts"] == []
     assert service.create(command)["id"] == copied["id"]
     assert service.store.get_configuration(frozen["id"])["manifest"] == frozen["manifest"]
-    assert t2.launched(task_center) == []
+    assert launched(task_center) == []
 
 
 @pytest.mark.parametrize("recover_existing_receipt", [False, True])
@@ -596,7 +595,7 @@ def test_submission_reuses_an_identical_frozen_batch_and_its_existing_label(
             partial = submit(service, record)
         assert partial["submission"]["status"] == "attention"
         assert partial["submission"]["error"]["code"] == "VERSION_LABEL_MISMATCH"
-        assert partial["configurationLocked"] and not t2.launched(task_center)
+        assert partial["configurationLocked"] and not launched(task_center)
         service.update(
             record["id"],
             UpdateModelExperiment(
@@ -605,15 +604,15 @@ def test_submission_reuses_an_identical_frozen_batch_and_its_existing_label(
         )
     submitted = submit(service, record)
     assert submitted["submission"]["status"] == "submitted", submitted["submission"]
-    launched = t2.launched(task_center)
-    assert set(submitted["submission"]["batchIds"]) == set(launched)
-    assert len(launched) == len(set(launched)) == 2
-    assert existing["id"] in launched
+    batch_ids = launched(task_center)
+    assert set(submitted["submission"]["batchIds"]) == set(batch_ids)
+    assert len(batch_ids) == len(set(batch_ids)) == 2
+    assert existing["id"] in batch_ids
     assert (
         service.store.get_configuration(existing["id"])["versionLabel"] == existing["versionLabel"]
     )
     assert submit(service, record)["submission"]["status"] == "submitted"
-    assert len(t2.launched(task_center)) == 2
+    assert len(launched(task_center)) == 2
 
 
 @pytest.mark.parametrize("state", ["archived", "trashed"])
@@ -641,7 +640,7 @@ def test_identical_inactive_batch_blocks_before_submission_locks(
     assert current["stage"] == "planning"
     assert current["submission"] is None
     assert current["revision"] == record["revision"]
-    assert not t2.launched(task_center)
+    assert not launched(task_center)
 
 
 def test_batch_predictor_policy_freezes_with_submission_and_copy_reopens_it(
@@ -709,5 +708,5 @@ def test_batch_predictor_policy_freezes_with_submission_and_copy_reopens_it(
         ),
     )
     assert all(row["spec"]["predictorPolicy"]["method"] == "skip" for row in updated["batchPlans"])
-    assert updated["predictorExecution"] is None and len(t2.launched(task_center)) == 2
+    assert updated["predictorExecution"] is None and len(launched(task_center)) == 2
     assert len(task_center.tasks(kind="predictor-coordinator")) == 1

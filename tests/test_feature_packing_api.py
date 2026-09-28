@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
-from support.features import run_pack
+from support.workers import run_pack
 
 from histopilot.api import create_app
 from histopilot.application.protocols import pack_binding_snapshot

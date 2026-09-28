@@ -7,8 +7,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from test_interpretation import save
-from test_interpretation import study as study
+from support.compute import managed_study as managed_study
+from support.compute import save_study
 
 from histopilot.storage.project_lock import StorageError
 from histopilot.viewer import sdpc, slide_images
@@ -184,13 +184,15 @@ def test_sdpc_rejects_symlink_before_launch(reader_runtime, monkeypatch):
     assert error.value.status_code == 403
 
 
-def test_sdpc_study_freezes_geometry_and_serves_original_tissue(study, reader_runtime, monkeypatch):
-    service, selection, executor = study
+def test_sdpc_study_freezes_geometry_and_serves_original_tissue(
+    managed_study, reader_runtime, monkeypatch
+):
+    service, selection, executor = managed_study
     path, _ = reader_runtime
     selected = selection.model_copy(
         update={"slides": [selection.slides[0].model_copy(update={"slidePath": str(path)})]}
     )
-    document, _ = save((service, selected, executor))
+    document, _ = save_study((service, selected, executor))
     row = document["manifest"]["slides"][0]
     assert row["backend"] == "opensdpc"
     assert (row["width"], row["height"]) == (1024, 512)

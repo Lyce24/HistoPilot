@@ -1,84 +1,22 @@
 """Development batch expansion preserves frozen splits and immutable run identity."""
 
 import copy
-import runpy
-from functools import partial
 from pathlib import Path
 
 import h5py
 import pytest
 from pydantic import ValidationError
-from support import t2
+from support.training import development_batch
 
-from histopilot.application.development import DevelopmentService, development_plans, expand_recipes
+from histopilot.application.development import development_plans, expand_recipes
 from histopilot.application.feature_packs import FeaturePackService
-from histopilot.application.protocols import ProtocolService
 from histopilot.schemas.development import DevelopmentBatchSpec, TrainingRecipe
-from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
-from histopilot.storage.scientific import ScientificStore
-
-support = runpy.run_path(str(Path(__file__).with_name("test_evaluations.py")))
-
-
-def development_batch(tmp_path, bundle):
-    folder = tmp_path / "project"
-    folder.mkdir()
-    store = ScientificStore(folder, "project-batches")
-    rows = [
-        {
-            "slideId": f"s{i:02}",
-            "patientId": f"p{i:02}",
-            "attributes": {"label": str(i % 2), "cohort": "development"},
-        }
-        for i in range(30)
-    ]
-    dataset, rows = support["dataset"](store, rows=rows)
-    features, _pack_id, source = bundle(
-        store, tmp_path, dataset, [row["slideId"] for row in rows], pack=True
-    )
-    protocol_spec = {
-        "datasetId": dataset["id"],
-        "target": support["TARGET"],
-        "split": {
-            "version": 4,
-            "mode": "kfold",
-            "folds": 5,
-            "seeds": [42],
-            "pools": {"trainSelection": "remaining"},
-        },
-    }
-    draft = store.create_draft(
-        "experiment", "Development protocol", {"type": "analysis-protocol", "spec": protocol_spec}
-    )
-    protocols = ProtocolService(store, LocalFilesystem((tmp_path,)))
-    preview = protocols.preview(draft["id"], 1)
-    assert preview["canFreeze"], preview["findings"]
-    protocol = protocols.freeze(draft["id"], 1, preview["previewHash"], "protocol")
-    spec = DevelopmentBatchSpec(
-        experimentName="Optimizer tuning",
-        batchName="Sweep v1",
-        inputs={"protocolId": protocol["id"], "featureBundleId": features["id"]},
-        mode="grid",
-        grid={
-            "learningRates": [0.0001, 0.0003, 0.001],
-            "weightDecays": [0, 0.0001],
-            "maxEpochs": [50, 100],
-        },
-        trainingSeeds=[10, 20, 30],
-    )
-    return DevelopmentService(store, LocalFilesystem((tmp_path,))), spec, source
 
 
 @pytest.fixture
 def batch(tmp_path):
-    return development_batch(tmp_path, support["bundle"])
-
-
-@pytest.fixture
-def managed_batch(tmp_path, task_center):
-    """``batch`` with its features validated and packed by a Task Center packing task."""
-    return development_batch(tmp_path, partial(t2.bundle, task_center))
+    return development_batch(tmp_path)
 
 
 def codes(preview):
@@ -121,8 +59,8 @@ def test_advanced_recipe_rejects_invalid_optimization_and_epoch_controls(changes
         TrainingRecipe(**changes)
 
 
-def test_resolved_grid_recipes_validate_minimum_and_warmup_epochs(managed_batch):
-    service, spec, _source = managed_batch
+def test_resolved_grid_recipes_validate_minimum_and_warmup_epochs(batch):
+    service, spec, _source = batch
     raw = spec.model_dump()
     raw["recipe"].update(lrScheduler="cosine", warmupEpochs=10)
     raw["grid"]["maxEpochs"] = [10, 20]
@@ -139,8 +77,8 @@ def test_resolved_grid_recipes_validate_minimum_and_warmup_epochs(managed_batch)
     assert error.value.code == "INVALID_TRAINING_RECIPE"
 
 
-def test_whole_bag_freeze_preserves_original_bounded_batch_seeds_and_memberships(managed_batch):
-    service, spec, _source = managed_batch
+def test_whole_bag_freeze_preserves_original_bounded_batch_seeds_and_memberships(batch):
+    service, spec, _source = batch
     original_preview = service.preview(spec)
     original = service.freeze(
         spec, original_preview["previewHash"], "bounded-bags", {"tag": "Bounded bags"}
@@ -171,8 +109,8 @@ def test_whole_bag_freeze_preserves_original_bounded_batch_seeds_and_memberships
     assert [recipe["bagSize"] for recipe in expand_recipes(explicit)] == [4096, None]
 
 
-def test_grid_expands_twelve_configurations_three_training_seeds_five_frozen_plans(managed_batch):
-    service, spec, _source = managed_batch
+def test_grid_expands_twelve_configurations_three_training_seeds_five_frozen_plans(batch):
+    service, spec, _source = batch
     protocol = service.store.get_configuration(spec.inputs.protocolId)
     before = copy.deepcopy(protocol)
     preview = service.preview(spec)
@@ -196,8 +134,8 @@ def test_grid_expands_twelve_configurations_three_training_seeds_five_frozen_pla
     assert service.store.get_configuration(spec.inputs.protocolId) == before
 
 
-def test_explicit_rows_preserve_parameter_pairs_and_deduplicate_equal_recipes(managed_batch):
-    service, spec, _source = managed_batch
+def test_explicit_rows_preserve_parameter_pairs_and_deduplicate_equal_recipes(batch):
+    service, spec, _source = batch
     first = TrainingRecipe(learningRate=0.001, weightDecay=0, maxEpochs=50)
     second = TrainingRecipe(learningRate=0.0001, weightDecay=0.01, maxEpochs=100)
     spec = spec.model_copy(
@@ -213,8 +151,8 @@ def test_explicit_rows_preserve_parameter_pairs_and_deduplicate_equal_recipes(ma
     ]
 
 
-def test_identical_resolved_recipes_have_same_identity_across_setup_modes(managed_batch):
-    service, spec, _source = managed_batch
+def test_identical_resolved_recipes_have_same_identity_across_setup_modes(batch):
+    service, spec, _source = batch
     spec = spec.model_copy(update={"mode": "single"})
     single = service.preview(spec)
     explicit = service.preview(
@@ -225,8 +163,8 @@ def test_identical_resolved_recipes_have_same_identity_across_setup_modes(manage
 
 
 @pytest.mark.parametrize("version", [1, 2, 3])
-def test_legacy_protocols_cannot_create_new_development_batches(managed_batch, version):
-    service, spec, _source = managed_batch
+def test_legacy_protocols_cannot_create_new_development_batches(batch, version):
+    service, spec, _source = batch
     manifest = service.store.get_configuration(spec.inputs.protocolId)["manifest"]
     manifest["spec"]["split"]["version"] = version
     old = service.store.publish_configuration(manifest=manifest, operation_id="legacy")
@@ -241,8 +179,8 @@ def test_legacy_protocols_cannot_create_new_development_batches(managed_batch, v
     assert error.value.code == "BATCH_PREFLIGHT_BLOCKED"
 
 
-def test_nested_cv_search_dependency_is_blocked_without_generating_outer_scores(managed_batch):
-    service, spec, _source = managed_batch
+def test_nested_cv_search_dependency_is_blocked_without_generating_outer_scores(batch):
+    service, spec, _source = batch
     manifest = service.store.get_configuration(spec.inputs.protocolId)["manifest"]
     manifest["spec"]["split"]["mode"] = "nested_kfold"
     nested = service.store.publish_configuration(manifest=manifest, operation_id="nested")
@@ -256,10 +194,8 @@ def test_nested_cv_search_dependency_is_blocked_without_generating_outer_scores(
 
 
 @pytest.mark.parametrize("mode", ["monte_carlo", "leave_one_domain_out", "held_out"])
-def test_nonexecutable_v4_splits_block_new_batches_without_changing_saved_protocols(
-    managed_batch, mode
-):
-    service, spec, _source = managed_batch
+def test_nonexecutable_v4_splits_block_new_batches_without_changing_saved_protocols(batch, mode):
+    service, spec, _source = batch
     manifest = service.store.get_configuration(spec.inputs.protocolId)["manifest"]
     manifest["spec"]["split"]["mode"] = mode
     protocol = service.store.publish_configuration(manifest=manifest, operation_id="unsupported")
@@ -302,8 +238,8 @@ def test_development_plan_expansion_omits_legacy_final_and_external_pool_rows():
     assert result[0]["partitions"] == {"train": 1}
 
 
-def test_freeze_is_idempotent_and_rejects_changed_spec_tag_or_note(managed_batch):
-    service, spec, _source = managed_batch
+def test_freeze_is_idempotent_and_rejects_changed_spec_tag_or_note(batch):
+    service, spec, _source = batch
     preview = service.preview(spec)
     label = {"tag": "AdamW exploration", "note": "Three training seeds."}
     frozen = service.freeze(spec, preview["previewHash"], "batch-freeze", label)
@@ -321,8 +257,8 @@ def test_freeze_is_idempotent_and_rejects_changed_spec_tag_or_note(managed_batch
         assert error.value.code == "OPERATION_CONFLICT"
 
 
-def test_freeze_replays_after_source_staleness_without_republishing(managed_batch):
-    service, spec, source = managed_batch
+def test_freeze_replays_after_source_staleness_without_republishing(batch):
+    service, spec, source = batch
     preview = service.preview(spec)
     label = {"tag": "Original batch"}
     original = service.freeze(spec, preview["previewHash"], "original-batch", label)
@@ -333,8 +269,8 @@ def test_freeze_replays_after_source_staleness_without_republishing(managed_batc
 
 
 @pytest.mark.parametrize("changed", ["source", "pack", "evidence"])
-def test_freshness_is_rechecked_inside_publication_transaction(managed_batch, monkeypatch, changed):
-    service, spec, source = managed_batch
+def test_freshness_is_rechecked_inside_publication_transaction(batch, monkeypatch, changed):
+    service, spec, source = batch
     preview = service.preview(spec)
     bundle = service.store.get_configuration(spec.inputs.featureBundleId)["manifest"]
     publish = service.store.publish_configuration
@@ -360,8 +296,8 @@ def test_freshness_is_rechecked_inside_publication_transaction(managed_batch, mo
     assert service.store.configuration_publication("raced") is None
 
 
-def test_changed_preview_intent_cannot_be_frozen(managed_batch):
-    service, spec, _source = managed_batch
+def test_changed_preview_intent_cannot_be_frozen(batch):
+    service, spec, _source = batch
     preview = service.preview(spec)
     changed = spec.model_copy(update={"trainingSeeds": [777]})
     with pytest.raises(StorageError) as error:

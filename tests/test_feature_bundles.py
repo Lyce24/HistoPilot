@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from support.features import run_pack
+from support.workers import run_pack
 
 from histopilot.api import create_app
 from histopilot.application.feature_bundles import FeatureBundleService

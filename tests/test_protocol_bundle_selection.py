@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from support import t2
+from support import projects
 
 from histopilot.application.protocols import ProtocolService
 from histopilot.schemas.protocols import ProtocolExploreRequest, ProtocolSpec
@@ -146,7 +146,6 @@ def test_dataset_only_protocol_binds_reusable_bundle_later_in_experiments(tmp_pa
     from histopilot.storage.filesystem import LocalFilesystem
     from histopilot.storage.scientific import ScientificStore
 
-    fixtures = runpy.run_path(str(Path(__file__).with_name("test_evaluations.py")))
     folder = tmp_path / "project"
     folder.mkdir()
     store = ScientificStore(folder, "project-bundle-intersection")
@@ -159,9 +158,8 @@ def test_dataset_only_protocol_binds_reusable_bundle_later_in_experiments(tmp_pa
         }
         for i in range(26)
     ]
-    original, _ = fixtures["dataset"](store, rows=encoded_rows)
-    bundle, _pack, _source = t2.bundle(
-        task_center,
+    original, _ = projects.dataset(store, rows=encoded_rows)
+    bundle, _pack, _source = projects.bundle(
         store,
         tmp_path,
         original,
@@ -174,11 +172,11 @@ def test_dataset_only_protocol_binds_reusable_bundle_later_in_experiments(tmp_pa
             "attributes": {"label": None, "cohort": "RIH"},
         }
     ]
-    study, _ = fixtures["dataset"](store, operation="new-study", rows=study_rows)
+    study, _ = projects.dataset(store, operation="new-study", rows=study_rows)
     spec = {
         "datasetId": study["id"],
         "featureBundleId": bundle["id"],
-        "target": fixtures["TARGET"],
+        "target": projects.TARGET,
         "split": {
             "version": 4,
             "mode": "kfold",

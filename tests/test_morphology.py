@@ -7,7 +7,8 @@ import h5py
 import numpy as np
 import pytest
 from PIL import Image
-from support.interpretation import managed_packing, run_pack
+from support.projects import packing_service
+from support.workers import run_pack
 
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.features import FeatureService
@@ -79,11 +80,11 @@ def make_study(tmp_path, request, center):
     feature = features.freeze(
         spec, features.preview(spec)["previewHash"], "feature", version_label={"tag": "test"}
     )
-    packs = managed_packing(store, filesystem, center)
+    packs = packing_service(store, filesystem)
     pack_spec = FeaturePackSpec(featureSetId=feature["id"], action="validate")
     preview = packs.preview(pack_spec)
     job = packs.submit(pack_spec, preview["previewHash"], "validate")
-    result = run_pack(packs, job, center)
+    result = run_pack(center.store, job)
     assert result["state"] == "succeeded", result
     bundles = FeatureBundleService(store, filesystem)
     bundle_spec = FeatureBundleSpec(featureSetId=feature["id"])
@@ -95,12 +96,6 @@ def make_study(tmp_path, request, center):
         datasetId=dataset["id"], featureBundleId=bundle["id"], patchesPerSlide=2
     )
     return MorphologyService(store, filesystem), request, sources, images
-
-
-@pytest.fixture
-def study(tmp_path, request, task_center):
-    """The study, its validation job run as a task of this test's Task Center."""
-    return make_study(tmp_path, request, task_center)
 
 
 @pytest.fixture
@@ -231,10 +226,10 @@ def test_explicit_verified_store_scope_can_be_used_with_dataset(managed_study, t
         "store-feature",
         version_label={"tag": "Store source"},
     )
-    packing = managed_packing(service.store, service.filesystem, task_center)
+    packing = packing_service(service.store, service.filesystem)
     validate = FeaturePackSpec(featureSetId=feature["id"], action="validate")
     job = packing.submit(validate, packing.preview(validate)["previewHash"], "store-validate")
-    assert run_pack(packing, job, task_center)["state"] == "succeeded"
+    assert run_pack(task_center.store, job)["state"] == "succeeded"
     spec = FeatureBundleSpec(featureSetId=feature["id"])
     bundle = service.bundles.freeze(
         spec,

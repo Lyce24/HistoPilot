@@ -8,7 +8,9 @@ from threading import Event
 
 import pytest
 from pydantic import ValidationError
-from support.evaluation import compute_tasks
+from support.compute import compute_tasks
+from support.predictors import candidate, freeze
+from support.projects import lifecycle
 
 from histopilot.application.bulk_evaluations import BulkEvaluationService
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection, RunBulkEvaluation
@@ -17,7 +19,6 @@ from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json
 
 support = runpy.run_path(str(Path(__file__).with_name("test_evaluation_execution_service.py")))
-registry = runpy.run_path(str(Path(__file__).with_name("test_predictor_registry.py")))
 
 
 @pytest.fixture
@@ -42,8 +43,8 @@ def run_request(selection, preview, operation="bulk-run"):
 
 
 def another(service, name):
-    selected, *_ = registry["candidate"](service.evaluations.predictors, name)
-    return registry["freeze"](service.evaluations.predictors, selected)[0]
+    selected, *_ = candidate(service.evaluations.predictors, name)
+    return freeze(service.evaluations.predictors, selected)[0]
 
 
 def test_all_scope_freezes_reviewed_ids_and_does_not_include_later_predictors(
@@ -180,7 +181,7 @@ def test_batch_manifest_retains_dependency_refs_and_selected_scope_is_explicit(b
 def test_deleted_explicit_selection_requires_removal_before_submission(bulk, task_center):
     service, valid, cohort = bulk
     deleted = another(service, "Deleted")
-    registry["lifecycle"](service.store, deleted, "trashed")
+    lifecycle(service.store, deleted, "trashed")
     choice = BulkEvaluationSelection(
         cohortId=cohort["id"], scope="selected", predictorIds=[valid["id"], deleted["id"]]
     )

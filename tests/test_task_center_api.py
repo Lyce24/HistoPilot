@@ -4,7 +4,6 @@ import hashlib
 import inspect
 import json
 import os
-import runpy
 import subprocess
 import sys
 import tempfile
@@ -1737,13 +1736,15 @@ def test_operations_inventory_reads_leases_without_pruning(api, registry):
 
 def _launched_batch(api, tmp_path, monkeypatch):
     """A real task-center batch of five folds, launched in a project of this workspace."""
+    from support import projects
+    from support.training import runtime
+
     from histopilot.application.development import DevelopmentService
     from histopilot.application.protocols import ProtocolService
     from histopilot.application.training import TrainingService
     from histopilot.schemas.development import DevelopmentBatchSpec
     from histopilot.storage.filesystem import LocalFilesystem
 
-    support = runpy.run_path(str(Path(__file__).with_name("test_evaluations.py")))
     monkeypatch.setattr("histopilot.application.training.gpu_snapshot", lambda: {"gpus": []})
     monkeypatch.setattr("histopilot.workers.training_process.gpu_snapshot", lambda: {"gpus": []})
     project_id, _folder = register(api)
@@ -1756,8 +1757,8 @@ def _launched_batch(api, tmp_path, monkeypatch):
         }
         for i in range(30)
     ]
-    dataset, rows = support["dataset"](store, rows=rows)
-    bundle, _pack, _source = support["bundle"](
+    dataset, rows = projects.dataset(store, rows=rows)
+    bundle, _pack, _source = projects.bundle(
         store, tmp_path, dataset, [row["slideId"] for row in rows], pack=True
     )
     filesystem = LocalFilesystem((tmp_path,))
@@ -1768,7 +1769,7 @@ def _launched_batch(api, tmp_path, monkeypatch):
             "type": "analysis-protocol",
             "spec": {
                 "datasetId": dataset["id"],
-                "target": support["TARGET"],
+                "target": projects.TARGET,
                 "split": {
                     "version": 4,
                     "mode": "kfold",
@@ -1796,16 +1797,6 @@ def _launched_batch(api, tmp_path, monkeypatch):
     )
     preview = development.preview(spec)
     frozen = development.freeze(spec, preview["previewHash"], "batch", {"tag": "Batch"})
-
-    def runtime():
-        return {
-            "available": True,
-            "python": sys.executable,
-            "versions": {},
-            "cudaAvailable": False,
-            "gpuCount": 0,
-            "findings": [],
-        }
 
     training = TrainingService(store, filesystem, runtime=runtime)
     training.launch(frozen["id"], "launch-1")

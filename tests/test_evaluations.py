@@ -4,134 +4,16 @@ import copy
 import json
 
 import h5py
-import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from support.evaluation import packing_service, run_packing
+from support.projects import TARGET, bundle, codes, dataset, draft, preview, setup
 
 from histopilot.api import create_app
-from histopilot.application.evaluations import EvaluationService
-from histopilot.application.feature_bundles import FeatureBundleService
-from histopilot.application.features import FeatureService
 from histopilot.config import Settings
 from histopilot.schemas.evaluations import EvaluationSpec, InferenceSettings
-from histopilot.schemas.feature_bundles import FeatureBundleSpec
-from histopilot.schemas.feature_packs import FeaturePackSpec
-from histopilot.schemas.features import FeatureSpec
-from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-
-TARGET = {
-    "field": "label",
-    "task": "binary_classification",
-    "unit": "patient",
-    "classes": ["low", "high"],
-    "labels": {"0": "low", "1": "high"},
-    "positiveClass": "high",
-}
-
-
-def dataset(store, operation="dataset", rows=None, inventory=None):
-    if rows is None:
-        rows = [
-            {
-                "slideId": f"s{i}",
-                "patientId": f"p{i}",
-                "attributes": {
-                    "label": str(i % 2),
-                    "cohort": "development" if i < 2 else "test",
-                },
-            }
-            for i in range(4)
-        ]
-    draft = store.create_draft("import", operation, {})
-    document = store.publish_dataset(
-        draft["id"],
-        expected_revision=1,
-        operation_id=operation,
-        manifest={
-            "kind": "dataset",
-            "dictionary": [
-                {"key": key, "sourceColumn": key, "owner": "slide", "type": "text"}
-                for key in ("label", "cohort")
-            ],
-        },
-        artifacts={
-            "records.json": json.dumps(rows).encode(),
-            **({"inventory.json": json.dumps(inventory).encode()} if inventory is not None else {}),
-        },
-    )
-    return document, rows
-
-
-def bundle(
-    store,
-    root,
-    data,
-    ids,
-    name="features",
-    dimension=4,
-    encoder="uni_v1",
-    pack=False,
-    dtype="float32",
-    feature_kind="patch",
-):
-    source = root / name
-    source.mkdir()
-    for identity in ids:
-        with h5py.File(source / f"{identity}.h5", "w") as handle:
-            handle.create_dataset("features", data=np.ones((1 if feature_kind == "slide" else 3, dimension), dtype=dtype))
-            if feature_kind == "patch":
-                handle.create_dataset("coords", data=np.ones((3, 2), dtype="int64"))
-    filesystem = LocalFilesystem((root,))
-    features = FeatureService(store, filesystem)
-    spec = FeatureSpec(datasetId=data["id"], path=str(source), encoderId=encoder, featureKind=feature_kind)
-    frozen = features.freeze(spec, features.preview(spec)["previewHash"], name)
-    packs = packing_service(store, filesystem)
-    packing = FeaturePackSpec(featureSetId=frozen["id"], action="pack" if pack else "validate")
-    job = packs.submit(packing, packs.preview(packing)["previewHash"], name + "-validation")
-    result = run_packing(packs, job)
-    assert result["state"] == "succeeded", result
-    bundle_service = FeatureBundleService(store, filesystem)
-    pack_id = result["artifact"]["id"] if pack else None
-    spec = FeatureBundleSpec(
-        featureSetId=frozen["id"], packArtifactIds=[pack_id] if pack_id else []
-    )
-    preview = bundle_service.preview(spec)
-    assert preview["canFreeze"], preview["findings"]
-    return bundle_service.freeze(spec, preview["previewHash"], name + "-bundle"), pack_id, source
-
-
-def setup(store, root, pack=False):
-    data, rows = dataset(store)
-    features, pack_id, source = bundle(
-        store, root, data, [row["slideId"] for row in rows], pack=pack
-    )
-    protocol = store.publish_configuration(
-        manifest={
-            "kind": "protocol",
-            "datasetId": data["id"],
-            "spec": {"target": TARGET, "split": {"version": 4}},
-            "memberships": [
-                {"slideId": row["slideId"], "patientId": row["patientId"], "partition": "train"}
-                for row in rows[:2]
-            ],
-        },
-        operation_id="protocol",
-    )
-    spec = {
-        "protocolId": protocol["id"],
-        "developmentFeatureBundleId": features["id"],
-        "datasetId": data["id"],
-        "featureBundleId": features["id"],
-        "target": TARGET,
-        "eligibility": [{"field": "cohort", "op": "eq", "value": "test"}],
-    }
-    if pack:
-        spec["inference"] = {"loadingPolicy": "packed", "packArtifactId": pack_id}
-    return EvaluationService(store, LocalFilesystem((root,))), spec, source
 
 
 @pytest.fixture
@@ -139,21 +21,6 @@ def evaluation(tmp_path):
     folder = tmp_path / "project"
     folder.mkdir()
     return setup(ScientificStore(folder, "project-evaluation"), tmp_path)
-
-
-def draft(service, spec, name="Later cohort"):
-    return service.store.create_draft(
-        "experiment", name, {"type": "evaluation-cohort", "spec": spec}
-    )
-
-
-def preview(service, spec):
-    item = draft(service, spec)
-    return service.preview(item["id"], 1)
-
-
-def codes(result):
-    return {item["code"] for item in result["findings"] if item["severity"] == "error"}
 
 
 @pytest.mark.parametrize("changed", ["identity", "content"])

@@ -1,12 +1,12 @@
 """Evaluation launch preserves reviewed cohorts, predictors and output provenance."""
 
 import hashlib
-import runpy
-import sys
 from pathlib import Path
 
 import pytest
-from support.evaluation import compute_tasks
+from support.compute import compute_tasks
+from support.predictors import candidate, freeze, registry
+from support.training import runtime
 
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.application.evaluation_runs import EvaluationRunService
@@ -15,24 +15,13 @@ from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json
 
-support = runpy.run_path(str(Path(__file__).with_name("test_predictor_registry.py")))
-
 
 @pytest.fixture
 def evaluation(tmp_path, monkeypatch, task_center):
-    predictors, cohort = support["registry"].__wrapped__(tmp_path)
-    selection, *_ = support["candidate"](predictors)
-    predictor, _ = support["freeze"](predictors, selection)
+    predictors, cohort = registry.__wrapped__(tmp_path)
+    selection, *_ = candidate(predictors)
+    predictor, _ = freeze(predictors, selection)
     service = EvaluationRunService(predictors.store, predictors.filesystem)
-
-    def runtime():
-        return {
-            "available": True,
-            "python": sys.executable,
-            "versions": {},
-            "cudaAvailable": False,
-            "gpuCount": 0,
-        }
 
     monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", runtime)
     service.jobs = ComputeJobService(

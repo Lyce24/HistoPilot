@@ -9,8 +9,10 @@ import h5py
 import numpy as np
 import pytest
 from pydantic import ValidationError
-from support.interpretation import compute_task, compute_tasks, launches, managed_packing, run_pack
-from test_interpretation import managed_study as managed_study
+from support.compute import compute_task, compute_tasks, launches
+from support.compute import managed_study as managed_study
+from support.projects import packing_service
+from support.workers import run_pack
 
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.features import FeatureService
@@ -73,12 +75,12 @@ def make_gallery(study, tmp_path, center):
     preview = inventories.preview(spec)
     assert preview["canFreeze"], preview
     inventory = inventories.freeze(spec, preview["previewHash"], "gallery-features")
-    packing = managed_packing(store, service.filesystem, center)
+    packing = packing_service(store, service.filesystem)
     pack_spec = FeaturePackSpec(featureSetId=inventory["id"], action="pack", dtype="preserve")
     pack_preview = packing.preview(pack_spec)
     assert pack_preview["canRun"], pack_preview
     job = packing.submit(pack_spec, pack_preview["previewHash"], "gallery-pack")
-    packed = run_pack(packing, job, center)
+    packed = run_pack(center.store, job)
     assert packed["state"] == "succeeded", packed
     bundles = FeatureBundleService(store, service.filesystem)
     bundle_spec = FeatureBundleSpec(

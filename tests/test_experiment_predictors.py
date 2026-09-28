@@ -1,111 +1,20 @@
 """Automatic experiment predictors preserve source groups, frozen policy and retries."""
 
 import copy
-import runpy
-import sys
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from support.predictors import managed as managed
+from support.predictors import registry as registry
 
-from histopilot.application.experiment_predictors import ExperimentPredictorService, source_items
+from histopilot.application.experiment_predictors import source_items
 from histopilot.application.feature_bundles import _hash
-from histopilot.application.model_experiments import ModelExperimentService, execution_contract
-from histopilot.application.refits import RefitService
+from histopilot.application.model_experiments import ModelExperimentService
 from histopilot.schemas.model_experiments import ExperimentPredictorPolicy
 from histopilot.schemas.predictors import LaunchRefit
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
-from histopilot.workers.training_process import compute_snapshot, read_json
-
-support = runpy.run_path(str(Path(__file__).with_name("test_predictor_builds.py")))
-registry = support["registry"]
-FakeJobs = support["support"]["FakeJobs"]
-
-
-class Training:
-    def __init__(self, folder):
-        self.folder = folder
-
-    def execution(self, identity, **_kwargs):
-        return read_json(self.folder / "training" / identity / "state.json")
-
-
-class Jobs(FakeJobs):
-    def __init__(self, store, runtime):
-        super().__init__(store)
-        self.runtime = lambda: runtime
-        self.launches, self.cancels = [], []
-
-    def launch(self, identity, plan, operation_id, resume=False, **task):
-        self.launches.append((identity, operation_id, resume))
-        return super().launch(identity, plan, operation_id, resume, **task)
-
-    def cancel(self, identity, operation_id=None):
-        self.cancels.append(identity)
-        self.states[identity] = {**self.states[identity], "status": "cancelled"}
-        return self.states[identity]
-
-
-def submitted(registry):
-    """An experiment whose two-seed CV batch finished, submitted with both predictor methods."""
-    predictors, _cohort = registry
-    selections, folder = support["two_seeds"](predictors)
-    store = predictors.store
-    identity = selections[0].experimentId
-    runtime = {"available": True, "python": sys.executable, "versions": {"torch": "fixture"}}
-    plan = read_json(folder / "plan.json")
-    plan.update(runtime=runtime, code=compute_snapshot())
-    state = read_json(folder / "state.json")
-    state["planHash"] = _hash(plan)
-    write_json(folder / "plan.json", plan)
-    write_json(folder / "state.json", state)
-    for run in plan["runs"]:
-        path = folder / "runs" / run["id"] / "plan.json"
-        run_plan = read_json(path)
-        run_plan.update(runtime=runtime, code=plan["code"])
-        write_json(path, run_plan)
-    record = store.get_draft(identity)
-    policy = {"method": "both", "refitPercentile": 75.0}
-    submission = {
-        "operationId": "submission",
-        "expectedRevision": 1,
-        "submittedAt": record["createdAt"],
-        "status": "submitted",
-        "error": None,
-        "batchIds": [selections[0].batchId],
-        "publications": [],
-        "executionContract": execution_contract(plan),
-        "predictorPolicy": policy,
-        "experiment": {"name": record["name"]},
-    }
-    store.update_draft(
-        identity,
-        expected_revision=record["revision"],
-        name=record["name"],
-        payload={**record["payload"], "submission": submission, "predictorPolicy": policy},
-    )
-    return predictors, identity, runtime, selections
-
-
-@pytest.fixture
-def managed(registry, task_center):
-    """The coordinator queued in this test's Task Center, as in production.
-
-    Tests call ``advance`` themselves, as the coordinator's worker would; refits stay fake.
-    """
-    predictors, identity, runtime, selections = submitted(registry)
-    store = predictors.store
-    jobs = Jobs(store, runtime)
-    service = ExperimentPredictorService(
-        store,
-        predictors.filesystem,
-        training=Training(store.folder),
-        refits=RefitService(store, predictors.filesystem, jobs=jobs),
-        runtime=lambda: runtime,
-        task_center=task_center.client,
-    )
-    return service, identity, jobs, selections
+from histopilot.workers.training_process import read_json
 
 
 def coordinators(center):

@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from support.task_center import exit_record
+from support.training import development_batch, runtime
 from test_training_control_preview import preview_context  # noqa: F401
 
 from histopilot.application.feature_bundles import _hash
@@ -34,7 +36,6 @@ from histopilot.workers.managed_collect import final_status
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json, save_state
 
-support = runpy.run_path(str(Path(__file__).with_name("test_development_batches.py")))
 setup_support = runpy.run_path(str(Path(__file__).with_name("test_experiment_setup.py")))
 
 # Serialized exactly as every pre-Task-Center spec stored its default resources.
@@ -57,17 +58,6 @@ LEGACY_EXPERIMENT = {
 }
 
 
-def runtime(**_options):
-    return {
-        "available": True,
-        "python": sys.executable,
-        "versions": {},
-        "cudaAvailable": False,
-        "gpuCount": 0,
-        "findings": [],
-    }
-
-
 @pytest.fixture(autouse=True)
 def quiet_gpu_probe(monkeypatch):
     """Requeue provenance never calls the real nvidia-smi in tests."""
@@ -85,7 +75,7 @@ def tiny_spec(spec, **changes):
 def managed(tmp_path, monkeypatch, task_center):
     monkeypatch.setattr("histopilot.application.training.gpu_snapshot", lambda: {"gpus": []})
     monkeypatch.setattr("histopilot.workers.training_process.gpu_snapshot", lambda: {"gpus": []})
-    development, spec, _source = support["batch"].__wrapped__(tmp_path)
+    development, spec, _source = development_batch(tmp_path)
     assert "resources" not in spec.model_dump()
     spec = tiny_spec(spec)
     preview = development.preview(spec)
@@ -723,16 +713,6 @@ def fabricated_task(folder, run_id=None, **fields):
         "command": {"log": str(folder / "run.log")},
         "adapterData": data,
         **fields,
-    }
-
-
-def exit_record(returncode=0, *, stop=None, lost=False):
-    return {
-        "returncode": returncode,
-        "lost": lost,
-        "signalled": False,
-        "killed": False,
-        "stopReason": stop,
     }
 
 

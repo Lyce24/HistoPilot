@@ -1,102 +1,20 @@
 """Refit provenance, epoch selection, and independent ensemble/refit identities."""
 
 import copy
-import runpy
 import sys
-from pathlib import Path
 
 import pytest
-from support.evaluation import compute_tasks
+from support.compute import compute_tasks
+from support.predictors import FakeJobs, candidate, create, freeze, refit_candidate
+from support.predictors import registry as registry
 
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.application.feature_bundles import _hash
-from histopilot.application.refits import RefitService, epoch_budget
+from histopilot.application.refits import epoch_budget
 from histopilot.schemas.development import ResourcePolicy
-from histopilot.schemas.predictors import FreezePredictor, LaunchRefit, PredictorSelection
+from histopilot.schemas.predictors import LaunchRefit
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
-
-support = runpy.run_path(str(Path(__file__).with_name("test_predictor_registry.py")))
-registry = support["registry"]
-candidate = support["candidate"]
-
-
-class FakeJobs:
-    def __init__(self, store):
-        self.store, self.states = store, {}
-
-    def folder(self, identity):
-        return self.store.folder / "compute-jobs" / identity
-
-    def status(self, identity, **kwargs):
-        return self.states.get(identity, {"status": "not_started"})
-
-    def replay_launch(self, identity, operation_id, **kwargs):
-        return None
-
-    def launch(self, identity, plan, operation_id, resume=False, **task):
-        self.task_options = task  # Task Center owner/title; the fake never queues anything.
-        folder = self.folder(identity)
-        folder.mkdir(parents=True, exist_ok=True)
-        write_json(folder / "plan.json", plan)
-        self.states[identity] = {"status": "running", "planHash": _hash(plan), "result": None}
-        return self.states[identity]
-
-    def complete(self, identity):
-        folder = self.folder(identity)
-        import json
-
-        plan = json.loads((folder / "plan.json").read_text())
-        checkpoint = folder / "final.ckpt"
-        checkpoint.write_bytes(b"Synthetic final model weights")
-        result = {
-            "runId": identity,
-            "state": "succeeded",
-            "bestCheckpointPath": str(checkpoint),
-            "epochsCompleted": plan["epochBudget"]["epochs"],
-        }
-        write_json(folder / "result.json", result)
-        self.states[identity].update(status="completed", result=result)
-
-
-def refit_candidate(service, *, epochs=(3, 10), percentile=50, legacy_history=False):
-    # Historical loss-only histories must declare their historical monitor;
-    # new recipes intentionally default to validation AUROC.
-    selection, folder, state = candidate(
-        service, refit_ready=True, checkpoint_metric="validation_loss" if legacy_history else None
-    )
-    for run, epoch in zip(state["runs"], epochs, strict=True):
-        result = run["result"]
-        result["epochsCompleted"] = 12
-        if not legacy_history:
-            result["bestEpoch"] = epoch
-        else:
-            write_json(
-                folder / "runs" / run["id"] / "history.json",
-                [
-                    {"epoch": i, "validation": {"loss": 0.7 if i + 1 == epoch else 1.0}}
-                    for i in range(12)
-                ],
-            )
-        write_json(folder / "runs" / run["id"] / "result.json", result)
-    write_json(folder / "state.json", state)
-    return (
-        PredictorSelection(
-            **{**selection.model_dump(), "method": "refit", "refitPercentile": percentile}
-        ),
-        folder,
-        state,
-    )
-
-
-def create(service, selection, jobs):
-    refits = RefitService(service.store, service.filesystem, jobs)
-    preview = service.preview(selection)
-    assert preview["canFreeze"], preview
-    request = FreezePredictor(
-        **selection.model_dump(), previewHash=preview["previewHash"], operationId="create-refit"
-    )
-    return refits, refits.create(request), request
 
 
 @pytest.mark.parametrize(
@@ -146,7 +64,7 @@ def test_refit_rejects_missing_best_epoch_instead_of_using_stopped_epochs(regist
 def test_ensemble_and_refit_are_independent_predictors_and_refit_publish_is_idempotent(registry):
     service, _ = registry
     selection, _, _ = refit_candidate(service)
-    ensemble, _ = support["freeze"](service, selection.model_copy(update={"method": "ensemble"}))
+    ensemble, _ = freeze(service, selection.model_copy(update={"method": "ensemble"}))
     assert ensemble["manifest"]["method"] == "ensemble"
     choices = service.choices()["items"]
     assert choices[0]["eligibleMethods"] == ["refit"]

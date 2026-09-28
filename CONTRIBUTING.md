@@ -54,7 +54,22 @@ def test_submission_queues_one_task_per_fold(task_center, tmp_path):
 | `runner(**options)`, `tick_until(runner, predicate)` | A real runner over this store with a fixed fake host, for tests where the worker itself must run |
 | `context(host=)` | The context an adapter hook receives from the runner |
 
-The fixture stops any runner and kills any process group it started when the test ends. Other helpers for common fixtures are in `tests/support/`.
+The fixture stops any runner and kills any process group it started when the test ends.
+
+### Test helpers
+
+Shared helpers live in `tests/support/`, one module per purpose. Import them from there rather than from another test module:
+
+| Module | Holds |
+| --- | --- |
+| `task_center.py` | `Center`, `fake_host`, and `begin`/`conclude`, which take a task through the runner's `prepare` and `on_exit` steps, plus the worker environment |
+| `workers.py` | Run a queued task's worker in-process as the runner would (`run_task`, `run_pack`, `run_archive`) or as a subprocess (`run_compute_worker`); write TRIDENT's extraction and validation receipts |
+| `projects.py` | Datasets, feature bundles packed through a real packing task, and evaluation cohorts |
+| `predictors.py` | Synthetic completed candidates, frozen predictors, fake refit jobs and the experiment predictor coordinator |
+| `training.py` | The fake training `runtime` probe, development batches, the `tc_execution` fixture, and helpers that finish or lose a batch's fold tasks |
+| `compute.py` | Compute-job services and tasks, and the `managed_study` attention study |
+
+A test module that uses a fixture from `tests/support/` imports it by name (for example `from support.predictors import registry as registry`) so that pytest registers it for that module.
 
 ### Stored names must not move
 

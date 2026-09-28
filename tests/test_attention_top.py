@@ -8,9 +8,9 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
-from support.interpretation import complete as record_completion
-from test_interpretation import managed_study as managed_study
-from test_interpretation import save
+from support.compute import complete as record_completion
+from support.compute import managed_study as managed_study
+from support.compute import save_study
 
 from histopilot.storage.project_lock import StorageError
 from histopilot.viewer.attention_arrays import attention_page, attention_top
@@ -66,7 +66,7 @@ def complete(study, *, legacy=False, footprint=(100, 100), coords=None):
         del handle["coords"].attrs["patch_size_level0"]
         handle["coords"].attrs["patch_width_level0"] = footprint[0]
         handle["coords"].attrs["patch_height_level0"] = footprint[1]
-    document, _ = save(study)
+    document, _ = save_study(study)
     identity = document["id"]
     service.launch(identity, "launch")
     folder = service.jobs.folder(identity)

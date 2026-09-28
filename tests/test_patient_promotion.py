@@ -1,11 +1,11 @@
 """Validation winners control publication and automatic predictor construction."""
 
 import copy
-import runpy
 import sys
-from pathlib import Path
 
 import pytest
+from support.predictors import Jobs, Training, candidate, freeze
+from support.predictors import registry as registry
 
 from histopilot.application.experiment_predictors import ExperimentPredictorService
 from histopilot.application.feature_bundles import _hash
@@ -15,15 +15,11 @@ from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import _run_plan
 from histopilot.workers.training_process import compute_snapshot, read_json
 
-support = runpy.run_path(str(Path(__file__).with_name("test_predictor_registry.py")))
-coordinator_support = runpy.run_path(str(Path(__file__).with_name("test_experiment_predictors.py")))
-registry = support["registry"]
-
 
 @pytest.fixture
 def selected_batch(registry):
     service, _ = registry
-    source, old_folder, old_state = support["candidate"](service, refit_ready=True)
+    source, old_folder, old_state = candidate(service, refit_ready=True)
     manifest = copy.deepcopy(service.store.get_configuration(source.batchId)["manifest"])
     manifest["spec"].update(
         selectionMetric="validation_auroc", candidateSelection="best_validation"
@@ -96,7 +92,7 @@ def test_only_validation_winner_can_publish_and_choices_explain_selection(select
     }
     assert choices[winner.candidateId]["eligible"]
     assert not choices[loser.candidateId]["eligible"]
-    predictor, _ = support["freeze"](service, winner)
+    predictor, _ = freeze(service, winner)
     evidence = predictor["manifest"]["selectionEvidence"]
     assert evidence["selectedCandidateId"] == winner.candidateId
     assert evidence["metric"] == "validation_auroc"
@@ -139,11 +135,11 @@ def test_automatic_construction_skips_losers_and_finishes_without_extra_refits(
         payload={**record["payload"], "submission": submission, "predictorPolicy": policy},
     )
     runtime = plan["runtime"]
-    jobs = coordinator_support["Jobs"](store, runtime)
+    jobs = Jobs(store, runtime)
     current = ExperimentPredictorService(
         store,
         predictors.filesystem,
-        training=coordinator_support["Training"](store.folder),
+        training=Training(store.folder),
         refits=RefitService(store, predictors.filesystem, jobs=jobs),
         runtime=lambda: runtime,
         task_center=task_center.client,

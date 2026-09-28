@@ -4,9 +4,8 @@ import hashlib
 import io
 
 import pytest
-from support.interpretation import complete
-from test_interpretation import managed_study as managed_study
-from test_interpretation import save
+from support.compute import complete, save_study
+from support.compute import managed_study as managed_study
 
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json
@@ -22,7 +21,7 @@ def top_api(managed_study, tmp_path, monkeypatch):
     from histopilot.config import Settings
 
     service, _, task_center = managed_study
-    record, _ = save(managed_study)
+    record, _ = save_study(managed_study)
     service.launch(record["id"], "top-api-launch")
     folder = service.jobs.folder(record["id"])
     artifacts = {}

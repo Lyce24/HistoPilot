@@ -10,6 +10,8 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
+from support.predictors import create, refit_candidate, registry  # noqa: E402
+
 from histopilot.training.module import MILTrainModule  # noqa: E402
 from histopilot.training.refit import RefitDataModule, train_refit  # noqa: E402
 
@@ -101,9 +103,8 @@ def test_pinned_refit_worker_runs_created_plan_and_publishes_verified_predictor(
     from histopilot.schemas.predictors import LaunchRefit
     from histopilot.taskcenter.model import TERMINAL
 
-    refit_support = runpy.run_path(str(Path(__file__).with_name("test_refit_predictors.py")))
-    service, _ = refit_support["registry"].__wrapped__(tmp_path)
-    selection, _, _ = refit_support["refit_candidate"](service, epochs=(1, 1))
+    service, _ = registry.__wrapped__(tmp_path)
+    selection, _, _ = refit_candidate(service, epochs=(1, 1))
     jobs = ComputeJobService(
         service.store,
         runtime=lambda: {
@@ -115,7 +116,7 @@ def test_pinned_refit_worker_runs_created_plan_and_publishes_verified_predictor(
         },
         task_center=task_center.client,
     )
-    refits, record, _ = refit_support["create"](service, selection, jobs)
+    refits, record, _ = create(service, selection, jobs)
     task_id = refits.launch(
         record["id"],
         LaunchRefit(

@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from support.predictors import Jobs, Training, two_seeds
+from support.predictors import registry as registry
 
 from histopilot.application.experiment_policy import policy_for_batch, submission_policies
 from histopilot.application.experiment_predictors import ExperimentPredictorService
@@ -18,15 +20,12 @@ from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import _run_plan
 from histopilot.workers.training_process import compute_snapshot, read_json
 
-support = runpy.run_path(str(Path(__file__).with_name("test_experiment_predictors.py")))
-registry = support["registry"]
-
 
 @pytest.fixture
 def managed_integrated(registry, task_center):
     """``integrated`` with the coordinator queued as a Task Center task, not an executor."""
     predictors, _cohort = registry
-    selections, folder = support["support"]["two_seeds"](predictors)
+    selections, folder = two_seeds(predictors)
     store = predictors.store
     identity = selections[0].experimentId
     runtime = {"available": True, "python": sys.executable, "versions": {"torch": "fixture"}}
@@ -61,11 +60,11 @@ def managed_integrated(registry, task_center):
         name=record["name"],
         payload={**record["payload"], "submission": submission, "predictorPolicy": policy},
     )
-    jobs = support["Jobs"](store, runtime)
+    jobs = Jobs(store, runtime)
     service = ExperimentPredictorService(
         store,
         predictors.filesystem,
-        training=support["Training"](store.folder),
+        training=Training(store.folder),
         refits=RefitService(store, predictors.filesystem, jobs=jobs),
         runtime=lambda: runtime,
         task_center=task_center.client,

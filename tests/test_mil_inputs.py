@@ -2,7 +2,6 @@
 
 import copy
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -11,7 +10,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from support.t1 import run_managed
+from support.workers import run_pack
 
 from histopilot.api import create_app
 from histopilot.application.feature_bundles import FeatureBundleService
@@ -24,7 +23,6 @@ from histopilot.schemas.mil import MILInputSpec
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.pack_features import run_job
 
 PACK_A = "pack-" + "a" * 64
 PACK_B = "pack-" + "b" * 64
@@ -303,7 +301,7 @@ def test_mil_request_rejects_contradictory_or_unimplemented_intent(changes):
 
 
 def test_mil_api_uses_immutable_bundles_and_does_not_change_old_preferences(
-    tmp_path, monkeypatch, task_center
+    tmp_path, task_center
 ):
     settings = Settings(workspace=tmp_path / "registry", data_roots=(tmp_path,))
     app = create_app(settings)
@@ -353,17 +351,13 @@ def test_mil_api_uses_immutable_bundles_and_does_not_change_old_preferences(
         )
         pack_spec = {"featureSetId": feature["id"], "action": "pack", "dtype": "preserve"}
         preview = post(base + "/feature-packs/preview", pack_spec)
-        post(
+        job = post(
             base + "/feature-packs",
             {**pack_spec, "previewHash": preview["previewHash"], "operationId": "pack"},
             201,
         )
         # The pack job is queued as a Task Center task; its worker runs here, inline.
-        [task] = task_center.tasks(kind="packing")
-        completed = run_managed(
-            task_center, task, monkeypatch, lambda: run_job(Path(task["command"]["argv"][-1]))
-        )
-        task_center.finish(task["id"], "succeeded")
+        completed = run_pack(task_center.store, job)
         assert completed["state"] == "succeeded", completed
         artifact = completed["artifact"]
         filesystem = LocalFilesystem((tmp_path,))

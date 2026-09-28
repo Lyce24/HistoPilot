@@ -1,8 +1,8 @@
 """A refit trains for its epoch budget along the fold models' own learning-rate schedule."""
 
 import pytest
-from test_experiment_predictors import managed as managed
-from test_experiment_predictors import registry as registry
+from support.predictors import managed as managed
+from support.predictors import registry as registry
 
 from histopilot.schemas.development import TrainingRecipe
 

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from test_evaluations import TARGET, bundle, dataset
-from test_training_execution import runtime
+from support.projects import TARGET, bundle, dataset
+from support.training import runtime
 
 pytest.importorskip("torch")
 pytest.importorskip("lightning")

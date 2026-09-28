@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
-from support.interpretation import launches
-from test_interpretation import managed_study as managed_study
+from support.compute import launches
+from support.compute import managed_study as managed_study
 from test_interpretation_gallery import managed_gallery as managed_gallery
 
 from histopilot.schemas.interpretation import InterpretationGalleryQuery, VisualizeInterpretation

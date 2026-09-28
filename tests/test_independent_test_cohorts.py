@@ -1,12 +1,12 @@
 """Test cohorts freeze before feature extraction; model evaluation checks compatibility."""
 
 import copy
-import runpy
-from pathlib import Path
 from uuid import uuid4
 
 import h5py
 import pytest
+from support import projects
+from support.predictors import candidate, freeze, registry
 
 from histopilot.application.bulk_evaluations import BulkEvaluationService
 from histopilot.application.evaluation_runs import EvaluationRunService
@@ -16,15 +16,12 @@ from histopilot.schemas.predictors import EvaluationRunSelection, SaveEvaluation
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.scientific import ScientificStore
 
-support = runpy.run_path(str(Path(__file__).with_name("test_predictor_registry.py")))
-cohorts = support["support"]
-
 
 def independent(service, spec):
     spec = copy.deepcopy(spec)
     for key in ("protocolId", "developmentFeatureBundleId", "featureBundleId"):
         spec.pop(key, None)
-    draft = cohorts["draft"](service, spec)
+    draft = projects.draft(service, spec)
     preview = service.preview(draft["id"], 1)
     assert preview["canFreeze"], preview["findings"]
     return service.freeze(draft["id"], 1, preview["previewHash"], uuid4().hex)
@@ -32,9 +29,9 @@ def independent(service, spec):
 
 @pytest.fixture
 def evaluation(tmp_path):
-    predictors, legacy = support["registry"].__wrapped__(tmp_path)
-    selected, *_ = support["candidate"](predictors)
-    predictor, _ = support["freeze"](predictors, selected)
+    predictors, legacy = registry.__wrapped__(tmp_path)
+    selected, *_ = candidate(predictors)
+    predictor, _ = freeze(predictors, selected)
     service = EvaluationRunService(predictors.store, predictors.filesystem)
     cohort = independent(service.cohorts, legacy["manifest"]["spec"])
     choice = EvaluationRunSelection(
@@ -47,8 +44,8 @@ def test_can_freeze_multiple_datasets_without_any_features_or_development(tmp_pa
     folder = tmp_path / "project"
     folder.mkdir()
     store = ScientificStore(folder, "project-independent")
-    first, _ = cohorts["dataset"](store)
-    second, _ = cohorts["dataset"](
+    first, _ = projects.dataset(store)
+    second, _ = projects.dataset(
         store,
         "external",
         [
@@ -67,7 +64,7 @@ def test_can_freeze_multiple_datasets_without_any_features_or_development(tmp_pa
         {
             "datasetId": first["id"],
             "datasetIds": [first["id"], second["id"]],
-            "target": cohorts["TARGET"],
+            "target": projects.TARGET,
             "eligibility": [{"field": "cohort", "op": "eq", "value": "test"}],
         },
     )
@@ -87,28 +84,28 @@ def test_multidataset_duplicate_slide_ids_block_freeze(tmp_path):
     folder = tmp_path / "project"
     folder.mkdir()
     store = ScientificStore(folder, "project-independent")
-    first, rows = cohorts["dataset"](store)
-    second, _ = cohorts["dataset"](store, "duplicate-import", rows[:1])
+    first, rows = projects.dataset(store)
+    second, _ = projects.dataset(store, "duplicate-import", rows[:1])
     service = EvaluationService(store, LocalFilesystem((tmp_path,)))
-    preview = cohorts["preview"](
+    preview = projects.preview(
         service,
         {
             "datasetId": first["id"],
             "datasetIds": [first["id"], second["id"]],
-            "target": cohorts["TARGET"],
+            "target": projects.TARGET,
         },
     )
     assert not preview["canFreeze"]
-    assert "DUPLICATE_SLIDE_ID" in cohorts["codes"](preview)
+    assert "DUPLICATE_SLIDE_ID" in projects.codes(preview)
 
 
 def test_initial_data_preview_supports_no_target_or_legacy_bindings(tmp_path):
     folder = tmp_path / "project"
     folder.mkdir()
     store = ScientificStore(folder, "project-independent")
-    data, _ = cohorts["dataset"](store)
+    data, _ = projects.dataset(store)
     service = EvaluationService(store, LocalFilesystem((tmp_path,)))
-    preview = cohorts["preview"](
+    preview = projects.preview(
         service,
         {
             "datasetId": data["id"],
@@ -151,7 +148,7 @@ def test_target_can_freeze_independently_but_mismatch_blocks_evaluation(evaluati
     frozen = independent(service.cohorts, {**spec, "target": {**spec["target"], **change}})
     preview = service.preview(choice.model_copy(update={"cohortId": frozen["id"]}))
     assert not preview["canSave"]
-    assert "TARGET_CONTRACT_MISMATCH" in cohorts["codes"](preview)
+    assert "TARGET_CONTRACT_MISMATCH" in projects.codes(preview)
 
 
 def test_development_overlap_is_checked_at_evaluation(evaluation):
@@ -160,16 +157,16 @@ def test_development_overlap_is_checked_at_evaluation(evaluation):
     assert service.cohorts.get(overlapping["id"])["current"]
     preview = service.preview(choice.model_copy(update={"cohortId": overlapping["id"]}))
     assert not preview["canSave"]
-    assert {"DEVELOPMENT_SLIDE_OVERLAP", "DEVELOPMENT_PATIENT_OVERLAP"} <= cohorts["codes"](preview)
+    assert {"DEVELOPMENT_SLIDE_OVERLAP", "DEVELOPMENT_PATIENT_OVERLAP"} <= projects.codes(preview)
 
 
 def test_evaluation_checks_exact_extracted_membership(evaluation, tmp_path):
     service, choice, cohort, _predictor = evaluation
     data = service.store.get_dataset(cohort["manifest"]["datasetId"])
-    missing, _, _ = cohorts["bundle"](service.store, tmp_path, data, ["s2"], name="partial-test")
+    missing, _, _ = projects.bundle(service.store, tmp_path, data, ["s2"], name="partial-test")
     preview = service.preview(choice.model_copy(update={"featureBundleId": missing["id"]}))
     assert not preview["canSave"]
-    assert "MISSING_TEST_FEATURES" in cohorts["codes"](preview)
+    assert "MISSING_TEST_FEATURES" in projects.codes(preview)
     assert service.cohorts.get(cohort["id"])["current"]
 
 
@@ -181,7 +178,7 @@ def test_evaluation_selects_packed_loading_and_checks_exact_pack_membership(
 
     service, choice, cohort, _predictor = evaluation
     data = service.store.get_dataset(cohort["manifest"]["datasetId"])
-    bundle, pack, _ = cohorts["bundle"](
+    bundle, pack, _ = projects.bundle(
         service.store, tmp_path, data, ["s2", "s3"], name="packed-test", pack=True
     )
     choice = choice.model_copy(
@@ -202,7 +199,7 @@ def test_evaluation_selects_packed_loading_and_checks_exact_pack_membership(
     monkeypatch.setattr(module, "_layout", missing_slide)
     preview = service.preview(choice)
     assert not preview["canSave"]
-    assert "MISSING_TEST_PACK_SLIDES" in cohorts["codes"](preview)
+    assert "MISSING_TEST_PACK_SLIDES" in projects.codes(preview)
 
 
 def test_automatic_feature_choice_is_pinned_for_saved_evaluation(evaluation, tmp_path, monkeypatch):
@@ -216,8 +213,8 @@ def test_automatic_feature_choice_is_pinned_for_saved_evaluation(evaluation, tmp
     assert service.save(request)["id"] == saved["id"]
     assert saved["manifest"]["features"] == predictor["manifest"]["inputs"]["features"]
     data = service.store.get_dataset(cohort["manifest"]["datasetId"])
-    cohorts["bundle"](service.store, tmp_path, data, ["s2", "s3"], name="later-test")
-    assert "EVALUATION_FEATURE_BUNDLE_AMBIGUOUS" in cohorts["codes"](service.preview(choice))
+    projects.bundle(service.store, tmp_path, data, ["s2", "s3"], name="later-test")
+    assert "EVALUATION_FEATURE_BUNDLE_AMBIGUOUS" in projects.codes(service.preview(choice))
     monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", lambda: {})
     plan = service._execution_plan(saved["id"])
     assert set(plan["data"]["featureFiles"]) == {"s2", "s3"}
@@ -229,7 +226,7 @@ def test_bulk_review_applies_selected_features_and_inference(evaluation, tmp_pat
 
     service, _choice, cohort, predictor = evaluation
     data = service.store.get_dataset(cohort["manifest"]["datasetId"])
-    bundle, pack, _ = cohorts["bundle"](
+    bundle, pack, _ = projects.bundle(
         service.store, tmp_path, data, ["s2", "s3"], name="bulk-test", pack=True
     )
     bulk = BulkEvaluationService(service.store, service.filesystem, evaluations=service)
@@ -252,7 +249,7 @@ def test_multidataset_evaluation_uses_combined_exact_slide_membership(evaluation
     service, choice, cohort, _predictor = evaluation
     sources = []
     for index in (2, 3):
-        source, _ = cohorts["dataset"](
+        source, _ = projects.dataset(
             service.store,
             f"source-{index}",
             [
@@ -281,7 +278,7 @@ def test_multidataset_evaluation_uses_combined_exact_slide_membership(evaluation
 
 def test_patient_namespace_declaration_is_selected_at_evaluation(evaluation):
     service, choice, cohort, predictor = evaluation
-    source, _ = cohorts["dataset"](
+    source, _ = projects.dataset(
         service.store,
         "separate-identifiers",
         [
@@ -301,7 +298,7 @@ def test_patient_namespace_declaration_is_selected_at_evaluation(evaluation):
     )
     selected = choice.model_copy(update={"cohortId": external["id"]})
     preview = service.preview(selected)
-    assert "DEVELOPMENT_PATIENT_OVERLAP" in cohorts["codes"](preview)
+    assert "DEVELOPMENT_PATIENT_OVERLAP" in projects.codes(preview)
     preview = service.preview(selected.model_copy(update={"patientIdentifiers": "independent"}))
     assert preview["canSave"], preview
     assert any(row["code"] == "PATIENT_OVERLAP_UNVERIFIABLE" for row in preview["findings"])

@@ -4,13 +4,13 @@ import json
 from pathlib import Path
 
 import pytest
-from test_mil_experimental_publication import candidate, registry, save_results, support
+from support.predictors import freeze
+from support.predictors import registry as registry
+from test_mil_experimental_publication import candidate, save_results
 
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.workers.train_batch import _run_plan
-
-__all__ = ["registry"]
 
 
 def completed_nnmil(service, monkeypatch, selection="best_validation"):
@@ -39,7 +39,7 @@ def completed_nnmil(service, monkeypatch, selection="best_validation"):
 def test_nnmil_promotes_selected_weights_and_resolved_fold_settings(registry, monkeypatch, selection):
     service, _ = registry
     choice, _, _ = completed_nnmil(service, monkeypatch, selection)
-    predictor, _ = support["freeze"](service, choice)
+    predictor, _ = freeze(service, choice)
     manifest = predictor["manifest"]
     assert manifest["recipe"]["model"] == "nnmil"
     # This fixture has no submitted construction policy; the checkpoint policy
@@ -86,7 +86,7 @@ def test_refit_uses_selected_epoch_and_recomputes_training_population(registry, 
 def test_external_evaluation_freezes_nnmil_window_policy_and_all_patches(registry, monkeypatch):
     service, cohort = registry
     choice, _, _ = completed_nnmil(service, monkeypatch)
-    predictor, _ = support["freeze"](service, choice)
+    predictor, _ = freeze(service, choice)
     evaluations = EvaluationRunService(service.store, service.filesystem)
     preview = evaluations.preview(EvaluationRunSelection(
         predictorId=predictor["id"], cohortId=cohort["id"], name="nnMIL external",

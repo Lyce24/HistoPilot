@@ -1,66 +1,30 @@
 """Durable execution preserves scientific identity across launch, resume and cancellation."""
 
 import copy
-import runpy
 import sys
 from pathlib import Path
 
 import h5py
 import pytest
-from support.t1 import attempts, batch_tasks, lose_batch, task_ids
+from support.task_center import task_ids
+from support.training import (
+    attempts,
+    batch_tasks,
+    lose_batch,
+    rewrite_batch,
+    runtime,
+    synthetic_results,
+)
+from support.training import tc_execution as tc_execution
 from test_worker_process_ownership import isolated_worker_tree as _worker_tree
 
-from histopilot.application.training import TrainingService, membership_plan_id
-from histopilot.schemas.development import DevelopmentBatchSpec
+from histopilot.application.training import membership_plan_id
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import _run_plan, collect_results
 from histopilot.workers.training_process import process_identity, read_json, save_state
 
-support = runpy.run_path(str(Path(__file__).with_name("test_development_batches.py")))
 isolated_worker_tree = _worker_tree
-
-
-def runtime():
-    return {
-        "available": True,
-        "python": sys.executable,
-        "versions": {},
-        "cudaAvailable": False,
-        "gpuCount": 0,
-        "findings": [],
-    }
-
-
-@pytest.fixture
-def tc_execution(tmp_path, monkeypatch, task_center):
-    """The same batch run as production runs it: one Task Center task per fold."""
-    monkeypatch.setattr("histopilot.application.training.gpu_snapshot", lambda: {"gpus": []})
-    monkeypatch.setattr("histopilot.workers.training_process.gpu_snapshot", lambda: {"gpus": []})
-    development, spec, source = support["batch"].__wrapped__(tmp_path)
-    values = spec.model_dump()
-    values.update(mode="single", trainingSeeds=[11])
-    values["recipe"].update(maxEpochs=1, bagSize=2, batchSize=2)
-    spec = DevelopmentBatchSpec.model_validate(values)
-    preview = development.preview(spec)
-    frozen = development.freeze(
-        spec, preview["previewHash"], "execution-batch", {"tag": "Executable batch"}
-    )
-    # New specs omit resources; the Task Center's per-run defaults stay tiny CPU settings.
-    task_center.store.update_settings({"defaults": {"cpuThreadsPerRun": 1, "dataLoaderWorkers": 0}})
-    service = TrainingService(
-        development.store,
-        development.filesystem,
-        runtime=runtime,
-        task_center=task_center.client,
-    )
-    return service, frozen, source
-
-
-def rewrite_batch(service, original, change):
-    manifest = copy.deepcopy(original["manifest"])
-    change(manifest)
-    return service.store.publish_configuration(manifest=manifest, operation_id="modified-batch")
 
 
 def test_launch_freezes_exact_work_and_idempotent_receipt(tc_execution, task_center):
@@ -634,37 +598,6 @@ def test_optional_progress_cannot_block_training_cancellation(tc_execution, cont
     cancelled = service.cancel(frozen["id"], "cancel")
     # Task Center: the queued folds are cancelled at once.
     assert cancelled["cancelRequested"] and cancelled["status"] == "cancelled"
-
-
-def synthetic_results(service, frozen):
-    batch, _guard = service._prepare(frozen)
-    rows = []
-    for run in batch["runs"]:
-        folder = service._folder(frozen["id"]) / "runs" / run["id"]
-        folder.mkdir(parents=True)
-        records = []
-        for membership in batch["memberships"][run["splitPlanId"]]:
-            if membership["partition"] == "test":
-                index = batch["target"]["classes"].index(membership["label"])
-                records.append(
-                    {
-                        "slideId": membership["slideId"],
-                        "patientId": membership["patientId"],
-                        "label": membership["label"],
-                        "labelIndex": index,
-                        "probabilities": [0.9, 0.1] if index == 0 else [0.1, 0.9],
-                    }
-                )
-        predictions = folder / "assessment-predictions.json"
-        write_json(predictions, {"records": records, "classOrder": batch["target"]["classes"]})
-        result = {
-            "runId": run["id"],
-            "state": "succeeded",
-            "predictions": {"assessment": str(predictions)},
-        }
-        write_json(folder / "result.json", result)
-        rows.append({**run, "status": "completed", "result": result, "outputPath": str(folder)})
-    return batch, {"status": "completed", "runs": rows}
 
 
 def test_real_oof_collection_checks_exact_identities_and_patient_metrics(tc_execution):

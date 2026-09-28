@@ -5,9 +5,9 @@ import shutil
 from pathlib import Path
 
 import pytest
-from test_evaluations import bundle
-from test_predictor_registry import candidate, registry
-from test_training_execution import rewrite_batch, tc_execution
+from support.predictors import candidate, registry
+from support.projects import bundle
+from support.training import rewrite_batch, tc_execution
 
 from histopilot.application.mil_inputs import MILInputService
 from histopilot.schemas.mil import MILInputSpec

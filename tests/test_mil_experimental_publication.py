@@ -1,10 +1,11 @@
 """Experimental MIL controls survive completed-fold publication and refit review."""
 
 import json
-import runpy
 from pathlib import Path
 
 import pytest
+from support import predictors
+from support.predictors import registry as registry
 
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.feature_bundles import _hash
@@ -15,20 +16,17 @@ from histopilot.schemas.training_controls import resolve_stopping
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.train_batch import _run_plan
 
-support = runpy.run_path(str(Path(__file__).with_name("test_predictor_registry.py")))
-registry = support["registry"]
-
 
 def candidate(service, monkeypatch, **recipe):
     # Reuse the complete frozen-protocol/receipt fixture with a different recipe,
     # preserving its candidate ID and batch/configuration hashes from creation.
     with monkeypatch.context() as patch:
         patch.setitem(
-            support["candidate"].__globals__,
+            predictors.candidate.__globals__,
             "TrainingRecipe",
             lambda **kwargs: TrainingRecipe(**{**kwargs, **recipe}),
         )
-        return support["candidate"](service, refit_ready=True)
+        return predictors.candidate(service, refit_ready=True)
 
 
 def save_results(folder, state):
@@ -73,7 +71,7 @@ def fallback_candidate(service, monkeypatch):
 def test_pooling_models_publish_completed_fold_checkpoints(registry, monkeypatch, model):
     service, _ = registry
     selection, _, _ = candidate(service, monkeypatch, model=model)
-    predictor, _ = support["freeze"](service, selection)
+    predictor, _ = predictors.freeze(service, selection)
     assert predictor["manifest"]["recipe"]["model"] == model
     assert len(predictor["manifest"]["checkpoints"]) == 2
 
@@ -94,7 +92,7 @@ def test_cohort_enriched_worker_memberships_publish_and_refit(registry, monkeypa
     state["planHash"] = _hash(plan)
     write_json(folder / "plan.json", plan)
     save_results(folder, state)
-    predictor, _ = support["freeze"](service, selection)
+    predictor, _ = predictors.freeze(service, selection)
     assert predictor["manifest"]["recipe"]["samplingStrategy"] == strategy
     refit = service.preview(selection.model_copy(update={"method": "refit"}))
     assert refit["canFreeze"], refit
@@ -108,7 +106,7 @@ def test_publication_pins_patient_and_ensemble_logit_aggregation(registry, monke
     selection, _, _ = candidate(
         service, monkeypatch, patientAggregation="mean_logits", ensembleAggregation="mean_logit"
     )
-    predictor, _ = support["freeze"](service, selection)
+    predictor, _ = predictors.freeze(service, selection)
     assert predictor["manifest"]["aggregation"] == "mean_logit"
     assert predictor["manifest"]["patientAggregation"] == "mean_logits"
 
@@ -118,7 +116,7 @@ def test_evaluation_inherits_logit_scoring_and_pins_the_resolved_plan(registry, 
     choice, _, _ = candidate(
         service, monkeypatch, patientAggregation="mean_logits", ensembleAggregation="mean_logit"
     )
-    predictor, _ = support["freeze"](service, choice)
+    predictor, _ = predictors.freeze(service, choice)
     evaluations = EvaluationRunService(service.store, service.filesystem)
     settings = InferenceSettings.model_validate(
         {
@@ -154,7 +152,7 @@ def test_evaluation_inherits_logit_scoring_and_pins_the_resolved_plan(registry, 
 def test_fallback_publishes_final_checkpoint_and_uses_its_epoch_for_refit(registry, monkeypatch):
     service, _ = registry
     selection, _, state = fallback_candidate(service, monkeypatch)
-    predictor, _ = support["freeze"](service, selection)
+    predictor, _ = predictors.freeze(service, selection)
     assert {row["path"] for row in predictor["manifest"]["checkpoints"]} == {
         run["result"]["lastCheckpointPath"] for run in state["runs"]
     }
@@ -210,7 +208,7 @@ def test_external_evaluation_inherits_frozen_threshold_and_analysis_policy(regis
     service, cohort = registry
     choice, _, _ = candidate(service, monkeypatch, decisionThreshold=0.7, evalBagSize=100,
                              analysis={"bootstrapResamples": 500, "bootstrapSeed": 11, "oneSlideSeed": 19})
-    predictor, _ = support["freeze"](service, choice)
+    predictor, _ = predictors.freeze(service, choice)
     evaluations = EvaluationRunService(service.store, service.filesystem)
     selection = EvaluationRunSelection(
         predictorId=predictor["id"], cohortId=cohort["id"], name="Frozen threshold",

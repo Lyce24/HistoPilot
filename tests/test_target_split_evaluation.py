@@ -2,11 +2,11 @@
 
 import copy
 import json
-import runpy
 import sys
-from pathlib import Path
 
 import pytest
+from support import projects
+from support.predictors import candidate, freeze, registry
 
 from histopilot.application.evaluation_runs import EvaluationRunService, run_purpose
 from histopilot.application.target_splits import TargetSplitService
@@ -17,14 +17,12 @@ from histopilot.schemas.predictors import (
 )
 from histopilot.storage.project_lock import StorageError
 
-registry = runpy.run_path(str(Path(__file__).with_name("test_predictor_registry.py")))
-
 
 @pytest.fixture(params=["evaluation", "separate-testing-labels", "inference"])
 def testing_partition(tmp_path, request):
-    predictors, original_cohort = registry["registry"].__wrapped__(tmp_path)
-    selection, *_ = registry["candidate"](predictors)
-    predictor, _ = registry["freeze"](predictors, selection)
+    predictors, original_cohort = registry.__wrapped__(tmp_path)
+    selection, *_ = candidate(predictors)
+    predictor, _ = freeze(predictors, selection)
     targets = TargetSplitService(predictors.store, predictors.filesystem)
     spec = {
         "datasetId": original_cohort["manifest"]["datasetId"],
@@ -152,7 +150,6 @@ def test_slide_unit_preserves_metadata_and_never_groups_training_or_testing(
     from histopilot.storage.filesystem import LocalFilesystem
     from histopilot.storage.scientific import ScientificStore
 
-    support = registry["support"]
     folder = tmp_path / "project"
     folder.mkdir()
     store = ScientificStore(folder, "slide-experiment")
@@ -168,13 +165,13 @@ def test_slide_unit_preserves_metadata_and_never_groups_training_or_testing(
         }
         for i in range(40)
     ]
-    source, _ = support["dataset"](store, rows=rows)
-    features, _, _ = support["bundle"](store, tmp_path, source, [row["slideId"] for row in rows])
+    source, _ = projects.dataset(store, rows=rows)
+    features, _, _ = projects.bundle(store, tmp_path, source, [row["slideId"] for row in rows])
     targets = TargetSplitService(store, filesystem)
     spec = {
         "datasetId": source["id"],
         "splitUnit": "slide",
-        "target": {**support["TARGET"], "unit": "slide"},
+        "target": {**projects.TARGET, "unit": "slide"},
         "split": {
             "method": "rules",
             "testRules": [{"field": "cohort", "op": "eq", "value": "test"}],
@@ -212,8 +209,8 @@ def test_slide_unit_preserves_metadata_and_never_groups_training_or_testing(
     assert protocol["manifest"]["summary"]["includedPatients"] == 0
 
     predictors = PredictorService(store, filesystem)
-    selection, *_ = registry["candidate"](predictors, feature_bundle_id=features["id"])
-    predictor, _ = registry["freeze"](predictors, selection)
+    selection, *_ = candidate(predictors, feature_bundle_id=features["id"])
+    predictor, _ = freeze(predictors, selection)
     runs = EvaluationRunService(store, filesystem)
     cohort = runs.cohorts.get(frozen["evaluationCohortId"])
     assert cohort["current"], cohort["findings"]

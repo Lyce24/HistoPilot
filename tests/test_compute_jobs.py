@@ -2,28 +2,15 @@
 
 import copy
 import hashlib
-import sys
 
 import pytest
+from support.training import runtime
 
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json
-
-
-def runtime():
-    return {
-        "available": True,
-        "python": sys.executable,
-        "versions": {},
-        "cudaAvailable": False,
-        "gpuCount": 0,
-        # Launch checks must not inherit the CI runner's resource limits.
-        "host": {"cpuCount": 8, "totalRamGb": 16},
-    }
-
 
 PLAN = {
     "kind": "evaluation",

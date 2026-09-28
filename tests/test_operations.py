@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from support.features import begin, conclude, run_archive, task_environment
+from support.task_center import begin, conclude, task_environment
+from support.workers import run_archive
 
 from histopilot.api import create_app
 from histopilot.application.operations import (

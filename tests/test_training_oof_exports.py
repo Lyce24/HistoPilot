@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from test_training_execution import synthetic_results, tc_execution
+from support.training import synthetic_results, tc_execution
 
 from histopilot.api import create_app
 from histopilot.application.feature_bundles import _hash

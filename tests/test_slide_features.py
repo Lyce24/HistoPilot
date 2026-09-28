@@ -14,7 +14,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
-from support.features import run_pack
+from support.workers import run_pack
 
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.feature_packs import FeaturePackService

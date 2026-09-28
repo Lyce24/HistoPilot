@@ -6,17 +6,17 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from support.t1 import lose_batch, run_managed, task_ids
+from support.task_center import task_ids
+from support.training import lose_batch, tc_execution
+from support.workers import run_pack
 
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers.pack_features import run_job
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import save_state
 
 packing_support = runpy.run_path(str(Path(__file__).with_name("test_feature_packs.py")))
 extraction_support = runpy.run_path(str(Path(__file__).with_name("test_extractions.py")))
-training_support = runpy.run_path(str(Path(__file__).with_name("test_training_execution.py")))
 
 
 def change(service, kind, identity, state):
@@ -46,17 +46,7 @@ def extraction(tmp_path, monkeypatch, task_center):
 
 @pytest.fixture
 def training(tmp_path, monkeypatch, task_center):
-    return training_support["tc_execution"].__wrapped__(tmp_path, monkeypatch, task_center)
-
-
-def complete(service, center, job, monkeypatch):
-    """Run the packing worker as its task, then record the task as the runner would."""
-    [task] = center.tasks(group=job["id"])
-    result = run_managed(
-        center, task, monkeypatch, lambda: run_job(service.folder / job["id"] / "plan.json")
-    )
-    center.finish(task["id"], "succeeded" if result["state"] == "succeeded" else "failed")
-    return result
+    return tc_execution.__wrapped__(tmp_path, monkeypatch, task_center)
 
 
 @pytest.mark.parametrize("kind", ["dataset", "project"])
@@ -130,12 +120,10 @@ def test_lifecycle_guard_covers_the_entire_job_start(job_type, request, monkeypa
         assert service.submit(record, "unused", "test") == {"guarded": True}
 
 
-def test_archived_pack_receipt_still_resolves_but_trash_blocks_it(
-    packing, task_center, monkeypatch
-):
+def test_archived_pack_receipt_still_resolves_but_trash_blocks_it(packing, task_center):
     service, spec, _ = packing
     job = packing_support["submit"](service, spec)
-    result = complete(service, task_center, job, monkeypatch)
+    result = run_pack(task_center.store, job)
     artifact = result["artifact"]
     service.select(spec.featureSetId, artifact["id"])
     change(service, "packing", job["id"], "archived")
@@ -282,20 +270,18 @@ def test_a_live_worker_of_a_batch_from_before_the_task_center_blocks_cleanup_but
     assert refused.value.code == "CREATED_BEFORE_TASK_CENTER"
 
 
-def test_artifact_can_use_an_older_retained_receipt_with_the_same_identity(
-    packing, task_center, monkeypatch
-):
+def test_artifact_can_use_an_older_retained_receipt_with_the_same_identity(packing, task_center):
     service, spec, _ = packing
     job = packing_support["submit"](service, spec)
-    result = complete(service, task_center, job, monkeypatch)
+    result = run_pack(task_center.store, job)
     artifact = result["artifact"]
     attach_spec = spec.model_copy(
         update={"action": "attach", "existingPath": artifact["outputPath"]}
     )
     retained = packing_support["submit"](service, attach_spec, "verify-existing-first")
-    retained_result = complete(service, task_center, retained, monkeypatch)
+    retained_result = run_pack(task_center.store, retained)
     later = packing_support["submit"](service, attach_spec, "verify-existing-again")
-    later_result = complete(service, task_center, later, monkeypatch)
+    later_result = run_pack(task_center.store, later)
     artifact_id = retained_result["artifact"]["id"]
     assert later_result["artifact"]["id"] == artifact_id
     change(service, "packing", later["id"], "trashed")

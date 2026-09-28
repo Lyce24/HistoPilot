@@ -1,14 +1,12 @@
 """Stable experiments own snapshots, survive cleanup and keep historical records readable."""
 
 import copy
-import runpy
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from support import t2
+from support.training import batch_tasks, development_batch, training_service
 
 from histopilot.api import create_app
 from histopilot.application.lifecycle import CleanupService
@@ -24,8 +22,6 @@ from histopilot.schemas.model_experiments import (
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-
-support = runpy.run_path(str(Path(__file__).with_name("test_development_batches.py")))
 
 
 class Training:
@@ -49,10 +45,8 @@ def service(tmp_path):
 
 @pytest.fixture
 def prepared(tmp_path, task_center, monkeypatch):
-    development, spec, source = support["managed_batch"].__wrapped__(tmp_path, task_center)
-    training = t2.training_service(
-        development.store, development.filesystem, task_center, monkeypatch
-    )
+    development, spec, source = development_batch(tmp_path)
+    training = training_service(development.store, development.filesystem, task_center, monkeypatch)
     service = ModelExperimentService(development.store, development.filesystem, training=training)
     experiment = service.create(
         CreateModelExperiment(
@@ -233,7 +227,7 @@ def test_running_batch_protects_experiment_upstream(prepared, task_center):
         SubmitModelExperiment(expectedRevision=record["revision"], operationId="submit"),
     )
     [batch_id] = submitted["submission"]["batchIds"]
-    task_center.start(t2.fold_tasks(task_center, batch_id)[0]["id"])
+    task_center.start(batch_tasks(task_center, batch_id, "mil-fold")[0]["id"])
     assert service.get(experiment["id"])["status"] == "running"
     lifecycle = CleanupService(service.store, service.filesystem, training=service.training)
     review = lifecycle.preview(CleanupSelection(action="archive", keys=[experiment["key"]]))
