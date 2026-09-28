@@ -91,23 +91,21 @@ def test_refit_resume_replays_incomplete_epoch_with_exact_optimizer_and_rng(
 
 
 @pytest.mark.slow
-def test_pinned_refit_worker_runs_created_plan_and_publishes_verified_predictor(tmp_path):
-    import os
-    import subprocess
+def test_pinned_refit_worker_runs_created_plan_and_publishes_verified_predictor(
+    tmp_path, task_center, monkeypatch
+):
     import sys
 
     from histopilot.application.compute_jobs import ComputeJobService
     from histopilot.schemas.development import ResourcePolicy
     from histopilot.schemas.predictors import LaunchRefit
+    from histopilot.taskcenter.model import TERMINAL
 
     refit_support = runpy.run_path(str(Path(__file__).with_name("test_refit_predictors.py")))
-    job_support = runpy.run_path(str(Path(__file__).with_name("test_compute_jobs.py")))
     service, _ = refit_support["registry"].__wrapped__(tmp_path)
     selection, _, _ = refit_support["refit_candidate"](service, epochs=(1, 1))
-    executor = job_support["Executor"]()
     jobs = ComputeJobService(
         service.store,
-        executor=executor,
         runtime=lambda: {
             "available": True,
             "python": sys.executable,
@@ -115,9 +113,11 @@ def test_pinned_refit_worker_runs_created_plan_and_publishes_verified_predictor(
             "cudaAvailable": False,
             "gpuCount": 0,
         },
+        execution_mode="task-center",
+        task_center=task_center.client,
     )
     refits, record, _ = refit_support["create"](service, selection, jobs)
-    refits.launch(
+    task_id = refits.launch(
         record["id"],
         LaunchRefit(
             operationId="launch",
@@ -128,25 +128,16 @@ def test_pinned_refit_worker_runs_created_plan_and_publishes_verified_predictor(
                 ramGbPerRun=0.01,
             ),
         ),
-    )
+    )["taskId"]
+    # The runner starts the pinned worker with this environment.
     private_tmp = tmp_path / "worker-runtime"
     private_tmp.mkdir(mode=0o700)
-    output = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "histopilot.workers.compute_job",
-            str(jobs.folder(record["id"]) / "plan.json"),
-        ],
-        cwd=jobs.folder(record["id"]) / "compute",
-        env={**os.environ, "TMPDIR": str(private_tmp), "PYTHONDONTWRITEBYTECODE": "1"},
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert output.returncode == 0, output.stderr
+    monkeypatch.setenv("TMPDIR", str(private_tmp))
+    runner = task_center.runner()
+    task_center.tick_until(runner, lambda: task_center.state(task_id) in TERMINAL, timeout=180)
+    assert task_center.state(task_id) == "succeeded", task_center.task(task_id)
     state = jobs.status(record["id"])
-    assert state["status"] == "completed", (state, output.stderr)
+    assert state["status"] == "completed", state
     published = refits.publish(record["id"], "publish-worker-model")
     assert published["manifest"]["method"] == "refit"
     assert published["manifest"]["checkpoints"][0]["bestEpoch"] == 1

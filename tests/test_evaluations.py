@@ -8,11 +8,11 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from support.evaluation import packing_service, run_packing
 
 from histopilot.api import create_app
 from histopilot.application.evaluations import EvaluationService
 from histopilot.application.feature_bundles import FeatureBundleService
-from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.features import FeatureService
 from histopilot.config import Settings
 from histopilot.schemas.evaluations import EvaluationSpec, InferenceSettings
@@ -22,10 +22,11 @@ from histopilot.schemas.features import FeatureSpec
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.pack_features import run_job
 
 
 class FakeExecutor:
+    """A tmux stand-in, still imported by modules on the legacy path."""
+
     def available(self):
         return True
 
@@ -102,10 +103,10 @@ def bundle(
     features = FeatureService(store, filesystem)
     spec = FeatureSpec(datasetId=data["id"], path=str(source), encoderId=encoder, featureKind=feature_kind)
     frozen = features.freeze(spec, features.preview(spec)["previewHash"], name)
-    packs = FeaturePackService(store, filesystem, FakeExecutor())
+    packs = packing_service(store, filesystem)
     packing = FeaturePackSpec(featureSetId=frozen["id"], action="pack" if pack else "validate")
     job = packs.submit(packing, packs.preview(packing)["previewHash"], name + "-validation")
-    result = run_job(packs.folder / job["id"] / "plan.json")
+    result = run_packing(packs, job)
     assert result["state"] == "succeeded", result
     bundle_service = FeatureBundleService(store, filesystem)
     pack_id = result["artifact"]["id"] if pack else None

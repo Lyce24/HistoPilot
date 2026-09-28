@@ -2,10 +2,12 @@
 
 import copy
 import runpy
+from functools import partial
 from pathlib import Path
 
 import h5py
 import pytest
+from support import t2
 
 from histopilot.application.development import DevelopmentService
 from histopilot.application.model_experiments import ModelExperimentService
@@ -36,9 +38,7 @@ class Training(stages["Training"]):
         return super()._prepare(batch)
 
 
-@pytest.fixture
-def setup(tmp_path, request):
-    slide_unit = getattr(request, "param", "legacy") == "slide"
+def build_setup(tmp_path, slide_unit, bundle, make_training):
     store = ScientificStore(tmp_path, "project-setup")
     rows = [
         {
@@ -76,8 +76,8 @@ def setup(tmp_path, request):
         for row in target_split["manifest"]["memberships"]
         if row["partition"] == "train"
     ]
-    bundle, _, source = support["bundle"](store, tmp_path, dataset, training_ids)
-    training = Training(store)
+    features, _, source = bundle(store, tmp_path, dataset, training_ids)
+    training = make_training(store, filesystem)
     service = ModelExperimentService(store, filesystem, training=training)
     record = service.create(
         CreateModelExperiment(
@@ -91,7 +91,7 @@ def setup(tmp_path, request):
         expectedRevision=record["revision"],
         datasetId=dataset["id"],
         targetSplitId=target_split["id"],
-        featureBundleId=bundle["id"],
+        featureBundleId=features["id"],
         trainingSplit={
             "version": 4,
             "mode": "kfold",
@@ -101,6 +101,24 @@ def setup(tmp_path, request):
         },
     )
     return service, record, request, target_split, source, training
+
+
+@pytest.fixture
+def setup(tmp_path, request):
+    slide_unit = getattr(request, "param", "legacy") == "slide"
+    return build_setup(tmp_path, slide_unit, support["bundle"], lambda store, _: Training(store))
+
+
+@pytest.fixture
+def managed_setup(tmp_path, request, task_center, monkeypatch):
+    """``setup`` with Task Center features and training; ``training.prepared`` spies preflight."""
+    slide_unit = getattr(request, "param", "legacy") == "slide"
+    return build_setup(
+        tmp_path,
+        slide_unit,
+        partial(t2.bundle, task_center),
+        partial(t2.training_service, center=task_center, monkeypatch=monkeypatch),
+    )
 
 
 def configure(setup):
@@ -143,13 +161,15 @@ def submit(service, record):
     )
 
 
-@pytest.mark.parametrize("setup", ["legacy", "slide"], indirect=True)
-def test_setup_selects_training_population_and_freezes_without_compute(setup):
-    service, original, _request, target_split, _source, training = setup
+@pytest.mark.parametrize("managed_setup", ["legacy", "slide"], indirect=True)
+def test_setup_selects_training_population_and_freezes_without_compute(
+    managed_setup, task_center
+):
+    service, original, _request, target_split, _source, training = managed_setup
     with pytest.raises(StorageError) as pending:
         submit(service, original)
     assert pending.value.code == "EXPERIMENT_SETUP_REQUIRED"
-    record = configure(setup)
+    record = configure(managed_setup)
     protocol = service.store.get_configuration(record["inputs"]["protocolId"])
     expected_unit = target_split["manifest"]["spec"].get("splitUnit", "patient")
     assert record["setupDesign"]["splitUnit"] == expected_unit
@@ -170,16 +190,18 @@ def test_setup_selects_training_population_and_freezes_without_compute(setup):
     assert frozen["frozenSetup"]["manifest"]["inputSnapshot"]["protocol"]["id"] == protocol["id"]
     assert len(service.store.list_configurations("experiment-setup")) == 1
     assert service.store.list_configurations("mil-batch") == []
-    assert training.preflight_calls == 0 and training.launches == []
+    assert t2.preflights(training) == 0 and t2.launched(task_center) == []
     assert freeze(service, record) == frozen
     with pytest.raises(StorageError) as replay:
         freeze(service, frozen, "different-freeze")
     assert replay.value.code == "EXPERIMENT_SETUP_FROZEN"
 
 
-def test_frozen_setup_blocks_science_edits_but_metadata_does_not_change_execution(setup):
-    service, _, request, _, _, training = setup
-    frozen = freeze(service, configure(setup))
+def test_frozen_setup_blocks_science_edits_but_metadata_does_not_change_execution(
+    managed_setup, task_center
+):
+    service, _, request, _, _, training = managed_setup
+    frozen = freeze(service, configure(managed_setup))
     snapshot = copy.deepcopy(frozen["frozenSetup"])
     for changes in (
         {"inputs": None},
@@ -216,18 +238,20 @@ def test_frozen_setup_blocks_science_edits_but_metadata_does_not_change_executio
     assert annotated["frozenSetup"] == snapshot
     submitted = submit(service, annotated)
     assert submitted["stage"] == "running" and submitted["submission"]["status"] == "submitted"
-    assert len(training.launches) == 1 and training.preflight_calls == 1
+    assert t2.launched(task_center) == submitted["submission"]["batchIds"]
+    assert t2.preflights(training) == 1
     assert (
         submitted["batches"][0]["manifest"]["spec"] == snapshot["manifest"]["batchPlans"][0]["spec"]
     )
     assert submitted["batches"][0]["manifest"]["experiment"]["name"] == frozen["name"]
     assert submit(service, annotated)["id"] == annotated["id"]
-    assert len(training.launches) == 1
+    assert len(t2.launched(task_center)) == 1
+    assert [task["attempt"] for task in task_center.tasks(kind="mil-fold")] == [1, 1]
 
 
-def test_copy_of_frozen_setup_is_editable_and_requires_its_own_freeze(setup):
-    service, *_ = setup
-    frozen = freeze(service, configure(setup))
+def test_copy_of_frozen_setup_is_editable_and_requires_its_own_freeze(managed_setup):
+    service, *_ = managed_setup
+    frozen = freeze(service, configure(managed_setup))
     copied = service.create(
         CreateModelExperiment(name="New setup", operationId="copy", sourceExperimentId=frozen["id"])
     )
@@ -241,8 +265,8 @@ def test_copy_of_frozen_setup_is_editable_and_requires_its_own_freeze(setup):
     assert freeze(service, copied, "copy-freeze")["frozenSetupId"] != frozen["frozenSetupId"]
 
 
-def test_setup_input_changes_require_typed_endpoint_and_matching_dataset(setup):
-    service, record, request, *_ = setup
+def test_setup_input_changes_require_typed_endpoint_and_matching_dataset(managed_setup):
+    service, record, request, *_ = managed_setup
     with pytest.raises(StorageError) as mismatch:
         service.setup_inputs(
             record["id"], request.model_copy(update={"datasetId": "dataset-" + "f" * 64})
@@ -262,10 +286,12 @@ def test_setup_input_changes_require_typed_endpoint_and_matching_dataset(setup):
 
 
 @pytest.mark.parametrize("phase", ["configure", "freeze", "submit"])
-def test_changed_feature_files_block_each_setup_execution_boundary(setup, phase):
-    service, record, request, _, source, training = setup
+def test_changed_feature_files_block_each_setup_execution_boundary(
+    managed_setup, task_center, phase
+):
+    service, record, request, _, source, training = managed_setup
     if phase != "configure":
-        record = configure(setup)
+        record = configure(managed_setup)
     if phase == "submit":
         record = freeze(service, record)
     path = next(source.glob("*.h5"))
@@ -280,12 +306,12 @@ def test_changed_feature_files_block_each_setup_execution_boundary(setup, phase)
             submit(service, record)
     assert changed.value.code in {"EXPERIMENT_INPUTS_INVALID", "BATCH_PREFLIGHT_BLOCKED"}
     assert service.get(record["id"])["revision"] == record["revision"]
-    assert training.launches == [] and training.preflight_calls == 0
+    assert t2.launched(task_center) == [] and t2.preflights(training) == 0
     assert service.get(record["id"])["submission"] is None
 
 
-def test_freeze_checks_revision_and_requires_saved_batches(setup):
-    service, record, request, *_ = setup
+def test_freeze_checks_revision_and_requires_saved_batches(managed_setup):
+    service, record, request, *_ = managed_setup
     configured = service.setup_inputs(record["id"], request)
     with pytest.raises(StorageError) as stale:
         freeze(service, record)
@@ -296,9 +322,11 @@ def test_freeze_checks_revision_and_requires_saved_batches(setup):
     assert service.store.list_configurations("experiment-setup") == []
 
 
-def test_freeze_recovers_publication_before_draft_receipt_without_duplicate(setup, monkeypatch):
-    service, *_ = setup
-    record = configure(setup)
+def test_freeze_recovers_publication_before_draft_receipt_without_duplicate(
+    managed_setup, monkeypatch
+):
+    service, *_ = managed_setup
+    record = configure(managed_setup)
     original = service.store.update_draft
 
     def lost_receipt(*args, **kwargs):
@@ -316,24 +344,28 @@ def test_freeze_recovers_publication_before_draft_receipt_without_duplicate(setu
     assert len(service.store.list_configurations("experiment-setup")) == 1
 
 
-def test_freeze_remains_available_when_execution_runtime_is_unavailable(setup):
-    service, _, _, _, _, training = setup
-    record = configure(setup)
-    training.fail_preflight = "Baseline"
+def test_freeze_remains_available_when_execution_runtime_is_unavailable(
+    managed_setup, task_center
+):
+    service, _, _, _, _, training = managed_setup
+    record = configure(managed_setup)
+    training.runtime.unavailable_after = 0
     frozen = freeze(service, record)
-    assert training.preflight_calls == 0
+    assert t2.preflights(training) == 0
     with pytest.raises(StorageError) as unavailable:
         submit(service, frozen)
     assert unavailable.value.code == "TRAINING_RUNTIME_UNAVAILABLE"
     current = service.get(record["id"])
     assert current["status"] == "ready" and current["submission"] is None
     assert current["frozenSetupId"] == frozen["frozenSetupId"]
-    assert training.launches == []
+    assert t2.launched(task_center) == []
 
 
-def test_freeze_publication_rechecks_feature_files_after_review(setup, monkeypatch):
-    service, _, _, _, source, training = setup
-    record = configure(setup)
+def test_freeze_publication_rechecks_feature_files_after_review(
+    managed_setup, task_center, monkeypatch
+):
+    service, _, _, _, source, training = managed_setup
+    record = configure(managed_setup)
     publish = service.store.publish_configuration
 
     def changed_during_publication(*args, **kwargs):
@@ -348,26 +380,37 @@ def test_freeze_publication_rechecks_feature_files_after_review(setup, monkeypat
     assert stale.value.code == "PREVIEW_STALE"
     assert service.store.list_configurations("experiment-setup") == []
     assert not service.get(record["id"])["configurationLocked"]
-    assert training.launches == []
+    assert t2.launched(task_center) == []
 
 
-def test_failed_execution_launch_retries_same_frozen_setup(setup):
-    service, _, _, _, _, training = setup
-    frozen = freeze(service, configure(setup))
-    training.fail_launch = 0
-    interrupted = submit(service, frozen)
+def test_failed_execution_launch_retries_same_frozen_setup(
+    managed_setup, task_center, monkeypatch
+):
+    service, *_ = managed_setup
+    frozen = freeze(service, configure(managed_setup))
+
+    def offline(*_args, **_kwargs):
+        raise StorageError("store offline", "TASK_CENTER_UNAVAILABLE", 503)
+
+    # The Task Center is unreachable for the first launch only.
+    with monkeypatch.context() as patch:
+        patch.setattr(task_center.client, "enqueue", offline)
+        interrupted = submit(service, frozen)
     assert interrupted["submission"]["status"] == "attention"
+    assert interrupted["submission"]["error"]["code"] == "TRAINING_LAUNCH_FAILED"
     assert interrupted["configurationLocked"]
     assert len(service.store.list_configurations("mil-batch")) == 1
-    training.fail_launch = None
+    assert t2.launched(task_center) == []
     recovered = submit(service, frozen)
     assert recovered["submission"]["status"] == "submitted"
     assert recovered["frozenSetupId"] == frozen["frozenSetupId"]
-    assert len(training.launches) == 1
+    assert t2.launched(task_center) == recovered["submission"]["batchIds"]
     assert len(service.store.list_configurations("mil-batch")) == 1
 
 
-def test_setup_routes_expose_freezing_separately_from_execution(setup, monkeypatch):
+def test_setup_routes_expose_freezing_separately_from_execution(
+    managed_setup, task_center, monkeypatch
+):
     from types import SimpleNamespace
 
     from fastapi import FastAPI
@@ -375,7 +418,7 @@ def test_setup_routes_expose_freezing_separately_from_execution(setup, monkeypat
 
     import histopilot.api.model_experiments as api
 
-    service, record, request, _, _, training = setup
+    service, record, request, _, _, training = managed_setup
     monkeypatch.setattr(api, "ModelExperimentService", lambda *_: service)
     app = FastAPI()
     app.include_router(
@@ -410,22 +453,22 @@ def test_setup_routes_expose_freezing_separately_from_execution(setup, monkeypat
         )
         assert frozen.status_code == 201, frozen.text
         assert frozen.json()["status"] == "ready"
-        assert training.launches == [] and training.preflight_calls == 0
+        assert t2.launched(task_center) == [] and t2.preflights(training) == 0
         execution = client.post(
             prefix + "/submit",
             json={"expectedRevision": frozen.json()["revision"], "operationId": "api-execute"},
         )
         assert execution.status_code == 202, execution.text
         assert execution.json()["submission"]["status"] == "submitted"
-        assert len(training.launches) == 1
+        assert len(t2.launched(task_center)) == 1 and t2.preflights(training) == 1
 
 
-def test_frozen_setup_cannot_be_archived_apart_from_its_experiment(setup):
+def test_frozen_setup_cannot_be_archived_apart_from_its_experiment(managed_setup):
     from histopilot.application.lifecycle import CleanupService
     from histopilot.schemas.lifecycle import CleanupSelection
 
-    service, *_ = setup
-    frozen = freeze(service, configure(setup))
+    service, *_ = managed_setup
+    frozen = freeze(service, configure(managed_setup))
     cleanup = CleanupService(service.store, service.filesystem, training=service.training)
     review = cleanup.preview(
         CleanupSelection(action="archive", keys=[f"configuration:{frozen['frozenSetupId']}"])
@@ -434,14 +477,14 @@ def test_frozen_setup_cannot_be_archived_apart_from_its_experiment(setup):
     assert "EXPERIMENT_CONFIGURATION_LOCKED" in {item["code"] for item in review["blockers"]}
 
 
-def test_generic_draft_api_cannot_bypass_frozen_setup_lock(setup, tmp_path, monkeypatch):
+def test_generic_draft_api_cannot_bypass_frozen_setup_lock(managed_setup, tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from histopilot.api import create_app
     from histopilot.config import Settings
 
-    service, *_ = setup
-    frozen = freeze(service, configure(setup))
+    service, *_ = managed_setup
+    frozen = freeze(service, configure(managed_setup))
     app = create_app(Settings(workspace=tmp_path / "api-workspace", data_roots=(tmp_path,)))
     monkeypatch.setattr(app.state.projects, "scientific_store", lambda _: service.store)
     with TestClient(app, base_url="http://127.0.0.1:8787") as client:
@@ -480,8 +523,8 @@ def test_generic_draft_api_cannot_bypass_frozen_setup_lock(setup, tmp_path, monk
 @pytest.mark.parametrize(
     "mode", ["monte_carlo", "leave_one_domain_out", "nested_kfold", "held_out"]
 )
-def test_setup_rejects_unexecutable_training_design_before_derivation(setup, mode):
-    service, record, request, *_ = setup
+def test_setup_rejects_unexecutable_training_design_before_derivation(managed_setup, mode):
+    service, record, request, *_ = managed_setup
     before = service.store.list_configurations("protocol")
     split = request.trainingSplit.model_copy(
         update={"mode": mode, "domainField": "cohort" if mode == "leave_one_domain_out" else None}
@@ -494,8 +537,10 @@ def test_setup_rejects_unexecutable_training_design_before_derivation(setup, mod
     assert service.get(record["id"])["setupDesign"] is None
 
 
-def test_unlabeled_testing_partition_does_not_change_training_setup_or_launch_compute(setup):
-    service, original, request, source_split, source, training = setup
+def test_unlabeled_testing_partition_does_not_change_training_setup_or_launch_compute(
+    managed_setup, task_center
+):
+    service, original, request, source_split, source, training = managed_setup
     targets = TargetSplitService(service.store, service.filesystem)
     draft = service.store.create_draft(
         "experiment",
@@ -537,4 +582,4 @@ def test_unlabeled_testing_partition_does_not_change_training_setup_or_launch_co
     }
     assert all(row["label"] is None for row in cohort["manifest"]["memberships"])
     assert frozen["setupStatus"] == "frozen" and frozen["submission"] is None
-    assert training.preflight_calls == 0 and training.launches == []
+    assert t2.preflights(training) == 0 and t2.launched(task_center) == []

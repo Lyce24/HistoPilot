@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from support.evaluation import compute_tasks
 
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.application.feature_bundles import _hash
@@ -183,22 +184,25 @@ def test_refit_rejects_changed_source_after_review_or_training(registry):
     assert error.value.code == "REFIT_EVIDENCE_CHANGED"
 
 
-def test_accepted_refit_retry_skips_evidence_scan_but_rejects_changed_resources(registry, monkeypatch):
+def test_accepted_refit_retry_skips_evidence_scan_but_rejects_changed_resources(
+    registry, task_center, monkeypatch
+):
     service, _ = registry
     selection, _, _ = refit_candidate(service)
-    job_support = runpy.run_path(str(Path(__file__).with_name("test_compute_jobs.py")))
-    executor = job_support["Executor"]()
-    jobs = ComputeJobService(service.store, executor=executor, runtime=lambda: {
+    jobs = ComputeJobService(service.store, runtime=lambda: {
         "available": True, "python": sys.executable, "versions": {},
         "cudaAvailable": False, "gpuCount": 0,
-        "host": {"cpuCount": 8, "totalRamGb": 16}})
+        "host": {"cpuCount": 8, "totalRamGb": 16}},
+        execution_mode="task-center", task_center=task_center.client)
     refits, record, _ = create(service, selection, jobs)
     request = LaunchRefit(operationId="launch-refit", resources=ResourcePolicy(gpuIds=[]))
     first = refits.launch(record["id"], request)
     monkeypatch.setattr(refits, "_verify_sources", lambda *_: pytest.fail(
         "Accepted refit retry must not scan completed fold evidence"))
     assert refits.launch(record["id"], request)["planHash"] == first["planHash"]
-    assert len(executor.calls) == 1
+    assert [(task["id"], task["attempt"]) for task in compute_tasks(task_center)] == [
+        (first["taskId"], 1)
+    ]
     with pytest.raises(StorageError) as caught:
         refits.launch(record["id"], LaunchRefit(operationId="launch-refit",
                       resources=ResourcePolicy(gpuIds=[], ramGbPerRun=2)))

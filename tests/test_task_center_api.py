@@ -1819,7 +1819,9 @@ def _launched_batch(api, tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(not _task_center_training(), reason="TrainingService has no Task Center mode")
-def test_real_training_batch_cancel_goes_through_training_service(api, tmp_path, monkeypatch):
+def test_real_training_batch_cancel_goes_through_training_service(
+    api, tmp_path, monkeypatch, task_center
+):
     """A task-center batch launched in a registered project is cancelled by owner action."""
     from histopilot.application.training import TrainingService
 
@@ -1839,25 +1841,18 @@ def test_real_training_batch_cancel_goes_through_training_service(api, tmp_path,
     # The runner's final collection records the cancelled batch; an owner retry then
     # resumes it through the real TrainingService.
     from histopilot.taskcenter import capacity
-    from histopilot.taskcenter.runner import Runner
 
-    messages = []
-    runner = Runner(
-        default_client().store,
+    runner = task_center.runner(
         host_probe=lambda: capacity.host(gpu_probe=lambda: {"gpus": []}),
         sample_interval=1.0,
         host_interval=1.0,
-        log=messages.append,
     )
-    runner.start(lock=False)
-    deadline = time.monotonic() + 600
-    while any(
-        item["state"] in LIVE
-        for item in default_client().store.list(owner_key=owner_row["key"], limit=None)
-    ):
-        assert time.monotonic() < deadline, messages[-20:]
-        runner.tick()
-        time.sleep(0.2)
+
+    def settled():
+        tasks = task_center.store.list(owner_key=owner_row["key"], limit=None)
+        return not any(item["state"] in LIVE for item in tasks)
+
+    task_center.tick_until(runner, settled, timeout=600)
     training = TrainingService(store, filesystem, runtime=runtime, execution_mode="task-center")
     assert training.execution(frozen["id"])["status"] == "cancelled"
     # The features of this fixture live outside the app's data roots.

@@ -2,6 +2,7 @@
 
 import copy
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -10,6 +11,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from support.t1 import run_managed
 
 from histopilot.api import create_app
 from histopilot.application.feature_bundles import FeatureBundleService
@@ -300,31 +302,9 @@ def test_mil_request_rejects_contradictory_or_unimplemented_intent(changes):
         )
 
 
-class InlineTestExecutor:
-    def __init__(self):
-        self.sessions = set()
-        self.plans = []
-
-    def available(self):
-        return True
-
-    def running(self, name):
-        return name in self.sessions
-
-    def launch(self, name, _runner, plan):
-        self.sessions.add(name)
-        self.plans.append(plan)
-
-
-def test_mil_api_uses_immutable_bundles_and_does_not_change_old_preferences(tmp_path, monkeypatch):
-    executor = InlineTestExecutor()
-    monkeypatch.setattr(
-        "histopilot.application.feature_packs.TmuxPackingExecutor", lambda: executor
-    )
-    # Packs are built inline through the legacy launch path (Area D kept it for tests).
-    monkeypatch.setattr(
-        "histopilot.application.task_records.default_execution_mode", lambda: "tmux"
-    )
+def test_mil_api_uses_immutable_bundles_and_does_not_change_old_preferences(
+    tmp_path, monkeypatch, task_center
+):
     settings = Settings(workspace=tmp_path / "registry", data_roots=(tmp_path,))
     app = create_app(settings)
     with TestClient(app, base_url="http://127.0.0.1:8787") as client:
@@ -378,8 +358,12 @@ def test_mil_api_uses_immutable_bundles_and_does_not_change_old_preferences(tmp_
             {**pack_spec, "previewHash": preview["previewHash"], "operationId": "pack"},
             201,
         )
-        completed = run_job(executor.plans[0])
-        executor.sessions.clear()
+        # The pack job is queued as a Task Center task; its worker runs here, inline.
+        [task] = task_center.tasks(kind="packing")
+        completed = run_managed(
+            task_center, task, monkeypatch, lambda: run_job(Path(task["command"]["argv"][-1]))
+        )
+        task_center.finish(task["id"], "succeeded")
         assert completed["state"] == "succeeded", completed
         artifact = completed["artifact"]
         filesystem = LocalFilesystem((tmp_path,))

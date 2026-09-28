@@ -7,28 +7,12 @@ import h5py
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from support.features import run_pack
 
 from histopilot.api import create_app
 from histopilot.application.protocols import pack_binding_snapshot
 from histopilot.config import Settings
 from histopilot.storage.packed import PackedFeatureStore, validate_pack
-from histopilot.workers.pack_features import run_job
-
-
-class FakeExecutor:
-    def __init__(self):
-        self.sessions = set()
-        self.plans = []
-
-    def available(self):
-        return True
-
-    def running(self, session):
-        return session in self.sessions
-
-    def launch(self, session, runner, plan):
-        self.sessions.add(session)
-        self.plans.append(plan)
 
 
 def auth(client):
@@ -42,15 +26,7 @@ def post(client, path, data, status=200):
 
 
 @pytest.mark.parametrize("action", ["pack", "validate"])
-def test_frozen_features_worker_receipt_and_reopen(tmp_path, monkeypatch, action):
-    executor = FakeExecutor()
-    monkeypatch.setattr(
-        "histopilot.application.feature_packs.TmuxPackingExecutor", lambda: executor
-    )
-    # This test exercises the legacy tmux launch path of the API.
-    monkeypatch.setattr(
-        "histopilot.application.task_records.default_execution_mode", lambda: "tmux"
-    )
+def test_frozen_features_worker_receipt_and_reopen(tmp_path, task_center, action):
     settings = Settings(workspace=tmp_path / "registry", data_roots=(tmp_path,))
     app = create_app(settings)
     with TestClient(app, base_url="http://127.0.0.1:8787") as client:
@@ -116,11 +92,10 @@ def test_frozen_features_worker_receipt_and_reopen(tmp_path, monkeypatch, action
         assert preview["sourceDtype"] == "float32"
         intent = {**pack_spec, "previewHash": preview["previewHash"], "operationId": "pack-op"}
         job = post(client, route, intent, 201)
-        assert job["state"] == "running"
+        assert job["state"] == "queued" and job["executor"] == "task-center"
         assert post(client, route, intent, 201)["id"] == job["id"]
-        assert len(executor.plans) == 1
-        completed = run_job(executor.plans[0])
-        executor.sessions.clear()
+        assert len(task_center.tasks(kind="packing")) == 1
+        completed = run_pack(task_center.store, job)
         assert completed["state"] == "succeeded", completed
         detail = client.get(route + f"/{job['id']}").json()
         assert detail["state"] == "succeeded"
@@ -207,8 +182,7 @@ def test_frozen_features_worker_receipt_and_reopen(tmp_path, monkeypatch, action
                 },
                 201,
             )
-            attach_result = run_job(executor.plans[-1])
-            executor.sessions.clear()
+            attach_result = run_pack(task_center.store, attached)
             assert attach_result["state"] == "succeeded", attach_result
             imported = attach_result["artifact"]
             assert imported["materializationId"] == artifact["materializationId"]

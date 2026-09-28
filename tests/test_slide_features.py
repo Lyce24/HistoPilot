@@ -14,6 +14,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
+from support.features import run_pack
 
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.feature_packs import FeaturePackService
@@ -26,7 +27,6 @@ from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.packed import PackedStoreError, PackingCancelled, validate_features
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.pack_features import run_job
 
 
 @pytest.fixture
@@ -302,28 +302,28 @@ def test_slide_validation_cancels_between_vector_chunks(attached):
     assert calls == 3
 
 
-class InlineValidationExecutor:
-    def available(self):
-        return True
-
-    def running(self, session):
-        return False
-
-    def launch(self, session, runner, plan):
-        run_job(plan)
+def pack_service(service, task_center):
+    return FeaturePackService(
+        service.store,
+        service.filesystem,
+        execution_mode="task-center",
+        task_center=task_center.client,
+    )
 
 
-def test_slide_inventory_full_worker_validation_and_frozen_bundle(attached):
+def test_slide_inventory_full_worker_validation_and_frozen_bundle(attached, task_center):
     service, _, root = attached
     frozen = freeze_slide_inventory(attached)
     bundles = FeatureBundleService(service.store, service.filesystem)
     spec = FeatureBundleSpec(featureSetId=frozen["id"])
     assert not bundles.preview(spec)["canFreeze"]
-    packs = FeaturePackService(service.store, service.filesystem, InlineValidationExecutor())
+    packs = pack_service(service, task_center)
     validation = FeaturePackSpec(featureSetId=frozen["id"], action="validate")
     preview = packs.preview(validation)
     assert preview["canRun"], preview["findings"]
     job = packs.submit(validation, preview["previewHash"], "validate-slide-vectors")
+    assert job["state"] == "queued"
+    run_pack(task_center.store, job)
     result = packs.get(job["id"])
     assert result["state"] == "succeeded", result
     assert result["result"]["artifact"] is None
@@ -342,10 +342,10 @@ def test_slide_inventory_full_worker_validation_and_frozen_bundle(attached):
 
 
 @pytest.mark.parametrize("action", ["pack", "attach"])
-def test_slide_pack_requests_blocked_before_launch(attached, action):
+def test_slide_pack_requests_blocked_before_launch(attached, task_center, action):
     service, _, _ = attached
     frozen = freeze_slide_inventory(attached)
-    packs = FeaturePackService(service.store, service.filesystem, InlineValidationExecutor())
+    packs = pack_service(service, task_center)
     spec = FeaturePackSpec(featureSetId=frozen["id"], action=action)
     preview = packs.preview(spec)
     assert not preview["canRun"]

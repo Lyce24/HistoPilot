@@ -8,8 +8,9 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
+from support.interpretation import complete as record_completion
+from test_interpretation import managed_study as managed_study
 from test_interpretation import save
-from test_interpretation import study as study
 
 from histopilot.storage.project_lock import StorageError
 from histopilot.viewer.attention_arrays import attention_page, attention_top
@@ -49,7 +50,8 @@ def array_case(tmp_path, weights):
 
 
 def complete(study, *, legacy=False, footprint=(100, 100), coords=None):
-    service, selection, _ = study
+    """Launch ``managed_study`` and record its worker's attention arrays and receipts."""
+    service, selection, task_center = study
     if coords is None:
         coords = [[0, 0], [100, 0], [290, 190]]
     # A coordinate gradient makes accidental thumbnail/attention-overlay crops
@@ -108,7 +110,7 @@ def complete(study, *, legacy=False, footprint=(100, 100), coords=None):
             }
         ],
     }
-    update_result(service, identity, result)
+    record_completion(service, identity, result, task_center)
     return service, identity, document, pixels
 
 
@@ -146,10 +148,10 @@ def test_top_scans_beyond_display_limit_and_viewport_with_global_tie_order(tmp_p
 
 @pytest.mark.parametrize("legacy", [False, True])
 def test_coordinate_coverage_includes_low_attention_rows_and_clips_fractional_footprints(
-    study, legacy
+    managed_study, legacy
 ):
     service, identity, _, _ = complete(
-        study,
+        managed_study,
         legacy=legacy,
         footprint=(31.5, 47.25),
         coords=[[20, 10], [290, 190], [100, 70]],
@@ -210,8 +212,8 @@ def test_verified_hash_is_shared_between_top_and_index_reads_and_changes_fail(
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-def test_service_ranks_members_globally_and_crops_exact_original_edge_pixels(study, legacy):
-    service, identity, _, pixels = complete(study, legacy=legacy)
+def test_service_ranks_members_globally_and_crops_exact_original_edge_pixels(managed_study, legacy):
+    service, identity, _, pixels = complete(managed_study, legacy=legacy)
     top = service.top_attention(identity, "independent", limit=20)
     assert [row["index"] for row in top["patches"]] == [2, 1, 0]
     assert top["returned"] == top["patchCount"] == top["total"] == 3
@@ -232,8 +234,8 @@ def test_service_ranks_members_globally_and_crops_exact_original_edge_pixels(stu
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-def test_fractional_frozen_footprint_is_rendered_exactly_and_clipped(study, legacy):
-    service, identity, _, _ = complete(study, legacy=legacy, footprint=(100.5, 83.25))
+def test_fractional_frozen_footprint_is_rendered_exactly_and_clipped(managed_study, legacy):
+    service, identity, _, _ = complete(managed_study, legacy=legacy, footprint=(100.5, 83.25))
     sizes = [
         Image.open(io.BytesIO(service.patch_image(identity, "independent", index))).size
         for index in (1, 2)
@@ -260,8 +262,8 @@ def test_rendering_resizes_the_exact_fractional_field_of_view(monkeypatch):
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-def test_crop_rejects_changed_source_or_attention_and_unknown_indices(study, legacy):
-    service, identity, document, _ = complete(study, legacy=legacy)
+def test_crop_rejects_changed_source_or_attention_and_unknown_indices(managed_study, legacy):
+    service, identity, document, _ = complete(managed_study, legacy=legacy)
     with pytest.raises(StorageError) as missing:
         service.patch_image(identity, "independent", 3)
     assert missing.value.code == "INTERPRETATION_PATCH_NOT_FOUND"
@@ -284,8 +286,10 @@ def test_crop_rejects_changed_source_or_attention_and_unknown_indices(study, leg
 @pytest.mark.parametrize(
     "field,value", [("index", 0), ("x", 0.25), ("y", 200), ("weight", float("nan"))]
 )
-def test_legacy_indices_and_values_are_validated_even_with_matching_receipt(study, field, value):
-    service, identity, _, _ = complete(study, legacy=True)
+def test_legacy_indices_and_values_are_validated_even_with_matching_receipt(
+    managed_study, field, value
+):
+    service, identity, _, _ = complete(managed_study, legacy=True)
     path = service.jobs.folder(identity) / "slide-0.json"
     content = json.loads(path.read_bytes())
     content["patches"][2][field] = value
@@ -299,10 +303,10 @@ def test_legacy_indices_and_values_are_validated_even_with_matching_receipt(stud
         service.patch_image(identity, "independent", 1)
 
 
-def test_legacy_view_limit_preserves_raw_export(study, monkeypatch):
+def test_legacy_view_limit_preserves_raw_export(managed_study, monkeypatch):
     import histopilot.application.interpretation as module
 
-    service, identity, _, _ = complete(study, legacy=True)
+    service, identity, _, _ = complete(managed_study, legacy=True)
     path = service.jobs.folder(identity) / "slide-0.json"
     monkeypatch.setattr(module, "MAX_LEGACY_VIEW_BYTES", path.stat().st_size)
     assert service.top_attention(identity, "independent")["returned"] == 3
@@ -316,11 +320,11 @@ def test_legacy_view_limit_preserves_raw_export(study, monkeypatch):
 
 
 def test_legacy_contact_sheet_reuses_compact_verified_rows_without_mutable_aliases(
-    study, monkeypatch
+    managed_study, monkeypatch
 ):
     import histopilot.application.interpretation as module
 
-    service, identity, _, _ = complete(study, legacy=True)
+    service, identity, _, _ = complete(managed_study, legacy=True)
     path = service.jobs.folder(identity) / "slide-0.json"
     content = json.loads(path.read_bytes())
     content["patches"][2]["unrelated"] = {"nested": ["extra metadata"]}
@@ -349,8 +353,8 @@ def test_legacy_contact_sheet_reuses_compact_verified_rows_without_mutable_alias
     )
 
 
-def test_patch_crops_refuse_symlink_replacement_and_incomplete_jobs(study, tmp_path):
-    service, identity, document, _ = complete(study)
+def test_patch_crops_refuse_symlink_replacement_and_incomplete_jobs(managed_study, tmp_path):
+    service, identity, document, _ = complete(managed_study)
     source = Path(document["manifest"]["slides"][0]["slidePath"])
     target = tmp_path / "replacement.png"
     source.rename(target)
@@ -361,6 +365,8 @@ def test_patch_crops_refuse_symlink_replacement_and_incomplete_jobs(study, tmp_p
     state_path = service.jobs.folder(identity) / "state.json"
     state = read_json(state_path)
     write_json(state_path, {**state, "status": "running"})
+    # Its task has concluded, so the Task Center reads the running record as stopped.
+    assert service.execution(identity)["status"] == "interrupted"
     with pytest.raises(StorageError) as error:
         service.top_attention(identity, "independent")
     assert error.value.code == "INTERPRETATION_NOT_COMPLETED"

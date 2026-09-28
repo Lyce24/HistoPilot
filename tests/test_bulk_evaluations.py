@@ -8,24 +8,28 @@ from threading import Event
 
 import pytest
 from pydantic import ValidationError
+from support.evaluation import compute_tasks
 
 from histopilot.application.bulk_evaluations import BulkEvaluationService
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection, RunBulkEvaluation
 from histopilot.storage.project_lock import StorageError
+from histopilot.workers.packing_process import write_json
+from histopilot.workers.training_process import read_json
 
 support = runpy.run_path(str(Path(__file__).with_name("test_evaluation_execution_service.py")))
 registry = runpy.run_path(str(Path(__file__).with_name("test_predictor_registry.py")))
 
 
 @pytest.fixture
-def bulk(tmp_path, monkeypatch):
-    evaluations, _record, predictor, cohort, executor = support["evaluation"].__wrapped__(
-        tmp_path, monkeypatch
+def bulk(tmp_path, monkeypatch, task_center):
+    """Bulk evaluation whose members queue in this test's Task Center, as in production."""
+    evaluations, _record, predictor, cohort = support["evaluation"].__wrapped__(
+        tmp_path, monkeypatch, task_center
     )
     service = BulkEvaluationService(
         evaluations.store, evaluations.filesystem, evaluations=evaluations
     )
-    return service, predictor, cohort, executor
+    return service, predictor, cohort
 
 
 def run_request(selection, preview, operation="bulk-run"):
@@ -42,8 +46,10 @@ def another(service, name):
     return registry["freeze"](service.evaluations.predictors, selected)[0]
 
 
-def test_all_scope_freezes_reviewed_ids_and_does_not_include_later_predictors(bulk):
-    service, first, cohort, executor = bulk
+def test_all_scope_freezes_reviewed_ids_and_does_not_include_later_predictors(
+    bulk, task_center
+):
+    service, first, cohort = bulk
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     preview = service.preview(choice)
     assert preview["eligibleCount"] == 1 and preview["reviewedPredictorIds"] == [first["id"]]
@@ -55,11 +61,13 @@ def test_all_scope_freezes_reviewed_ids_and_does_not_include_later_predictors(bu
         later["id"]
         not in service._record(result["id"])["manifest"]["request"]["reviewedPredictorIds"]
     )
-    assert len(executor.calls) == 1
+    assert len(compute_tasks(task_center)) == 1
 
 
-def test_mixed_compatibility_review_skips_only_explicitly_blocked_predictors(bulk):
-    service, valid, cohort, executor = bulk
+def test_mixed_compatibility_review_skips_only_explicitly_blocked_predictors(
+    bulk, task_center
+):
+    service, valid, cohort = bulk
     invalid = another(service, "Changed weights")
     Path(invalid["manifest"]["checkpoints"][0]["path"]).write_bytes(b"changed")
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
@@ -71,22 +79,24 @@ def test_mixed_compatibility_review_skips_only_explicitly_blocked_predictors(bul
         valid["id"]: "queued",
         invalid["id"]: "skipped",
     }
-    assert len(executor.calls) == 1
+    assert len(compute_tasks(task_center)) == 1
 
 
-def test_changed_checkpoint_after_review_rejects_entire_unstarted_batch(bulk):
-    service, predictor, cohort, executor = bulk
+def test_changed_checkpoint_after_review_rejects_entire_unstarted_batch(bulk, task_center):
+    service, predictor, cohort = bulk
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     preview = service.preview(choice)
     Path(predictor["manifest"]["checkpoints"][0]["path"]).write_bytes(b"changed after review")
     with pytest.raises(StorageError, match="changed"):
         service.run(run_request(choice, preview))
     assert service.list()["items"] == []
-    assert not executor.calls
+    assert not compute_tasks(task_center)
 
 
-def test_partial_submission_retry_reuses_success_and_continues_missing_member(bulk, monkeypatch):
-    service, _, cohort, executor = bulk
+def test_partial_submission_retry_reuses_success_and_continues_missing_member(
+    bulk, task_center, monkeypatch
+):
+    service, _, cohort = bulk
     another(service, "Second")
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     preview = service.preview(choice)
@@ -102,16 +112,16 @@ def test_partial_submission_retry_reuses_success_and_continues_missing_member(bu
 
     monkeypatch.setattr(service.evaluations, "launch", once_missing)
     first = service.run(request)
-    assert first["counts"]["failed"] == 1 and len(executor.calls) == 1
+    assert first["counts"]["failed"] == 1 and len(compute_tasks(task_center)) == 1
     second = service.run(request)
     assert second["id"] == first["id"] and second["counts"]["queued"] == 2
-    assert len(executor.calls) == 2
+    assert [task["attempt"] for task in compute_tasks(task_center)] == [1, 1]
     assert len({row["evaluationId"] for row in second["items"]}) == 2
     assert len(service.store.list_configurations("evaluation-batch")) == 1
 
 
-def test_new_requests_create_distinct_records_but_exact_retries_do_not(bulk):
-    service, _, cohort, executor = bulk
+def test_new_requests_create_distinct_records_but_exact_retries_do_not(bulk, task_center):
+    service, _, cohort = bulk
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     preview = service.preview(choice)
     first = service.run(run_request(choice, preview, "first"))
@@ -119,14 +129,16 @@ def test_new_requests_create_distinct_records_but_exact_retries_do_not(bulk):
     second = service.run(run_request(choice, preview, "second"))
     assert first["id"] != second["id"]
     assert first["items"][0]["evaluationId"] != second["items"][0]["evaluationId"]
-    assert len(executor.calls) == 2
+    assert [task["attempt"] for task in compute_tasks(task_center)] == [1, 1]
     changed = run_request(choice, preview, "first").model_copy(update={"namePrefix": "Another"})
     with pytest.raises(StorageError, match="another evaluation batch"):
         service.run(changed)
 
 
-def test_batch_cancel_stops_pending_submission_and_preserves_running_jobs(bulk, monkeypatch):
-    service, _, cohort, executor = bulk
+def test_batch_cancel_stops_pending_submission_and_preserves_running_jobs(
+    bulk, task_center, monkeypatch
+):
+    service, _, cohort = bulk
     another(service, "Second")
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     preview = service.preview(choice)
@@ -139,11 +151,11 @@ def test_batch_cancel_stops_pending_submission_and_preserves_running_jobs(bulk, 
     assert cancelled["status"] == "cancelled"
     monkeypatch.setattr(service, "_submit", original)
     assert service.run(request)["status"] == "cancelled"
-    assert not executor.calls
+    assert not compute_tasks(task_center)
 
 
 def test_batch_manifest_retains_dependency_refs_and_selected_scope_is_explicit(bulk):
-    service, predictor, cohort, _executor = bulk
+    service, predictor, cohort = bulk
     choice = BulkEvaluationSelection(
         cohortId=cohort["id"], scope="selected", predictorIds=[predictor["id"]]
     )
@@ -165,8 +177,8 @@ def test_batch_manifest_retains_dependency_refs_and_selected_scope_is_explicit(b
         service.run(changed.model_copy(update={"operationId": "changed"}))
 
 
-def test_deleted_explicit_selection_requires_removal_before_submission(bulk):
-    service, valid, cohort, executor = bulk
+def test_deleted_explicit_selection_requires_removal_before_submission(bulk, task_center):
+    service, valid, cohort = bulk
     deleted = another(service, "Deleted")
     registry["lifecycle"](service.store, deleted, "trashed")
     choice = BulkEvaluationSelection(
@@ -182,17 +194,29 @@ def test_deleted_explicit_selection_requires_removal_before_submission(bulk):
     )
     with pytest.raises(StorageError, match="remove deleted"):
         service.run(run_request(choice, preview))
-    assert not executor.calls
+    assert not compute_tasks(task_center)
 
 
-def test_group_cancellation_marks_existing_jobs_pending_until_workers_stop(bulk):
-    service, _, cohort, executor = bulk
+def test_group_cancellation_marks_existing_jobs_pending_until_workers_stop(
+    bulk, task_center
+):
+    service, _, cohort = bulk
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     result = service.run(run_request(choice, service.preview(choice)))
+    [task] = compute_tasks(task_center)
+    # The member's worker has started: the Task Center cancels a queued member at once.
+    task_center.start(task["id"])
     cancelled = service.cancel(result["id"], "cancel-bulk")
     assert cancelled["cancelRequested"] and cancelled["status"] == "queued"
     assert cancelled["items"][0]["execution"]["cancellationRequested"]
-    assert len(executor.calls) == 1
+    assert len(compute_tasks(task_center)) == 1
+    assert task_center.state(task["id"]) == "stopping"
+    # The worker records the cancellation and exits; only then is the group cancelled.
+    member = cancelled["items"][0]["evaluationId"]
+    folder = service.evaluations.jobs.folder(member)
+    write_json(folder / "state.json", {**read_json(folder / "state.json"), "status": "cancelled"})
+    task_center.finish(task["id"], "cancelled")
+    assert service.get(result["id"])["status"] == "cancelled"
 
 
 def test_batch_routes_precede_the_individual_evaluation_getter():
@@ -205,8 +229,10 @@ def test_batch_routes_precede_the_individual_evaluation_getter():
     assert paths.index(base + "/bulk/{batch_id}") < paths.index(base + "/{evaluation_id}")
 
 
-def test_concurrent_cancel_between_members_prevents_the_next_launch(bulk, monkeypatch):
-    service, _, cohort, executor = bulk
+def test_concurrent_cancel_between_members_prevents_the_next_launch(
+    bulk, task_center, monkeypatch
+):
+    service, _, cohort = bulk
     another(service, "Second")
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     request = run_request(choice, service.preview(choice))
@@ -227,12 +253,14 @@ def test_concurrent_cancel_between_members_prevents_the_next_launch(bulk, monkey
         running = pool.submit(service.run, request)
         try:
             assert submitted.wait(5)
+            # The first member's worker has started, so the cancel can only request its stop.
+            task_center.start(compute_tasks(task_center)[0]["id"])
             cancelling = pool.submit(service.cancel, batch_ids[0], "concurrent-cancel")
             cancelled = cancelling.result(timeout=3)
             assert cancelled["cancelRequested"]
         finally:
             continue_submission.set()
         finished = running.result(timeout=5)
-    assert len(executor.calls) == 1
+    assert len(compute_tasks(task_center)) == 1
     assert finished["counts"]["cancelled"] == 1
     assert finished["items"][0]["execution"]["cancellationRequested"]

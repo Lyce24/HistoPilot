@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 
 import pytest
-from test_interpretation import study as study
-from test_interpretation_gallery import gallery as gallery
+from support.interpretation import launches
+from test_interpretation import managed_study as managed_study
+from test_interpretation_gallery import managed_gallery as managed_gallery
 
 from histopilot.schemas.interpretation import InterpretationGalleryQuery, VisualizeInterpretation
 from histopilot.storage.project_lock import StorageError
@@ -22,8 +23,8 @@ def dataset(service, operation, records, *, manifest=None):
     )
 
 
-def test_sources_reuse_external_bundle_dataset_not_predictor_training_folder(gallery):
-    service, source, _, _ = gallery
+def test_sources_reuse_external_bundle_dataset_not_predictor_training_folder(managed_gallery):
+    service, source, _, _ = managed_gallery
     returned = service.gallery.sources()["items"][0]
     bundle = service.gallery.bundles.get(source["featureBundleId"])
     predictor = service.predictors.get(source["predictorId"])
@@ -35,8 +36,8 @@ def test_sources_reuse_external_bundle_dataset_not_predictor_training_folder(gal
     assert returned["slideFolderFinding"] is None and returned["current"]
 
 
-def test_gallery_and_visualization_can_omit_previously_saved_folder(gallery):
-    service, source, executor, _ = gallery
+def test_gallery_and_visualization_can_omit_previously_saved_folder(managed_gallery):
+    service, source, task_center, _ = managed_gallery
     automatic = {key: value for key, value in source.items() if key != "slideFolder"}
     results = service.gallery.query(InterpretationGalleryQuery(**automatic, search="tumour"))
     assert results["folder"] == source["slideFolder"]
@@ -48,12 +49,14 @@ def test_gallery_and_visualization_can_omit_previously_saved_folder(gallery):
     assert visualized["items"][0]["status"] == "queued", visualized
     assert visualized["interpretations"][0]["manifest"]["slideFolder"] == source["slideFolder"]
     assert service.visualize(request)["items"][0]["reused"]
-    assert len(executor.calls) == 1
+    assert launches(task_center) == 1
 
 
 @pytest.mark.parametrize("location", ["provenance", "spec"])
-def test_saved_dataset_import_folder_supports_nested_record_folders(gallery, tmp_path, location):
-    service, _, _, _ = gallery
+def test_saved_dataset_import_folder_supports_nested_record_folders(
+    managed_gallery, tmp_path, location
+):
+    service, _, _, _ = managed_gallery
     folder = tmp_path / "frozen-external-slides"
     (folder / "cohort-a").mkdir(parents=True)
     (folder / "cohort-b").mkdir()
@@ -73,8 +76,8 @@ def test_saved_dataset_import_folder_supports_nested_record_folders(gallery, tmp
     assert resolved["slideFolderFinding"] is None
 
 
-def test_legacy_common_ancestor_is_not_guessed_for_unrelated_folders(gallery, tmp_path):
-    service, _, _, _ = gallery
+def test_legacy_common_ancestor_is_not_guessed_for_unrelated_folders(managed_gallery, tmp_path):
+    service, _, _, _ = managed_gallery
     first, second = tmp_path / "cohort-one", tmp_path / "cohort-two"
     first.mkdir()
     second.mkdir()
@@ -96,8 +99,10 @@ def test_legacy_common_ancestor_is_not_guessed_for_unrelated_folders(gallery, tm
 @pytest.mark.parametrize(
     "scenario", ["no_paths", "outside_root", "symlink", "missing_folder", "traversal"]
 )
-def test_missing_or_unsafe_dataset_source_requires_dataset_repair(gallery, tmp_path, scenario):
-    service, _, _, _ = gallery
+def test_missing_or_unsafe_dataset_source_requires_dataset_repair(
+    managed_gallery, tmp_path, scenario
+):
+    service, _, _, _ = managed_gallery
     folder = tmp_path / "unsafe-source"
     folder.mkdir()
     path = folder / "a.png"
@@ -125,9 +130,9 @@ def test_missing_or_unsafe_dataset_source_requires_dataset_repair(gallery, tmp_p
 
 
 def test_omitted_folder_unavailable_is_clear_but_explicit_legacy_override_still_works(
-    gallery, monkeypatch
+    managed_gallery, monkeypatch
 ):
-    service, source, _, _ = gallery
+    service, source, _, _ = managed_gallery
     original = service.gallery.dataset_source
     metadata = original(service.gallery.sources()["items"][0]["datasetId"])
     finding = {
@@ -154,13 +159,13 @@ def test_omitted_folder_unavailable_is_clear_but_explicit_legacy_override_still_
     assert finding in item["findings"]
 
 
-def test_automatic_folder_gallery_http_auth_and_request(gallery, tmp_path, monkeypatch):
+def test_automatic_folder_gallery_http_auth_and_request(managed_gallery, tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from histopilot.api.app import create_app
     from histopilot.config import Settings
 
-    service, source, executor, _ = gallery
+    service, source, task_center, _ = managed_gallery
     monkeypatch.setattr(
         "histopilot.api.interpretation.InterpretationService", lambda *args: service
     )
@@ -180,11 +185,11 @@ def test_automatic_folder_gallery_http_auth_and_request(gallery, tmp_path, monke
         )
         assert response.status_code == 202, response.text
         assert response.json()["items"][0]["status"] == "queued"
-        assert len(executor.calls) == 1
+        assert launches(task_center) == 1
 
 
-def test_dataset_sources_list_each_frozen_dataset_slide_folder(gallery):
-    service, source, _, _ = gallery
+def test_dataset_sources_list_each_frozen_dataset_slide_folder(managed_gallery):
+    service, source, _, _ = managed_gallery
     bundle_dataset = service.gallery.sources()["items"][0]["datasetId"]
     items = {item["datasetId"]: item for item in service.gallery.dataset_sources()["items"]}
     chosen = items[bundle_dataset]
@@ -194,8 +199,10 @@ def test_dataset_sources_list_each_frozen_dataset_slide_folder(gallery):
     assert chosen["slideCount"] == len(service.gallery._records(bundle_dataset))
 
 
-def test_store_scoped_bundle_stays_usable_with_a_chosen_dataset_folder(gallery, monkeypatch):
-    service, source, _, _ = gallery
+def test_store_scoped_bundle_stays_usable_with_a_chosen_dataset_folder(
+    managed_gallery, monkeypatch
+):
+    service, source, _, _ = managed_gallery
     original = service.gallery.dataset_source
     metadata = original(service.gallery.sources()["items"][0]["datasetId"])
     warning = {

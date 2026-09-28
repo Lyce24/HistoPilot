@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from support.features import begin, conclude, run_archive, task_environment
 
 from histopilot.api import create_app
 from histopilot.application.operations import (
@@ -29,6 +30,7 @@ from histopilot.config import Settings
 from histopilot.schemas.operations import PortabilityRequest, RelinkSource
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
+from histopilot.taskcenter.adapters.archive import ArchiveAdapter
 from histopilot.workers import resource_reservation as reservations
 from histopilot.workers.portability import run
 
@@ -202,23 +204,8 @@ def test_missing_slide_references_are_detected_in_frozen_artifacts(project):
     assert result["missingReferences"] == [{"path": missing, "reason": "missing"}]
 
 
-def test_authenticated_operations_api_executes_archive_worker(project, monkeypatch):
+def test_authenticated_operations_api_executes_archive_worker(project, task_center):
     store, projects, client, _ = project
-    # This test exercises the legacy tmux launch path of the API.
-    monkeypatch.setattr(
-        "histopilot.application.task_records.default_execution_mode", lambda: "tmux"
-    )
-    monkeypatch.setattr(
-        "histopilot.application.portability_jobs.PortabilityExecutor.available", lambda _: True
-    )
-    monkeypatch.setattr(
-        "histopilot.application.portability_jobs.PortabilityExecutor.running",
-        lambda _self, _session: False,
-    )
-    monkeypatch.setattr(
-        "histopilot.application.portability_jobs.PortabilityExecutor.launch",
-        lambda _self, _session, _runner, plan: run(plan),
-    )
     prefix = f"/api/v1/projects/{store.project_id}/operations"
     assert client.get(prefix).status_code == 200
     archive = str(projects.database.workspace / "api-study.zip")
@@ -227,9 +214,12 @@ def test_authenticated_operations_api_executes_archive_worker(project, monkeypat
         json={"action": "export", "archivePath": archive, "operationId": "api-export"},
     )
     assert response.status_code == 202, response.text
-    job = response.json()
+    queued = response.json()
+    assert queued["status"] == "queued" and queued["executor"] == "task-center"
+    run_archive(task_center.store, queued)
+    job = client.get(prefix + f"/archives/{queued['id']}").json()
     assert job["status"] == "completed", job
-    assert client.get(prefix + f"/archives/{job['id']}").json() == job
+    assert job["result"]["verified"]
     assert client.get(prefix + "/archives").json()["jobs"] == [job]
     client.headers.pop("X-HistoPilot-Token")
     assert client.post(
@@ -249,24 +239,63 @@ class InlineExecutor:
         run(plan)
 
 
-def test_durable_archive_submission_is_idempotent_and_isolated(project):
+def archive_jobs(projects, task_center):
+    return PortabilityJobs(
+        projects, projects.storage, execution_mode="task-center", task_center=task_center.client
+    )
+
+
+def test_durable_archive_submission_is_idempotent_and_isolated(project, task_center):
     store, projects, _, _ = project
-    jobs = PortabilityJobs(projects, projects.storage, executor=InlineExecutor())
+    jobs = archive_jobs(projects, task_center)
     request = PortabilityRequest(
         action="export",
         archivePath=str(projects.database.workspace / "study.zip"),
         operationId="test-archive",
     )
-    first = jobs.submit(store.project_id, request)
+    queued = jobs.submit(store.project_id, request)
+    assert queued["status"] == "queued"
+    run_archive(task_center.store, queued)
+    first = jobs.get(store.project_id, queued["id"])
     assert first["status"] == "completed", first
     assert first["result"]["verified"]
     assert jobs.submit(store.project_id, request) == first
     assert jobs.list(store.project_id)["jobs"] == [first]
+    assert [task["attempt"] for task in task_center.tasks(kind="archive")] == [1]
     with pytest.raises(StorageError, match="different archive request"):
         jobs.submit(store.project_id, request.model_copy(update={"action": "verify"}))
 
 
+def test_a_retry_after_a_lost_conclusion_keeps_the_completed_receipt(project, task_center):
+    store, projects, _, _ = project
+    jobs = archive_jobs(projects, task_center)
+    request = PortabilityRequest(
+        action="export",
+        archivePath=str(projects.database.workspace / "study.zip"),
+        operationId="lost-conclusion",
+    )
+    job = jobs.submit(store.project_id, request)
+    task = task_center.task(job["taskId"])
+    assert begin(task_center.store, task["id"], ArchiveAdapter())
+    with task_environment(task_center.task(task["id"])):
+        assert run(Path(task["command"]["argv"][-1]))["status"] == "completed"
+    # The worker completed, but the runner lost it before concluding the attempt.
+    task_center.finish(task["id"], "interrupted", returncode=None, reason="lost")
+    receipt = json.loads(Path(task["command"]["result"]).read_text())
+    assert receipt["status"] == "completed" and receipt["error"] is None
+    assert jobs.retry(store.project_id, job["id"])["status"] == "queued"
+    run_archive(task_center.store, job)  # the retry finds the operation complete
+    assert task_center.task(task["id"])["exit"]["reason"] == "already-complete"
+    result = jobs.get(store.project_id, job["id"])
+    assert result["status"] == "completed"
+    assert result["result"] == receipt["result"] and result["result"]["verified"]
+    assert result["error"] is None
+
+
+@pytest.mark.legacy_tmux
 def test_lost_launch_acknowledgement_does_not_clobber_completed_receipt(project):
+    # Queueing a task has no launch acknowledgement to lose; a completed receipt whose
+    # conclusion was lost is test_a_retry_after_a_lost_conclusion_keeps_the_completed_receipt.
     store, projects, _, _ = project
 
     class LostAcknowledgement(InlineExecutor):
@@ -286,23 +315,11 @@ def test_lost_launch_acknowledgement_does_not_clobber_completed_receipt(project)
     assert result["error"] is None
 
 
-def test_archive_cancel_retry_and_active_request_coalescing_survive_reconnect(project):
+def test_archive_cancel_retry_and_active_request_coalescing_survive_reconnect(
+    project, task_center
+):
     store, projects, _, _ = project
-
-    class QueuedExecutor(InlineExecutor):
-        def __init__(self):
-            self.sessions = set()
-            self.calls = []
-
-        def launch(self, session, _runner, plan):
-            self.sessions.add(session)
-            self.calls.append(plan)
-
-        def running(self, session):
-            return session in self.sessions
-
-    executor = QueuedExecutor()
-    jobs = PortabilityJobs(projects, projects.storage, executor=executor)
+    jobs = archive_jobs(projects, task_center)
     request = PortabilityRequest(
         action="export",
         archivePath=str(projects.database.workspace / "study.zip"),
@@ -313,15 +330,24 @@ def test_archive_cancel_retry_and_active_request_coalescing_survive_reconnect(pr
         store.project_id, request.model_copy(update={"operationId": "reconnected-request"})
     )
     assert first["id"] == duplicate["id"]
-    assert len(executor.calls) == 1
+    assert len(task_center.tasks(kind="archive")) == 1
+    adapter = ArchiveAdapter()
+    # A queued operation is cancelled at once; a running worker stops at its next file.
+    assert begin(task_center.store, first["taskId"], adapter)
     assert jobs.cancel(store.project_id, first["id"])["status"] == "cancelling"
-    assert run(executor.calls[0])["status"] == "cancelled"
+    task = task_center.task(first["taskId"])
+    with task_environment(task):
+        assert run(Path(task["command"]["argv"][-1]))["status"] == "cancelled"
+    assert conclude(task_center.store, task["id"], adapter, 1)["state"] == "cancelled"
+    assert jobs.get(store.project_id, first["id"])["status"] == "cancelled"
     assert not Path(request.archivePath).exists()
-    executor.sessions.clear()
-    jobs.executor = InlineExecutor()
     retried = jobs.retry(store.project_id, first["id"])
+    assert retried["status"] == "queued"
+    run_archive(task_center.store, retried)
+    retried = jobs.get(store.project_id, first["id"])
     assert retried["status"] == "completed"
-    assert retried["attempts"] == 2
+    # The retry is the operation task's second attempt.
+    assert retried["task"]["attempt"] == 2
 
 
 def test_export_recovers_publication_after_worker_receipt_was_lost(project):
@@ -351,7 +377,10 @@ def test_export_destination_race_preserves_other_file(project):
     assert archive.read_bytes() == b"another operation owns this file"
 
 
+@pytest.mark.legacy_tmux
 def test_standalone_restore_works_when_original_project_is_gone(project):
+    # archive_cli.launch_archive_recovery launches through tmux only; no Task Center test
+    # covers it. Restoring itself is test_archive_roundtrip_preserves_scientific_data_and_reviews.
     store, projects, _, _ = project
     archive = projects.database.workspace / "study.zip"
     StudyPortability(store, projects.storage).export(str(archive))
@@ -372,7 +401,10 @@ def test_unified_inventory_includes_host_capacity(project):
     assert result["jobs"] == []
 
 
+@pytest.mark.legacy_tmux
 def test_preparation_reservations_hold_all_requested_gpus_atomically(tmp_path, monkeypatch):
+    # The self-lease of a tmux worker; the runner admits a task on one GPU instead:
+    # test_gpu_extraction_requests_vram_and_runs_on_the_admitted_device.
     registry = tmp_path / "leases"
     registry.mkdir()
     job = tmp_path / "job"
@@ -405,7 +437,10 @@ def test_preparation_reservations_hold_all_requested_gpus_atomically(tmp_path, m
     assert json.loads((job / "resources.json").read_text())["status"] == "released"
 
 
+@pytest.mark.legacy_tmux
 def test_preparation_wait_honors_cancellation_without_leaking_lease(tmp_path, monkeypatch):
+    # A tmux worker waiting for its self-lease; a task waiting for capacity is cancelled
+    # before it starts: test_packing_cancel_from_the_stage_records_cancelled.
     registry = tmp_path / "leases"
     registry.mkdir()
     job = tmp_path / "job"
@@ -431,7 +466,10 @@ def test_preparation_wait_honors_cancellation_without_leaking_lease(tmp_path, mo
     assert not list(registry.glob("lease-*.json"))
 
 
+@pytest.mark.legacy_tmux
 def test_managed_extraction_supervisor_runs_both_phases_and_releases_resources(tmp_path):
+    # The tmux plan: TRIDENT then validation in one supervisor under a self-lease. Tasks
+    # run them as two: test_extraction_and_validation_run_through_the_runner.
     from histopilot.adapters.trident import runner
 
     plan = {

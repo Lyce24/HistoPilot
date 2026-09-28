@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from support import t2
 
 from histopilot.application.protocols import ProtocolService
 from histopilot.schemas.protocols import ProtocolExploreRequest, ProtocolSpec
@@ -135,7 +136,7 @@ def test_obsolete_feature_choices_are_removed_when_loading_protocol_specs(select
         assert not any(key.startswith("feature") for key in parsed.model_dump())
 
 
-def test_dataset_only_protocol_binds_reusable_bundle_later_in_experiments(tmp_path):
+def test_dataset_only_protocol_binds_reusable_bundle_later_in_experiments(tmp_path, task_center):
     from histopilot.application.development import DevelopmentService
     from histopilot.application.mil_inputs import MILInputService
     from histopilot.application.model_experiments import ModelExperimentService
@@ -159,7 +160,8 @@ def test_dataset_only_protocol_binds_reusable_bundle_later_in_experiments(tmp_pa
         for i in range(26)
     ]
     original, _ = fixtures["dataset"](store, rows=encoded_rows)
-    bundle, _pack, _source = fixtures["bundle"](
+    bundle, _pack, _source = t2.bundle(
+        task_center,
         store,
         tmp_path,
         original,

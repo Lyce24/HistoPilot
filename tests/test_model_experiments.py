@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from support import t2
 
 from histopilot.api import create_app
 from histopilot.application.lifecycle import CleanupService
@@ -15,7 +16,11 @@ from histopilot.application.model_experiments import ModelExperimentService, agg
 from histopilot.config import Settings
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.lifecycle import ApplyCleanup, CleanupSelection
-from histopilot.schemas.model_experiments import CreateModelExperiment, UpdateModelExperiment
+from histopilot.schemas.model_experiments import (
+    CreateModelExperiment,
+    SubmitModelExperiment,
+    UpdateModelExperiment,
+)
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
@@ -43,9 +48,12 @@ def service(tmp_path):
 
 
 @pytest.fixture
-def prepared(tmp_path):
-    development, spec, source = support["batch"].__wrapped__(tmp_path)
-    service = ModelExperimentService(development.store, development.filesystem, training=Training())
+def prepared(tmp_path, task_center, monkeypatch):
+    development, spec, source = support["managed_batch"].__wrapped__(tmp_path, task_center)
+    training = t2.training_service(
+        development.store, development.filesystem, task_center, monkeypatch
+    )
+    service = ModelExperimentService(development.store, development.filesystem, training=training)
     experiment = service.create(
         CreateModelExperiment(
             name=spec.experimentName, operationId="experiment", inputs=spec.inputs
@@ -208,15 +216,24 @@ def test_experiment_deletion_requires_batches_and_saved_plans_and_restore_parent
     assert service.get(experiment["id"])["batches"][0]["id"] == frozen["id"]
 
 
-def test_running_batch_protects_experiment_upstream(prepared):
-    service, development, spec, experiment, _source = prepared
-    preview = development.preview(spec)
-    frozen = development.freeze(spec, preview["previewHash"], "batch", {"tag": "Batch"})
-    service.training.states[frozen["id"]] = {
-        "status": "running",
-        "runs": [],
-        "cancelRequested": False,
-    }
+def test_running_batch_protects_experiment_upstream(prepared, task_center):
+    service, _development, spec, experiment, _source = prepared
+    # Batches launch only through a submission; one of its folds is running.
+    plan = {**spec.model_dump(), "mode": "single", "trainingSeeds": [11]}
+    record = service.update(
+        experiment["id"],
+        UpdateModelExperiment(
+            name=experiment["name"],
+            expectedRevision=1,
+            batchPlans=[{"id": "batch", "spec": plan}],
+        ),
+    )
+    submitted = service.submit(
+        record["id"],
+        SubmitModelExperiment(expectedRevision=record["revision"], operationId="submit"),
+    )
+    [batch_id] = submitted["submission"]["batchIds"]
+    task_center.start(t2.fold_tasks(task_center, batch_id)[0]["id"])
     assert service.get(experiment["id"])["status"] == "running"
     lifecycle = CleanupService(service.store, service.filesystem, training=service.training)
     review = lifecycle.preview(CleanupSelection(action="archive", keys=[experiment["key"]]))

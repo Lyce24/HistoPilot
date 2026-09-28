@@ -12,11 +12,12 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
+from support.evaluation import packing_service, run_packing  # noqa: E402
+
 from histopilot.application.development import DevelopmentService  # noqa: E402
 from histopilot.application.evaluation_runs import EvaluationRunService  # noqa: E402
 from histopilot.application.evaluations import EvaluationService  # noqa: E402
 from histopilot.application.feature_bundles import FeatureBundleService, _hash  # noqa: E402
-from histopilot.application.feature_packs import FeaturePackService  # noqa: E402
 from histopilot.application.features import FeatureService  # noqa: E402
 from histopilot.application.predictors import PredictorService  # noqa: E402
 from histopilot.application.protocols import ProtocolService  # noqa: E402
@@ -40,7 +41,6 @@ from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.inference import evaluate  # noqa: E402
 from histopilot.training.module import MILTrainModule  # noqa: E402
 from histopilot.training.refit import train_refit  # noqa: E402
-from histopilot.workers.pack_features import run_job  # noqa: E402
 from histopilot.workers.packing_process import write_json  # noqa: E402
 from histopilot.workers.train_batch import _run_plan  # noqa: E402
 
@@ -70,12 +70,12 @@ def slide_bundle(store, filesystem, root, dataset, rows, name):
     reviewed = features.preview(spec)
     assert reviewed["canFreeze"], reviewed["findings"]
     feature = features.freeze(spec, reviewed["previewHash"], name)
-    packing = FeaturePackService(store, filesystem, support["FakeExecutor"]())
+    packing = packing_service(store, filesystem)
     request = FeaturePackSpec(featureSetId=feature["id"], action="validate")
     preview = packing.preview(request)
     assert preview["canRun"], preview["findings"]
     job = packing.submit(request, preview["previewHash"], name + "-validation")
-    result = run_job(packing.folder / job["id"] / "plan.json")
+    result = run_packing(packing, job)
     assert result["state"] == "succeeded", result
     assert result["validation"]["tensorValidationComplete"]
     assert result["validation"]["featureKind"] == "slide"

@@ -3,8 +3,6 @@
 import copy
 import json
 import runpy
-import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +24,17 @@ from histopilot.training.inference import (  # noqa: E402
 )
 
 support = runpy.run_path(str(Path(__file__).with_name("test_mil_training.py")))
+
+
+def run_pinned_worker(center, service, identity, launched):
+    """A real runner starts the queued worker from the job's pinned archive and concludes it."""
+    from histopilot.taskcenter.model import TERMINAL
+
+    task_id = launched["taskId"]
+    assert center.task(task_id)["command"]["cwd"] == str(service.folder(identity) / "compute")
+    runner = center.runner()
+    center.tick_until(runner, lambda: center.state(task_id) in TERMINAL, timeout=120)
+    assert center.state(task_id) == "succeeded", (center.task(task_id), center.logs)
 
 
 def _evaluation_plan(tmp_path, split_unit=None):
@@ -200,9 +209,12 @@ def test_patient_conflicts_and_invalid_refit_member_counts_rejected(plan, tmp_pa
         patient_predictions(rows)
 
 
-def test_pinned_worker_executes_real_inference_and_publishes_identical_receipt(plan, tmp_path):
+@pytest.mark.slow
+def test_pinned_worker_executes_real_inference_and_publishes_identical_receipt(
+    plan, tmp_path, task_center
+):
     job_support = runpy.run_path(str(Path(__file__).with_name("test_compute_jobs.py")))
-    service, initial_id, _, executor = job_support["job"].__wrapped__(tmp_path)
+    service, initial_id, _ = job_support["job"].__wrapped__(tmp_path, task_center)
     store = service.store
     dataset_id = store.get_configuration(initial_id)["manifest"]["datasetId"]
 
@@ -232,17 +244,7 @@ def test_pinned_worker_executes_real_inference_and_publishes_identical_receipt(p
     )
     identity = evaluation["id"]
     plan["resources"].update(gpuIds=[], ramGbPerRun=0.01, maxConcurrentRuns=1, runsPerGpu=1)
-    service.launch(identity, plan, "launch")
-    _, _, plan_path, _, archive = executor.calls[0]
-    result = subprocess.run(
-        [sys.executable, "-m", "histopilot.workers.compute_job", str(plan_path)],
-        cwd=archive,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert result.returncode == 0, result.stderr
-    executor.sessions.clear()
+    run_pinned_worker(task_center, service, identity, service.launch(identity, plan, "launch"))
     state = service.status(identity)
     assert state["status"] == "completed", state
     assert state["result"] == json.loads((service.folder(identity) / "result.json").read_text())
@@ -386,9 +388,12 @@ def test_inference_plan_never_reads_labels_or_unknown_purposes(plan, tmp_path):
         evaluate({**plan, "purpose": "review"}, tmp_path / "review")
 
 
-def test_pinned_worker_runs_inference_plans_through_record_verification(plan, tmp_path):
+@pytest.mark.slow
+def test_pinned_worker_runs_inference_plans_through_record_verification(
+    plan, tmp_path, task_center
+):
     job_support = runpy.run_path(str(Path(__file__).with_name("test_compute_jobs.py")))
-    service, initial_id, _, executor = job_support["job"].__wrapped__(tmp_path)
+    service, initial_id, _ = job_support["job"].__wrapped__(tmp_path, task_center)
     store = service.store
     dataset_id = store.get_configuration(initial_id)["manifest"]["datasetId"]
     memberships = [{**row, "label": None} for row in plan["data"]["memberships"]]
@@ -418,14 +423,8 @@ def test_pinned_worker_runs_inference_plans_through_record_verification(plan, tm
         "data": {**plan["data"], "memberships": memberships},
     }
     inference["resources"].update(gpuIds=[], ramGbPerRun=0.01, maxConcurrentRuns=1, runsPerGpu=1)
-    service.launch(evaluation["id"], inference, "launch")
-    _, _, plan_path, _, archive = executor.calls[0]
-    result = subprocess.run(
-        [sys.executable, "-m", "histopilot.workers.compute_job", str(plan_path)],
-        cwd=archive, capture_output=True, text=True, timeout=60,
-    )
-    assert result.returncode == 0, result.stderr
-    executor.sessions.clear()
+    launched = service.launch(evaluation["id"], inference, "launch")
+    run_pinned_worker(task_center, service, evaluation["id"], launched)
     state = service.status(evaluation["id"])
     assert state["status"] == "completed", state
     outcome = state["result"]

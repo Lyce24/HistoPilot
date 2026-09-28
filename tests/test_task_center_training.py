@@ -27,12 +27,9 @@ from histopilot.schemas.model_experiments import (
 from histopilot.storage.project_lock import StorageError
 from histopilot.taskcenter import capacity, ids
 from histopilot.taskcenter.adapters import adapter as registered_adapter
-from histopilot.taskcenter.adapters.base import AdapterError, RunnerContext
+from histopilot.taskcenter.adapters.base import AdapterError
 from histopilot.taskcenter.adapters.mil import MilCollectAdapter, MilFoldAdapter
-from histopilot.taskcenter.client import TaskCenterClient
 from histopilot.taskcenter.model import LIVE, TERMINAL, utc_now_iso
-from histopilot.taskcenter.runner import Runner
-from histopilot.taskcenter.store import TaskStore
 from histopilot.workers.managed_collect import final_status
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json, save_state
@@ -85,7 +82,7 @@ def tiny_spec(spec, **changes):
 
 
 @pytest.fixture
-def managed(tmp_path, monkeypatch):
+def managed(tmp_path, monkeypatch, task_center):
     monkeypatch.setattr("histopilot.application.training.gpu_snapshot", lambda: {"gpus": []})
     monkeypatch.setattr("histopilot.workers.training_process.gpu_snapshot", lambda: {"gpus": []})
     development, spec, _source = support["batch"].__wrapped__(tmp_path)
@@ -95,17 +92,15 @@ def managed(tmp_path, monkeypatch):
     frozen = development.freeze(
         spec, preview["previewHash"], "managed-batch", {"tag": "Managed batch"}
     )
-    store = TaskStore(tmp_path / "task-center" / "task-center.sqlite")
-    store.update_settings(
+    task_center.store.update_settings(
         {"defaults": {"cpuThreadsPerRun": 1, "dataLoaderWorkers": 0}, "cancelGraceSeconds": 5}
     )
-    client = TaskCenterClient(store)
     service = TrainingService(
         development.store,
         development.filesystem,
         runtime=runtime,
         execution_mode="task-center",
-        task_center=client,
+        task_center=task_center.client,
     )
     folder = development.store.folder / "training" / frozen["id"]
     return SimpleNamespace(
@@ -113,27 +108,25 @@ def managed(tmp_path, monkeypatch):
         service=service,
         frozen=frozen,
         identity=frozen["id"],
-        store=store,
-        client=client,
+        center=task_center,
+        store=task_center.store,
+        client=task_center.client,
         folder=folder,
         spec=spec,
-        messages=[],
+        messages=task_center.logs,
     )
 
 
 def make_runner(context, *, probe=runtime, clock=time.monotonic):
+    """A real runner with the MIL adapters, on this machine's CPUs and no GPU."""
     adapters = {"mil-fold": MilFoldAdapter(runtime=probe), "mil-collect": MilCollectAdapter()}
-    runner = Runner(
-        context.store,
+    return context.center.runner(
         clock=clock,
         host_probe=lambda: capacity.host(gpu_probe=lambda: {"gpus": []}),
         adapters=lambda name: adapters.get(name) or registered_adapter(name),
         sample_interval=1.0,
         host_interval=1.0,
-        log=context.messages.append,
     )
-    runner.start(lock=False)
-    return runner
 
 
 def group_tasks(context):
@@ -312,16 +305,6 @@ def test_task_center_launches_ignore_a_frozen_setups_legacy_resources(managed):
         1,
         0,
     )
-    tmux = TrainingService(
-        context.development.store,
-        context.development.filesystem,
-        runtime=runtime,
-        execution_mode="tmux",
-        task_center=context.client,
-    )
-    with pytest.raises(StorageError) as refused:
-        tmux._prepare(batch)
-    assert refused.value.code == "TRAINING_GPU_UNAVAILABLE"
 
 
 # -- launch, queue and status --------------------------------------------------------------
@@ -597,6 +580,7 @@ def test_lost_runner_interrupts_and_auto_resumes_the_running_fold(managed):
     # The host lost the fold and its runner (for example a WSL restart).
     lose(task)
     first._procs[task["id"]].wait(timeout=30)
+    first.close()  # its runner lock went with it
     second = make_runner(context)
     resumed = context.store.get(task["id"])
     assert resumed["state"] == "queued" and resumed["attempt"] == 2
@@ -634,6 +618,7 @@ def test_a_fold_lost_in_a_restart_resumes_once_its_runtime_answers(managed, monk
     ]
     lose(task)
     first._procs[task["id"]].wait(timeout=30)
+    first.close()
     probes = []
 
     def cold_then_warm(**_options):
@@ -752,15 +737,9 @@ def exit_record(returncode=0, *, stop=None, lost=False):
     }
 
 
-def test_fold_outcomes_come_from_receipts_never_from_the_exit_code(tmp_path):
+def test_fold_outcomes_come_from_receipts_never_from_the_exit_code(tmp_path, task_center):
     folder = fabricated_batch(tmp_path, "done", "sigterm", "oom", "stale", "lost", "paused")
-    ctx = RunnerContext(
-        store=TaskStore(tmp_path / "tc" / "task-center.sqlite"),
-        now=utc_now_iso,
-        settings={},
-        host={},
-        log=lambda _message: None,
-    )
+    ctx = task_center.context()
     adapter = MilFoldAdapter(runtime=runtime)
     result = {
         "runId": "done",
@@ -819,15 +798,9 @@ def test_fold_outcomes_come_from_receipts_never_from_the_exit_code(tmp_path):
     assert decision["state"] == "cancelled"
 
 
-def test_final_collection_applies_only_its_own_receipt(tmp_path):
+def test_final_collection_applies_only_its_own_receipt(tmp_path, task_center):
     folder = fabricated_batch(tmp_path, "run")
-    ctx = RunnerContext(
-        store=TaskStore(tmp_path / "tc" / "task-center.sqlite"),
-        now=utc_now_iso,
-        settings={},
-        host={},
-        log=lambda _message: None,
-    )
+    ctx = task_center.context()
     adapter = MilCollectAdapter()
     final = fabricated_task(folder)
     assert adapter.on_exit(final, exit_record(75), ctx)["exitReason"] == "busy"
@@ -861,19 +834,9 @@ def test_final_collection_applies_only_its_own_receipt(tmp_path):
     assert final_status({"runs": [{"status": "queued"}]}, cancel_requested=False) == "interrupted"
 
 
-def adapter_context(tmp_path):
-    return RunnerContext(
-        store=TaskStore(tmp_path / "tc" / "task-center.sqlite"),
-        now=utc_now_iso,
-        settings={},
-        host={},
-        log=lambda _message: None,
-    )
-
-
-def test_final_collection_superseded_by_requeued_folds_collects_again(tmp_path):
+def test_final_collection_superseded_by_requeued_folds_collects_again(tmp_path, task_center):
     folder = fabricated_batch(tmp_path, "run")
-    ctx = adapter_context(tmp_path)
+    ctx = task_center.context()
     adapter = MilCollectAdapter()
     final = fabricated_task(folder, queuedAt=utc_now_iso())
     # A collection that finishes before the runner records startedAt is still this attempt's.
@@ -922,9 +885,9 @@ def test_final_collection_superseded_by_requeued_folds_collects_again(tmp_path):
     assert "finishedAt" not in state
 
 
-def test_prepare_adopts_only_an_exact_result_left_by_a_lost_runner(tmp_path):
+def test_prepare_adopts_only_an_exact_result_left_by_a_lost_runner(tmp_path, task_center):
     folder = fabricated_batch(tmp_path, "done", "other")
-    ctx = adapter_context(tmp_path)
+    ctx = task_center.context()
     adapter = MilFoldAdapter(runtime=runtime)
     result = {
         "runId": "done",
@@ -947,7 +910,7 @@ def test_prepare_adopts_only_an_exact_result_left_by_a_lost_runner(tmp_path):
 POST_FIT_ERROR = "The verified feature pack changed after the batch was launched."
 
 
-def test_a_result_the_worker_later_failed_is_never_success(tmp_path, monkeypatch):
+def test_a_result_the_worker_later_failed_is_never_success(tmp_path, monkeypatch, task_center):
     from histopilot.workers import train_batch
 
     folder = fabricated_batch(tmp_path, "run")
@@ -978,7 +941,7 @@ def test_a_result_the_worker_later_failed_is_never_success(tmp_path, monkeypatch
     with pytest.raises(ValueError):
         train_batch.run_fold_worker(run_folder / "plan.json")
     assert (run_folder / "result.json").exists()
-    ctx = adapter_context(tmp_path)
+    ctx = task_center.context()
     adapter = MilFoldAdapter(runtime=runtime)
     # Legacy failed this fold; neither its exit code nor an unobservable one makes it success.
     for code in (1, 0, None):
@@ -1003,11 +966,11 @@ def test_a_result_the_worker_later_failed_is_never_success(tmp_path, monkeypatch
     assert read_json(folder / "state.json")["runs"][0]["status"] == "completed"
 
 
-def test_a_cancel_that_races_a_pause_is_never_requeued(tmp_path):
+def test_a_cancel_that_races_a_pause_is_never_requeued(tmp_path, task_center):
     from histopilot.storage.project_lock import writer_lock
 
     folder = fabricated_batch(tmp_path, "upgraded", "paused", "single")
-    ctx = adapter_context(tmp_path)
+    ctx = task_center.context()
     adapter = MilFoldAdapter(runtime=runtime)
     upgraded = fabricated_task(folder, "upgraded")
     ctx.store.enqueue(
@@ -1081,7 +1044,7 @@ while True:
 """
 
 
-def test_cancel_while_the_runner_concludes_a_paused_fold_cancels_it(tmp_path):
+def test_cancel_while_the_runner_concludes_a_paused_fold_cancels_it(tmp_path, task_center):
     import threading
 
     from histopilot.storage.project_lock import writer_lock
@@ -1092,14 +1055,14 @@ def test_cancel_while_the_runner_concludes_a_paused_fold_cancels_it(tmp_path):
     state.update(status="queued", runs=[{"id": "r1", "status": "queued", "attempt": 1}])
     save_state(folder, state)
     project = str(folder.parents[1])
-    store = TaskStore(tmp_path / "state" / "task-center.sqlite")
-    client = TaskCenterClient(store)
+    client = task_center.client
     context = SimpleNamespace(
-        store=store,
+        center=task_center,
+        store=task_center.store,
         client=client,
         identity="batch",
         development=SimpleNamespace(store=SimpleNamespace(folder=project)),
-        messages=[],
+        messages=task_center.logs,
     )
     work = tmp_path / "work"
     work.mkdir()
@@ -1129,48 +1092,41 @@ def test_cancel_while_the_runner_concludes_a_paused_fold_cancels_it(tmp_path):
         ],
     )
     runner = make_runner(context)
-    try:
-        drive(context, runner, lambda: (work / "started").exists(), timeout=30)
-        # "Stop & hold" on the experiment, then the fold saves its checkpoint and exits.
-        context.store.hold_owner(enqueued["owner"]["key"], True)
-        assert context.store.request_stop(["fold-r1"], "pause") == ["fold-r1"]
-        runner.tick()
-        deadline = time.monotonic() + 30
-        while procs.leader_alive(context.store.get("fold-r1")["process"]):
-            assert time.monotonic() < deadline
-            time.sleep(0.02)
-        locked = threading.Event()
+    drive(context, runner, lambda: (work / "started").exists(), timeout=30)
+    # "Stop & hold" on the experiment, then the fold saves its checkpoint and exits.
+    context.store.hold_owner(enqueued["owner"]["key"], True)
+    assert context.store.request_stop(["fold-r1"], "pause") == ["fold-r1"]
+    runner.tick()
+    deadline = time.monotonic() + 30
+    while procs.leader_alive(context.store.get("fold-r1")["process"]):
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    locked = threading.Event()
 
-        def cancel():
-            # What TrainingService._cancel_managed does under the batch writer lock.
-            with writer_lock(folder, timeout=5):
-                locked.set()
-                time.sleep(0.5)
-                write_json(folder / "cancel.json", {"requestedAt": utc_now_iso()})
-                for _ in range(2):
-                    client.cancel_group(
-                        "mil-batch", "batch", project, exclude_kinds=("mil-collect",)
-                    )
+    def cancel():
+        # What TrainingService._cancel_managed does under the batch writer lock.
+        with writer_lock(folder, timeout=5):
+            locked.set()
+            time.sleep(0.5)
+            write_json(folder / "cancel.json", {"requestedAt": utc_now_iso()})
+            for _ in range(2):
+                client.cancel_group("mil-batch", "batch", project, exclude_kinds=("mil-collect",))
 
-        thread = threading.Thread(target=cancel)
-        thread.start()
-        assert locked.wait(5)
-        runner.tick()  # lists the fold as paused, then waits for the lock in on_exit
-        thread.join()
-        task = context.store.get("fold-r1")
-        state = read_json(folder / "state.json")
-        assert task["state"] == "cancelled" and task["attempt"] == 1
-        assert state["runs"][0]["status"] == "cancelled"
-    finally:
-        for task in context.store.list(limit=None):
-            if task["process"]:
-                procs.kill_group(task["process"])
+    thread = threading.Thread(target=cancel)
+    thread.start()
+    assert locked.wait(5)
+    runner.tick()  # lists the fold as paused, then waits for the lock in on_exit
+    thread.join()
+    task = context.store.get("fold-r1")
+    state = read_json(folder / "state.json")
+    assert task["state"] == "cancelled" and task["attempt"] == 1
+    assert state["runs"][0]["status"] == "cancelled"
 
 
 @pytest.mark.parametrize("recorded", [True, False], ids=["single-run-cancel", "store-only"])
-def test_a_cancel_during_a_pause_requeue_ends_the_task_cancelled(tmp_path, recorded):
+def test_a_cancel_during_a_pause_requeue_ends_the_task_cancelled(tmp_path, task_center, recorded):
     folder = fabricated_batch(tmp_path, "r1")
-    store = TaskStore(tmp_path / "state" / "task-center.sqlite")
+    store = task_center.store
     fold = fabricated_task(folder, "r1")
     store.enqueue(
         {
@@ -1223,13 +1179,10 @@ def test_a_cancel_during_a_pause_requeue_ends_the_task_cancelled(tmp_path, recor
             return super().on_requeue(task, ctx)
 
     adapters = {"mil-fold": CancelledMeanwhile(runtime=runtime), "mil-collect": MilCollectAdapter()}
-    runner = Runner(
-        store,
+    runner = task_center.runner(
         host_probe=lambda: capacity.host(gpu_probe=lambda: {"gpus": []}),
         adapters=lambda name: adapters.get(name) or registered_adapter(name),
-        log=lambda _message: None,
     )
-    runner.start(lock=False)
     runner.tick()
     task = store.get(fold["id"])
     run = read_json(folder / "state.json")["runs"][0]
@@ -1241,7 +1194,7 @@ def test_a_cancel_during_a_pause_requeue_ends_the_task_cancelled(tmp_path, recor
     assert not (folder / "attempts.jsonl").exists()
 
 
-def test_requeued_attempts_record_their_host_provenance(tmp_path, monkeypatch):
+def test_requeued_attempts_record_their_host_provenance(tmp_path, monkeypatch, task_center):
     import json
 
     from histopilot.taskcenter.adapters import mil
@@ -1258,7 +1211,7 @@ def test_requeued_attempts_record_their_host_provenance(tmp_path, monkeypatch):
 
     def requeue(run_id, **fields):
         # A fresh context per call: the provenance probe is cached for one runner tick.
-        adapter.on_requeue(fabricated_task(folder, run_id, **fields), adapter_context(tmp_path))
+        adapter.on_requeue(fabricated_task(folder, run_id, **fields), task_center.context())
 
     def host_changed():
         return [
@@ -1297,7 +1250,7 @@ def test_requeued_attempts_record_their_host_provenance(tmp_path, monkeypatch):
     assert read_json(folder / "state.json")["provenance"]["gpus"] == gpus
 
 
-def test_a_retried_requeue_records_its_attempt_once(tmp_path, monkeypatch):
+def test_a_retried_requeue_records_its_attempt_once(tmp_path, monkeypatch, task_center):
     import json
 
     folder = fabricated_batch(tmp_path, "run")
@@ -1312,7 +1265,7 @@ def test_a_retried_requeue_records_its_attempt_once(tmp_path, monkeypatch):
 
     # The store's requeue failed (or the runner died) after this hook, so the runner repeats it.
     for _ in range(2):
-        adapter.on_requeue(fold, adapter_context(tmp_path))
+        adapter.on_requeue(fold, task_center.context())
     run = read_json(folder / "state.json")["runs"][0]
     assert (run["status"], run["attempt"], run["taskAttempt"]) == ("queued", 2, 2)
     assert events() == [("auto-resume", 2)]
@@ -1321,15 +1274,15 @@ def test_a_retried_requeue_records_its_attempt_once(tmp_path, monkeypatch):
     state = read_json(folder / "state.json")
     state["runs"][0]["status"] = "interrupted"
     save_state(folder, state)
-    adapter.on_requeue({**fold, "attempt": 2}, adapter_context(tmp_path))
+    adapter.on_requeue({**fold, "attempt": 2}, task_center.context())
     run = read_json(folder / "state.json")["runs"][0]
     assert (run["status"], run["attempt"], run["taskAttempt"]) == ("queued", 3, 3)
     assert events() == [("auto-resume", 2), ("auto-resume", 3)]
 
 
-def test_a_fold_requeued_after_finalization_rearms_the_final_collection(tmp_path):
+def test_a_fold_requeued_after_finalization_rearms_the_final_collection(tmp_path, task_center):
     folder = fabricated_batch(tmp_path, "run")
-    ctx = adapter_context(tmp_path)
+    ctx = task_center.context()
     store, fold = ctx.store, fabricated_task(folder, "run")
     final_id = ids.collect_task_id(str(folder), True)
     command = {
@@ -1395,13 +1348,15 @@ def pinned_runtime(folder, python, versions):
     save_state(folder, state)
 
 
-def test_an_unknown_runtime_defers_the_requeue_decision_instead_of_refusing(tmp_path, monkeypatch):
+def test_an_unknown_runtime_defers_the_requeue_decision_instead_of_refusing(
+    tmp_path, monkeypatch, task_center
+):
     from histopilot.taskcenter.adapters import mil
 
     folder = fabricated_batch(tmp_path, "run", "done")
     python, versions = "/envs/train/bin/python", {"torch": "2.10.0"}
     pinned_runtime(folder, python, versions)
-    ctx = adapter_context(tmp_path)
+    ctx = task_center.context()
     answers = [
         RuntimeError("probe timed out"),  # e.g. a cold import right after a reboot
         {
@@ -1439,7 +1394,7 @@ def test_an_unknown_runtime_defers_the_requeue_decision_instead_of_refusing(tmp_
     state = read_json(folder / "state.json")
     state["runs"][1]["status"] = "cancelled"
     save_state(folder, state)
-    assert adapter.can_requeue(fabricated_task(folder, "done"), adapter_context(tmp_path)) is False
+    assert adapter.can_requeue(fabricated_task(folder, "done"), task_center.context()) is False
     assert len(probes) == 3
 
     def other(*, python, refresh):
@@ -1447,15 +1402,15 @@ def test_an_unknown_runtime_defers_the_requeue_decision_instead_of_refusing(tmp_
 
     # Only known, different versions refuse; an interpreter that answered is known even when
     # a legacy requirement such as tmux marked the runtime unavailable.
-    assert MilFoldAdapter(runtime=other).can_requeue(task, adapter_context(tmp_path)) is False
+    assert MilFoldAdapter(runtime=other).can_requeue(task, task_center.context()) is False
 
     def no_tmux(*, python, refresh):
         return {"available": False, "versions": versions, "findings": [{"message": "tmux"}]}
 
-    assert MilFoldAdapter(runtime=no_tmux).can_requeue(task, adapter_context(tmp_path)) is True
+    assert MilFoldAdapter(runtime=no_tmux).can_requeue(task, task_center.context()) is True
 
 
-def test_folds_waiting_on_one_slow_runtime_probe_wait_once_per_tick(tmp_path):
+def test_folds_waiting_on_one_slow_runtime_probe_wait_once_per_tick(tmp_path, task_center):
     """After a reboot every lost fold asks whether it may resume while one cold probe runs;
     the runner loop waits for that probe once per tick, not once per fold."""
     import dataclasses
@@ -1465,7 +1420,7 @@ def test_folds_waiting_on_one_slow_runtime_probe_wait_once_per_tick(tmp_path):
     folder = fabricated_batch(tmp_path, *runs)
     python, versions = "/envs/train/bin/python", {"torch": "2.10.0"}
     pinned_runtime(folder, python, versions)
-    ctx = adapter_context(tmp_path)
+    ctx = task_center.context()
     release = threading.Event()
 
     def probe(*, python, refresh):
@@ -1510,13 +1465,15 @@ def test_training_runtime_probes_the_given_interpreter_once_per_executable(tmp_p
     )
 
 
-def test_contended_batch_lock_is_transient_for_every_state_write(tmp_path, monkeypatch):
+def test_contended_batch_lock_is_transient_for_every_state_write(
+    tmp_path, monkeypatch, task_center
+):
     from histopilot.storage.project_lock import writer_lock
     from histopilot.taskcenter.adapters import mil
 
     monkeypatch.setattr(mil, "writer_lock", lambda folder, timeout: writer_lock(folder))
     folder = fabricated_batch(tmp_path, "run")
-    ctx = adapter_context(tmp_path)
+    ctx = task_center.context()
     fold, final = MilFoldAdapter(runtime=runtime), MilCollectAdapter()
     write_json(
         folder / "collect-result.json",
@@ -1559,51 +1516,6 @@ def test_managed_collect_defers_when_busy_and_never_regresses_final_results(tmp_
     write_json(plan_path, {**read_json(plan_path), "batchId": "changed"})
     assert collect(plan_path, final=True) == 1
     assert "plan changed" in read_json(folder / "collect-result.json")["error"]
-
-
-def test_legacy_plans_keep_the_tmux_scheduler_in_task_center_mode(managed):
-    context = managed
-
-    class Executor:
-        def __init__(self):
-            self.sessions, self.launches = set(), []
-
-        def available(self):
-            return True
-
-        def running(self, session):
-            return session in self.sessions
-
-        def launch(self, session, python, plan, log, *, package_root):
-            self.sessions.add(session)
-            self.launches.append(session)
-
-    executor = Executor()
-    development = context.development
-    legacy = TrainingService(
-        development.store, development.filesystem, executor=executor, runtime=runtime
-    )
-    assert legacy.mode == "tmux"
-    state = legacy.launch(context.identity, "legacy-launch")
-    plan = read_json(context.folder / "plan.json")
-    assert "executionMode" not in plan and state["sessionName"].startswith("hp-train-")
-    executor.sessions.clear()  # the scheduler was lost, for example by a reboot
-    managed_mode = TrainingService(
-        development.store,
-        development.filesystem,
-        executor=executor,
-        runtime=runtime,
-        execution_mode="task-center",
-        task_center=context.client,
-    )
-    assert managed_mode.execution(context.identity)["status"] == "interrupted"
-    resumed = managed_mode.launch(context.identity, "legacy-resume", resume=True)
-    assert executor.launches == [state["sessionName"]] * 2
-    assert "executor" not in resumed and "resourcePlan" in resumed
-    assert read_json(context.folder / "plan.json") == plan
-    cancelled = managed_mode.cancel(context.identity, "legacy-cancel")
-    assert cancelled["cancelRequested"] and "taskCenter" not in cancelled
-    assert group_tasks(context) == [] and context.store.owners(live_only=False) == []
 
 
 # -- experiments ---------------------------------------------------------------------------
@@ -1660,7 +1572,7 @@ def test_cancelled_managed_batch_keeps_its_experiment_running_and_resumable(mana
     receipt = development.store.get_draft(record["id"])["payload"]["submission"]
     assert receipt["executionMode"] == "task-center"
     [batch_id] = submitted["submission"]["batchIds"]
-    [owner] = context.store.owners()
+    [owner] = [row for row in context.store.owners() if row["kind"] == "experiment"]
     assert owner["kind"] == "experiment" and owner["id"] == record["id"]
     assert owner["title"] == "Managed study"
 
@@ -1682,3 +1594,77 @@ def test_cancelled_managed_batch_keeps_its_experiment_running_and_resumable(mana
     resumed = context.service.launch(batch_id, "resume", resume=True)
     assert resumed["status"] == "queued"
     assert experiments.get(record["id"])["stage"] == "running"
+
+
+# -- Batches on the legacy tmux scheduler -------------------------------------------------
+
+
+@pytest.mark.legacy_tmux
+def test_tmux_launches_still_honor_a_frozen_setups_legacy_resources(managed):
+    context = managed
+    frozen = context.frozen
+    legacy = {**LEGACY_RESOURCES, "gpuIds": [1]}  # a GPU this machine does not have
+    batch = {
+        **frozen,
+        "manifest": {
+            **frozen["manifest"],
+            "spec": {**frozen["manifest"]["spec"], "resources": legacy},
+        },
+    }
+    tmux = TrainingService(
+        context.development.store,
+        context.development.filesystem,
+        runtime=runtime,
+        execution_mode="tmux",
+        task_center=context.client,
+    )
+    with pytest.raises(StorageError) as refused:
+        tmux._prepare(batch)
+    assert refused.value.code == "TRAINING_GPU_UNAVAILABLE"
+
+
+@pytest.mark.legacy_tmux
+def test_legacy_plans_keep_the_tmux_scheduler_in_task_center_mode(managed):
+    context = managed
+
+    class Executor:
+        def __init__(self):
+            self.sessions, self.launches = set(), []
+
+        def available(self):
+            return True
+
+        def running(self, session):
+            return session in self.sessions
+
+        def launch(self, session, python, plan, log, *, package_root):
+            self.sessions.add(session)
+            self.launches.append(session)
+
+    executor = Executor()
+    development = context.development
+    legacy = TrainingService(
+        development.store, development.filesystem, executor=executor, runtime=runtime
+    )
+    assert legacy.mode == "tmux"
+    state = legacy.launch(context.identity, "legacy-launch")
+    plan = read_json(context.folder / "plan.json")
+    assert "executionMode" not in plan and state["sessionName"].startswith("hp-train-")
+    executor.sessions.clear()  # the scheduler was lost, for example by a reboot
+    managed_mode = TrainingService(
+        development.store,
+        development.filesystem,
+        executor=executor,
+        runtime=runtime,
+        execution_mode="task-center",
+        task_center=context.client,
+    )
+    assert managed_mode.execution(context.identity)["status"] == "interrupted"
+    resumed = managed_mode.launch(context.identity, "legacy-resume", resume=True)
+    assert executor.launches == [state["sessionName"]] * 2
+    assert "executor" not in resumed and "resourcePlan" in resumed
+    assert read_json(context.folder / "plan.json") == plan
+    cancelled = managed_mode.cancel(context.identity, "legacy-cancel")
+    assert cancelled["cancelRequested"] and "taskCenter" not in cancelled
+    assert group_tasks(context) == []
+    assert all(row["id"] != context.identity for row in context.store.owners(live_only=False))

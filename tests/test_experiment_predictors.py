@@ -63,8 +63,8 @@ class Jobs(FakeJobs):
         return self.states[identity]
 
 
-@pytest.fixture
-def integrated(registry):
+def submitted(registry):
+    """An experiment whose two-seed CV batch finished, submitted with both predictor methods."""
     predictors, _cohort = registry
     selections, folder = support["two_seeds"](predictors)
     store = predictors.store
@@ -101,6 +101,14 @@ def integrated(registry):
         name=record["name"],
         payload={**record["payload"], "submission": submission, "predictorPolicy": policy},
     )
+    return predictors, identity, runtime, selections
+
+
+@pytest.fixture
+def integrated(registry):
+    """The coordinator on the legacy tmux executor, for modules that still build on it."""
+    predictors, identity, runtime, selections = submitted(registry)
+    store = predictors.store
     executor = Executor()
     jobs = Jobs(store, runtime)
     service = ExperimentPredictorService(
@@ -112,6 +120,39 @@ def integrated(registry):
         runtime=lambda: runtime,
     )
     return service, identity, jobs, executor, selections
+
+
+@pytest.fixture
+def managed(registry, task_center):
+    """The coordinator queued in this test's Task Center, as in production.
+
+    Tests call ``advance`` themselves, as the coordinator's worker would; refits stay fake.
+    """
+    predictors, identity, runtime, selections = submitted(registry)
+    store = predictors.store
+    jobs = Jobs(store, runtime)
+    service = ExperimentPredictorService(
+        store,
+        predictors.filesystem,
+        training=Training(store.folder),
+        refits=RefitService(store, predictors.filesystem, jobs=jobs),
+        runtime=lambda: runtime,
+        execution_mode="task-center",
+        task_center=task_center.client,
+    )
+    service.legacy_executor = service.executor.legacy = Executor()  # never probe real tmux
+    return service, identity, jobs, selections
+
+
+def coordinators(center):
+    """The coordinator tasks in ``center`` (fixtures also queue feature validation)."""
+    return center.tasks(kind="predictor-coordinator")
+
+
+def coordinator(center):
+    """The id of the experiment's single coordinator task."""
+    [task] = coordinators(center)
+    return task["id"]
 
 
 @pytest.mark.parametrize("method", ["skip", "ensemble"])
@@ -157,28 +198,33 @@ def test_example_counts_seed_configuration_groups_once_per_method():
     assert source_items("experiment", batches, {"method": "skip"}) == []
 
 
-def test_get_never_dispatches_and_cv_finished_waits_for_predictors(integrated):
-    service, identity, jobs, executor, _ = integrated
+def test_get_never_dispatches_and_cv_finished_waits_for_predictors(managed, task_center):
+    service, identity, jobs, _ = managed
     models = ModelExperimentService(
         service.store, service.filesystem, training=service.training, predictor_execution=service
     )
     detail = models.get(identity)
     assert detail["stage"] == "running"
     assert detail["predictorExecution"]["status"] == "interrupted"
-    assert jobs.launches == [] and executor.launches == []
+    assert jobs.launches == [] and coordinators(task_center) == []
     service.launch(identity, "start")
     for _ in range(3):
         assert models.get(identity)["predictorExecution"]["counts"]["completed"] == 0
     assert jobs.launches == []
-    assert len(executor.launches) == 1
+    assert [task["attempt"] for task in coordinators(task_center)] == [1]
 
 
-def test_both_automatically_publishes_ensembles_and_launches_every_ready_refit(integrated):
-    service, identity, jobs, executor, _ = integrated
+def test_both_automatically_publishes_ensembles_and_launches_every_ready_refit(
+    managed, task_center
+):
+    service, identity, jobs, _ = managed
     launched = service.launch(identity, "start")
     assert launched["counts"]["total"] == 4
-    assert service.launch(identity, "start") == launched
-    assert len(executor.launches) == 1
+    replay = service.launch(identity, "start")
+    # The replay also reports the queue the accepted coordinator now waits in.
+    assert replay["waitingReason"] and replay["runnerAlive"] is False
+    assert {**replay, "waitingReason": None, "runnerAlive": None} == launched
+    assert [task["attempt"] for task in coordinators(task_center)] == [1]
     first = service.advance(identity)
     # Every ready refit is its own task; the Task Center, not the coordinator, admits them.
     assert first["counts"]["completed"] == 2 and first["counts"]["active"] == 2
@@ -204,8 +250,8 @@ def test_both_automatically_publishes_ensembles_and_launches_every_ready_refit(i
     assert models.get(identity)["stage"] == "finished"
 
 
-def test_partial_folds_wait_without_publishing(integrated):
-    service, identity, jobs, _executor, selections = integrated
+def test_partial_folds_wait_without_publishing(managed):
+    service, identity, jobs, selections = managed
     folder = service.store.folder / "training" / selections[0].batchId
     state = read_json(folder / "state.json")
     state["status"] = "running"
@@ -216,40 +262,59 @@ def test_partial_folds_wait_without_publishing(integrated):
     assert service.store.list_configurations("frozen-predictor") == [] and jobs.launches == []
 
 
-def test_worker_launch_failure_is_recoverable_without_replaying_cv(integrated):
-    service, identity, jobs, executor, _ = integrated
-    executor.fail = True
+def test_worker_launch_failure_is_recoverable_without_replaying_cv(
+    managed, task_center, monkeypatch
+):
+    service, identity, jobs, _ = managed
+    enqueue = task_center.client.enqueue
+
+    def refuse(*_args, **_kwargs):
+        raise OSError("Synthetic launch failed")
+
+    monkeypatch.setattr(task_center.client, "enqueue", refuse)
     state = service.launch(identity, "start")
     assert state["status"] == "interrupted" and state["retryable"]
     assert service.launch(identity, "start")["status"] == "interrupted"
-    executor.fail = False
+    monkeypatch.setattr(task_center.client, "enqueue", enqueue)
     recovered = service.launch(identity, "retry", resume=True)
-    assert recovered["status"] == "queued" and len(executor.launches) == 2
-    assert jobs.launches == []
+    # The refused submission left no task behind; the retry queues the coordinator.
+    assert recovered["status"] == "queued"
+    assert [task["attempt"] for task in coordinators(task_center)] == [1]
+    assert jobs.launches == [] and service.legacy_executor.launches == []
 
 
-def test_lost_coordinator_acknowledgement_keeps_worker_ownership(integrated):
-    service, identity, _jobs, executor, _ = integrated
-    executor.lost = True
+def test_lost_coordinator_acknowledgement_keeps_worker_ownership(
+    managed, task_center, monkeypatch
+):
+    service, identity, _jobs, _ = managed
+    enqueue = task_center.client.enqueue
+
+    def enqueue_then_lose_the_reply(*args, **kwargs):
+        enqueue(*args, **kwargs)
+        raise OSError("Synthetic lost acknowledgement")
+
+    monkeypatch.setattr(task_center.client, "enqueue", enqueue_then_lose_the_reply)
     state = service.launch(identity, "start")
     assert state["status"] == "queued" and not state["retryable"]
     assert service.launch(identity, "start")["status"] == "queued"
-    assert len(executor.launches) == 1
+    assert [task["attempt"] for task in coordinators(task_center)] == [1]
 
 
-def test_cancel_stops_active_refits_and_never_launches_them_again(integrated):
-    service, identity, jobs, _executor, _ = integrated
+def test_cancel_stops_active_refits_and_never_launches_them_again(managed, task_center):
+    service, identity, jobs, _ = managed
     service.launch(identity, "start")
     service.advance(identity)
     result = service.cancel(identity, "cancel")
     assert result["status"] == "cancelled" and result["counts"]["completed"] == 2
     assert result["counts"]["cancelled"] == 2 and len(jobs.cancels) == 2
+    # The coordinator had not started, so the Task Center drops it at once.
+    assert task_center.state(coordinator(task_center)) == "cancelled"
     assert service.advance(identity)["status"] == "cancelled"
     assert len(jobs.launches) == 2
 
 
-def test_a_busy_project_leaves_an_item_waiting_instead_of_failing_it(integrated, monkeypatch):
-    service, identity, jobs, _executor, _ = integrated
+def test_a_busy_project_leaves_an_item_waiting_instead_of_failing_it(managed, monkeypatch):
+    service, identity, jobs, _ = managed
     service.launch(identity, "start")
     original = service.builds.apply
     busy = []
@@ -274,9 +339,10 @@ def test_a_busy_project_leaves_an_item_waiting_instead_of_failing_it(integrated,
     assert final["status"] == "completed" and final["counts"]["completed"] == 4
 
 
-def test_failed_refit_waits_for_explicit_resume(integrated):
-    service, identity, jobs, executor, _ = integrated
+def test_failed_refit_waits_for_explicit_resume(managed, task_center):
+    service, identity, jobs, _ = managed
     service.launch(identity, "start")
+    task_id = coordinator(task_center)
     service.advance(identity)
     first_refit = jobs.launches[0][0]
     jobs.states[first_refit]["status"] = "failed"
@@ -289,15 +355,17 @@ def test_failed_refit_waits_for_explicit_resume(integrated):
     second_refit = jobs.launches[-1][0]
     jobs.complete(second_refit)
     assert service.advance(identity)["status"] == "attention"
-    executor.live = False
+    # The coordinator exits after recording attention; its task ends failed.
+    task_center.finish(task_id, "failed", returncode=0)
     service.launch(identity, "retry", resume=True)
+    assert task_center.task(task_id)["attempt"] == 2
     service.advance(identity)
     assert sum(row[0] == first_refit for row in jobs.launches) == 2
     assert jobs.launches[-1][2]
 
 
-def test_published_build_receipt_recovers_a_lost_reply(integrated, monkeypatch):
-    service, identity, _jobs, executor, _ = integrated
+def test_published_build_receipt_recovers_a_lost_reply(managed, task_center, monkeypatch):
+    service, identity, _jobs, _ = managed
     service.launch(identity, "start")
     original = service.builds.apply
     failed = False
@@ -317,8 +385,9 @@ def test_published_build_receipt_recovers_a_lost_reply(integrated, monkeypatch):
     assert failed_item["buildRequest"]["previewHash"]
     # Simulate coordinator process loss; resume must reuse the persisted request
     # whose manifest action is 'create', not review a new conflicting 'reuse'.
-    executor.live = False
+    task_center.finish(coordinator(task_center), "interrupted", returncode=None, reason="lost")
     service.launch(identity, "retry", resume=True)
+    assert task_center.task(coordinator(task_center))["attempt"] == 2
     service.advance(identity)
     _plan, state = service._read(identity)
     assert (
@@ -329,8 +398,10 @@ def test_published_build_receipt_recovers_a_lost_reply(integrated, monkeypatch):
 
 
 @pytest.mark.parametrize("policy", [None, {"method": "skip", "refitPercentile": None}])
-def test_historical_and_skip_submissions_cannot_start_automatic_work(integrated, policy):
-    service, identity, _jobs, executor, _ = integrated
+def test_historical_and_skip_submissions_cannot_start_automatic_work(
+    managed, task_center, policy
+):
+    service, identity, _jobs, _ = managed
     record = service.store.get_draft(identity)
     payload = copy.deepcopy(record["payload"])
     if policy:
@@ -342,15 +413,15 @@ def test_historical_and_skip_submissions_cannot_start_automatic_work(integrated,
     )
     with pytest.raises(StorageError):
         service.launch(identity, "start")
-    assert executor.launches == [] and service.status(identity) is None
+    assert coordinators(task_center) == [] and service.status(identity) is None
     models = ModelExperimentService(
         service.store, service.filesystem, training=service.training, predictor_execution=service
     )
     assert models.get(identity)["stage"] == "finished"
 
 
-def test_manual_refit_cannot_change_submitted_percentile_or_resources(integrated):
-    service, identity, _jobs, _executor, selections = integrated
+def test_manual_refit_cannot_change_submitted_percentile_or_resources(managed):
+    service, identity, _jobs, selections = managed
     service.launch(identity, "start")
     status = service.advance(identity)
     selection = selections[0].model_copy(update={"method": "refit", "refitPercentile": 50.0})
@@ -367,12 +438,12 @@ def test_manual_refit_cannot_change_submitted_percentile_or_resources(integrated
 
 @pytest.mark.parametrize("archived", [True, False])
 def test_manual_refit_runs_the_submitted_archive_after_the_checkout_changes(
-    integrated, monkeypatch, archived
+    managed, monkeypatch, archived
 ):
     from histopilot.workers import training_process
     from histopilot.workers.compute_archive import prepare_compute_archive
 
-    service, identity, jobs, _executor, selections = integrated
+    service, identity, jobs, selections = managed
     submission = service.store.get_draft(identity)["payload"]["submission"]
     code = submission["executionContract"]["code"]
     batch = service.store.folder / "training" / selections[0].batchId
@@ -396,43 +467,48 @@ def test_manual_refit_runs_the_submitted_archive_after_the_checkout_changes(
     assert jobs.task_options["pinned"] == (code, batch / "compute" / "histopilot")
 
 
-def test_cleanup_catalog_tracks_active_coordinator(integrated, monkeypatch):
-    from histopilot.application.experiment_predictors import TmuxExperimentExecutor
+def test_cleanup_catalog_tracks_active_coordinator(managed, task_center):
     from histopilot.application.lifecycle import CleanupService
 
-    service, identity, jobs, executor, _ = integrated
+    service, identity, jobs, _ = managed
     service.launch(identity, "start")
-    monkeypatch.setattr(TmuxExperimentExecutor, "running", lambda _self, _session: executor.live)
+    task_id = coordinator(task_center)
     cleanup = CleanupService(
         service.store, service.filesystem, training=service.training, compute=jobs
     )
-    experiment = next(row for row in cleanup.catalog()["items"] if row["id"] == identity)
-    assert experiment["job"]["busy"]
-    assert not experiment["job"]["cancellable"]
-    # A terminal receipt does not permit cleanup while the owning tmux worker
-    # still exists and could be finalizing its state.
+
+    def job():
+        return next(row for row in cleanup.catalog()["items"] if row["id"] == identity)["job"]
+
+    assert job()["busy"]  # queued
+    # The coordinator is running; the cancel below would drop a queued one at once.
+    task_center.start(task_id)
+    experiment = job()
+    assert experiment["busy"]
+    assert not experiment["cancellable"]
+    # A terminal receipt does not permit cleanup while the coordinator's task still
+    # runs and could be finalizing its state.
     service.cancel(identity, "cancel-for-cleanup")
     assert service.status(identity)["status"] == "cancelled"
-    retained = next(row for row in cleanup.catalog()["items"] if row["id"] == identity)
-    assert retained["job"]["busy"]
-    executor.live = False
-    stopped = next(row for row in cleanup.catalog()["items"] if row["id"] == identity)
-    assert not stopped["job"]["busy"]
+    assert task_center.state(task_id) == "running"
+    assert job()["busy"]
+    task_center.finish(task_id, "cancelled")
+    assert not job()["busy"]
 
 
-def test_cancel_can_finish_failed_start_without_starting_a_process(integrated):
-    service, identity, jobs, executor, _ = integrated
+def test_cancel_can_finish_failed_start_without_starting_a_process(managed, task_center):
+    service, identity, jobs, _ = managed
     assert service.status(identity) is None
     cancelled = service.cancel(identity, "stop-before-start")
     assert cancelled["status"] == "cancelled"
     assert cancelled["counts"]["total"] == cancelled["counts"]["cancelled"] == 4
     assert service.status(identity)["status"] == "cancelled"
     assert service.launch(identity, "try-resume", resume=True)["status"] == "cancelled"
-    assert not jobs.launches and not executor.launches
+    assert not jobs.launches and coordinators(task_center) == []
 
 
-def test_attention_is_cancellable(integrated):
-    service, identity, jobs, _executor, _ = integrated
+def test_attention_is_cancellable(managed):
+    service, identity, jobs, _ = managed
     service.launch(identity, "start")
     service.advance(identity)
     first = jobs.launches[0][0]
@@ -446,8 +522,8 @@ def test_attention_is_cancellable(integrated):
     assert cancelled["status"] == "cancelled" and cancelled["counts"]["cancelled"] == 2
 
 
-def test_overall_status_includes_predictor_work(integrated):
-    service, identity, _jobs, _executor, _ = integrated
+def test_overall_status_includes_predictor_work(managed):
+    service, identity, _jobs, _ = managed
     models = ModelExperimentService(
         service.store, service.filesystem, training=service.training, predictor_execution=service
     )
@@ -459,21 +535,23 @@ def test_overall_status_includes_predictor_work(integrated):
     assert models.get(identity)["status"] == "running"
 
 
-def test_accepted_noop_resume_cannot_launch_a_later_attempt(integrated):
-    service, identity, _jobs, executor, _ = integrated
+def test_accepted_noop_resume_cannot_launch_a_later_attempt(managed, task_center):
+    service, identity, _jobs, _ = managed
     service.launch(identity, "start")
+    task_id = coordinator(task_center)
     assert service.launch(identity, "resume-while-active", resume=True)["status"] == "queued"
-    executor.live = False
+    task_center.finish(task_id, "interrupted", returncode=None, reason="lost")
     assert service.status(identity)["status"] == "interrupted"
     assert service.launch(identity, "resume-while-active", resume=True)["status"] == "interrupted"
-    assert len(executor.launches) == 1
+    assert task_center.task(task_id)["attempt"] == 1
     service.launch(identity, "fresh-resume", resume=True)
-    assert len(executor.launches) == 2
+    assert task_center.task(task_id)["attempt"] == 2
 
 
-def test_old_cancel_retry_cannot_cancel_a_new_attempt(integrated, monkeypatch):
-    service, identity, _jobs, executor, _ = integrated
+def test_old_cancel_retry_cannot_cancel_a_new_attempt(managed, task_center, monkeypatch):
+    service, identity, _jobs, _ = managed
     service.launch(identity, "start")
+    task_id = coordinator(task_center)
     original = service._cancel_items
 
     def fail_cancel(_plan, _state):
@@ -488,17 +566,18 @@ def test_old_cancel_retry_cannot_cancel_a_new_attempt(integrated, monkeypatch):
     state = read_json(path)
     state["status"] = "attention"
     write_json(path, state)
-    executor.live = False
+    task_center.finish(task_id, "failed", returncode=0)
     monkeypatch.setattr(service, "_cancel_items", original)
     service.launch(identity, "fresh-resume", resume=True)
+    assert task_center.task(task_id)["attempt"] == 2
     result = service.cancel(identity, "old-cancel")
     assert result["status"] == "queued"
     assert not (service.folder(identity) / "cancel.requested").exists()
     assert service.cancel(identity, "fresh-cancel")["status"] == "cancelled"
 
 
-def test_predictor_actions_cannot_reuse_another_action_identity(integrated):
-    service, identity, _jobs, _executor, _ = integrated
+def test_predictor_actions_cannot_reuse_another_action_identity(managed):
+    service, identity, _jobs, _ = managed
     service.launch(identity, "start")
     with pytest.raises(StorageError) as error:
         service.cancel(identity, "start")
@@ -509,8 +588,8 @@ def test_predictor_actions_cannot_reuse_another_action_identity(integrated):
     assert error.value.code == "OPERATION_CONFLICT"
 
 
-def test_manual_refit_cannot_reopen_cancelled_experiment_predictor_work(integrated):
-    service, identity, jobs, _executor, _ = integrated
+def test_manual_refit_cannot_reopen_cancelled_experiment_predictor_work(managed):
+    service, identity, jobs, _ = managed
     service.launch(identity, "start")
     service.advance(identity)
     refit_id = jobs.launches[0][0]
@@ -522,10 +601,10 @@ def test_manual_refit_cannot_reopen_cancelled_experiment_predictor_work(integrat
     assert len(jobs.launches) == 2  # both refits launched together; neither reopened
 
 
-def test_cancelled_intent_blocks_manual_creation_but_not_existing_evidence(integrated):
+def test_cancelled_intent_blocks_manual_creation_but_not_existing_evidence(managed):
     from histopilot.schemas.predictors import FreezePredictor
 
-    service, identity, jobs, _executor, selections = integrated
+    service, identity, jobs, selections = managed
     service.launch(identity, "start")
     request = selections[0].model_copy(update={"method": "ensemble"})
     preview = service.builds.predictors.preview(request)
@@ -542,8 +621,8 @@ def test_cancelled_intent_blocks_manual_creation_but_not_existing_evidence(integ
     assert not jobs.launches
 
 
-def test_cancelled_intent_blocks_late_refit_publication(integrated):
-    service, identity, jobs, _executor, _ = integrated
+def test_cancelled_intent_blocks_late_refit_publication(managed):
+    service, identity, jobs, _ = managed
     service.launch(identity, "start")
     service.advance(identity)
     refit_id = jobs.launches[0][0]

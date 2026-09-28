@@ -4,8 +4,9 @@ import hashlib
 import io
 
 import pytest
+from support.interpretation import complete
+from test_interpretation import managed_study as managed_study
 from test_interpretation import save
-from test_interpretation import study as study
 
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import read_json
@@ -14,14 +15,14 @@ Image = pytest.importorskip("PIL.Image")
 
 
 @pytest.fixture
-def top_api(study, tmp_path, monkeypatch):
+def top_api(managed_study, tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from histopilot.api.app import create_app
     from histopilot.config import Settings
 
-    service, _, _ = study
-    record, _ = save(study)
+    service, _, task_center = managed_study
+    record, _ = save(managed_study)
     service.launch(record["id"], "top-api-launch")
     folder = service.jobs.folder(record["id"])
     artifacts = {}
@@ -50,9 +51,7 @@ def top_api(study, tmp_path, monkeypatch):
             "sha256": hashlib.sha256(content).hexdigest(),
         }
     result = {"runId": record["id"], "state": "succeeded", "artifacts": artifacts}
-    state = read_json(folder / "state.json")
-    write_json(folder / "state.json", {**state, "status": "completed", "result": result})
-    write_json(folder / "result.json", result)
+    complete(service, record["id"], result, task_center)
     monkeypatch.setattr(
         "histopilot.api.interpretation.InterpretationService", lambda *args: service
     )

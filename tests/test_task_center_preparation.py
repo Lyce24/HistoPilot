@@ -18,6 +18,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
+from support.task_center import Center, fake_host
 
 from histopilot.adapters import trident
 from histopilot.adapters.trident import performance
@@ -30,15 +31,12 @@ from histopilot.schemas.features import FeatureSpec
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.scientific import ScientificStore
 from histopilot.taskcenter import ids, procs
-from histopilot.taskcenter.adapters.base import RunnerContext
 from histopilot.taskcenter.adapters.extraction import (
     ExtractionAdapter,
     ExtractionValidationAdapter,
 )
 from histopilot.taskcenter.adapters.packing import PackingAdapter, reap_staging
-from histopilot.taskcenter.client import default_client
 from histopilot.taskcenter.model import TERMINAL, utc_now_iso
-from histopilot.taskcenter.runner import Runner
 from histopilot.workers import packing_process
 from histopilot.workers.resource_reservation import SHARED_RUNS_PER_GPU, preparation_resources
 
@@ -52,80 +50,30 @@ def load_runner_module():
     return module
 
 
-def fake_host():
-    return {
-        "cpuCount": 8,
-        "totalRamGb": 64.0,
-        "availableRamGb": 60.0,
-        "bootId": "test",
-        "kernel": "test",
-        "physicalCpuCount": 4,
-        "gpus": [],
-    }
+# Preparation work runs on the CPU lane here: 8 CPUs, no GPU.
+HOST = fake_host(gpus=0, cpus=8, available=60.0)
 
 
-class Center:
-    """The per-test Task Center (the one default_client() resolves) plus runners."""
+class PreparationCenter(Center):
+    """The shared per-test Task Center (``support/task_center.py``) on the CPU-only host.
 
-    def __init__(self):
-        self.client = default_client()
-        self.store = self.client.store
-        self.runners = []
-        self.logs = []
+    Real extraction, packing and archive workers start slowly, so conditions get a
+    minute to hold.
+    """
 
-    def runner(self):
-        runner = Runner(
-            self.store,
-            host_probe=fake_host,
-            sample_interval=0.0,
-            host_interval=0.0,
-            log=self.logs.append,
-        )
-        self.runners.append(runner)
-        runner.start()
-        return runner
-
-    def state(self, task_id):
-        return self.store.get(task_id)["state"]
+    def runner(self, **options):
+        return super().runner(**{"host_probe": HOST, **options})
 
     def tick_until(self, runner, predicate, timeout=60.0):
-        deadline = time.monotonic() + timeout
-        while True:
-            runner.tick()
-            if predicate():
-                return
-            if time.monotonic() > deadline:
-                states = {task["id"]: task["state"] for task in self.store.list(limit=None)}
-                raise AssertionError(f"Condition not reached; tasks: {states}; log: {self.logs}")
-            time.sleep(0.05)
+        return super().tick_until(runner, predicate, timeout)
 
-    def context(self):
-        return RunnerContext(
-            store=self.store,
-            now=utc_now_iso,
-            settings=self.store.settings(),
-            host=fake_host(),
-            log=self.logs.append,
-        )
-
-    def cleanup(self):
-        for runner in self.runners:
-            runner.close()
-        for task in self.store.list(limit=None):
-            if task["process"]:
-                procs.kill_group(task["process"])
-        for runner in self.runners:
-            for child in runner._procs.values():
-                try:
-                    child.kill()
-                    child.wait(timeout=5)
-                except (OSError, subprocess.SubprocessError):
-                    pass
+    def context(self, host=None):
+        return super().context(host or HOST)
 
 
 @pytest.fixture
-def center():
-    value = Center()
+def center(_task_center_state):
+    value = PreparationCenter()
     yield value
     value.cleanup()
 
@@ -133,7 +81,10 @@ def center():
 # -- 1.15: GPU sharing -------------------------------------------------------------------
 
 
+@pytest.mark.legacy_tmux
 def test_extraction_leases_share_the_gpu_with_a_vram_estimate():
+    # The self-lease of a tmux worker; a task asks the runner for VRAM instead:
+    # test_gpu_extraction_requests_vram_and_runs_on_the_admitted_device.
     resources = preparation_resources("extraction", {"gpu": 0, "segmenter": "hest"})
     assert resources["runsPerGpu"] == SHARED_RUNS_PER_GPU > 1
     assert resources["vramGb"] == performance.estimate_vram_gb({"gpu": 0, "segmenter": "hest"})
@@ -153,7 +104,10 @@ def test_vram_estimate_scales_with_stages_and_batches():
     assert performance.workload_key({"task": "all"}) != performance.workload_key({"task": "seg"})
 
 
+@pytest.mark.legacy_tmux
 def test_managed_preparation_takes_no_lease(monkeypatch, tmp_path):
+    # Self-leases exist only for tmux workers; the runner admits tasks instead:
+    # test_pack_and_validate_run_one_at_a_time_through_the_runner.
     from histopilot.workers.resource_reservation import reserve_preparation
 
     monkeypatch.setenv("HISTOPILOT_TASK_MANAGED", "1")
@@ -714,6 +668,33 @@ def test_preview_blocks_missing_slide_readers(extraction, monkeypatch):
     assert [item["severity"] for item in preview["findings"]] == ["warning"]
 
 
+def _without_tmux(monkeypatch):
+    which = packing_process.shutil.which
+    monkeypatch.setattr(
+        packing_process.shutil,
+        "which",
+        lambda name, *args, **kwargs: None if name == "tmux" else which(name, *args, **kwargs),
+    )
+
+
+@pytest.mark.xfail(
+    strict=True, reason="A Task Center extraction preview still reports TMUX_UNAVAILABLE"
+)
+def test_extraction_preview_does_not_need_tmux(extraction, monkeypatch):
+    service, spec, _commands = extraction
+    _without_tmux(monkeypatch)
+    preview = service.preview(spec)
+    assert preview["canRun"], preview["findings"]
+
+
+@pytest.mark.xfail(strict=True, reason="A Task Center packing preview still reports TMUX_UNAVAILABLE")
+def test_packing_preview_does_not_need_tmux(packing, monkeypatch):
+    service, feature = packing
+    _without_tmux(monkeypatch)
+    preview = service.preview(FeaturePackSpec(featureSetId=feature, action="validate"))
+    assert preview["canRun"], preview["findings"]
+
+
 def test_slide_reader_map_follows_trident():
     assert trident.slide_readers(["a.sdpc", "b.SVS", "c.png", "d.czi", "e.zarr"]) == {
         "sdpc": 1,
@@ -1012,7 +993,10 @@ def test_registry_sweep_drops_dead_and_malformed_claims_and_idle_locks(tmp_path)
     assert writer.exists()
 
 
+@pytest.mark.legacy_tmux
 def test_malformed_claim_no_longer_blocks_packing(packing, monkeypatch):
+    # Claim files are written by tmux jobs only; Task Center jobs write none:
+    # test_pack_job_is_a_packing_task_without_a_claim.
     service, feature = packing
     registry = packing_process.registry_directory()
     (registry / f"{'d' * 64}.claim.json").write_text("{")
@@ -1082,31 +1066,31 @@ def archives(tmp_path, center):
         yield store, projects, jobs
 
 
-def _busy_packing_record(store):
-    """A legacy packing record whose worker is 'alive' (this test process)."""
-    from histopilot.workers.packing_process import process_metadata, write_json
-
-    identity = "packing-" + "e" * 32
-    folder = store.folder / "packing" / identity
-    folder.mkdir(parents=True)
-    now = utc_now_iso()
-    write_json(
-        folder / "job.json",
-        {
-            "id": identity,
-            "projectId": store.project_id,
-            "state": "running",
-            "spec": {"action": "validate"},
-            "featureSetId": "configuration-" + "f" * 64,
-            "outputPath": None,
-            "sessionName": "histopilot-pack-test",
-            "logPath": str(folder / "worker.log"),
-            "createdAt": now,
-            "updatedAt": now,
-        },
+def _busy_feature_job(store, center):
+    """A feature job of this project that stays queued: its owner is on hold."""
+    source = store.folder / "features"
+    source.mkdir()
+    with h5py.File(source / "001.h5", "w") as handle:
+        handle.create_dataset("features", data=np.ones((3, 4), dtype="float32"))
+        handle.create_dataset("coords", data=np.zeros((3, 2), dtype="int64"))
+    draft = store.create_draft("import", "busy", {})
+    dataset = store.publish_dataset(
+        draft["id"],
+        expected_revision=1,
+        manifest={"kind": "dataset"},
+        artifacts={"records.json": json.dumps([{"slideId": "001", "patientId": "p1"}]).encode()},
+        operation_id="busy-dataset",
     )
-    write_json(folder / "process.json", process_metadata())
-    return folder
+    filesystem = LocalFilesystem((store.folder,))
+    features = FeatureService(store, filesystem)
+    spec = FeatureSpec(datasetId=dataset["id"], path=str(source))
+    feature = features.freeze(spec, features.preview(spec)["previewHash"], "busy-features")
+    service = FeaturePackService(
+        store, filesystem, execution_mode="task-center", task_center=center.client
+    )
+    job = submit_pack(service, FeaturePackSpec(featureSetId=feature["id"], action="validate"))
+    center.store.hold_owner(job["ownerKey"], True)
+    return service, job
 
 
 @pytest.mark.slow
@@ -1114,7 +1098,7 @@ def test_export_is_an_archive_task_that_waits_for_an_idle_project(archives, cent
     from histopilot.schemas.operations import PortabilityRequest
 
     store, projects, jobs = archives
-    busy = _busy_packing_record(store)
+    packs, busy = _busy_feature_job(store, center)
     request = PortabilityRequest(
         action="export",
         archivePath=str(projects.database.workspace / "study.zip"),
@@ -1133,8 +1117,8 @@ def test_export_is_an_archive_task_that_waits_for_an_idle_project(archives, cent
     waiting = jobs.get(store.project_id, job["id"])
     assert waiting["status"] == "queued"
     assert "active jobs" in (waiting.get("waitingReason") or "")
-    (busy / "process.json").unlink()
-    (busy / "cancelled").write_text("{}")
+    assert center.state(busy["taskId"]) == "queued"  # held: the runner never starts it
+    assert packs.cancel(busy["id"])["state"] == "cancelled"
     center.tick_until(runner, lambda: center.state(job["taskId"]) in TERMINAL, timeout=120)
     assert center.state(job["taskId"]) == "succeeded"
     done = jobs.get(store.project_id, job["id"])

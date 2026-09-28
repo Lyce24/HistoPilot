@@ -190,6 +190,7 @@ def test_missing_cpu_counters_do_not_prevent_other_telemetry(tmp_path, monkeypat
     assert json.loads((tmp_path / "telemetry.jsonl").read_text()) == observation
 
 
+@pytest.mark.legacy_tmux
 def test_device_health_changes_only_react_to_evidence_for_selected_gpus():
     baseline = {"gpus": [gpu()]}
     assert "driver changed" in process.device_health_failure(baseline, {"gpus": [gpu("561")]}, [0])
@@ -203,6 +204,7 @@ def test_device_health_changes_only_react_to_evidence_for_selected_gpus():
     assert process.device_health_failure(baseline, {"gpus": [gpu("561")]}, []) is None
 
 
+@pytest.mark.legacy_tmux
 def test_training_executor_runs_the_archived_package_with_bytecode_disabled(tmp_path, monkeypatch):
     import shlex
 

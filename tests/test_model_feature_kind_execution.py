@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from test_evaluations import bundle
 from test_predictor_registry import candidate, registry
-from test_training_execution import execution, rewrite_batch
+from test_training_execution import rewrite_batch, tc_execution
 
 from histopilot.application.mil_inputs import MILInputService
 from histopilot.schemas.mil import MILInputSpec
@@ -15,7 +15,7 @@ from histopilot.storage.project_lock import StorageError
 from histopilot.workers.compute_archive import prepare_compute_archive
 from histopilot.workers.training_process import compute_snapshot
 
-__all__ = ["execution", "registry"]
+__all__ = ["registry", "tc_execution"]
 
 
 def slide_bundle(service, tmp_path, protocol):
@@ -27,8 +27,10 @@ def slide_bundle(service, tmp_path, protocol):
 
 
 @pytest.mark.parametrize("kind,model", [("slide", "abmil"), ("patch", "slide_linear")])
-def test_launch_rejects_incompatible_older_frozen_batch(execution, tmp_path, kind, model):
-    service, original, executor, _ = execution
+def test_launch_rejects_incompatible_older_frozen_batch(
+    tc_execution, task_center, tmp_path, kind, model
+):
+    service, original, _ = tc_execution
     inputs = dict(original["manifest"]["spec"]["inputs"])
     if kind == "slide":
         protocol = service.store.get_configuration(inputs["protocolId"])
@@ -50,7 +52,7 @@ def test_launch_rejects_incompatible_older_frozen_batch(execution, tmp_path, kin
     with pytest.raises(StorageError) as error:
         service.launch(malformed["id"], "reject-wrong-representation")
     assert error.value.code == "TRAINING_FEATURE_KIND_MISMATCH"
-    assert not executor.launches
+    assert not task_center.tasks(kind="mil-fold")
     assert not (service.store.folder / "training" / malformed["id"] / "plan.json").exists()
     assert service.store.get_configuration(original["id"]) == original
 

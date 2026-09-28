@@ -9,6 +9,8 @@ import h5py
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from support.interpretation import compute_task, compute_tasks, launches, managed_packing, run_pack
+from test_interpretation import managed_study as managed_study
 from test_interpretation import study as study
 
 from histopilot.application.feature_bundles import FeatureBundleService
@@ -39,9 +41,13 @@ class PackingExecutor:
         pass
 
 
-@pytest.fixture
-def gallery(study, tmp_path):
-    service, manual, executor = study
+def make_gallery(study, tmp_path, center=None):
+    """Three slides with frozen features, a verified pack and a bundle over them.
+
+    With ``center`` the packing job queues in that Task Center and its worker runs as the
+    task; without it, the job runs on a fake tmux executor.
+    """
+    service, manual, _ = study
     store = service.store
     slides = tmp_path / "gallery"
     features = tmp_path / "gallery-features"
@@ -82,12 +88,20 @@ def gallery(study, tmp_path):
     preview = inventories.preview(spec)
     assert preview["canFreeze"], preview
     inventory = inventories.freeze(spec, preview["previewHash"], "gallery-features")
-    packing = FeaturePackService(store, service.filesystem, PackingExecutor())
+    packing = (
+        FeaturePackService(store, service.filesystem, PackingExecutor())
+        if center is None
+        else managed_packing(store, service.filesystem, center)
+    )
     pack_spec = FeaturePackSpec(featureSetId=inventory["id"], action="pack", dtype="preserve")
     pack_preview = packing.preview(pack_spec)
     assert pack_preview["canRun"], pack_preview
     job = packing.submit(pack_spec, pack_preview["previewHash"], "gallery-pack")
-    packed = run_job(packing.folder / job["id"] / "plan.json")
+    packed = (
+        run_job(packing.folder / job["id"] / "plan.json")
+        if center is None
+        else run_pack(packing, job, center)
+    )
     assert packed["state"] == "succeeded", packed
     bundles = FeatureBundleService(store, service.filesystem)
     bundle_spec = FeatureBundleSpec(
@@ -106,7 +120,21 @@ def gallery(study, tmp_path):
         "featureBundleId": bundle["id"],
         "predictorId": manual.predictorId,
     }
-    return service, source, executor, packed["artifact"]
+    return service, source, packed["artifact"]
+
+
+@pytest.fixture
+def gallery(study, tmp_path):
+    """The gallery on fake tmux executors; ``managed_gallery`` is its Task Center twin."""
+    service, source, artifact = make_gallery(study, tmp_path)
+    return service, source, study[2], artifact
+
+
+@pytest.fixture
+def managed_gallery(managed_study, tmp_path, task_center):
+    """The gallery with its pack and launches queued in this test's Task Center."""
+    service, source, artifact = make_gallery(managed_study, tmp_path, task_center)
+    return service, source, task_center, artifact
 
 
 def visualize_request(source, paths, operation="visualize-test", **extra):
@@ -115,8 +143,8 @@ def visualize_request(source, paths, operation="visualize-test", **extra):
     )
 
 
-def test_full_folder_search_precedes_pagination_and_unicode_casefold(gallery):
-    service, source, _, _ = gallery
+def test_full_folder_search_precedes_pagination_and_unicode_casefold(managed_gallery):
+    service, source, _, _ = managed_gallery
     first = service.gallery.query(InterpretationGalleryQuery(**source, limit=1))
     assert first["total"] == 3 and first["hasMore"]
     assert first["items"][0]["slideId"] == "001"
@@ -130,8 +158,8 @@ def test_full_folder_search_precedes_pagination_and_unicode_casefold(gallery):
     assert service.gallery.sources()["items"][0]["name"] == "All slide patches"
 
 
-def test_nnmil_predictor_can_query_and_visualize_compatible_gallery_slides(gallery):
-    service, source, executor, _ = gallery
+def test_nnmil_predictor_can_query_and_visualize_compatible_gallery_slides(managed_gallery):
+    service, source, task_center, _ = managed_gallery
     original = service.predictors.get(source["predictorId"])
     predictor = service.store.publish_configuration(
         manifest={**original["manifest"], "recipe": {"model": "nnmil", "attentionDim": 2}},
@@ -143,11 +171,13 @@ def test_nnmil_predictor_can_query_and_visualize_compatible_gallery_slides(galle
     request = visualize_request(source, [Path(source["slideFolder"]) / "001.png"])
     submitted = service.visualize(request)
     assert submitted["items"][0]["status"] == "queued", submitted
-    assert len(executor.calls) == 1
+    assert launches(task_center) == 1
 
 
-def test_duplicate_stems_missing_features_and_symlinks_are_visible_and_safe(gallery, tmp_path):
-    service, source, _, _ = gallery
+def test_duplicate_stems_missing_features_and_symlinks_are_visible_and_safe(
+    managed_gallery, tmp_path
+):
+    service, source, _, _ = managed_gallery
     folder = Path(source["slideFolder"])
     nested = folder / "nested"
     nested.mkdir()
@@ -172,8 +202,8 @@ def test_duplicate_stems_missing_features_and_symlinks_are_visible_and_safe(gall
         service.gallery_thumbnail(str(folder / "linked.png"))
 
 
-def test_thumbnail_uses_real_slide_without_study_and_is_bounded(gallery):
-    service, source, _, _ = gallery
+def test_thumbnail_uses_real_slide_without_study_and_is_bounded(managed_gallery):
+    service, source, _, _ = managed_gallery
     path = str(Path(source["slideFolder"]) / "001.png")
     with Image.open(io.BytesIO(service.gallery_thumbnail(path, max_size=128))) as thumbnail:
         assert thumbnail.size == (128, 85)
@@ -184,8 +214,10 @@ def test_thumbnail_uses_real_slide_without_study_and_is_bounded(gallery):
 
 
 @pytest.mark.parametrize("method", ["refit", "ensemble"])
-def test_single_visualization_freezes_exact_inputs_and_reuses_inflight_model(gallery, method):
-    service, source, executor, _ = gallery
+def test_single_visualization_freezes_exact_inputs_and_reuses_inflight_model(
+    managed_gallery, method
+):
+    service, source, task_center, _ = managed_gallery
     predictor = service.predictors.get(source["predictorId"])
     if method == "refit":
         from histopilot.application.predictors import checkpoint_snapshot
@@ -219,15 +251,15 @@ def test_single_visualization_freezes_exact_inputs_and_reuses_inflight_model(gal
     assert service.visualize(visualize_request(source, [path], operation="new-click"))["items"][0][
         "reused"
     ]
-    assert len(executor.calls) == 1
+    assert launches(task_center) == 1
     with pytest.raises(StorageError, match="different selection"):
         service.visualize(
             visualize_request(source, [path], patchWidthLevel0=50, patchHeightLevel0=50)
         )
 
 
-def test_batch_keeps_successes_when_one_slide_fails_and_retry_does_not_duplicate(gallery):
-    service, source, executor, _ = gallery
+def test_batch_keeps_successes_when_one_slide_fails_and_retry_does_not_duplicate(managed_gallery):
+    service, source, task_center, _ = managed_gallery
     folder = Path(source["slideFolder"])
     Image.new("RGB", (30, 20)).save(folder / "missing.png")
     request = visualize_request(
@@ -237,18 +269,18 @@ def test_batch_keeps_successes_when_one_slide_fails_and_retry_does_not_duplicate
     assert [row["status"] for row in response["items"]] == ["queued", "error", "queued"], response
     assert response["items"][1]["error"]["code"] == "INTERPRETATION_SLIDE_UNAVAILABLE"
     assert len(response["interpretations"]) == 2
-    assert len(executor.calls) == 2
+    assert launches(task_center) == 2
     retried = service.visualize(request)
     assert [row.get("interpretationId") for row in retried["items"]] == [
         row.get("interpretationId") for row in response["items"]
     ]
-    assert len(executor.calls) == 2
+    assert launches(task_center) == 2
 
 
 def test_launch_failure_retains_saved_study_and_resource_change_creates_new_one(
-    gallery, monkeypatch
+    managed_gallery, monkeypatch
 ):
-    service, source, executor, _ = gallery
+    service, source, task_center, _ = managed_gallery
     path = Path(source["slideFolder"]) / "001.png"
     original = service.jobs.runtime
     monkeypatch.setattr(service.jobs, "runtime", lambda: {"available": False})
@@ -267,11 +299,11 @@ def test_launch_failure_retains_saved_study_and_resource_change_creates_new_one(
     )
     assert changed["items"][0]["status"] == "queued"
     assert changed["items"][0]["interpretationId"] != old
-    assert len(executor.calls) == 1
+    assert launches(task_center) == 1
 
 
-def test_wrong_bundle_pack_and_encoder_are_rejected_before_compute(gallery):
-    service, source, executor, _ = gallery
+def test_wrong_bundle_pack_and_encoder_are_rejected_before_compute(managed_gallery):
+    service, source, task_center, _ = managed_gallery
     with pytest.raises(StorageError, match="included"):
         service.gallery.query(
             InterpretationGalleryQuery(**source, packArtifactId="pack-" + "f" * 64)
@@ -284,21 +316,21 @@ def test_wrong_bundle_pack_and_encoder_are_rejected_before_compute(gallery):
         InterpretationGalleryQuery(**{**source, "predictorId": wrong["id"]})
     )
     assert all(not row["available"] and "encoder" in row["reason"] for row in response["items"])
-    assert executor.calls == []
+    assert compute_tasks(task_center) == []
 
 
-def test_scan_bound_fails_instead_of_returning_incomplete_matches(gallery, monkeypatch):
+def test_scan_bound_fails_instead_of_returning_incomplete_matches(managed_gallery, monkeypatch):
     import histopilot.application.interpretation_gallery as module
 
-    service, source, _, _ = gallery
+    service, source, _, _ = managed_gallery
     monkeypatch.setattr(module, "MAX_ENTRIES", 1)
     with pytest.raises(StorageError) as caught:
         service.gallery.query(InterpretationGalleryQuery(**source))
     assert caught.value.code == "INTERPRETATION_SCAN_LIMIT"
 
 
-def test_legacy_manual_study_plan_and_resume_keep_original_slide_shape(study):
-    service, selection, executor = study
+def test_legacy_manual_study_plan_and_resume_keep_original_slide_shape(managed_study):
+    service, selection, task_center = managed_study
     original = service._prepare(selection)
     # Reproduce a pre-gallery saved manifest and selection, without new defaults.
     for key in ("featureBundleId", "packArtifactId", "slideFolder"):
@@ -311,15 +343,16 @@ def test_legacy_manual_study_plan_and_resume_keep_original_slide_shape(study):
 
     original["previewHash"] = _hash(original)
     legacy = service.store.publish_configuration(manifest=original, operation_id="legacy-manual")
-    assert service.launch(legacy["id"], "legacy-launch")["status"] == "queued"
-    executor.sessions.clear()
+    launched = service.launch(legacy["id"], "legacy-launch")
+    assert launched["status"] == "queued"
+    task_center.finish(launched["taskId"], "interrupted", returncode=None, reason="lost")
     assert service.execution(legacy["id"])["status"] == "interrupted"
     assert service.launch(legacy["id"], "legacy-resume", resume=True)["attempt"] == 2
     assert "sourceFormat" not in service._execution_plan(legacy["id"])["slides"][0]
 
 
-def test_bound_inputs_cannot_swap_to_unrelated_coordinates(gallery):
-    service, source, _, _ = gallery
+def test_bound_inputs_cannot_swap_to_unrelated_coordinates(managed_gallery):
+    service, source, _, _ = managed_gallery
     resolved, folder, rows, _ = service.gallery.rows(InterpretationGalleryQuery(**source))
     selected = service.gallery.input(resolved, rows[0])
     other = service.gallery.input(resolved, rows[1])
@@ -347,35 +380,35 @@ def test_schema_rejects_duplicate_batch_and_partial_geometry():
         visualize_request(source, ["/slides/a.png"], patchWidthLevel0=20)
 
 
-def test_lost_response_after_fast_failure_does_not_resume_same_operation(gallery):
+def test_lost_response_after_fast_failure_does_not_resume_same_operation(managed_gallery):
     from histopilot.workers.training_process import read_json, write_json
 
-    service, source, executor, _ = gallery
+    service, source, task_center, _ = managed_gallery
     request = visualize_request(source, [Path(source["slideFolder"]) / "001.png"])
     first = service.visualize(request)
     identity = first["items"][0]["interpretationId"]
     state_path = service.jobs.folder(identity) / "state.json"
     state = read_json(state_path)
     write_json(state_path, {**state, "status": "failed", "error": "Fast worker failure"})
-    executor.sessions.clear()
+    task_center.finish(state["taskId"], "failed", returncode=1)
     repeated = service.visualize(request)
     assert repeated["items"][0]["status"] == "failed"
     assert repeated["items"][0]["interpretation"]["execution"]["attempt"] == 1
-    assert len(executor.calls) == 1
+    assert launches(task_center) == 1
     # A new explicit operation can resume the same scientific study.
     retry = service.visualize(
         visualize_request(source, request.slidePaths, operation="explicit-retry")
     )
     assert retry["items"][0]["status"] == "queued"
     assert retry["items"][0]["interpretation"]["execution"]["attempt"] == 2
-    assert len(executor.calls) == 2
+    assert launches(task_center) == 2
 
 
-def test_uncertain_response_after_launch_replays_original_operation(gallery):
+def test_uncertain_response_after_launch_replays_original_operation(managed_gallery):
     from histopilot.application.feature_bundles import _hash
     from histopilot.workers.training_process import read_json, write_json
 
-    service, source, executor, _ = gallery
+    service, source, task_center, _ = managed_gallery
     request = visualize_request(source, [Path(source["slideFolder"]) / "001.png"])
     first = service.visualize(request)
     identity = first["items"][0]["interpretationId"]
@@ -390,15 +423,20 @@ def test_uncertain_response_after_launch_replays_original_operation(gallery):
         False  # Simulate interruption after launch before acknowledgement.
     )
     write_json(receipt_path, receipt)
-    executor.sessions.clear()
+    task_center.finish(
+        compute_task(service, identity, task_center)["id"],
+        "interrupted",
+        returncode=None,
+        reason="lost",
+    )
     assert service.execution(identity)["status"] == "interrupted"
     repeat = service.visualize(request)
     assert repeat["items"][0]["status"] == "interrupted"
-    assert len(executor.calls) == 1
+    assert launches(task_center) == 1
 
 
-def test_batch_resolves_folder_once_and_uses_real_selected_pack(gallery, monkeypatch):
-    service, source, executor, artifact = gallery
+def test_batch_resolves_folder_once_and_uses_real_selected_pack(managed_gallery, monkeypatch):
+    service, source, task_center, artifact = managed_gallery
     source = {**source, "packArtifactId": artifact["id"]}
     calls = []
     original = service.gallery.scan
@@ -414,7 +452,7 @@ def test_batch_resolves_folder_once_and_uses_real_selected_pack(gallery, monkeyp
     response = service.visualize(request)
     assert [row["status"] for row in response["items"]] == ["queued", "queued"], response
     assert len(calls) == 1
-    assert len(executor.calls) == 2
+    assert launches(task_center) == 2
     for document in response["interpretations"]:
         row = document["manifest"]["slides"][0]
         assert row["sourceFormat"] == "packed"
@@ -425,13 +463,15 @@ def test_batch_resolves_folder_once_and_uses_real_selected_pack(gallery, monkeyp
         assert document["manifest"]["packArtifactId"] == artifact["id"]
 
 
-def test_gallery_http_auth_search_thumbnail_single_and_batch(gallery, tmp_path, monkeypatch):
+def test_gallery_http_auth_search_thumbnail_single_and_batch(
+    managed_gallery, tmp_path, monkeypatch
+):
     from fastapi.testclient import TestClient
 
     from histopilot.api.app import create_app
     from histopilot.config import Settings
 
-    service, source, executor, _ = gallery
+    service, source, task_center, _ = managed_gallery
     monkeypatch.setattr(
         "histopilot.api.interpretation.InterpretationService", lambda *args: service
     )
@@ -476,16 +516,16 @@ def test_gallery_http_auth_search_thumbnail_single_and_batch(gallery, tmp_path, 
         response = client.post(base + "/visualize", json=batch.model_dump())
         assert response.status_code == 202 and len(response.json()["items"]) == 2
         assert response.json()["items"][0]["reused"]
-        assert len(executor.calls) == 2
+        assert launches(task_center) == 2
 
 
-def test_tensor_review_does_not_hold_project_lifecycle_lock(gallery, monkeypatch):
+def test_tensor_review_does_not_hold_project_lifecycle_lock(managed_gallery, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
 
     import histopilot.application.interpretation as module
     from histopilot.storage.lifecycle import lifecycle_guard
 
-    service, source, executor, _ = gallery
+    service, source, task_center, _ = managed_gallery
     inspect = module.inspect_inputs
     checked = []
 
@@ -496,7 +536,7 @@ def test_tensor_review_does_not_hold_project_lifecycle_lock(gallery, monkeypatch
     def inspect_while_worker_can_verify(*args, **kwargs):
         with ThreadPoolExecutor(max_workers=1) as pool:
             assert pool.submit(acquire_as_worker).result(timeout=1)
-        checked.append(bool(executor.calls))
+        checked.append(bool(compute_tasks(task_center)))
         return inspect(*args, **kwargs)
 
     monkeypatch.setattr(module, "inspect_inputs", inspect_while_worker_can_verify)
@@ -507,36 +547,38 @@ def test_tensor_review_does_not_hold_project_lifecycle_lock(gallery, monkeypatch
     assert len(checked) == 6  # Preview, publication check, execution check for each slide.
 
 
-def test_batch_review_budget_retains_started_slides_and_marks_remaining(gallery, monkeypatch):
+def test_batch_review_budget_retains_started_slides_and_marks_remaining(
+    managed_gallery, monkeypatch
+):
     import time
     from types import SimpleNamespace
 
     import histopilot.application.interpretation as module
 
-    service, source, executor, _ = gallery
+    service, source, task_center, _ = managed_gallery
     offset = [0]
     monkeypatch.setattr(
         module, "time", SimpleNamespace(monotonic=lambda: time.monotonic() + offset[0])
     )
-    launch = executor.launch
+    launch = service.jobs.executor.launch
 
     def consume_budget(*args, **kwargs):
         launch(*args, **kwargs)
         offset[0] = 46
 
-    monkeypatch.setattr(executor, "launch", consume_budget)
+    monkeypatch.setattr(service.jobs.executor, "launch", consume_budget)
     paths = [Path(source["slideFolder"]) / name for name in ["001.png", "Tumour-02.png"]]
     response = service.visualize(visualize_request(source, paths))
     assert [row["status"] for row in response["items"]] == ["queued", "error"], response
     assert response["items"][1]["error"]["code"] == "INTERPRETATION_BATCH_LIMIT"
-    assert len(executor.calls) == 1
+    assert launches(task_center) == 1
 
 
-def test_concurrent_distinct_operations_reuse_one_scientific_study(gallery, monkeypatch):
+def test_concurrent_distinct_operations_reuse_one_scientific_study(managed_gallery, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
-    service, source, executor, _ = gallery
+    service, source, task_center, _ = managed_gallery
     barrier = Barrier(2)
     preview = service.preview
 
@@ -559,11 +601,13 @@ def test_concurrent_distinct_operations_reuse_one_scientific_study(gallery, monk
     assert (
         responses[0]["items"][0]["interpretationId"] == responses[1]["items"][0]["interpretationId"]
     )
-    assert len(executor.calls) == 1
+    assert launches(task_center) == 1
 
 
-def test_unacknowledged_operation_reuses_study_launched_by_other_operation(gallery, monkeypatch):
-    service, source, executor, _ = gallery
+def test_unacknowledged_operation_reuses_study_launched_by_other_operation(
+    managed_gallery, monkeypatch
+):
+    service, source, task_center, _ = managed_gallery
     original = service.jobs.runtime
     path = Path(source["slideFolder"]) / "001.png"
     first = visualize_request(source, [path], operation="original-failed-launch")
@@ -575,4 +619,4 @@ def test_unacknowledged_operation_reuses_study_launched_by_other_operation(galle
     repeated = service.visualize(first)
     assert repeated["items"][0]["status"] == "queued", repeated
     assert repeated["items"][0]["reused"]
-    assert len(executor.calls) == 1
+    assert launches(task_center) == 1

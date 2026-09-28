@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from test_evaluations import TARGET, bundle, dataset
-from test_training_execution import FakeExecutor, runtime
+from test_training_execution import runtime
 
 pytest.importorskip("torch")
 pytest.importorskip("lightning")
@@ -27,7 +27,9 @@ from histopilot.workers.train_batch import _run_plan, collect_results  # noqa: E
 from histopilot.workers.training_process import read_json  # noqa: E402
 
 
-def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(tmp_path, monkeypatch):
+def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
+    tmp_path, monkeypatch, task_center
+):
     folder = tmp_path / "project"
     folder.mkdir()
     store = ScientificStore(folder, "project-pipeline-audit")
@@ -91,7 +93,12 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(t
     assert len(review["runs"]) == 10 and len(review["nnmilPlanning"]) == 5
     frozen = development.freeze(batch_spec, review["previewHash"], "both-models", {"tag": "Audit"})
     monkeypatch.setattr("histopilot.application.training.gpu_snapshot", lambda: {"gpus": []})
-    training = TrainingService(store, filesystem, executor=FakeExecutor(), runtime=runtime)
+    # The Task Center's per-run defaults match the frozen request: one thread, no loaders.
+    task_center.store.update_settings({"defaults": {"cpuThreadsPerRun": 1, "dataLoaderWorkers": 0}})
+    training = TrainingService(
+        store, filesystem, runtime=runtime, execution_mode="task-center",
+        task_center=task_center.client,
+    )
     plan, _ = training._prepare(frozen)
     assert set(plan["data"]["featureFiles"]) == eligible_ids
     output = folder / "training" / frozen["id"]
@@ -134,4 +141,4 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(t
             parsed = list(csv.DictReader(io.StringIO(exported.decode())))
             assert len(parsed) == count
             assert {int(row["assessmentFold"]) for row in parsed} == set(range(5))
-    assert not training.executor.launches
+    assert not task_center.tasks(kind="mil-fold")

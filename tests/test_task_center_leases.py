@@ -28,12 +28,13 @@ def task(identity="task-1"):
     return {"id": identity, "group": {"kind": "mil-batch", "id": "batch-1"}, "ownerKey": "owner-1"}
 
 
-def test_task_lease_is_readable_by_legacy_schedulers_and_removed(registry):
+def test_task_lease_is_published_in_the_legacy_format_read_and_removed(registry):
     assert leases.read_leases() == []
     me = process_identity()
     name = leases.write_task_lease(task(), me, 0, cpus=3, ram_gb=6.0, runs_per_gpu=5, supervisor=me)
     assert name == f"lease-{me['pid']}.json"
     value = json.loads((registry / name).read_text())
+    # Exactly the fields a legacy scheduler of another checkout reads.
     assert value == {
         "process": me,
         "processGroupId": me["pid"],
@@ -49,16 +50,6 @@ def test_task_lease_is_readable_by_legacy_schedulers_and_removed(registry):
     }
     [read] = leases.read_leases()
     assert read["taskId"] == "task-1" and read["live"] is True and read["gpu"] == 0
-    with train_batch._leases() as (_, active):
-        assert [item["taskId"] for item in active] == ["task-1"]
-        resources = {
-            "cpuThreadsPerRun": 1,
-            "dataLoaderWorkers": 0,
-            "ramGbPerRun": 1.0,
-            "gpuIds": [0],
-            "runsPerGpu": 8,
-        }
-        assert train_batch.available_device(resources, active, (64, 64.0)) == (True, 0)
     leases.remove_task_lease(name)
     leases.remove_task_lease(name)
     assert leases.read_leases() == []
@@ -151,3 +142,25 @@ def test_the_registry_lock_is_the_legacy_writers_lock(registry):
         assert leases.read_leases() == []
     with writer_lock(registry, timeout=0.05):
         pass
+
+
+# -- This checkout's legacy batch scheduler, removed with the tmux path ---------------------
+
+
+@pytest.mark.legacy_tmux
+def test_task_lease_is_readable_by_legacy_schedulers_and_removed(registry):
+    me = process_identity()
+    name = leases.write_task_lease(task(), me, 0, cpus=3, ram_gb=6.0, runs_per_gpu=5, supervisor=me)
+    with train_batch._leases() as (_, active):
+        assert [item["taskId"] for item in active] == ["task-1"]
+        resources = {
+            "cpuThreadsPerRun": 1,
+            "dataLoaderWorkers": 0,
+            "ramGbPerRun": 1.0,
+            "gpuIds": [0],
+            "runsPerGpu": 8,
+        }
+        assert train_batch.available_device(resources, active, (64, 64.0)) == (True, 0)
+    leases.remove_task_lease(name)
+    with train_batch._leases() as (_, active):
+        assert active == []

@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from support.evaluation import compute_tasks
 
 from histopilot.application.lifecycle import CleanupService
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
@@ -21,8 +22,10 @@ extraction = job_support["extraction"]
 
 
 @pytest.fixture
-def batch_cleanup(tmp_path, monkeypatch):
-    bulk, predictor, cohort, executor = bulk_support["bulk"].__wrapped__(tmp_path, monkeypatch)
+def batch_cleanup(tmp_path, monkeypatch, task_center):
+    bulk, predictor, cohort = bulk_support["bulk"].__wrapped__(
+        tmp_path, monkeypatch, task_center
+    )
     cleanup = CleanupService(
         bulk.store,
         bulk.filesystem,
@@ -32,7 +35,7 @@ def batch_cleanup(tmp_path, monkeypatch):
     )
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     request = bulk_support["run_request"](choice, bulk.preview(choice))
-    return bulk, cleanup, predictor, cohort, executor, request
+    return bulk, cleanup, predictor, cohort, request
 
 
 def key(identity):
@@ -45,7 +48,8 @@ def review(service, action, *identities):
     )
 
 
-def finish(bulk, evaluation_id, status="cancelled"):
+def finish(bulk, task_center, evaluation_id, status="cancelled"):
+    """The evaluation worker records ``status`` and exits; its task concludes."""
     folder = bulk.evaluations.jobs.folder(evaluation_id)
     state = read_json(folder / "state.json")
     result = {"state": "succeeded", "runId": evaluation_id} if status == "completed" else None
@@ -53,12 +57,17 @@ def finish(bulk, evaluation_id, status="cancelled"):
         write_json(folder / "result.json", result)
     state.update(status=status, process=None, result=result)
     write_json(folder / "state.json", state)
+    task_center.finish(state["taskId"], "succeeded" if status == "completed" else status)
 
 
-def test_active_batch_blocks_its_own_and_source_cleanup_until_children_stop(batch_cleanup):
-    bulk, cleanup, predictor, _, executor, request = batch_cleanup
+def test_active_batch_blocks_its_own_and_source_cleanup_until_children_stop(
+    batch_cleanup, task_center
+):
+    bulk, cleanup, predictor, _, request = batch_cleanup
     batch = bulk.run(request)
     child = batch["items"][0]["evaluationId"]
+    # The child's worker has started: the Task Center cancels a queued child at once.
+    task_center.start(bulk.evaluations.jobs.status(child)["taskId"])
     for identity in (batch["id"], child, predictor["id"]):
         result = review(cleanup, "trash", identity)
         assert not result["canApply"]
@@ -70,8 +79,7 @@ def test_active_batch_blocks_its_own_and_source_cleanup_until_children_stop(batc
     parent = next(row for row in cleanup.catalog()["items"] if row["key"] == key(batch["id"]))
     assert parent["job"] == {"status": "cancelling", "cancellable": False, "busy": True}
     assert bulk.evaluations.jobs.status(child)["cancellationRequested"]
-    finish(bulk, child)
-    executor.sessions.clear()
+    finish(bulk, task_center, child)
     assert review(cleanup, "archive", batch["id"])["canApply"]
     before = (bulk.evaluations.jobs.folder(child) / "cancel.requested").read_bytes()
     cleanup.cancel(cancel)
@@ -79,9 +87,9 @@ def test_active_batch_blocks_its_own_and_source_cleanup_until_children_stop(batc
 
 
 def test_cleanup_cancel_stops_unsubmitted_members_and_prevents_later_launch(
-    batch_cleanup, monkeypatch
+    batch_cleanup, task_center, monkeypatch
 ):
-    bulk, cleanup, _, _, executor, request = batch_cleanup
+    bulk, cleanup, _, _, request = batch_cleanup
     submit = bulk._submit
     monkeypatch.setattr(bulk, "_submit", lambda batch: None)
     batch = bulk.run(request)
@@ -92,19 +100,20 @@ def test_cleanup_cancel_stops_unsubmitted_members_and_prevents_later_launch(
     assert bulk.get(batch["id"])["status"] == "cancelled"
     monkeypatch.setattr(bulk, "_submit", submit)
     assert bulk.run(request)["status"] == "cancelled"
-    assert executor.calls == []
+    assert compute_tasks(task_center) == []
     with pytest.raises(StorageError) as absent:
         bulk.store.get_configuration(child)
     assert absent.value.code == "CONFIGURATION_NOT_FOUND"
     assert review(cleanup, "trash", batch["id"])["canApply"]
 
 
-def test_retained_batch_protects_child_results_and_restore_requires_them(batch_cleanup):
-    bulk, cleanup, _, _, executor, request = batch_cleanup
+def test_retained_batch_protects_child_results_and_restore_requires_them(
+    batch_cleanup, task_center
+):
+    bulk, cleanup, _, _, request = batch_cleanup
     batch = bulk.run(request)
     child = batch["items"][0]["evaluationId"]
-    finish(bulk, child, "completed")
-    executor.sessions.clear()
+    finish(bulk, task_center, child, "completed")
     artifact = bulk.evaluations.jobs.folder(child) / "retained-results.txt"
     artifact.write_text("Keep completed evidence")
     cleanup_support["apply"](cleanup, "archive", key(batch["id"]))
@@ -131,7 +140,7 @@ def test_retained_batch_protects_child_results_and_restore_requires_them(batch_c
     ],
 )
 def test_feature_jobs_cannot_overwrite_bulk_receipts(job_type, reserved, request):
-    service, spec, _executor, _ = request.getfixturevalue(job_type)
+    service, spec, *_ = request.getfixturevalue(job_type)
     destination = service.store.folder / reserved
     destination.parent.mkdir(parents=True, exist_ok=True)
     before = destination.parent / "sentinel.txt"

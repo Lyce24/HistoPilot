@@ -3,13 +3,13 @@
 from copy import deepcopy
 
 import pytest
-from test_training_execution import execution, rewrite_batch
+from test_training_execution import rewrite_batch, tc_execution
 
 from histopilot.schemas.training_controls import validate_training_controls
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.train_batch import _run_plan
 
-__all__ = ["execution"]
+__all__ = ["tc_execution"]
 
 
 def changed_recipe(service, batch, **changes):
@@ -21,8 +21,10 @@ def changed_recipe(service, batch, **changes):
     return rewrite_batch(service, batch, update)
 
 
-def test_cohort_plan_pins_dataset_values_and_worker_binds_selected_column(execution):
-    service, batch, executor, _ = execution
+def test_cohort_plan_pins_dataset_values_and_worker_binds_selected_column(
+    tc_execution, task_center
+):
+    service, batch, _ = tc_execution
     changed = changed_recipe(service, batch, samplingStrategy="cohort_balanced")
     plan, _freshness = service._prepare(changed)
     assert set(plan["data"]["cohortValues"]) == {"cohort"}
@@ -36,11 +38,11 @@ def test_cohort_plan_pins_dataset_values_and_worker_binds_selected_column(execut
         assert selected["data"]["memberships"]
         assert all(row["cohort"] == "development" for row in selected["data"]["memberships"])
     assert plan == before
-    assert not executor.launches
+    assert not task_center.tasks(kind="mil-fold")
 
 
-def test_default_recipe_keeps_legacy_plan_without_cohort_metadata(execution):
-    service, batch, _, _ = execution
+def test_default_recipe_keeps_legacy_plan_without_cohort_metadata(tc_execution):
+    service, batch, _ = tc_execution
     plan, _ = service._prepare(batch)
     assert "cohortValues" not in plan["data"]
     selected = _run_plan(plan, plan["runs"][0], None)
@@ -54,22 +56,24 @@ def test_default_recipe_keeps_legacy_plan_without_cohort_metadata(execution):
         ({"classWeights": [1.0, 2.0, 3.0]}, "one class weight"),
     ],
 )
-def test_launch_planning_rejects_incompatible_data_controls(execution, changes, message):
-    service, batch, executor, _ = execution
+def test_launch_planning_rejects_incompatible_data_controls(
+    tc_execution, task_center, changes, message
+):
+    service, batch, _ = tc_execution
     changed = changed_recipe(service, batch, **changes)
     with pytest.raises(StorageError, match=message) as error:
         service._prepare(changed)
     assert error.value.code == "TRAINING_RECIPE_UNAVAILABLE"
-    assert not executor.launches
+    assert not task_center.tasks(kind="mil-fold")
 
 
-def test_binary_bce_and_fold_class_weights_are_accepted_by_planner(execution):
-    service, batch, executor, _ = execution
+def test_binary_bce_and_fold_class_weights_are_accepted_by_planner(tc_execution, task_center):
+    service, batch, _ = tc_execution
     changed = changed_recipe(service, batch, lossType="bce", classWeighting="inverse_prevalence")
     plan, _ = service._prepare(changed)
     assert plan["target"]["task"] == "binary_classification"
     assert all(config["recipe"]["lossType"] == "bce" for config in plan["configurations"])
-    assert not executor.launches
+    assert not task_center.tasks(kind="mil-fold")
 
 
 def test_multiclass_bce_and_missing_training_class_are_rejected():

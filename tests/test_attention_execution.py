@@ -3,8 +3,6 @@
 import copy
 import json
 import runpy
-import subprocess
-import sys
 from pathlib import Path
 
 import h5py
@@ -15,8 +13,11 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("lightning")
 Image = pytest.importorskip("PIL.Image")
 
+from support.interpretation import managed_jobs, run_compute_worker  # noqa: E402
+
 from histopilot.application.predictors import checkpoint_snapshot  # noqa: E402
 from histopilot.storage.attention_inputs import file_stamp, inspect_inputs  # noqa: E402
+from histopilot.storage.scientific import ScientificStore  # noqa: E402
 from histopilot.training.attention import _percentiles, interpret  # noqa: E402
 from histopilot.training.fold import train_fold  # noqa: E402
 from histopilot.training.module import MILTrainModule  # noqa: E402
@@ -112,6 +113,20 @@ def plan(tmp_path):
     return attention_plan(tmp_path)
 
 
+def compute_project(tmp_path, center):
+    """A project with one dataset whose compute jobs queue in ``center``."""
+    store = ScientificStore(tmp_path, "compute-project")
+    draft = store.create_draft("import", "Data", {})
+    dataset = store.publish_dataset(
+        draft["id"],
+        expected_revision=1,
+        manifest={"name": "Data"},
+        artifacts={"slides.json": b'[{"slideId":"slide-1"}]'},
+        operation_id="dataset",
+    )
+    return managed_jobs(store, center), dataset["id"]
+
+
 def test_refit_attention_is_exact_whole_bag_forward_and_resume_reuses_evidence(
     plan, tmp_path, monkeypatch
 ):
@@ -202,11 +217,9 @@ def test_immutable_contract_detects_coords_even_when_stamp_is_replaced(plan, tmp
 
 
 @pytest.mark.slow
-def test_pinned_worker_executes_attention_without_server_or_tmux(plan, tmp_path):
-    support_jobs = runpy.run_path(str(Path(__file__).with_name("test_compute_jobs.py")))
-    service, initial_id, _, executor = support_jobs["job"].__wrapped__(tmp_path)
+def test_pinned_worker_executes_attention_without_server_or_tmux(plan, tmp_path, task_center):
+    service, dataset_id = compute_project(tmp_path, task_center)
     store = service.store
-    dataset_id = store.get_configuration(initial_id)["manifest"]["datasetId"]
     predictor = store.publish_configuration(
         manifest={
             "kind": "frozen-predictor",
@@ -231,17 +244,10 @@ def test_pinned_worker_executes_attention_without_server_or_tmux(plan, tmp_path)
         operation_id="attention-study",
     )
     plan["runId"] = document["id"]
-    service.launch(document["id"], plan, "attention-launch")
-    _, _, plan_path, _, archive = executor.calls[0]
-    result = subprocess.run(
-        [sys.executable, "-m", "histopilot.workers.compute_job", str(plan_path)],
-        cwd=archive,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    task_id = service.launch(document["id"], plan, "attention-launch")["taskId"]
+    result = run_compute_worker(task_center, task_id)
     assert result.returncode == 0, result.stderr
-    executor.sessions.clear()
+    assert task_center.state(task_id) == "succeeded"
     status = service.status(document["id"])
     assert status["status"] == "completed", status
     assert status["result"]["slideCount"] == 1
@@ -475,12 +481,10 @@ def test_packed_attention_detects_mutation_before_reusing_cached_predictions(tmp
 
 
 @pytest.mark.slow
-def test_pinned_worker_executes_packed_multi_slide_attention(tmp_path):
+def test_pinned_worker_executes_packed_multi_slide_attention(tmp_path, task_center):
     plan = packed_attention_plans(tmp_path)["packed-ensemble"]
-    job_support = runpy.run_path(str(Path(__file__).with_name("test_compute_jobs.py")))
-    service, initial_id, _, executor = job_support["job"].__wrapped__(tmp_path)
+    service, dataset_id = compute_project(tmp_path, task_center)
     store = service.store
-    dataset_id = store.get_configuration(initial_id)["manifest"]["datasetId"]
     predictor = store.publish_configuration(
         manifest={
             "kind": "frozen-predictor",
@@ -505,18 +509,12 @@ def test_pinned_worker_executes_packed_multi_slide_attention(tmp_path):
         operation_id="packed-attention-study",
     )
     plan["runId"] = record["id"]
-    service.launch(record["id"], plan, "launch-packed")
-    _, _, plan_path, _, archive = executor.calls[0]
+    task_id = service.launch(record["id"], plan, "launch-packed")["taskId"]
+    archive = Path(task_center.task(task_id)["command"]["cwd"])
     assert (archive / "histopilot/storage/attention_packs.py").exists()
-    finished = subprocess.run(
-        [sys.executable, "-m", "histopilot.workers.compute_job", str(plan_path)],
-        cwd=archive,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    finished = run_compute_worker(task_center, task_id)
     assert finished.returncode == 0, finished.stderr
-    executor.sessions.clear()
+    assert task_center.state(task_id) == "succeeded"
     state = service.status(record["id"])
     assert state["status"] == "completed", state
     assert state["result"]["slideCount"] == 2

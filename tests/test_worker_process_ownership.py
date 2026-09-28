@@ -5,13 +5,14 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
 from histopilot.storage.project_lock import StorageError
-from histopilot.workers import train_batch
+from histopilot.taskcenter import leases
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import (
     confirmed_process_alive,
@@ -81,9 +82,9 @@ def test_orphan_descendants_retain_resources_and_receive_escalated_cancellation(
     leader.wait(timeout=5)
     assert not confirmed_process_alive(identity)
     assert owned_processes(identity, leader.pid) == [child]
-    monkeypatch.setattr(train_batch.tempfile, "gettempdir", lambda: str(tmp_path))
-    with train_batch._leases() as (registry, active):
-        assert active == []
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    assert leases.read_leases() == []
+    with leases.registry_lock() as registry:
         lease = registry / f"lease-{leader.pid}.json"
         write_json(
             lease,
@@ -98,20 +99,17 @@ def test_orphan_descendants_retain_resources_and_receive_escalated_cancellation(
                 "runId": "fold",
             },
         )
-    with train_batch._leases() as (_, active):
-        assert len(active) == 1 and active[0]["process"] == identity
-        assert not train_batch.available_device(
-            {"cpuThreadsPerRun": 1, "dataLoaderWorkers": 0, "ramGbPerRun": 1, "gpuIds": []},
-            active,
-            (2, 100),
-        )[0]
+    # The orphaned child keeps the reservation: the runner counts it as foreign load.
+    [held] = leases.foreign(leases.read_leases(), ())
+    assert (held["file"], held["process"], held["cpus"]) == (lease.name, identity, 2)
     stop_owned_processes(identity, grace_seconds=0.05)
     assert not confirmed_process_alive(child)
     assert confirmed_process_alive(unrelated_identity)
     assert unrelated.poll() is None
-    with train_batch._leases() as (_, active):
-        assert active == []
-    assert not lease.exists()
+    # The empty session no longer holds capacity; readers never delete its lease.
+    [released] = leases.read_leases()
+    assert released["live"] is False and leases.foreign([released], ()) == []
+    assert lease.exists()
 
 
 @pytest.mark.parametrize("run_id", ["fold", "batch"])
@@ -121,14 +119,16 @@ def test_old_training_and_compute_leases_retain_orphan_session(
     leader, identity, child = isolated_worker_tree()
     leader.kill()
     leader.wait(timeout=5)
-    monkeypatch.setattr(train_batch.tempfile, "gettempdir", lambda: str(tmp_path))
-    with train_batch._leases() as (registry, _):
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    with leases.registry_lock() as registry:
+        # Old writers recorded no process group: their workers led their own sessions.
         write_json(
             registry / f"lease-{leader.pid}.json",
             {"process": identity, "batchId": "batch", "runId": run_id},
         )
-    with train_batch._leases() as (_, active):
-        assert len(active) == 1
+    [lease] = leases.read_leases()
+    assert lease["live"] is True and lease["processGroupId"] is None
+    assert len(leases.foreign([lease], ())) == 1
     assert confirmed_process_alive(child)
 
 
@@ -149,8 +149,8 @@ def test_unreadable_evidence_blocks_reservation_release(
     if target == "child":
         leader.kill()
         leader.wait(timeout=5)
-    monkeypatch.setattr(train_batch.tempfile, "gettempdir", lambda: str(tmp_path))
-    with train_batch._leases() as (registry, _):
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    with leases.registry_lock() as registry:
         lease = registry / f"lease-{leader.pid}.json"
         write_json(lease, {"process": identity, "processGroupId": leader.pid})
     blocked = {
@@ -167,8 +167,10 @@ def test_unreadable_evidence_blocks_reservation_release(
 
     monkeypatch.setattr(Path, "read_text", read)
     with pytest.raises(StorageError, match="Cannot"):
-        with train_batch._leases():
-            pytest.fail("Unknown ownership must not become available capacity.")
+        owned_processes(identity, leader.pid)
+    # Unknown ownership never becomes available capacity, and the lease is kept.
+    [unknown] = leases.read_leases()
+    assert unknown["live"] is True and leases.foreign([unknown], ()) == [unknown]
     assert lease.exists()
 
 

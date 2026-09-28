@@ -1,15 +1,21 @@
-"""Durable feature jobs honor frozen inputs, immutable outputs and cancellation."""
+"""Durable feature jobs honor frozen inputs, immutable outputs and cancellation.
+
+Jobs are packing tasks of the test's private Task Center; ``support.features.run_pack``
+runs one the way the runner does. ``packing``, ``submit`` and ``complete`` keep the
+legacy tmux launch path for ``test_job_lifecycle``, which imports them.
+"""
 
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import h5py
 import numpy as np
 import pytest
+from support.features import begin, conclude, run_pack, task_environment, worker_environment
 
+from histopilot.application import task_records
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.features import FeatureService
 from histopilot.schemas.feature_packs import FeaturePackSpec
@@ -18,6 +24,7 @@ from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.packed import build_pack
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
+from histopilot.taskcenter.adapters.packing import PackingAdapter
 from histopilot.workers.pack_features import run_job
 from histopilot.workers.packing_process import output_lock, write_json
 
@@ -38,8 +45,8 @@ class FakeExecutor:
         self.launches.append((runner, plan))
 
 
-@pytest.fixture
-def packing(tmp_path):
+def feature_source(tmp_path):
+    """A saved feature version of two slides with three float32 patches each."""
     project = tmp_path / "project"
     project.mkdir()
     store = ScientificStore(project, "project-packing")
@@ -66,6 +73,22 @@ def packing(tmp_path):
     feature_spec = FeatureSpec(datasetId=dataset["id"], path=str(source))
     preview = feature_service.preview(feature_spec)
     feature = feature_service.freeze(feature_spec, preview["previewHash"], "features")
+    return store, filesystem, feature, source
+
+
+@pytest.fixture
+def packs(tmp_path, task_center):
+    store, filesystem, feature, source = feature_source(tmp_path)
+    service = FeaturePackService(
+        store, filesystem, execution_mode="task-center", task_center=task_center.client
+    )
+    return service, FeaturePackSpec(featureSetId=feature["id"]), source
+
+
+@pytest.fixture
+def packing(tmp_path):
+    """The same service on the legacy tmux launch path, with a fake executor."""
+    store, filesystem, feature, source = feature_source(tmp_path)
     executor = FakeExecutor()
     service = FeaturePackService(store, filesystem, executor)
     return service, FeaturePackSpec(featureSetId=feature["id"]), executor, source
@@ -78,15 +101,17 @@ def submit(service, spec, operation="operation"):
 
 
 def complete(service, executor, job):
+    """Run a legacy job's worker inline, as its tmux session would."""
     result = run_job(service.folder / job["id"] / "plan.json")
     executor.sessions.discard(job["sessionName"])
     return result
 
 
 @pytest.mark.parametrize("content", ["{", "[]"])
-def test_optional_progress_cannot_block_packing_cancellation(packing, content):
-    service, spec, _executor, _source = packing
+def test_optional_progress_cannot_block_packing_cancellation(packs, task_center, content):
+    service, spec, _source = packs
     job = submit(service, spec)
+    task_center.start(job["taskId"])
     (service.folder / job["id"] / "progress.json").write_text(content)
     shown = service.get(job["id"])
     assert shown["state"] == "running"
@@ -94,7 +119,10 @@ def test_optional_progress_cannot_block_packing_cancellation(packing, content):
     assert service.cancel(job["id"])["state"] == "cancelling"
 
 
+@pytest.mark.legacy_tmux
 def test_lost_launch_acknowledgement_keeps_packing_job_active(packing, monkeypatch):
+    # Queueing a Task Center task has no launch acknowledgement to lose; a failed enqueue
+    # is test_queue_failure_is_durable_and_retry_can_use_unchanged_empty_output.
     service, spec, executor, _source = packing
     original = executor.launch
 
@@ -111,17 +139,17 @@ def test_lost_launch_acknowledgement_keeps_packing_job_active(packing, monkeypat
     assert len(executor.launches) == 1
 
 
-def test_preview_is_stable_and_submission_is_idempotent(packing):
-    service, spec, executor, source = packing
+def test_preview_is_stable_and_submission_is_idempotent(packs, task_center):
+    service, spec, source = packs
     preview = service.preview(spec)
     assert preview["previewHash"] == service.preview(spec)["previewHash"]
     assert preview["slideCount"] == 2
     assert preview["patchCount"] == 6
     assert preview["sourceDtype"] == preview["outputDtype"] == "float32"
     job = service.submit(spec, preview["previewHash"], "same")
-    assert job["state"] == "running"
+    assert job["state"] == "queued"
     assert service.submit(spec, preview["previewHash"], "same")["id"] == job["id"]
-    assert len(executor.launches) == 1
+    assert [task["attempt"] for task in task_center.tasks(kind="packing")] == [1]
     plan = json.loads((service.folder / job["id"] / "plan.json").read_text())
     assert len(plan["configuration"]["manifest"]["files"]) == 2
     assert not Path(job["outputPath"]).exists()
@@ -130,8 +158,8 @@ def test_preview_is_stable_and_submission_is_idempotent(packing):
     assert caught.value.code == "OPERATION_CONFLICT"
 
 
-def test_changed_source_rejects_stale_preview(packing):
-    service, spec, executor, source = packing
+def test_changed_source_rejects_stale_preview(packs, task_center):
+    service, spec, source = packs
     preview = service.preview(spec)
     with h5py.File(source / "001.A.h5", "r+") as handle:
         handle["features"][0, 0] = 999
@@ -139,11 +167,11 @@ def test_changed_source_rejects_stale_preview(packing):
         service.submit(spec, preview["previewHash"], "stale")
     assert caught.value.code == "PREVIEW_STALE"
     assert not service.preview(spec)["canRun"]
-    assert not executor.launches
+    assert task_center.tasks() == []
 
 
-def test_outputs_reject_source_overlap_symlinks_reserved_and_occupied(packing, tmp_path):
-    service, spec, executor, source = packing
+def test_outputs_reject_source_overlap_symlinks_reserved_and_occupied(packs, tmp_path):
+    service, spec, source = packs
     linked = tmp_path / "linked"
     linked.symlink_to(tmp_path, target_is_directory=True)
     for output in (
@@ -167,12 +195,12 @@ def test_outputs_reject_source_overlap_symlinks_reserved_and_occupied(packing, t
     assert (occupied / "original").read_text() == "keep"
 
 
-def test_validate_without_pack_and_freshness_is_metadata_only(packing, monkeypatch):
-    service, spec, executor, source = packing
+def test_validate_without_pack_and_freshness_is_metadata_only(packs, task_center, monkeypatch):
+    service, spec, source = packs
     spec = spec.model_copy(update={"action": "validate"})
     job = submit(service, spec)
     assert job["outputPath"] is None
-    assert complete(service, executor, job)["state"] == "succeeded"
+    assert run_pack(task_center.store, job)["state"] == "succeeded"
     monkeypatch.setattr(
         FeatureService, "_header", lambda *args: pytest.fail("Status opened HDF5 headers")
     )
@@ -188,14 +216,16 @@ def test_validate_without_pack_and_freshness_is_metadata_only(packing, monkeypat
     assert not service.validation_for(spec.featureSetId)["current"]
 
 
-def test_pack_completion_supports_empty_folder_and_preserves_sources(packing, tmp_path):
-    service, spec, executor, source = packing
+def test_pack_completion_supports_empty_folder_and_preserves_sources(
+    packs, task_center, tmp_path
+):
+    service, spec, source = packs
     output = tmp_path / "empty-output"
     output.mkdir()
     spec = spec.model_copy(update={"outputPath": str(output)})
     before = {path.name: path.read_bytes() for path in source.iterdir()}
     job = submit(service, spec)
-    result = complete(service, executor, job)
+    result = run_pack(task_center.store, job)
     assert result["state"] == "succeeded", result.get("error")
     artifact = service.list()["artifacts"][0]
     assert artifact["featureSetId"] == spec.featureSetId
@@ -210,8 +240,8 @@ def test_pack_completion_supports_empty_folder_and_preserves_sources(packing, tm
     assert caught.value.code == "OUTPUT_IMMUTABLE"
 
 
-def test_existing_pack_attach_verifies_then_persists_selection(packing, tmp_path):
-    service, spec, executor, source = packing
+def test_existing_pack_attach_verifies_then_persists_selection(packs, task_center, tmp_path):
+    service, spec, source = packs
     path = tmp_path / "existing"
     original = service.store.get_configuration(spec.featureSetId)
     build_pack({**original, "id": "another-feature-version"}, path)
@@ -222,14 +252,19 @@ def test_existing_pack_attach_verifies_then_persists_selection(packing, tmp_path
     assert preview["packInspection"]["expectedFeatureBytes"] == 96
     assert service.selection_for(spec.featureSetId)["artifactId"] is None
     job = submit(service, attach)
-    result = complete(service, executor, job)
+    result = run_pack(task_center.store, job)
     assert result["state"] == "succeeded", result.get("error")
     artifact = result["artifact"]
     assert artifact["id"] != artifact["materializationId"]
     assert service.resolve_artifact(spec.featureSetId, artifact["id"])["current"]
     selected = service.select(spec.featureSetId, artifact["id"])
     assert selected["current"] and selected["artifactId"] == artifact["id"]
-    reopened = FeaturePackService(service.store, service.filesystem, executor)
+    reopened = FeaturePackService(
+        service.store,
+        service.filesystem,
+        execution_mode="task-center",
+        task_center=task_center.client,
+    )
     assert reopened.selection_for(spec.featureSetId)["artifactId"] == artifact["id"]
     assert reopened.list()["selections"][spec.featureSetId] == artifact["id"]
     assert reopened.list()["artifacts"][0]["current"]
@@ -238,8 +273,8 @@ def test_existing_pack_attach_verifies_then_persists_selection(packing, tmp_path
     assert reopened.selection_for(spec.featureSetId)["artifactId"] is None
 
 
-def test_existing_pack_count_mismatch_is_warning_and_cannot_start(packing, tmp_path):
-    service, spec, executor, source = packing
+def test_existing_pack_count_mismatch_is_warning_and_cannot_start(packs, task_center, tmp_path):
+    service, spec, source = packs
     path = tmp_path / "existing"
     build_pack(service.store.get_configuration(spec.featureSetId), path)
     with h5py.File(source / "001.A.h5", "r+") as handle:
@@ -262,18 +297,20 @@ def test_existing_pack_count_mismatch_is_warning_and_cannot_start(packing, tmp_p
     )
     with pytest.raises(StorageError, match="Resolve preview"):
         service.submit(attach, preview["previewHash"], "blocked")
-    assert not executor.launches
+    assert task_center.tasks() == []
 
 
-def test_existing_pack_changed_after_submission_cannot_publish_or_select(packing, tmp_path):
-    service, spec, executor, source = packing
+def test_existing_pack_changed_after_submission_cannot_publish_or_select(
+    packs, task_center, tmp_path
+):
+    service, spec, source = packs
     path = tmp_path / "existing"
     build_pack(service.store.get_configuration(spec.featureSetId), path)
     attach = spec.model_copy(update={"action": "attach", "existingPath": str(path)})
     job = submit(service, attach)
     with (path / "coords.bin").open("r+b") as stream:
         stream.write(np.array([123], dtype="<i4").tobytes())
-    result = complete(service, executor, job)
+    result = run_pack(task_center.store, job)
     assert result["state"] == "failed"
     assert "changed since the attachment preview" in result["error"]
     assert result["artifact"] is None
@@ -282,10 +319,12 @@ def test_existing_pack_changed_after_submission_cannot_publish_or_select(packing
 
 
 @pytest.mark.parametrize("changed_input", ["source", "pack"])
-def test_same_size_changes_with_restored_mtime_invalidate_selected_pack(packing, changed_input):
-    service, spec, executor, source = packing
+def test_same_size_changes_with_restored_mtime_invalidate_selected_pack(
+    packs, task_center, changed_input
+):
+    service, spec, source = packs
     job = submit(service, spec)
-    artifact = complete(service, executor, job)["artifact"]
+    artifact = run_pack(task_center.store, job)["artifact"]
     assert service.select(spec.featureSetId, artifact["id"])["current"]
     path = (
         source / "001.A.h5"
@@ -311,10 +350,10 @@ def test_same_size_changes_with_restored_mtime_invalidate_selected_pack(packing,
     assert caught.value.code == "PACK_NOT_CURRENT"
 
 
-def test_selected_pack_becomes_stale_without_reading_tensors(packing, monkeypatch):
-    service, spec, executor, source = packing
+def test_selected_pack_becomes_stale_without_reading_tensors(packs, task_center, monkeypatch):
+    service, spec, source = packs
     job = submit(service, spec)
-    artifact = complete(service, executor, job)["artifact"]
+    artifact = run_pack(task_center.store, job)["artifact"]
     assert service.select(spec.featureSetId, artifact["id"])["current"]
     monkeypatch.setattr(
         FeatureService, "_header", lambda *args: pytest.fail("Freshness opened HDF5")
@@ -333,10 +372,10 @@ def test_selected_pack_becomes_stale_without_reading_tensors(packing, monkeypatc
     assert service.select(spec.featureSetId, None)["current"]
 
 
-def test_older_pack_receipt_needs_verification_before_selection(packing):
-    service, spec, executor, source = packing
+def test_older_pack_receipt_needs_verification_before_selection(packs, task_center):
+    service, spec, source = packs
     job = submit(service, spec)
-    result = complete(service, executor, job)
+    result = run_pack(task_center.store, job)
     result["artifact"].pop("packStamps")
     write_json(service.folder / job["id"] / "result.json", result)
     resolved = service.resolve_artifact(spec.featureSetId, result["artifact"]["id"])
@@ -344,10 +383,10 @@ def test_older_pack_receipt_needs_verification_before_selection(packing):
     assert resolved["findings"][0]["code"] == "PACK_VERIFICATION_REFRESH_REQUIRED"
 
 
-def test_old_operation_retry_without_existing_path_field_is_idempotent(packing):
+def test_old_operation_retry_without_existing_path_field_is_idempotent(packs, task_center):
     import hashlib
 
-    service, spec, executor, source = packing
+    service, spec, source = packs
     preview = service.preview(spec)
     job = service.submit(spec, preview["previewHash"], "old-operation")
     record_path = service.folder / job["id"] / "job.json"
@@ -359,13 +398,13 @@ def test_old_operation_retry_without_existing_path_field_is_idempotent(packing):
     ).hexdigest()
     write_json(record_path, record)
     assert service.submit(spec, preview["previewHash"], "old-operation")["id"] == job["id"]
-    assert len(executor.launches) == 1
+    assert len(task_center.tasks()) == 1
 
 
-def test_list_reads_each_terminal_receipt_once_and_deduplicates(packing, monkeypatch):
-    service, spec, executor, source = packing
+def test_list_reads_each_terminal_receipt_once_and_deduplicates(packs, task_center, monkeypatch):
+    service, spec, source = packs
     job = submit(service, spec)
-    complete(service, executor, job)
+    run_pack(task_center.store, job)
     real_result = service._result
     calls = []
 
@@ -378,10 +417,10 @@ def test_list_reads_each_terminal_receipt_once_and_deduplicates(packing, monkeyp
     assert calls == [job["id"]]
 
 
-def test_reverified_folder_supersedes_old_receipt_without_changing_selection(packing):
-    service, spec, executor, source = packing
+def test_reverified_folder_supersedes_old_receipt_without_changing_selection(packs, task_center):
+    service, spec, source = packs
     created_job = submit(service, spec)
-    created_result = complete(service, executor, created_job)
+    created_result = run_pack(task_center.store, created_job)
     original = created_result["artifact"]
     service.select(spec.featureSetId, original["id"])
     original.pop("packStamps")
@@ -389,7 +428,7 @@ def test_reverified_folder_supersedes_old_receipt_without_changing_selection(pac
 
     attach = spec.model_copy(update={"action": "attach", "existingPath": original["outputPath"]})
     attached_job = submit(service, attach, "reverify-existing")
-    verified = complete(service, executor, attached_job)["artifact"]
+    verified = run_pack(task_center.store, attached_job)["artifact"]
     assert verified["id"] != original["id"]
     assert verified["materializationId"] == original["materializationId"]
     listing = service.list()
@@ -403,13 +442,18 @@ def test_reverified_folder_supersedes_old_receipt_without_changing_selection(pac
     assert service.select(spec.featureSetId, verified["id"])["current"]
 
 
-def test_cancellation_is_cooperative_and_retry_uses_a_new_output(packing):
-    service, spec, executor, source = packing
+def test_cancellation_is_cooperative_and_retry_uses_a_new_output(packs, task_center):
+    service, spec, source = packs
     job = submit(service, spec)
+    adapter = PackingAdapter()
+    # A job still queued is cancelled at once; a running worker stops at its next chunk.
+    assert begin(task_center.store, job["taskId"], adapter)
     assert service.cancel(job["id"])["state"] == "cancelling"
-    assert job["sessionName"] in executor.sessions
-    result = complete(service, executor, job)
+    assert task_center.task(job["taskId"])["stopRequest"] == "cancel"
+    with task_environment(task_center.task(job["taskId"])):
+        result = run_job(service.folder / job["id"] / "plan.json")
     assert result["state"] == "cancelled"
+    assert conclude(task_center.store, job["taskId"], adapter, 1)["state"] == "cancelled"
     assert not Path(job["outputPath"]).exists()
     assert service.get(job["id"])["state"] == "cancelled"
     retry = submit(service, spec, "retry")
@@ -417,10 +461,11 @@ def test_cancellation_is_cooperative_and_retry_uses_a_new_output(packing):
     assert retry["outputPath"] != job["outputPath"]
 
 
-def test_interrupted_launch_and_worker_lock_cannot_be_stolen(packing):
-    service, spec, executor, source = packing
+def test_interrupted_launch_and_worker_lock_cannot_be_stolen(packs, task_center):
+    service, spec, source = packs
     job = submit(service, spec)
-    executor.sessions.clear()
+    # The runner lost the worker before it recorded an outcome.
+    task_center.finish(job["taskId"], "interrupted", returncode=None, reason="lost")
     assert service.get(job["id"])["state"] == "interrupted"
     with output_lock(job["outputPath"]):
         with pytest.raises(StorageError) as caught:
@@ -431,8 +476,8 @@ def test_interrupted_launch_and_worker_lock_cannot_be_stolen(packing):
     assert retry["id"] != job["id"]
 
 
-def test_another_project_cannot_claim_an_active_nested_output(packing, tmp_path):
-    service, spec, executor, source = packing
+def test_another_project_cannot_claim_an_active_nested_output(packs, task_center, tmp_path):
+    service, spec, source = packs
     output = tmp_path / "shared-output"
     job = submit(service, spec.model_copy(update={"outputPath": str(output)}))
     other = tmp_path / "other-project"
@@ -454,34 +499,46 @@ def test_another_project_cannot_claim_an_active_nested_output(packing, tmp_path)
     other_feature = other_store.publish_configuration(
         manifest=configuration["manifest"], operation_id="feature"
     )
-    other_service = FeaturePackService(other_store, service.filesystem, executor)
+    other_service = FeaturePackService(
+        other_store,
+        service.filesystem,
+        execution_mode="task-center",
+        task_center=task_center.client,
+    )
     preview = other_service.preview(
         FeaturePackSpec(featureSetId=other_feature["id"], outputPath=str(output / "nested"))
     )
+    # The queued packing task of the first project owns the output machine-wide.
+    assert task_center.state(job["taskId"]) == "queued"
     assert not preview["canRun"]
     assert any(finding["code"] == "OUTPUT_BUSY" for finding in preview["findings"])
-    executor.sessions.discard(job["sessionName"])
 
 
-def test_script_worker_runs_from_unrelated_cwd(packing, tmp_path):
-    service, spec, executor, source = packing
+def test_script_worker_runs_from_unrelated_cwd(packs, task_center, tmp_path):
+    service, spec, source = packs
     job = submit(service, spec.model_copy(update={"action": "validate"}))
-    runner, plan = executor.launches[0]
+    adapter = PackingAdapter()
+    assert begin(task_center.store, job["taskId"], adapter)
+    task = task_center.task(job["taskId"])
+    # The runner starts the task's command line in the checkout; it must not rely on that.
     result = subprocess.run(
-        [sys.executable, str(runner), str(plan)],
+        task["command"]["argv"],
         cwd=tmp_path,
+        env={**os.environ, **worker_environment(task)},
         capture_output=True,
         text=True,
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    executor.sessions.clear()
+    assert conclude(task_center.store, job["taskId"], adapter, result.returncode)["state"] == (
+        "succeeded"
+    )
     assert service.get(job["id"])["state"] == "succeeded"
     assert not (service.folder / job["id"] / "process.json").exists()
 
 
-def test_corrupt_terminal_receipt_does_not_masquerade_as_success(packing):
-    service, spec, executor, source = packing
+def test_corrupt_terminal_receipt_does_not_masquerade_as_success(packs):
+    service, spec, source = packs
     job = submit(service, spec)
     write_json(
         service.folder / job["id"] / "result.json", {"jobId": "different", "state": "succeeded"}
@@ -491,32 +548,35 @@ def test_corrupt_terminal_receipt_does_not_masquerade_as_success(packing):
     assert caught.value.code == "PACKING_CORRUPT"
 
 
-def test_launch_failure_is_durable_and_retry_can_use_unchanged_empty_output(
-    packing, monkeypatch, tmp_path
+def test_queue_failure_is_durable_and_retry_can_use_unchanged_empty_output(
+    packs, task_center, monkeypatch, tmp_path
 ):
-    service, spec, executor, source = packing
+    service, spec, source = packs
     spec = spec.model_copy(update={"outputPath": str(tmp_path / "launch-retry")})
-    launch = executor.launch
+    enqueue = task_records.enqueue
 
     def fail(*args):
-        raise RuntimeError("tmux failed")
+        raise StorageError("The Task Center store is unavailable.", "TASK_CENTER_UNAVAILABLE")
 
-    monkeypatch.setattr(executor, "launch", fail)
+    monkeypatch.setattr(task_records, "enqueue", fail)
     job = submit(service, spec)
     assert job["state"] == "failed"
-    assert "tmux failed" in job["error"]
-    monkeypatch.setattr(executor, "launch", launch)
+    assert "Could not queue the feature job" in job["error"]
+    assert "store is unavailable" in job["error"]
+    assert service.get(job["id"])["state"] == "failed"
+    monkeypatch.setattr(task_records, "enqueue", enqueue)
     retry = submit(service, spec, "retry")
-    assert retry["state"] == "running"
+    assert retry["state"] == "queued"
     assert retry["outputPath"] == job["outputPath"]
+    assert [task["labels"]["recordId"] for task in task_center.tasks()] == [retry["id"]]
 
 
-def test_source_modified_after_submission_stops_worker_before_output(packing):
-    service, spec, executor, source = packing
+def test_source_modified_after_submission_stops_worker_before_output(packs, task_center):
+    service, spec, source = packs
     job = submit(service, spec)
     with h5py.File(source / "001.A.h5", "r+") as handle:
         handle["features"][0, 0] = 999
-    result = complete(service, executor, job)
+    result = run_pack(task_center.store, job)
     assert result["state"] == "failed"
     assert "sources changed" in result["error"]
     assert not Path(job["outputPath"]).exists()
@@ -536,10 +596,12 @@ def test_source_modified_after_submission_stops_worker_before_output(packing):
         "artifactValidation",
     ],
 )
-def test_artifact_and_job_reads_reject_inconsistent_completion_receipts(packing, field):
-    service, spec, executor, source = packing
+def test_artifact_and_job_reads_reject_inconsistent_completion_receipts(
+    packs, task_center, field
+):
+    service, spec, source = packs
     job = submit(service, spec)
-    result = complete(service, executor, job)
+    result = run_pack(task_center.store, job)
     assert result["state"] == "succeeded"
     artifact_id = result["artifact"]["id"]
     if field == "jobId":
@@ -572,9 +634,9 @@ def test_artifact_and_job_reads_reject_inconsistent_completion_receipts(packing,
         assert caught.value.code == "PACKING_CORRUPT"
 
 
-def test_reduced_precision_pack_verifies_against_the_cast_source(packing, tmp_path):
+def test_reduced_precision_pack_verifies_against_the_cast_source(packs, task_center, tmp_path):
     """A float16 pack of float32 sources is a faithful copy at its own declared precision."""
-    service, spec, executor, _source = packing
+    service, spec, _source = packs
     path = tmp_path / "half"
     configuration = service.store.get_configuration(spec.featureSetId)
     build_pack({**configuration, "id": "another-feature-version"}, path, dtype="float16")
@@ -584,7 +646,7 @@ def test_reduced_precision_pack_verifies_against_the_cast_source(packing, tmp_pa
     inspection = preview["packInspection"]
     assert (inspection["sourceDtype"], inspection["outputDtype"]) == ("float32", "float16")
     assert inspection["precision"] == "reduced"
-    result = complete(service, executor, submit(service, attach))
+    result = run_pack(task_center.store, submit(service, attach))
     assert result["state"] == "succeeded", result.get("error")
     artifact = result["artifact"]
     assert artifact["verification"] == "exact-cast-source-values"
@@ -592,8 +654,8 @@ def test_reduced_precision_pack_verifies_against_the_cast_source(packing, tmp_pa
     assert artifact["dtypePolicy"] == "float16"
 
 
-def test_a_reduced_pack_whose_values_are_not_the_cast_source_is_rejected(packing, tmp_path):
-    service, spec, _executor, _source = packing
+def test_a_reduced_pack_whose_values_are_not_the_cast_source_is_rejected(packs, tmp_path):
+    service, spec, _source = packs
     path = tmp_path / "half"
     configuration = service.store.get_configuration(spec.featureSetId)
     build_pack({**configuration, "id": "another-feature-version"}, path, dtype="float16")
@@ -621,9 +683,9 @@ def test_only_a_lower_float_precision_counts_as_a_faithful_pack():
     assert not _reduces("float32", "nonsense")
 
 
-def test_values_that_cannot_survive_the_declared_precision_are_refused(packing, tmp_path):
+def test_values_that_cannot_survive_the_declared_precision_are_refused(packs, tmp_path):
     """A source value with no float16 representation cannot be packed or verified at float16."""
-    service, spec, _executor, _source = packing
+    service, spec, _source = packs
     source = tmp_path / "wide-range"
     source.mkdir()
     with h5py.File(source / "001.A.h5", "w") as handle:

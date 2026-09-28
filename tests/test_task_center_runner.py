@@ -1,6 +1,5 @@
 """The runner end to end, with real short-lived Python tasks in their own sessions."""
 
-import copy
 import json
 import os
 import signal
@@ -13,16 +12,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from support.task_center import Center as TaskCenter
+from support.task_center import fake_host
 
 from histopilot.storage.project_lock import StorageError
-from histopilot.taskcenter import TaskCenterClient, TaskStore, leases, procs
+from histopilot.taskcenter import leases, procs
 from histopilot.taskcenter import runner as runner_module
 from histopilot.taskcenter.adapters.base import BUSY_EXIT, AdapterError, outcome
 from histopilot.taskcenter.adapters.generic import GenericAdapter
 from histopilot.taskcenter.launcher import runner_alive
 from histopilot.taskcenter.model import TERMINAL
 from histopilot.taskcenter.runner import BUSY_WAIT, Runner, RunnerBusy, host_stop
-from histopilot.workers import train_batch
 
 # Waits for <folder>/release (whose text is the exit code). On SIGTERM it writes
 # <folder>/terminated and exits 0, unless told to ignore the signal.
@@ -41,41 +41,18 @@ sys.exit(int(release.read_text() or 0))
 """
 
 
-def fake_host(*, gpus=1, total=24.0, free=20.0, cpus=32, available=64.0):
-    snapshot = {
-        "cpuCount": cpus,
-        "totalRamGb": 128.0,
-        "availableRamGb": available,
-        "bootId": "test",
-        "kernel": "test",
-        "physicalCpuCount": cpus // 2,
-        "gpus": [
-            {
-                "index": index,
-                "uuid": f"GPU-{index}",
-                "name": "Test GPU",
-                "driverVersion": "1",
-                "totalMemoryGb": total,
-                "usedMemoryGb": total - free,
-                "freeMemoryGb": free,
-                "utilizationPercent": 10.0,
-            }
-            for index in range(gpus)
-        ],
-    }
-    return lambda: copy.deepcopy(snapshot)
+class Center(TaskCenter):
+    """This test's Task Center, plus synthetic generic tasks that each run TASK in a folder."""
 
-
-class Center:
     def __init__(self, tmp_path):
+        super().__init__()
         self.tmp_path = tmp_path
         self.project = str(tmp_path / "project")
-        self.store = TaskStore(tmp_path / "state" / "task-center.sqlite")
-        self.client = TaskCenterClient(self.store)
-        self.runners = []
-        self.logs = []
 
     def runner(self, *, stop=None, **options):
+        if stop is None:
+            return super().runner(**options)
+        # Only a stop given to start() can interrupt startup reconciliation.
         runner = Runner(
             self.store,
             **{
@@ -140,36 +117,8 @@ class Center:
     def started(self, identity):
         return (self.folder(identity) / "started").exists()
 
-    def state(self, identity):
-        return self.store.get(identity)["state"]
-
     def running(self):
         return {task["id"] for task in self.store.list(states=("running",), limit=None)}
-
-    def tick_until(self, runner, predicate, timeout=15.0):
-        deadline = time.monotonic() + timeout
-        while True:
-            result = runner.tick()
-            if predicate():
-                return result
-            if time.monotonic() > deadline:
-                states = {task["id"]: task["state"] for task in self.store.list(limit=None)}
-                raise AssertionError(f"Condition not reached; tasks: {states}; log: {self.logs}")
-            time.sleep(0.02)
-
-    def cleanup(self):
-        for runner in self.runners:
-            runner.close()
-        for task in self.store.list(limit=None):
-            if task["process"]:
-                procs.kill_group(task["process"])
-        for runner in self.runners:
-            for child in runner._procs.values():
-                try:
-                    child.kill()
-                    child.wait(timeout=5)
-                except (OSError, subprocess.SubprocessError):
-                    pass
 
 
 @pytest.fixture
@@ -181,7 +130,7 @@ def registry(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def center(tmp_path, registry):
+def center(tmp_path, registry, _task_center_state):
     value = Center(tmp_path)
     yield value
     value.cleanup()
@@ -689,16 +638,10 @@ def test_leases_are_visible_to_legacy_schedulers_and_measurements_are_recorded(c
     assert task["lease"] == f"lease-{task['process']['pid']}.json" and lease.exists()
     value = json.loads(lease.read_text())
     assert (value["taskId"], value["cpus"], value["runsPerGpu"], value["gpu"]) == ("fold", 3, 2, 0)
-    with train_batch._leases() as (_, active):
-        assert [item["taskId"] for item in active] == ["fold"]
-        resources = {
-            "cpuThreadsPerRun": 1,
-            "dataLoaderWorkers": 0,
-            "ramGbPerRun": 1.0,
-            "gpuIds": [0],
-            "runsPerGpu": 4,
-        }
-        assert train_batch.available_device(resources, active, (64, 64.0)) == (True, 0)
+    # Other writers of the registry read it as live load; the runner knows it as its own.
+    [read] = leases.read_leases()
+    assert (read["taskId"], read["live"], read["gpu"]) == ("fold", True, 0)
+    assert leases.foreign([read], {"fold"}) == []
     (center.folder("fold") / "progress.json").write_text(json.dumps({"epoch": 3, "maxEpochs": 9}))
     center.tick_until(
         runner, lambda: (center.store.get("fold")["progress"] or {}).get("epoch") == 3
@@ -1535,17 +1478,9 @@ def test_admission_holds_the_registry_lock_against_legacy_schedulers(center, reg
         seen = leases.read_leases()
         if armed:
             armed.clear()
-            # A legacy scheduler dispatches right after the runner's lock-free read.
-            with train_batch._leases() as (folder, active):
-                resources = {
-                    "maxConcurrentRuns": 1,
-                    "gpuIds": [0],
-                    "runsPerGpu": 1,
-                    "cpuThreadsPerRun": 2,
-                    "dataLoaderWorkers": 2,
-                    "ramGbPerRun": 8.0,
-                }
-                assert train_batch.available_device(resources, active, (32, 64.0)) == (True, 0)
+            # Another writer (a legacy scheduler of another checkout) dispatches right after
+            # the runner's lock-free read, holding the registry lock as every writer does.
+            with leases.registry_lock() as folder:
                 child = subprocess.Popen(
                     [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
                 )

@@ -1,9 +1,21 @@
-"""Extraction preflight, durable jobs, recovery and native artifacts without GPU execution."""
+"""Extraction preflight, durable jobs, recovery and native artifacts without GPU execution.
+
+Jobs are an extraction task and its validation task in the test's private Task Center;
+``support.features`` ends them with the receipts their workers write. ``extraction`` and
+``submit`` keep the legacy tmux launch path for ``test_job_lifecycle``, which imports them.
+"""
 
 import json
 from pathlib import Path
 
 import pytest
+from support.features import (
+    begin,
+    conclude,
+    finish_extraction,
+    finish_validation,
+    run_validation,
+)
 
 from histopilot.application.extractions import ExtractionService, _write
 from histopilot.schemas.extractions import ExtractionSpec
@@ -33,8 +45,8 @@ class FakeExecutor:
         self.sessions.discard(session)
 
 
-@pytest.fixture
-def extraction(tmp_path, monkeypatch):
+def extraction_setup(tmp_path, monkeypatch):
+    """A dataset of two slides on two data roots, with TRIDENT's runtime faked."""
     folder = tmp_path / "experiment"
     folder.mkdir()
     roots = [tmp_path / "drive-d", tmp_path / "oceanpath-hot"]
@@ -53,8 +65,6 @@ def extraction(tmp_path, monkeypatch):
         artifacts={"records.json": json.dumps(slides).encode()},
         operation_id="dataset",
     )
-    executor = FakeExecutor()
-    service = ExtractionService(store, LocalFilesystem(tuple(roots)), executor)
     monkeypatch.setattr(
         "histopilot.adapters.trident.discover_runtime",
         lambda: {
@@ -81,6 +91,24 @@ def extraction(tmp_path, monkeypatch):
     spec = ExtractionSpec(
         datasetId=dataset["id"], outputPath=str(folder / "trident"), options={"task": "seg"}
     )
+    return store, LocalFilesystem(tuple(roots)), spec, slides
+
+
+@pytest.fixture
+def extractions(tmp_path, monkeypatch, task_center):
+    store, filesystem, spec, slides = extraction_setup(tmp_path, monkeypatch)
+    service = ExtractionService(
+        store, filesystem, execution_mode="task-center", task_center=task_center.client
+    )
+    return service, spec, slides
+
+
+@pytest.fixture
+def extraction(tmp_path, monkeypatch):
+    """The same service on the legacy tmux launch path, with a fake executor."""
+    store, filesystem, spec, slides = extraction_setup(tmp_path, monkeypatch)
+    executor = FakeExecutor()
+    service = ExtractionService(store, filesystem, executor)
     return service, spec, executor, slides
 
 
@@ -90,7 +118,11 @@ def submit(service, spec, operation="run"):
     return service.submit(spec, preview["previewHash"], operation)
 
 
+@pytest.mark.legacy_tmux
 def test_lost_launch_acknowledgement_keeps_extraction_job_active(extraction, monkeypatch):
+    # Queueing Task Center tasks has no launch acknowledgement to lose, so no Task Center
+    # test covers this. Idempotent queueing:
+    # test_exact_multiple_roots_manifest_idempotency_logs_and_reopen.
     service, spec, executor, _slides = extraction
     original = executor.launch
 
@@ -107,15 +139,17 @@ def test_lost_launch_acknowledgement_keeps_extraction_job_active(extraction, mon
     assert len(executor.launches) == 1
 
 
-def test_exact_multiple_roots_manifest_idempotency_logs_and_reopen(extraction):
-    service, spec, executor, slides = extraction
+def test_exact_multiple_roots_manifest_idempotency_logs_and_reopen(extractions, task_center):
+    service, spec, slides = extractions
     preview = service.preview(spec)
     assert preview["slideCount"] == 2
     assert not Path(spec.outputPath).exists()
     job = service.submit(spec, preview["previewHash"], "run")
-    assert job["state"] == "running"
-    assert len(executor.launches) == 1
+    assert job["state"] == "queued"
+    queued = {(task["kind"], task["attempt"]) for task in task_center.tasks()}
+    assert queued == {("extraction", 1), ("extraction-validation", 1)}
     assert service.submit(spec, preview["previewHash"], "run")["id"] == job["id"]
+    assert {(task["kind"], task["attempt"]) for task in task_center.tasks()} == queued
     folder = service.folder / job["id"]
     assert (folder / "slides.csv").read_text().splitlines() == [
         "wsi",
@@ -123,15 +157,24 @@ def test_exact_multiple_roots_manifest_idempotency_logs_and_reopen(extraction):
         "oceanpath-hot/slide.1.svs",
     ]
     (folder / "worker.log").write_text("segmenting slide 1\n")
-    reopened = ExtractionService(service.store, service.filesystem, executor)
+    reopened = ExtractionService(
+        service.store,
+        service.filesystem,
+        execution_mode="task-center",
+        task_center=task_center.client,
+    )
     assert reopened.get(job["id"], logs=True)["logs"] == "segmenting slide 1\n"
-    executor.sessions.clear()
+    # The runner lost TRIDENT before it recorded an outcome.
+    task_center.finish(job["taskId"], "interrupted", returncode=None, reason="lost")
     assert reopened.get(job["id"])["state"] == "interrupted"
 
 
-def test_progress_reads_existing_worker_logs_on_list_and_detail(extraction, monkeypatch):
-    service, spec, executor, slides = extraction
+def test_progress_reads_existing_worker_logs_on_list_and_detail(
+    extractions, task_center, monkeypatch
+):
+    service, spec, slides = extractions
     job = submit(service, spec)
+    task_center.start(job["taskId"])
     folder = service.folder / job["id"]
     original = (folder / "job.json").read_bytes()
     log = (
@@ -159,25 +202,27 @@ def test_progress_reads_existing_worker_logs_on_list_and_detail(extraction, monk
     assert (folder / "job.json").read_bytes() == original
 
 
-def test_progress_tail_is_bounded_and_terminal_runtime_stops(extraction):
+def test_progress_tail_is_bounded_and_terminal_runtime_stops(extractions, task_center):
     from histopilot.application.extractions import MAX_LOG_BYTES
 
-    service, spec, executor, slides = extraction
+    service, spec, slides = extractions
     job = submit(service, spec)
     folder = service.folder / job["id"]
     with (folder / "worker.log").open("wb") as stream:
         stream.seek(MAX_LOG_BYTES * 4)
         stream.write(b"\rSegmenting tissue:  50%|#####| 1/2 [00:19<00:19, 19.05s/it]")
-    _write(
-        folder / "result.json",
-        {
-            "state": "cancelled",
-            "exitCode": -15,
-            "startedAt": "2026-09-10T06:20:18+00:00",
-            "finishedAt": "2026-09-10T06:23:19+00:00",
-        },
+    task_center.start(job["taskId"])
+    service.cancel(job["id"])
+    finish_extraction(
+        task_center.store,
+        job,
+        "cancelled",
+        exitCode=-15,
+        startedAt="2026-09-10T06:20:18+00:00",
+        finishedAt="2026-09-10T06:23:19+00:00",
     )
     response = service.get(job["id"], logs=True)
+    assert response["state"] == "cancelled"
     assert len(response["logs"].encode()) == MAX_LOG_BYTES
     assert response["progress"]["completed"] == 1
     assert response["progress"]["elapsedSeconds"] == 181
@@ -185,11 +230,14 @@ def test_progress_tail_is_bounded_and_terminal_runtime_stops(extraction):
 
 
 @pytest.mark.parametrize("kind", ["symlink", "fifo", "unreadable"])
-def test_unavailable_progress_does_not_block_status_or_cancellation(extraction, kind, monkeypatch):
+def test_unavailable_progress_does_not_block_status_or_cancellation(
+    extractions, task_center, kind, monkeypatch
+):
     import os
 
-    service, spec, executor, slides = extraction
+    service, spec, slides = extractions
     job = submit(service, spec)
+    task_center.start(job["taskId"])
     folder = service.folder / job["id"]
     if kind == "symlink":
         (folder / "worker.log").symlink_to(folder / "job.json")
@@ -210,14 +258,12 @@ def test_unavailable_progress_does_not_block_status_or_cancellation(extraction, 
     assert (folder / "cancelled").exists()
 
 
-def test_skip_errors_exit_zero_cannot_claim_missing_outputs(extraction):
-    service, spec, executor, slides = extraction
+def test_skip_errors_exit_zero_cannot_claim_missing_outputs(extractions, task_center):
+    service, spec, slides = extractions
     job = submit(service, spec)
-    _write(service.folder / job["id"] / "result.json", {"state": "succeeded", "exitCode": 0})
-    _write(
-        service.folder / job["id"] / "validation.json",
-        {"jobId": job["id"], "completedSlides": 0, "missingSlides": 2},
-    )
+    # TRIDENT skipped the slides it could not process and still exited 0.
+    finish_extraction(task_center.store, job)
+    assert run_validation(task_center.store, job)["state"] == "failed"
     result = service.get(job["id"])
     assert result["state"] == "failed"
     assert result["result"]["missingSlides"] == 2
@@ -227,21 +273,23 @@ def test_skip_errors_exit_zero_cannot_claim_missing_outputs(extraction):
         (contours / f"{slide['slideId']}.geojson").write_text(
             '{"type":"FeatureCollection","features":[]}'
         )
-    _write(
-        service.folder / job["id"] / "validation.json",
-        {"jobId": job["id"], "completedSlides": 2, "missingSlides": 0},
-    )
+    # Resuming runs TRIDENT again, then a fresh validation of the outputs it left.
+    assert service.resume(job["id"])["state"] == "queued"
+    finish_extraction(task_center.store, job)
+    assert run_validation(task_center.store, job)["state"] == "succeeded"
     assert service.get(job["id"])["state"] == "succeeded"
 
 
-def test_cancel_retains_artifacts_and_resume_requires_matching_configuration(extraction):
-    service, spec, executor, slides = extraction
+def test_cancel_retains_artifacts_and_resume_requires_matching_configuration(
+    extractions, task_center
+):
+    service, spec, slides = extractions
     job = submit(service, spec)
+    task_center.start(job["taskId"])
     result = service.cancel(job["id"])
     assert result["state"] == "cancelling"
     assert not service.preview(spec)["canRun"]
-    executor.sessions.clear()
-    _write(service.folder / job["id"] / "result.json", {"state": "cancelled", "exitCode": -15})
+    finish_extraction(task_center.store, job, "cancelled", exitCode=-15)
     assert service.get(job["id"])["state"] == "cancelled"
     assert Path(spec.outputPath).is_dir()
     assert service.preview(spec)["canRun"]
@@ -251,8 +299,8 @@ def test_cancel_retains_artifacts_and_resume_requires_matching_configuration(ext
     assert any(item["code"] == "OUTPUT_CONFIG_CHANGED" for item in preview["findings"])
 
 
-def test_reject_changed_source_busy_output_and_operation_conflict(extraction):
-    service, spec, executor, slides = extraction
+def test_reject_changed_source_busy_output_and_operation_conflict(extractions):
+    service, spec, slides = extractions
     preview = service.preview(spec)
     Path(slides[0]["slidePath"]).write_bytes(b"changed slide")
     with pytest.raises(StorageError, match="changed"):
@@ -265,8 +313,8 @@ def test_reject_changed_source_busy_output_and_operation_conflict(extraction):
     assert error.value.code == "OPERATION_CONFLICT"
 
 
-def test_blocks_unowned_nonempty_paths_traversal_cache_and_invalid_options(extraction, tmp_path):
-    service, spec, executor, slides = extraction
+def test_blocks_unowned_nonempty_paths_traversal_cache_and_invalid_options(extractions, tmp_path):
+    service, spec, slides = extractions
     Path(spec.outputPath).mkdir()
     (Path(spec.outputPath) / "original.txt").write_text("keep")
     assert not service.preview(spec)["canRun"]
@@ -290,8 +338,8 @@ def test_blocks_unowned_nonempty_paths_traversal_cache_and_invalid_options(extra
         service.preview(spec.model_copy(update={"outputPath": str(link)}))
 
 
-def test_runtime_unavailable_never_launches(extraction, monkeypatch):
-    service, spec, executor, slides = extraction
+def test_runtime_unavailable_never_launches(extractions, task_center, monkeypatch):
+    service, spec, slides = extractions
     monkeypatch.setattr(
         "histopilot.adapters.trident.discover_runtime",
         lambda: {"available": False, "error": "Missing TRIDENT"},
@@ -301,11 +349,11 @@ def test_runtime_unavailable_never_launches(extraction, monkeypatch):
     with pytest.raises(StorageError) as error:
         service.submit(spec, preview["previewHash"], "blocked")
     assert error.value.code == "EXTRACTION_INVALID"
-    assert not executor.launches
+    assert task_center.tasks() == []
 
 
-def test_custom_csv_subset_mpp_cache_and_stage_prerequisites(extraction):
-    service, spec, executor, slides = extraction
+def test_custom_csv_subset_mpp_cache_and_stage_prerequisites(extractions):
+    service, spec, slides = extractions
     csv_path = service.store.folder / "selected.csv"
     csv_path.write_text("wsi,mpp\nslide.1.svs,0.5\n")
     selected = spec.model_copy(
@@ -342,7 +390,7 @@ def test_custom_csv_subset_mpp_cache_and_stage_prerequisites(extraction):
 
 
 @pytest.fixture
-def cohort_extraction(tmp_path, monkeypatch):
+def cohort_extraction(tmp_path, monkeypatch, task_center):
     """One slide root with per-cohort subfolders, as a multi-cohort study is imported."""
     folder = tmp_path / "experiment"
     folder.mkdir()
@@ -365,8 +413,12 @@ def cohort_extraction(tmp_path, monkeypatch):
         artifacts={"records.json": json.dumps(slides).encode()},
         operation_id="dataset",
     )
-    executor = FakeExecutor()
-    service = ExtractionService(store, LocalFilesystem((tmp_path / "drive-d",)), executor)
+    service = ExtractionService(
+        store,
+        LocalFilesystem((tmp_path / "drive-d",)),
+        execution_mode="task-center",
+        task_center=task_center.client,
+    )
     monkeypatch.setattr(
         "histopilot.adapters.trident.discover_runtime",
         lambda: {
@@ -470,7 +522,7 @@ def test_the_same_folder_narrowed_by_a_dataset_selects_only_its_slides(cohort_ex
     assert preview["slideList"]["outsideExamples"] == ["SURGEN/SR386.tiff"]
 
 
-def test_extraction_rejects_selected_physical_slide_aliases(cohort_extraction):
+def test_extraction_rejects_selected_physical_slide_aliases(cohort_extraction, task_center):
     service, spec, root = cohort_extraction
     alias = root / "copied-identity.svs"
     alias.hardlink_to(root / "rih" / "SL-1.svs")
@@ -480,7 +532,7 @@ def test_extraction_rejects_selected_physical_slide_aliases(cohort_extraction):
     assert any(row["code"] == "DUPLICATE_SLIDE_ALIAS" for row in reviewed["findings"])
     with pytest.raises(StorageError, match="preflight"):
         service.submit(independent, reviewed["previewHash"], "duplicate-source")
-    assert service.executor.launches == []
+    assert task_center.tasks() == []
     # A dataset restriction excludes the alias, so it still selects a valid source.
     selected = service.preview(spec.model_copy(update={"slideRoot": str(root)}))
     assert selected["canRun"], selected["findings"]
@@ -529,14 +581,26 @@ def test_a_partly_declared_mpp_column_never_reaches_trident(cohort_extraction):
     assert error.value.code == "INVALID_SLIDE_LIST"
 
 
-def test_result_polling_reads_saved_validation_without_reopening_artifacts(extraction, monkeypatch):
-    service, spec, executor, slides = extraction
+def test_result_polling_reads_saved_validation_without_reopening_artifacts(
+    extractions, task_center, monkeypatch
+):
+    from histopilot.taskcenter.adapters.extraction import ExtractionValidationAdapter
+
+    service, spec, slides = extractions
     job = submit(service, spec)
-    _write(service.folder / job["id"] / "result.json", {"state": "succeeded", "exitCode": 0})
-    assert service.get(job["id"])["state"] == "failed"  # No validation is not success.
-    _write(
-        service.folder / job["id"] / "validation.json",
-        {"jobId": job["id"], "completedSlides": 2, "missingSlides": 0, "unvalidatedSlides": 0},
+    finish_extraction(task_center.store, job)
+    # No validation is not success: the job runs on until its validation reports ...
+    assert service.get(job["id"])["state"] == "running"
+    adapter = ExtractionValidationAdapter()
+    assert begin(task_center.store, job["validationTaskId"], adapter)
+    # ... and a validation that ends without its report leaves it resumable, not done.
+    assert conclude(task_center.store, job["validationTaskId"], adapter, 0)["state"] == (
+        "interrupted"
+    )
+    assert service.get(job["id"])["state"] == "interrupted"
+    assert task_center.client.requeue_task(job["validationTaskId"], reason="retry")
+    finish_validation(
+        task_center.store, job, completedSlides=2, missingSlides=0, unvalidatedSlides=0
     )
     monkeypatch.setattr(
         "histopilot.application.extraction_artifacts.inspect_outputs",
@@ -545,16 +609,18 @@ def test_result_polling_reads_saved_validation_without_reopening_artifacts(extra
     assert service.get(job["id"])["state"] == "succeeded"
 
 
-def test_modified_checkpoint_at_same_path_cannot_reuse_embeddings(extraction):
-    service, spec, executor, slides = extraction
+def test_modified_checkpoint_at_same_path_cannot_reuse_embeddings(extractions, task_center):
+    service, spec, slides = extractions
     checkpoint = service.store.folder / "model.pt"
     checkpoint.write_bytes(b"first checkpoint")
     spec = spec.model_copy(
         update={"options": {"task": "all", "patch_encoder_ckpt_path": str(checkpoint)}}
     )
     job = submit(service, spec)
-    executor.sessions.clear()
-    _write(service.folder / job["id"] / "result.json", {"state": "cancelled", "exitCode": -15})
+    task_center.start(job["taskId"])
+    service.cancel(job["id"])
+    finish_extraction(task_center.store, job, "cancelled", exitCode=-15)
+    assert service.get(job["id"])["state"] == "cancelled"
     assert service.preview(spec)["canRun"]
     checkpoint.write_bytes(b"other checkpoint")
     preview = service.preview(spec)
@@ -565,13 +631,11 @@ def test_modified_checkpoint_at_same_path_cannot_reuse_embeddings(extraction):
 @pytest.mark.parametrize(
     "change", ["missing_counts", "short_count", "boolean_count", "incomplete", "error_finding"]
 )
-def test_completion_requires_explicit_consistent_coverage(extraction, change):
-    service, spec, executor, slides = extraction
+def test_completion_requires_explicit_consistent_coverage(extractions, task_center, change):
+    service, spec, slides = extractions
     job = submit(service, spec)
-    folder = service.folder / job["id"]
-    _write(folder / "result.json", {"state": "succeeded", "exitCode": 0})
+    finish_extraction(task_center.store, job)
     coverage = {
-        "jobId": job["id"],
         "completedSlides": 2,
         "missingSlides": 0,
         "unvalidatedSlides": 0,
@@ -586,22 +650,24 @@ def test_completion_requires_explicit_consistent_coverage(extraction, change):
         coverage["inspectionComplete"] = False
     else:
         coverage["findings"] = [{"severity": "error", "code": "INVALID_EXTRACTION_ARTIFACT"}]
-    _write(folder / "validation.json", coverage)
+    # The report claims completeness and its task succeeds; the stage checks the counts.
+    validated = finish_validation(task_center.store, job, complete=True, **coverage)
+    assert validated["state"] == "succeeded"
     assert service.get(job["id"])["state"] == "failed"
 
 
 @pytest.mark.parametrize(
     "folder", ["packing/new-run", "configurations/new-run", "jobs/new-run", ".git/new-run"]
 )
-def test_extraction_cannot_write_inside_managed_metadata(extraction, folder):
-    service, spec, executor, slides = extraction
+def test_extraction_cannot_write_inside_managed_metadata(extractions, folder):
+    service, spec, slides = extractions
     with pytest.raises(StorageError) as caught:
         service.preview(spec.model_copy(update={"outputPath": str(service.store.folder / folder)}))
     assert caught.value.code == "INVALID_OUTPUT"
 
 
-def test_extraction_cannot_create_children_inside_an_existing_pack(extraction):
-    service, spec, executor, slides = extraction
+def test_extraction_cannot_create_children_inside_an_existing_pack(extractions):
+    service, spec, slides = extractions
     pack = service.filesystem.roots[0] / "existing-pack"
     pack.mkdir()
     for name in ("features.bin", "coords.bin", "index.parquet", "meta.json"):
@@ -611,20 +677,13 @@ def test_extraction_cannot_create_children_inside_an_existing_pack(extraction):
     assert caught.value.code == "OUTPUT_IMMUTABLE"
 
 
-def test_authenticated_project_extraction_api_roundtrip(extraction, monkeypatch, tmp_path):
+def test_authenticated_project_extraction_api_roundtrip(extractions, task_center, tmp_path):
     from fastapi.testclient import TestClient
 
     from histopilot.api import create_app
     from histopilot.config import Settings
 
-    service, spec, executor, slides = extraction
-    monkeypatch.setattr(
-        "histopilot.application.extractions.TmuxExtractionExecutor", lambda: executor
-    )
-    # This round trip exercises the legacy tmux launch path of the API.
-    monkeypatch.setattr(
-        "histopilot.application.task_records.default_execution_mode", lambda: "tmux"
-    )
+    service, spec, slides = extractions
     settings = Settings(workspace=tmp_path / "registry", data_roots=(tmp_path,))
     app = create_app(settings)
     with TestClient(app, base_url="http://127.0.0.1:8787") as client:
@@ -662,9 +721,11 @@ def test_authenticated_project_extraction_api_roundtrip(extraction, monkeypatch,
         request = {**intent, "previewHash": preview.json()["previewHash"], "operationId": "api-run"}
         started = client.post(base, json=request)
         assert started.status_code == 201, started.text
+        assert started.json()["state"] == "queued"
         identity = started.json()["id"]
         assert client.post(base, json=request).json()["id"] == identity
         assert len(client.get(base).json()["jobs"]) == 1
+        task_center.start(started.json()["taskId"])
         job_folder = store.folder / "extractions" / identity
         (job_folder / "worker.log").write_text(
             "\rSegmenting tissue:  50%|#####| 1/2 [00:19<00:19, 19.05s/it]"
@@ -798,10 +859,10 @@ def test_uploaded_slide_list_rejects_invalid_encoding_and_conflicting_sources(co
         )
 
 
-def test_legacy_extraction_preview_and_retry_keep_their_hashes(extraction):
+def test_legacy_extraction_preview_and_retry_keep_their_hashes(extractions, task_center):
     from histopilot.application.extractions import _hash
 
-    service, spec, executor, _slides = extraction
+    service, spec, _slides = extractions
     legacy_spec = {
         "datasetId": spec.datasetId,
         "slideRoot": None,
@@ -837,18 +898,20 @@ def test_legacy_extraction_preview_and_retry_keep_their_hashes(extraction):
     _write(path, recorded)
     replay = service.submit(request, legacy_preview_hash, "legacy-extraction-submit")
     assert replay["id"] == job["id"]
-    assert len(executor.launches) == 1
+    assert [task["attempt"] for task in task_center.tasks(kind="extraction")] == [1]
 
 
-@pytest.mark.parametrize("options, expected_workers, devices", [
-    ({}, 8, 1),
-    ({"gpus": [0, 1]}, 4, 2),
-    ({"gpus": [0, 1], "max_workers": 3}, 3, 2),
+# The Task Center runs an extraction on one GPU; only CPU devices fan out in one task.
+@pytest.mark.parametrize("options, expected_workers, lane, devices", [
+    ({}, 8, "gpu", 1),
+    ({"gpus": [0, 1]}, 4, "gpu", 1),
+    ({"gpus": [0, 1], "max_workers": 3}, 3, "gpu", 1),
+    ({"gpus": [-1, -1]}, 4, "cpu", 2),
 ])
-def test_preview_command_and_lease_share_frozen_worker_count(
-    extraction, monkeypatch, options, expected_workers, devices
+def test_preview_command_and_task_request_share_frozen_worker_count(
+    extractions, task_center, monkeypatch, options, expected_workers, lane, devices
 ):
-    service, spec, executor, _slides = extraction
+    service, spec, _slides = extractions
     monkeypatch.setattr("histopilot.adapters.trident.performance.usable_cpu_count", lambda: 48)
     seen = []
 
@@ -862,8 +925,10 @@ def test_preview_command_and_lease_share_frozen_worker_count(
     assert preview["spec"]["options"]["max_workers"] == expected_workers
     job = service.submit(spec, preview["previewHash"], "worker-plan")
     assert job["spec"]["options"]["max_workers"] == expected_workers
-    plan = executor.launches[0]
+    plan = json.loads((service.folder / job["id"] / "plan.json").read_text())
     assert plan["command"][-1] == str(expected_workers)
-    assert plan["resources"]["dataLoaderWorkers"] == expected_workers * devices
-    assert plan["resources"]["cpuThreadsPerRun"] == devices
+    request = task_center.task(job["taskId"])["request"]
+    assert request["lane"] == lane
+    assert request["dataWorkers"] == expected_workers * devices
+    assert request["cpuThreads"] == devices
     assert seen and set(seen) == {expected_workers}

@@ -3,14 +3,14 @@
 from copy import deepcopy
 
 import pytest
-from test_training_execution import execution
+from test_training_execution import tc_execution
 
 from histopilot.application.development import DevelopmentService
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.train_batch import _run_plan
 
-__all__ = ["execution"]
+__all__ = ["tc_execution"]
 
 
 def freeze_nnmil(service, batch):
@@ -25,8 +25,8 @@ def freeze_nnmil(service, batch):
     return result, preview
 
 
-def test_preview_freeze_and_launch_share_the_same_fold_fingerprint(execution):
-    service, batch, executor, _ = execution
+def test_preview_freeze_and_launch_share_the_same_fold_fingerprint(tc_execution, task_center):
+    service, batch, _ = tc_execution
     frozen, preview = freeze_nnmil(service, batch)
     plan, _guard = service._prepare(frozen)
     assert plan["nnmilPlanning"] == preview["nnmilPlanning"]
@@ -39,15 +39,15 @@ def test_preview_freeze_and_launch_share_the_same_fold_fingerprint(execution):
                                           if key not in {"candidateId", "splitPlanId"}}
         assert worker["effectiveRecipe"]["bagSize"] == summary["bagSize"]
         assert worker["recipe"] == frozen["manifest"]["configurations"][0]["recipe"]
-    assert not executor.launches
+    assert not task_center.tasks(kind="mil-fold")
 
 
-def test_stale_frozen_bag_preview_blocks_launch(execution):
-    service, batch, executor, _ = execution
+def test_stale_frozen_bag_preview_blocks_launch(tc_execution, task_center):
+    service, batch, _ = tc_execution
     frozen, _ = freeze_nnmil(service, batch)
     changed = deepcopy(frozen)
     changed["manifest"]["nnmilPlanning"][0]["bagSize"] += 1
     with pytest.raises(StorageError, match="frozen MIL bag preview") as error:
         service._prepare(changed)
     assert error.value.code == "TRAINING_INPUTS_STALE"
-    assert not executor.launches
+    assert not task_center.tasks(kind="mil-fold")

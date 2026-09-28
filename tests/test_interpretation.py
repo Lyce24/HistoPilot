@@ -10,6 +10,7 @@ import h5py
 import numpy as np
 import pytest
 from pydantic import ValidationError
+from support.interpretation import complete, compute_tasks, managed_jobs, runtime
 
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.application.interpretation import InterpretationService
@@ -38,8 +39,8 @@ class Executor:
         self.calls.append((session, python, plan, log, package_root))
 
 
-@pytest.fixture
-def study(tmp_path):
+def make_study(tmp_path, jobs):
+    """One reviewed slide and a frozen predictor; ``jobs(store)`` builds its compute jobs."""
     (tmp_path / "project").mkdir()
     store = ScientificStore(tmp_path / "project", "interpret-project")
     draft = store.create_draft("import", "Development", {})
@@ -103,21 +104,25 @@ def study(tmp_path):
         ],
     )
     service = InterpretationService(store, LocalFilesystem((tmp_path,)))
+    service.jobs = jobs(store)
+    return service, selection
+
+
+@pytest.fixture
+def study(tmp_path):
+    """The study on a fake tmux executor; ``managed_study`` is its Task Center twin."""
     executor = Executor()
-    service.jobs = ComputeJobService(
-        store,
-        executor=executor,
-        runtime=lambda: {
-            "available": True,
-            "python": sys.executable,
-            "versions": {},
-            "cudaAvailable": False,
-            "gpuCount": 0,
-            # The executor is fake; reservation checks must use a fixed host too.
-            "host": {"cpuCount": 8, "totalRamGb": 16},
-        },
+    service, selection = make_study(
+        tmp_path, lambda store: ComputeJobService(store, executor=executor, runtime=runtime)
     )
     return service, selection, executor
+
+
+@pytest.fixture
+def managed_study(tmp_path, task_center):
+    """The study with launches queued in this test's Task Center; the third item is it."""
+    service, selection = make_study(tmp_path, lambda store: managed_jobs(store, task_center))
+    return service, selection, task_center
 
 
 def save(study):
@@ -130,8 +135,8 @@ def save(study):
     return service.save(request), request
 
 
-def test_arbitrary_slide_review_geometry_identity_idempotency_and_execution(study):
-    service, selection, executor = study
+def test_arbitrary_slide_review_geometry_identity_idempotency_and_execution(managed_study):
+    service, selection, task_center = managed_study
     preview = service.preview(selection)
     assert preview["canSave"], preview
     row = preview["manifest"]["slides"][0]
@@ -140,24 +145,31 @@ def test_arbitrary_slide_review_geometry_identity_idempotency_and_execution(stud
     assert row["patchWidthLevel0"] == row["patchHeightLevel0"] == 100
     assert row["alignment"] == "embedded_verified" and row["patchCount"] == 3
     assert len(row["featureSha256"]) == len(row["coordinatesSha256"]) == 64
-    document, request = save(study)
+    document, request = save(managed_study)
     assert service.save(request)["id"] == document["id"]
     assert service.list()["items"][0]["execution"]["status"] == "not_started"
     result = service.launch(document["id"], "launch")
     assert result["status"] == "queued" and "interpretation" in result["sessionName"]
     assert service.launch(document["id"], "launch")["status"] == "queued"
-    assert len(executor.calls) == 1
+    tasks = compute_tasks(task_center)
+    assert [task["attempt"] for task in tasks] == [1]
+    assert tasks[0]["group"] == {"kind": "interpretation", "id": document["id"]}
     plan = read_json(service.jobs.folder(document["id"]) / "plan.json")
     verify_plan_inputs(plan)
-    executor.sessions.clear()
+    task_center.finish(result["taskId"], "interrupted", returncode=None, reason="lost")
     assert service.execution(document["id"])["status"] == "interrupted"
     assert service.launch(document["id"], "resume", resume=True)["attempt"] == 2
-    assert service.cancel(document["id"], "cancel")["cancellationRequested"]
+    assert task_center.task(result["taskId"])["attempt"] == 2
+    cancelled = service.cancel(document["id"], "cancel")
+    # The Task Center drops a queued task at once, so the job reads cancelled already.
+    assert cancelled["cancellationRequested"] and cancelled["status"] == "cancelled"
 
 
-def test_accepted_attention_retry_never_reinspects_complete_feature_arrays(study, monkeypatch):
-    service, _, executor = study
-    document, _ = save(study)
+def test_accepted_attention_retry_never_reinspects_complete_feature_arrays(
+    managed_study, monkeypatch
+):
+    service, _, task_center = managed_study
+    document, _ = save(managed_study)
     first = service.launch(document["id"], "launch")
     monkeypatch.setattr(
         service,
@@ -167,11 +179,11 @@ def test_accepted_attention_retry_never_reinspects_complete_feature_arrays(study
         ),
     )
     assert service.launch(document["id"], "launch")["planHash"] == first["planHash"]
-    assert len(executor.calls) == 1
+    assert [task["attempt"] for task in compute_tasks(task_center)] == [1]
 
 
-def test_nnmil_attention_publication_preserves_window_method_and_feature_provenance(study):
-    service, selection, _ = study
+def test_nnmil_attention_publication_preserves_window_method_and_feature_provenance(managed_study):
+    service, selection, _ = managed_study
     source = service.predictors.get(selection.predictorId)
     predictor = service.store.publish_configuration(
         manifest={
@@ -201,10 +213,10 @@ def test_nnmil_attention_publication_preserves_window_method_and_feature_provena
     assert "nnMIL maps average normalized attention" in preview["executionNote"]
 
 
-def test_geometry_and_slide_viewport_are_exact_and_bounded(study):
-    service, selection, _ = study
+def test_geometry_and_slide_viewport_are_exact_and_bounded(managed_study):
+    service, selection, _ = managed_study
     assert service.inspect_slide(selection.slides[0].slidePath)["width"] == 300
-    document, _ = save(study)
+    document, _ = save(managed_study)
     with Image.open(
         io.BytesIO(service.image(document["id"], "independent", max_size=128))
     ) as image:
@@ -238,8 +250,8 @@ def test_geometry_and_slide_viewport_are_exact_and_bounded(study):
         ("coord_space", "level-0"),
     ],
 )
-def test_invalid_scientific_inputs_fail_review(study, mutation, fragment):
-    service, selection, _ = study
+def test_invalid_scientific_inputs_fail_review(managed_study, mutation, fragment):
+    service, selection, _ = managed_study
     with h5py.File(selection.slides[0].featurePath, "a") as handle:
         if mutation == "wrong_encoder":
             handle["features"].attrs["encoder_id"] = "another"
@@ -279,8 +291,10 @@ def test_invalid_scientific_inputs_fail_review(study, mutation, fragment):
     assert fragment in result["findings"][0]["message"], result
 
 
-def test_separate_coords_validate_embedded_row_order_or_explicit_attestation(study, tmp_path):
-    service, selection, _ = study
+def test_separate_coords_validate_embedded_row_order_or_explicit_attestation(
+    managed_study, tmp_path
+):
+    service, selection, _ = managed_study
     external = tmp_path / "coords.h5"
     with h5py.File(selection.slides[0].featurePath) as source, h5py.File(external, "w") as dest:
         source.copy("coords", dest)
@@ -296,8 +310,8 @@ def test_separate_coords_validate_embedded_row_order_or_explicit_attestation(stu
     assert result["manifest"]["slides"][0]["alignment"] == "user_confirmed"
 
 
-def test_linked_hdf5_and_unapproved_paths_are_blocked(study, tmp_path):
-    service, selection, _ = study
+def test_linked_hdf5_and_unapproved_paths_are_blocked(managed_study, tmp_path):
+    service, selection, _ = managed_study
     source = Path(selection.slides[0].featurePath)
     linked = tmp_path / "linked.h5"
     with h5py.File(linked, "w") as handle:
@@ -312,8 +326,8 @@ def test_linked_hdf5_and_unapproved_paths_are_blocked(study, tmp_path):
     assert not service.preview(selection)["canSave"]
 
 
-def test_stale_feature_preview_and_modified_slide_block_launch_and_view(study):
-    service, selection, _ = study
+def test_stale_feature_preview_and_modified_slide_block_launch_and_view(managed_study):
+    service, selection, _ = managed_study
     preview = service.preview(selection)
     with h5py.File(selection.slides[0].featurePath, "a") as handle:
         handle["features"][0, 0] += 1
@@ -323,7 +337,7 @@ def test_stale_feature_preview_and_modified_slide_block_launch_and_view(study):
                 **selection.model_dump(), previewHash=preview["previewHash"], operationId="stale"
             )
         )
-    document, _ = save(study)
+    document, _ = save(managed_study)
     Image.new("RGB", (300, 200), color="blue").save(selection.slides[0].slidePath)
     with pytest.raises(StorageError, match="changed"):
         service.launch(document["id"], "changed")
@@ -331,8 +345,8 @@ def test_stale_feature_preview_and_modified_slide_block_launch_and_view(study):
         service.image(document["id"], "independent")
 
 
-def test_prediction_and_clinical_lineage_reject_other_predictors(study):
-    service, selection, _ = study
+def test_prediction_and_clinical_lineage_reject_other_predictors(managed_study):
+    service, selection, _ = managed_study
     model = service.predictors.get(selection.predictorId)
 
     def record(kind, **fields):
@@ -352,9 +366,9 @@ def test_prediction_and_clinical_lineage_reject_other_predictors(study):
     assert service.preview(selection)["findings"][0]["code"] == "INTERPRETATION_LINEAGE_MISMATCH"
 
 
-def test_attention_pagination_member_viewports_and_tamper_detection(study):
-    service, _, _ = study
-    document, _ = save(study)
+def test_attention_pagination_member_viewports_and_tamper_detection(managed_study):
+    service, _, task_center = managed_study
+    document, _ = save(managed_study)
     identity = document["id"]
     service.launch(identity, "launch")
     folder = service.jobs.folder(identity)
@@ -381,9 +395,7 @@ def test_attention_pagination_member_viewports_and_tamper_detection(study):
             }
         },
     }
-    state = read_json(folder / "state.json")
-    write_json(folder / "state.json", {**state, "status": "completed", "result": result})
-    write_json(folder / "result.json", result)
+    complete(service, identity, result, task_center)
     response = service.attention(identity, "independent", limit=1, offset=1)
     assert response["total"] == 3 and response["patches"][0]["index"] == 1
     response = service.attention(identity, "independent", region=(100, 100, 100, 100))
@@ -397,8 +409,8 @@ def test_attention_pagination_member_viewports_and_tamper_detection(study):
         service.attention(identity, "independent")
 
 
-def test_schema_requires_alignment_and_distinct_slides(study):
-    _, selection, _ = study
+def test_schema_requires_alignment_and_distinct_slides(managed_study):
+    _, selection, _ = managed_study
     data = selection.model_dump()
     data["slides"][0]["confirmRowAlignment"] = False
     with pytest.raises(ValidationError):
@@ -424,8 +436,8 @@ def test_corrupt_and_oversized_rasters_fail_clearly(tmp_path, monkeypatch):
         pass
 
 
-def test_empty_explicit_resources_and_missing_geometry_infer_stable_preview(study):
-    service, selection, _ = study
+def test_empty_explicit_resources_and_missing_geometry_infer_stable_preview(managed_study):
+    service, selection, _ = managed_study
     selection = InterpretationSelection.model_validate(
         {**selection.model_dump(), "resources": {"gpuIds": [], "dataLoaderWorkers": 0}}
     )
@@ -433,8 +445,8 @@ def test_empty_explicit_resources_and_missing_geometry_infer_stable_preview(stud
     assert document["manifest"]["resources"]["ramGbPerRun"] == 8.0
 
 
-def test_pending_extraction_lock_blocks_attention_review(study):
-    service, selection, _ = study
+def test_pending_extraction_lock_blocks_attention_review(managed_study):
+    service, selection, _ = managed_study
     Path(selection.slides[0].featurePath + ".lock").touch()
     assert "lock remains" in service.preview(selection)["findings"][0]["message"]
 
@@ -585,9 +597,9 @@ def test_mmap_attention_pages_verify_receipts_cache_stamps_and_reject_objects(
         attention_arrays.attention_page(path, receipt(), slide, offset=0, limit=1)
 
 
-def test_service_serves_indexed_mean_and_member_without_parsing_json(study, monkeypatch):
-    service, _, _ = study
-    document, _ = save(study)
+def test_service_serves_indexed_mean_and_member_without_parsing_json(managed_study, monkeypatch):
+    service, _, task_center = managed_study
+    document, _ = save(managed_study)
     identity = document["id"]
     service.launch(identity, "launch")
     folder = service.jobs.folder(identity)
@@ -624,9 +636,7 @@ def test_service_serves_indexed_mean_and_member_without_parsing_json(study, monk
             }
         ],
     }
-    state = read_json(folder / "state.json")
-    write_json(folder / "state.json", {**state, "status": "completed", "result": result})
-    write_json(folder / "result.json", result)
+    complete(service, identity, result, task_center)
     monkeypatch.setattr(
         service,
         "artifact",
@@ -641,10 +651,13 @@ def test_service_serves_indexed_mean_and_member_without_parsing_json(study, monk
         assert response["member"] == member
 
 
-def test_display_copy_updates_do_not_make_saved_attention_evidence_stale(study, monkeypatch):
-    service, _, _ = study
-    document, _ = save(study)
+def test_display_copy_updates_do_not_make_saved_attention_evidence_stale(
+    managed_study, monkeypatch
+):
+    service, _, task_center = managed_study
+    document, _ = save(managed_study)
     monkeypatch.setattr(
         "histopilot.application.interpretation.EXECUTION_NOTE", "Updated help text."
     )
     assert service.launch(document["id"], "launch")["status"] == "queued"
+    assert [task["state"] for task in compute_tasks(task_center)] == ["queued"]

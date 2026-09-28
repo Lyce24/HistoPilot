@@ -6,9 +6,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from support.t1 import lose_batch, run_managed, task_ids
 
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError
+from histopilot.workers.pack_features import run_job
 from histopilot.workers.packing_process import write_json
 from histopilot.workers.training_process import save_state
 
@@ -29,49 +31,67 @@ def change(service, kind, identity, state):
     )
 
 
-@pytest.fixture
-def packing(tmp_path):
-    return packing_support["packing"].__wrapped__(tmp_path)
+# The job modules' fixtures; each service queues its work in this test's Task Center.
 
 
 @pytest.fixture
-def extraction(tmp_path, monkeypatch):
-    return extraction_support["extraction"].__wrapped__(tmp_path, monkeypatch)
+def packing(tmp_path, task_center):
+    return packing_support["packs"].__wrapped__(tmp_path, task_center)
 
 
 @pytest.fixture
-def training(tmp_path, monkeypatch):
-    return training_support["execution"].__wrapped__(tmp_path, monkeypatch)
+def extraction(tmp_path, monkeypatch, task_center):
+    return extraction_support["extractions"].__wrapped__(tmp_path, monkeypatch, task_center)
+
+
+@pytest.fixture
+def training(tmp_path, monkeypatch, task_center):
+    return training_support["tc_execution"].__wrapped__(tmp_path, monkeypatch, task_center)
+
+
+def complete(service, center, job, monkeypatch):
+    """Run the packing worker as its task, then record the task as the runner would."""
+    [task] = center.tasks(group=job["id"])
+    result = run_managed(
+        center, task, monkeypatch, lambda: run_job(service.folder / job["id"] / "plan.json")
+    )
+    center.finish(task["id"], "succeeded" if result["state"] == "succeeded" else "failed")
+    return result
 
 
 @pytest.mark.parametrize("kind", ["dataset", "project"])
-def test_extraction_rejects_trashed_inputs_before_creating_job(extraction, kind):
-    service, spec, executor, _ = extraction
+def test_extraction_rejects_trashed_inputs_before_creating_job(extraction, task_center, kind):
+    service, spec, _ = extraction
+    before = task_ids(task_center)
     preview = service.preview(spec)
     identity = spec.datasetId if kind == "dataset" else service.store.project_id
     change(service, kind, identity, "trashed")
     with pytest.raises(StorageError, match="Trash"):
         service.submit(spec, preview["previewHash"], "blocked")
-    assert not executor.launches
+    assert task_ids(task_center) == before
     assert not service.folder.exists()
     assert not Path(spec.outputPath).exists()
 
 
 @pytest.mark.parametrize("kind", ["configuration", "project"])
-def test_packing_rejects_trashed_inputs_before_creating_job(packing, kind):
-    service, spec, executor, _ = packing
+def test_packing_rejects_trashed_inputs_before_creating_job(packing, task_center, kind):
+    service, spec, _ = packing
+    before = task_ids(task_center)
     preview = service.preview(spec)
     identity = spec.featureSetId if kind == "configuration" else service.store.project_id
     change(service, kind, identity, "trashed")
     with pytest.raises(StorageError, match="Trash"):
         service.submit(spec, preview["previewHash"], "blocked")
-    assert not executor.launches
+    assert task_ids(task_center) == before
     assert not service.folder.exists()
 
 
 @pytest.mark.parametrize("reference", ["batch", "protocol", "bundle", "dataset", "project"])
-def test_training_rejects_trashed_records_before_creating_execution(training, reference):
-    service, batch, executor, _ = training
+def test_training_rejects_trashed_records_before_creating_execution(
+    training, task_center, reference
+):
+    service, batch, _ = training
+    before = task_ids(task_center)
     inputs = batch["manifest"]["spec"]["inputs"]
     kind, identity = {
         "batch": ("configuration", batch["id"]),
@@ -83,7 +103,7 @@ def test_training_rejects_trashed_records_before_creating_execution(training, re
     change(service, kind, identity, "trashed")
     with pytest.raises(StorageError, match="Trash"):
         service.launch(batch["id"], "blocked")
-    assert not executor.launches
+    assert task_ids(task_center) == before
     assert not (service.store.folder / "training").exists()
 
 
@@ -110,10 +130,12 @@ def test_lifecycle_guard_covers_the_entire_job_start(job_type, request, monkeypa
         assert service.submit(record, "unused", "test") == {"guarded": True}
 
 
-def test_archived_pack_receipt_still_resolves_but_trash_blocks_it(packing):
-    service, spec, executor, _ = packing
+def test_archived_pack_receipt_still_resolves_but_trash_blocks_it(
+    packing, task_center, monkeypatch
+):
+    service, spec, _ = packing
     job = packing_support["submit"](service, spec)
-    result = packing_support["complete"](service, executor, job)
+    result = complete(service, task_center, job, monkeypatch)
     artifact = result["artifact"]
     service.select(spec.featureSetId, artifact["id"])
     change(service, "packing", job["id"], "archived")
@@ -138,10 +160,10 @@ def test_archived_pack_receipt_still_resolves_but_trash_blocks_it(packing):
         service.select(spec.featureSetId, artifact["id"])
 
 
-def test_extraction_archive_hides_terminal_job_and_keeps_direct_history(extraction):
-    service, spec, executor, _ = extraction
+def test_extraction_archive_hides_terminal_job_and_keeps_direct_history(extraction, task_center):
+    service, spec, _ = extraction
     job = extraction_support["submit"](service, spec)
-    executor.sessions.clear()
+    task_center.finish(job["taskId"], "interrupted", returncode=None, reason="lost")
     change(service, "extraction", job["id"], "archived")
     assert service.list()["jobs"] == []
     assert service.get(job["id"])["state"] == "interrupted"
@@ -153,7 +175,9 @@ def test_extraction_archive_hides_terminal_job_and_keeps_direct_history(extracti
 
 
 @pytest.mark.parametrize("job_type", ["packing", "extraction", "training"])
-def test_active_jobs_remain_visible_and_cancellable_if_lifecycle_is_inconsistent(job_type, request):
+def test_active_jobs_remain_visible_and_cancellable_if_lifecycle_is_inconsistent(
+    job_type, request, task_center
+):
     service, record, *_ = request.getfixturevalue(job_type)
     if job_type == "training":
         service.launch(record["id"], "launch")
@@ -164,42 +188,64 @@ def test_active_jobs_remain_visible_and_cancellable_if_lifecycle_is_inconsistent
     else:
         preview = service.preview(record)
         job = service.submit(record, preview["previewHash"], "launch")
+        # The worker is running: a queued task would be cancelled at once instead.
+        task_center.start(job["taskId"])
         change(service, job_type, job["id"], "trashed")
         assert service.list()["jobs"][0]["id"] == job["id"]
         assert service.cancel(job["id"])["state"] == "cancelling"
 
 
-def test_trashed_job_idempotency_receipt_cannot_launch_replacement(extraction):
-    service, spec, executor, _ = extraction
+def test_trashed_job_idempotency_receipt_cannot_launch_replacement(extraction, task_center):
+    service, spec, _ = extraction
     preview = service.preview(spec)
     job = service.submit(spec, preview["previewHash"], "once")
-    executor.sessions.clear()
+    task_center.finish(job["taskId"], "interrupted", returncode=None, reason="lost")
+    queued = task_ids(task_center)
     change(service, "extraction", job["id"], "trashed")
     with pytest.raises(StorageError, match="Trash"):
         service.submit(spec, preview["previewHash"], "once")
-    assert len(executor.launches) == 1
+    assert task_ids(task_center) == queued
+    assert task_center.task(job["taskId"])["attempt"] == 1
 
 
 @pytest.mark.parametrize("job_type", ["packing", "extraction"])
-def test_terminal_job_with_worker_still_running_accepts_cancellation(job_type, request):
-    service, spec, _executor, _ = request.getfixturevalue(job_type)
+def test_terminal_job_with_worker_still_running_accepts_cancellation(
+    job_type, request, task_center
+):
+    service, spec, _ = request.getfixturevalue(job_type)
     preview = service.preview(spec)
     job = service.submit(spec, preview["previewHash"], "launch")
+    task_center.start(job["taskId"])
+    task = task_center.task(job["taskId"])
     folder = service.folder / job["id"]
-    write_json(folder / "result.json", {"jobId": job["id"], "state": "failed"})
-    assert service.get(job["id"])["state"] == "failed"
-    service.cancel(job["id"])
+    write_json(
+        folder / "result.json",
+        {
+            "jobId": job["id"],
+            "taskId": task["id"],
+            "taskAttempt": task["attempt"],
+            "state": "failed",
+        },
+    )
+    # Task Center: the task, not a receipt written before the worker exits, says whether
+    # the job still runs.
+    assert service.get(job["id"])["state"] == "running"
+    assert service.cancel(job["id"])["state"] == "cancelling"
     assert (folder / "cancelled").exists()
+    assert task_center.task(job["taskId"])["stopRequest"] == "cancel"
 
 
-def test_terminal_training_with_live_orphan_accepts_cancellation(training, monkeypatch):
-    service, batch, executor, _ = training
+def test_terminal_training_with_live_orphan_accepts_cancellation(
+    training, task_center, monkeypatch
+):
+    service, batch, _ = training
     state = service.launch(batch["id"], "launch")
     child = {"pid": 77777, "startTicks": 1234, "bootId": "test"}
     state["status"] = "failed"
     state["runs"][0]["process"] = child
     save_state(Path(state["outputPath"]), state)
-    executor.sessions.clear()
+    # Every task of the batch ended; one fold's worker still runs.
+    lose_batch(task_center, batch["id"], state="failed")
     monkeypatch.setattr(
         "histopilot.application.training.process_alive", lambda value: value == child
     )
@@ -211,18 +257,20 @@ def test_terminal_training_with_live_orphan_accepts_cancellation(training, monke
     assert signalled == [child["pid"]]
 
 
-def test_artifact_can_use_an_older_retained_receipt_with_the_same_identity(packing):
-    service, spec, executor, _ = packing
+def test_artifact_can_use_an_older_retained_receipt_with_the_same_identity(
+    packing, task_center, monkeypatch
+):
+    service, spec, _ = packing
     job = packing_support["submit"](service, spec)
-    result = packing_support["complete"](service, executor, job)
+    result = complete(service, task_center, job, monkeypatch)
     artifact = result["artifact"]
     attach_spec = spec.model_copy(
         update={"action": "attach", "existingPath": artifact["outputPath"]}
     )
     retained = packing_support["submit"](service, attach_spec, "verify-existing-first")
-    retained_result = packing_support["complete"](service, executor, retained)
+    retained_result = complete(service, task_center, retained, monkeypatch)
     later = packing_support["submit"](service, attach_spec, "verify-existing-again")
-    later_result = packing_support["complete"](service, executor, later)
+    later_result = complete(service, task_center, later, monkeypatch)
     artifact_id = retained_result["artifact"]["id"]
     assert later_result["artifact"]["id"] == artifact_id
     change(service, "packing", later["id"], "trashed")
@@ -235,7 +283,7 @@ def test_artifact_can_use_an_older_retained_receipt_with_the_same_identity(packi
     "path", ["histopilot-lifecycle.json", ".histopilot-lifecycle.lock", "training/output"]
 )
 def test_packing_cannot_claim_lifecycle_or_training_storage(packing, path):
-    service, spec, _, _ = packing
+    service, spec, _ = packing
     with pytest.raises(StorageError) as caught:
         service.preview(spec.model_copy(update={"outputPath": str(service.store.folder / path)}))
     assert caught.value.code == "INVALID_OUTPUT"

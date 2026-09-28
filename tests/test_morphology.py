@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import pytest
 from PIL import Image
+from support.interpretation import managed_packing, run_pack
 
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.feature_packs import FeaturePackService
@@ -34,8 +35,12 @@ class FakeExecutor:
         pass
 
 
-@pytest.fixture
-def study(tmp_path, request):
+def make_study(tmp_path, request, center=None):
+    """Three slides with fully validated features, frozen in a bundle.
+
+    With ``center`` the validation job queues in that Task Center and its worker runs as the
+    task; without it, the job runs on a fake tmux executor.
+    """
     feature_kind = getattr(request, "param", "patch")
     root = tmp_path / "project"
     root.mkdir()
@@ -88,11 +93,19 @@ def study(tmp_path, request):
     feature = features.freeze(
         spec, features.preview(spec)["previewHash"], "feature", version_label={"tag": "test"}
     )
-    packs = FeaturePackService(store, filesystem, FakeExecutor())
+    packs = (
+        FeaturePackService(store, filesystem, FakeExecutor())
+        if center is None
+        else managed_packing(store, filesystem, center)
+    )
     pack_spec = FeaturePackSpec(featureSetId=feature["id"], action="validate")
     preview = packs.preview(pack_spec)
     job = packs.submit(pack_spec, preview["previewHash"], "validate")
-    result = run_job(packs.folder / job["id"] / "plan.json")
+    result = (
+        run_job(packs.folder / job["id"] / "plan.json")
+        if center is None
+        else run_pack(packs, job, center)
+    )
     assert result["state"] == "succeeded", result
     bundles = FeatureBundleService(store, filesystem)
     bundle_spec = FeatureBundleSpec(featureSetId=feature["id"])
@@ -106,8 +119,20 @@ def study(tmp_path, request):
     return MorphologyService(store, filesystem), request, sources, images
 
 
-def test_projection_and_neighbors_use_real_cosine_not_projected_distance(study):
-    service, request, _, _ = study
+@pytest.fixture
+def study(tmp_path, request):
+    """The study validated on a fake tmux executor; ``managed_study`` is its Task Center twin."""
+    return make_study(tmp_path, request)
+
+
+@pytest.fixture
+def managed_study(tmp_path, request, task_center):
+    """The study with its validation job run as a task of this test's Task Center."""
+    return make_study(tmp_path, request, task_center)
+
+
+def test_projection_and_neighbors_use_real_cosine_not_projected_distance(managed_study):
+    service, request, _, _ = managed_study
     result = service.build(request)
     assert result["indexedSlides"] == 3
     assert result["indexedPatches"] == 6
@@ -137,8 +162,8 @@ def test_projection_handles_single_and_identical_slides():
     assert normalized([[0.0, 0.0]]).tolist() == [[0.0, 0.0]]
 
 
-def test_cached_index_rejects_changed_source(study):
-    service, request, source, _ = study
+def test_cached_index_rejects_changed_source(managed_study):
+    service, request, source, _ = managed_study
     result = service.build(request)
     with h5py.File(source / "a.h5", "r+") as handle:
         handle["features"][0, 0] = 42
@@ -148,8 +173,8 @@ def test_cached_index_rejects_changed_source(study):
         service.neighbors(MorphologyNeighborsRequest(indexId=result["indexId"], slideId="a"))
 
 
-def test_exact_geometry_patch_crop_and_no_invented_tissue(study):
-    service, request, _, _ = study
+def test_exact_geometry_patch_crop_and_no_invented_tissue(managed_study):
+    service, request, _, _ = managed_study
     quality = service.quality(request.datasetId, "a", request.featureBundleId)
     assert quality["patchWidth"] == 16
     assert quality["patchCount"] == 4
@@ -165,16 +190,16 @@ def test_exact_geometry_patch_crop_and_no_invented_tissue(study):
         service.image(request.datasetId, "../outside")
 
 
-def test_changed_slide_cannot_be_visualized_again(study):
-    service, request, _, images = study
+def test_changed_slide_cannot_be_visualized_again(managed_study):
+    service, request, _, images = managed_study
     Image.new("RGB", (64, 64), "white").save(images / "a.png")
     with pytest.raises(StorageError) as caught:
         service.image(request.datasetId, "a")
     assert caught.value.code == "MORPHOLOGY_SLIDE_CHANGED"
 
 
-def test_explicit_sampling_limits_and_unmatched_selection(study, monkeypatch):
-    service, request, _, _ = study
+def test_explicit_sampling_limits_and_unmatched_selection(managed_study, monkeypatch):
+    service, request, _, _ = managed_study
     with pytest.raises(StorageError, match="Every selected"):
         service.build(request.model_copy(update={"slideIds": ["not-in-dataset"]}))
     monkeypatch.setattr("histopilot.application.morphology.MAX_INDEX_VALUES", 1)
@@ -183,8 +208,8 @@ def test_explicit_sampling_limits_and_unmatched_selection(study, monkeypatch):
     assert caught.value.code == "MORPHOLOGY_INDEX_LIMIT"
 
 
-def test_index_project_scope_and_unsampled_query(study, tmp_path):
-    service, request, _, _ = study
+def test_index_project_scope_and_unsampled_query(managed_study, tmp_path):
+    service, request, _, _ = managed_study
     result = service.build(request)
     with pytest.raises(StorageError, match="sampled patch"):
         service.neighbors(
@@ -199,8 +224,8 @@ def test_index_project_scope_and_unsampled_query(study, tmp_path):
     assert caught.value.code == "MORPHOLOGY_INDEX_EXPIRED"
 
 
-def test_reused_slide_names_from_another_dataset_cannot_bind_features(study):
-    service, request, _, _ = study
+def test_reused_slide_names_from_another_dataset_cannot_bind_features(managed_study):
+    service, request, _, _ = managed_study
     records = service.records(request.datasetId)
     draft = service.store.create_draft("import", "Other cohort", {})
     other = service.store.publish_dataset(
@@ -218,8 +243,8 @@ def test_reused_slide_names_from_another_dataset_cannot_bind_features(study):
     assert caught.value.code == "MORPHOLOGY_DATASET_MISMATCH"
 
 
-def test_explicit_verified_store_scope_can_be_used_with_dataset(study):
-    service, request, sources, _ = study
+def test_explicit_verified_store_scope_can_be_used_with_dataset(managed_study, task_center):
+    service, request, sources, _ = managed_study
     features = FeatureService(service.store, service.filesystem)
     spec = FeatureSpec(path=str(sources))
     feature = features.freeze(
@@ -228,10 +253,10 @@ def test_explicit_verified_store_scope_can_be_used_with_dataset(study):
         "store-feature",
         version_label={"tag": "Store source"},
     )
-    packing = FeaturePackService(service.store, service.filesystem, FakeExecutor())
+    packing = managed_packing(service.store, service.filesystem, task_center)
     validate = FeaturePackSpec(featureSetId=feature["id"], action="validate")
     job = packing.submit(validate, packing.preview(validate)["previewHash"], "store-validate")
-    assert run_job(packing.folder / job["id"] / "plan.json")["state"] == "succeeded"
+    assert run_pack(packing, job, task_center)["state"] == "succeeded"
     spec = FeatureBundleSpec(featureSetId=feature["id"])
     bundle = service.bundles.freeze(
         spec,
@@ -245,8 +270,8 @@ def test_explicit_verified_store_scope_can_be_used_with_dataset(study):
     )
 
 
-def test_cached_public_response_is_an_independent_snapshot(study):
-    service, request, _, _ = study
+def test_cached_public_response_is_an_independent_snapshot(managed_study):
+    service, request, _, _ = managed_study
     result = service.build(request)
     result["points"][0]["slideId"] = "changed-client-object"
     result["patches"][0]["x"] = -999
@@ -255,8 +280,8 @@ def test_cached_public_response_is_an_independent_snapshot(study):
     assert again["patches"][0]["x"] == 0
 
 
-def test_duplicate_frozen_slide_identity_is_rejected(study):
-    service, request, _, _ = study
+def test_duplicate_frozen_slide_identity_is_rejected(managed_study):
+    service, request, _, _ = managed_study
     rows = service.records(request.datasetId)
     draft = service.store.create_draft("import", "Invalid duplicate", {})
     dataset = service.store.publish_dataset(
@@ -271,8 +296,8 @@ def test_duplicate_frozen_slide_identity_is_rejected(study):
     assert caught.value.code == "REVIEW_DATASET_INVALID"
 
 
-def test_contour_holes_preserved_and_invalid_geometry_rejected(study, tmp_path):
-    service, _, _, _ = study
+def test_contour_holes_preserved_and_invalid_geometry_rejected(managed_study, tmp_path):
+    service, _, _, _ = managed_study
     identity = "extraction-test"
     folder = service.store.folder / "extractions" / identity
     folder.mkdir(parents=True)
@@ -298,8 +323,8 @@ def test_contour_holes_preserved_and_invalid_geometry_rejected(study, tmp_path):
     assert value == [] and "unavailable" in warnings[0]
 
 
-def test_prepared_legacy_view_cannot_mix_replaced_slide_pixels(study, monkeypatch):
-    service, request, _, images = study
+def test_prepared_legacy_view_cannot_mix_replaced_slide_pixels(managed_study, monkeypatch):
+    service, request, _, images = managed_study
     original_read = service.store.read_artifact
 
     def without_inventory(identity, name, *args, **kwargs):
@@ -328,8 +353,8 @@ def test_prepared_legacy_view_cannot_mix_replaced_slide_pixels(study, monkeypatc
 
 
 @pytest.fixture
-def legacy_study(study, monkeypatch):
-    service, request, _, _ = study
+def legacy_study(managed_study, monkeypatch):
+    service, request, _, _ = managed_study
     original = service.store.read_artifact
 
     def without_inventory(identity, name, *args, **kwargs):
@@ -338,7 +363,7 @@ def legacy_study(study, monkeypatch):
         return original(identity, name, *args, **kwargs)
 
     monkeypatch.setattr(service.store, "read_artifact", without_inventory)
-    return study
+    return managed_study
 
 
 def test_legacy_patch_and_viewport_routes_reject_replaced_slide(legacy_study):

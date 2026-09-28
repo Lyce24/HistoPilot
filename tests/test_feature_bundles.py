@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from support.features import run_pack
 
 from histopilot.api import create_app
 from histopilot.application.feature_bundles import FeatureBundleService
@@ -22,21 +23,15 @@ from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.packed import build_pack
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-from histopilot.workers.pack_features import run_job
 
 
-class FakeExecutor:
-    def available(self):
-        return True
-
-    def running(self, session):
-        return False
-
-    def launch(self, session, runner, plan):
-        pass
+def pack_service(store, filesystem, task_center):
+    return FeaturePackService(
+        store, filesystem, execution_mode="task-center", task_center=task_center.client
+    )
 
 
-def feature_fixture(store, root):
+def feature_fixture(store, root, task_center):
     draft = store.create_draft("import", "Slides", {})
     dataset = store.publish_dataset(
         draft["id"],
@@ -56,23 +51,26 @@ def feature_fixture(store, root):
     feature = features.freeze(
         spec, features.preview(spec)["previewHash"], "inventory", version_label={"tag": "Source"}
     )
-    packs = FeaturePackService(store, filesystem, FakeExecutor())
+    packs = pack_service(store, filesystem, task_center)
     return FeatureBundleService(store, filesystem), packs, feature, source
 
 
 @pytest.fixture
-def bundle_setup(tmp_path):
+def bundle_setup(tmp_path, task_center):
     (tmp_path / "project").mkdir()
-    return feature_fixture(ScientificStore(tmp_path / "project", "project-bundles"), tmp_path)
+    store = ScientificStore(tmp_path / "project", "project-bundles")
+    return feature_fixture(store, tmp_path, task_center)
 
 
 def verify(packs, feature, operation="validate", **options):
+    """Validate every tensor of ``feature`` through its packing task."""
     spec = FeaturePackSpec(featureSetId=feature["id"], action="validate", **options)
     preview = packs.preview(spec)
     assert preview["canRun"], preview["findings"]
     job = packs.submit(spec, preview["previewHash"], operation)
-    result = run_job(packs.folder / job["id"] / "plan.json")
+    result = run_pack(packs.tasks.client.store, job)
     assert result["state"] == "succeeded", result
+    assert packs.get(job["id"])["state"] == "succeeded"
     return result
 
 
@@ -80,8 +78,9 @@ def make_pack(packs, feature, operation="pack", dtype="preserve"):
     spec = FeaturePackSpec(featureSetId=feature["id"], action="pack", dtype=dtype)
     preview = packs.preview(spec)
     job = packs.submit(spec, preview["previewHash"], operation)
-    result = run_job(packs.folder / job["id"] / "plan.json")
+    result = run_pack(packs.tasks.client.store, job)
     assert result["state"] == "succeeded", result
+    assert packs.get(job["id"])["state"] == "succeeded"
     return result["artifact"]
 
 
@@ -393,7 +392,7 @@ def test_pack_from_another_feature_inventory_is_not_included(bundle_setup):
     assert any(item["code"] == "PACK_FEATURE_MISMATCH" for item in preview["findings"])
 
 
-def test_bundle_api_freezes_lists_resolves_and_requires_named_intent(tmp_path):
+def test_bundle_api_freezes_lists_resolves_and_requires_named_intent(tmp_path, task_center):
     settings = Settings(workspace=tmp_path / "registry", data_roots=(tmp_path,))
     with TestClient(create_app(settings), base_url="http://127.0.0.1:8787") as client:
         client.headers["X-HistoPilot-Token"] = client.get("/api/v1/session").json()["token"]
@@ -401,7 +400,7 @@ def test_bundle_api_freezes_lists_resolves_and_requires_named_intent(tmp_path):
             "/api/v1/projects", json={"name": "Bundles", "storagePath": str(tmp_path / "project")}
         ).json()
         store = client.app.state.projects.scientific_store(project["id"])
-        bundles, packs, feature, source = feature_fixture(store, tmp_path)
+        bundles, packs, feature, source = feature_fixture(store, tmp_path, task_center)
         verify(packs, feature)
         base = f"/api/v1/projects/{project['id']}/feature-bundles"
         spec = {"featureSetId": feature["id"], "packArtifactIds": []}
@@ -444,7 +443,7 @@ def test_an_attached_reduced_precision_pack_can_be_frozen_into_a_bundle(bundle_s
     preview = packs.preview(spec)
     assert preview["canRun"] and preview["matchesFeatures"], preview["findings"]
     job = packs.submit(spec, preview["previewHash"], "attach-half")
-    artifact = run_job(packs.folder / job["id"] / "plan.json")["artifact"]
+    artifact = run_pack(packs.tasks.client.store, job)["artifact"]
     assert artifact["verification"] == "exact-cast-source-values"
     bundle_spec = FeatureBundleSpec(featureSetId=feature["id"], packArtifactIds=[artifact["id"]])
     review = bundles.preview(bundle_spec)
@@ -452,7 +451,9 @@ def test_an_attached_reduced_precision_pack_can_be_frozen_into_a_bundle(bundle_s
     assert review["canFreeze"], review["findings"]
 
 
-def test_a_store_scoped_feature_set_freezes_a_bundle_with_no_dataset(bundle_setup, tmp_path):
+def test_a_store_scoped_feature_set_freezes_a_bundle_with_no_dataset(
+    bundle_setup, task_center, tmp_path
+):
     """A bundle inherits its feature set's scope, including having no cohort at all."""
     bundles, packs, _feature, source = bundle_setup
     features = FeatureService(packs.store, packs.filesystem)
@@ -461,7 +462,7 @@ def test_a_store_scoped_feature_set_freezes_a_bundle_with_no_dataset(bundle_setu
         spec, features.preview(spec)["previewHash"], "store-wide", version_label={"tag": "Store"}
     )
     assert store_wide["manifest"]["datasetId"] is None
-    packs_service = FeaturePackService(packs.store, packs.filesystem, FakeExecutor())
+    packs_service = pack_service(packs.store, packs.filesystem, task_center)
     verify(packs_service, store_wide, operation="validate-store")
     bundle_spec = FeatureBundleSpec(featureSetId=store_wide["id"])
     review = bundles.preview(bundle_spec)

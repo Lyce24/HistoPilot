@@ -13,18 +13,17 @@ import time
 from pathlib import Path
 
 import pytest
+from support.task_center import Center as TaskCenter
+from support.task_center import fake_host
 
 from histopilot.application import compute_jobs as compute_module
 from histopilot.application.compute_jobs import ComputeJobService
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.scientific import ScientificStore
-from histopilot.taskcenter import TaskStore, ids, leases, procs
-from histopilot.taskcenter.adapters.base import RunnerContext
+from histopilot.taskcenter import ids, leases, procs
 from histopilot.taskcenter.adapters.compute import ComputeJobAdapter, plan_hash
 from histopilot.taskcenter.adapters.coordinator import CoordinatorAdapter
-from histopilot.taskcenter.client import default_client
 from histopilot.taskcenter.model import TERMINAL, normalize_request, utc_now_iso
-from histopilot.taskcenter.runner import Runner
 from histopilot.workers import compute_job as compute_worker
 from histopilot.workers.packing_process import output_lock, write_json
 from histopilot.workers.training_process import process_identity, read_json
@@ -33,16 +32,7 @@ HERE = Path(__file__).parent
 UID = os.getuid()
 
 
-def fake_host():
-    return {
-        "cpuCount": 8,
-        "totalRamGb": 64.0,
-        "availableRamGb": 60.0,
-        "bootId": "test",
-        "kernel": "test",
-        "physicalCpuCount": 4,
-        "gpus": [],
-    }
+HOST = fake_host(gpus=0, cpus=8, available=60.0)
 
 
 def runtime():
@@ -70,67 +60,15 @@ class LegacyExecutor:
         self.calls.append((session, python, plan, log, package_root))
 
 
-class Center:
-    """The per-test Task Center (the one default_client() resolves) plus runners."""
+class Center(TaskCenter):
+    """This test's Task Center; its runners see a host without GPUs."""
 
-    def __init__(self):
-        self.client = default_client()
-        self.store: TaskStore = self.client.store
-        self.runners = []
-        self.logs = []
-
-    def runner(self):
-        runner = Runner(
-            self.store,
-            host_probe=fake_host,
-            sample_interval=0.0,
-            host_interval=0.0,
-            log=self.logs.append,
-        )
-        self.runners.append(runner)
-        runner.start()
-        return runner
-
-    def state(self, task_id):
-        return self.store.get(task_id)["state"]
-
-    def tick_until(self, runner, predicate, timeout=30.0):
-        deadline = time.monotonic() + timeout
-        while True:
-            runner.tick()
-            if predicate():
-                return
-            if time.monotonic() > deadline:
-                states = {task["id"]: task["state"] for task in self.store.list(limit=None)}
-                raise AssertionError(f"Condition not reached; tasks: {states}; log: {self.logs}")
-            time.sleep(0.02)
-
-    def context(self):
-        return RunnerContext(
-            store=self.store,
-            now=utc_now_iso,
-            settings=self.store.settings(),
-            host=fake_host(),
-            log=self.logs.append,
-        )
-
-    def cleanup(self):
-        for runner in self.runners:
-            runner.close()
-        for task in self.store.list(limit=None):
-            if task["process"]:
-                procs.kill_group(task["process"])
-        for runner in self.runners:
-            for child in runner._procs.values():
-                try:
-                    child.kill()
-                    child.wait(timeout=5)
-                except (OSError, subprocess.SubprocessError):
-                    pass
+    def runner(self, **options):
+        return super().runner(**{"host_probe": HOST, **options})
 
 
 @pytest.fixture
-def center():
+def center(_task_center_state):
     value = Center()
     yield value
     value.cleanup()
@@ -156,7 +94,6 @@ def job(tmp_path, center):
     service = ComputeJobService(
         store, runtime=runtime, execution_mode="task-center", task_center=center.client
     )
-    service.legacy_executor = LegacyExecutor()  # never probe real tmux
     plan = {
         "kind": "evaluation",
         "resources": {
@@ -239,8 +176,7 @@ def test_managed_launch_queues_one_task_and_status_reports_its_queue(job, center
     assert status["waitingReason"] == "Waiting for RAM" and status["task"]["held"] is True
 
     assert service.launch(identity, plan, "launch")["status"] == "queued"
-    assert [row["attempt"] for row in center.store.list(limit=None)] == [1]
-    assert service.legacy_executor.calls == []
+    assert [row["attempt"] for row in center.tasks(kind="compute-job")] == [1]
 
 
 def test_owner_and_title_are_propagated_to_the_task(job, center):
@@ -346,7 +282,6 @@ def test_compute_submissions_wake_a_stopped_runner_and_report_it(job, center, mo
     assert calls == []
     task_id = state["taskId"]
     served = ComputeJobService(service.store, runtime=runtime, execution_mode="task-center")
-    served.legacy_executor = LegacyExecutor()
     center.store.transition(task_id, from_states="queued", to_state="interrupted")
     served.launch(identity, plan, "resume", resume=True)
     assert calls == [1]
@@ -524,28 +459,6 @@ def test_cancel_signals_a_live_worker_whose_task_already_finished(job, center):
         if child.poll() is None:
             child.kill()
             child.wait()
-
-
-def test_legacy_records_and_archives_keep_the_tmux_worker(job, center, monkeypatch):
-    service, identity, plan = job
-    # A record first launched before the Task Center ...
-    legacy = LegacyExecutor()
-    ComputeJobService(service.store, executor=legacy, runtime=runtime).launch(
-        identity, plan, "legacy-launch"
-    )
-    state = read_json(service.folder(identity) / "state.json")
-    assert "executor" not in state and state["sessionName"].startswith("hp-evaluation-")
-    service.legacy_executor = legacy
-    assert service.status(identity)["executor"] == "tmux"
-    assert service.status(identity)["status"] == "queued"
-    legacy.sessions.clear()
-    assert service.status(identity)["status"] == "interrupted"
-    # ... resumes from its pinned archive, which predates the Task Center protocol.
-    monkeypatch.setattr(compute_module, "archive_protocol", lambda _path: None)
-    resumed = service.launch(identity, plan, "legacy-resume", resume=True)
-    assert "executor" not in resumed and "taskId" not in resumed
-    assert len(legacy.calls) == 2 and center.store.list(limit=None) == []
-    assert service.status(identity)["status"] == "queued"
 
 
 def test_managed_worker_fences_foreign_records_and_reports_busy_output(job, center):
@@ -890,7 +803,7 @@ sys.exit(75)
 
 def test_a_coordinator_that_exited_busy_while_no_runner_ran_is_requeued(coordinator, center):
     """Its wrapper's exit record keeps the busy exit (75) across the runner restart."""
-    service, identity, _tmux, tmp_path = coordinator
+    service, identity, tmp_path = coordinator
     service.launch(identity, "start")
     folder = service.folder(identity)
     task_id = ids.coordinator_task_id(str(folder))
@@ -937,7 +850,7 @@ def test_a_coordinator_that_exits_busy_is_requeued_and_resumes(coordinator, cent
     from histopilot.taskcenter import runner as runner_module
 
     monkeypatch.setattr(runner_module, "BUSY_BACKOFF_SECONDS", 0.05)
-    service, identity, _tmux, tmp_path = coordinator
+    service, identity, tmp_path = coordinator
     service.launch(identity, "start")
     folder = service.folder(identity)
     task_id = ids.coordinator_task_id(str(folder))
@@ -974,7 +887,6 @@ def refit(tmp_path, center, monkeypatch):
         execution_mode="task-center",
         task_center=center.client,
     )
-    jobs.legacy_executor = LegacyExecutor()
     refits, record, _ = support["create"](predictors, selection, jobs)
     # The worker gets a private TMPDIR: any lease it wrote would appear under it.
     private = tmp_path / "worker-tmp"
@@ -1108,21 +1020,20 @@ def coordinator(tmp_path, center):
     from histopilot.application.experiment_predictors import ExperimentPredictorService
 
     support = runpy.run_path(str(HERE / "test_experiment_predictors.py"))
-    legacy, identity, _jobs, _executor, _selections = support["integrated"].__wrapped__(
+    # The integrated fixture's project and collaborators, without its executor.
+    base, identity, *_ = support["integrated"].__wrapped__(
         support["registry"].__wrapped__(tmp_path)
     )
     service = ExperimentPredictorService(
-        legacy.store,
-        legacy.filesystem,
-        training=legacy.training,
-        refits=legacy.refits,
-        runtime=legacy.runtime,
+        base.store,
+        base.filesystem,
+        training=base.training,
+        refits=base.refits,
+        runtime=base.runtime,
         execution_mode="task-center",
         task_center=center.client,
     )
-    tmux = support["Executor"]()
-    service.legacy_executor = service.executor.legacy = tmux  # never probe real tmux
-    return service, identity, tmux, tmp_path
+    return service, identity, tmp_path
 
 
 def batch_tasks(service, identity, center, tmp_path, *, failing=None):
@@ -1181,7 +1092,7 @@ def batch_tasks(service, identity, center, tmp_path, *, failing=None):
 def test_coordinator_waits_for_final_results_and_a_failed_fold_does_not_block_it(
     coordinator, center
 ):
-    service, identity, tmux, tmp_path = coordinator
+    service, identity, tmp_path = coordinator
     folds, final, progress = batch_tasks(service, identity, center, tmp_path, failing=0)
     launched = service.launch(identity, "start")
     folder = service.folder(identity)
@@ -1208,7 +1119,7 @@ def test_coordinator_waits_for_final_results_and_a_failed_fold_does_not_block_it
     assert (status["status"], status["executor"]) == ("queued", "task-center")
     assert "fold batches" in status["waitingReason"]
     assert service.launch(identity, "start")["status"] == "queued"
-    assert center.store.get(task_id)["attempt"] == 1 and tmux.launches == []
+    assert center.store.get(task_id)["attempt"] == 1
 
     # Stand in for the real coordinator: record completion like the worker would.
     command = {**task["command"]}
@@ -1225,7 +1136,7 @@ def test_coordinator_waits_for_final_results_and_a_failed_fold_does_not_block_it
 
 
 def test_cancel_drops_a_coordinator_that_is_still_waiting(coordinator, center):
-    service, identity, _tmux, tmp_path = coordinator
+    service, identity, tmp_path = coordinator
     batch_tasks(service, identity, center, tmp_path)
     service.launch(identity, "start")
     task_id = ids.coordinator_task_id(str(service.folder(identity)))
@@ -1236,7 +1147,7 @@ def test_cancel_drops_a_coordinator_that_is_still_waiting(coordinator, center):
 
 
 def test_a_cancelled_task_center_coordinator_resumes(coordinator, center):
-    service, identity, tmux, tmp_path = coordinator
+    service, identity, tmp_path = coordinator
     _folds, final, _progress = batch_tasks(service, identity, center, tmp_path)
     service.launch(identity, "start")
     folder = service.folder(identity)
@@ -1254,18 +1165,18 @@ def test_a_cancelled_task_center_coordinator_resumes(coordinator, center):
     assert (task["state"], task["attempt"]) == ("blocked", 2)
     assert {row["task"] for row in center.store.dependencies(task_id)} == {final}
     assert service.launch(identity, "resume", resume=True)["status"] == "queued"
-    assert center.store.get(task_id)["attempt"] == 2 and tmux.launches == []
+    assert center.store.get(task_id)["attempt"] == 2
 
 
 def test_a_coordinator_submission_wakes_the_runner_and_reports_it(coordinator, center, monkeypatch):
     from histopilot.application.experiment_predictors import TaskCenterExperimentExecutor
     from histopilot.taskcenter import launcher
 
-    service, identity, tmux, tmp_path = coordinator
+    service, identity, tmp_path = coordinator
     batch_tasks(service, identity, center, tmp_path)
     calls = []
     monkeypatch.setattr(launcher, "ensure_runner", lambda: calls.append(1) or {"started": True})
-    service.executor = TaskCenterExperimentExecutor(legacy=tmux)
+    service.executor = TaskCenterExperimentExecutor()
     service._task_center = None
     service.launch(identity, "start")
     assert calls == [1]
@@ -1278,26 +1189,15 @@ def test_a_coordinator_submission_wakes_the_runner_and_reports_it(coordinator, c
         lock.close()
 
 
-def test_coordinator_without_batch_tasks_or_protocol(coordinator, center, monkeypatch):
-    service, identity, tmux, _tmp_path = coordinator
-    from histopilot.application import experiment_predictors
-
-    # Batches launched before the Task Center add no dependencies ...
+def test_coordinator_of_batches_launched_before_the_task_center_waits_for_nothing(
+    coordinator, center
+):
+    service, identity, _tmp_path = coordinator
+    # Batches launched before the Task Center have no tasks, so they add no dependencies.
     service.launch(identity, "start")
     task_id = ids.coordinator_task_id(str(service.folder(identity)))
     assert center.state(task_id) == "queued"
     assert center.store.dependencies(task_id) == []
-    center.store.cancel_pending([task_id])
-    state_path = service.folder(identity) / "state.json"
-    state = read_json(state_path)
-    write_json(state_path, {**state, "status": "attention"})
-    # ... and a coordinator archive pinned before the Task Center resumes in tmux.
-    monkeypatch.setattr(experiment_predictors, "archive_protocol", lambda _path: None)
-    resumed = service.launch(identity, "resume", resume=True)
-    assert resumed["status"] == "queued" and "executor" not in resumed
-    assert len(tmux.launches) == 1
-    assert "executor" not in read_json(state_path)
-    assert center.state(task_id) == "cancelled"
 
 
 # -- Background bulk evaluation submission --------------------------------------------------------
@@ -1305,22 +1205,45 @@ def test_coordinator_without_batch_tasks_or_protocol(coordinator, center, monkey
 
 @pytest.fixture
 def bulk(tmp_path, monkeypatch, center):
-    support = runpy.run_path(str(HERE / "test_bulk_evaluations.py"))
-    service, _predictor, cohort, executor = support["bulk"].__wrapped__(tmp_path, monkeypatch)
+    """One frozen predictor and an external cohort; members launch into this Task Center."""
+    from histopilot.application.bulk_evaluations import BulkEvaluationService
+    from histopilot.application.evaluation_runs import EvaluationRunService
+
+    registry = runpy.run_path(str(HERE / "test_predictor_registry.py"))
+    predictors, cohort = registry["registry"].__wrapped__(tmp_path)
+    selection, *_ = registry["candidate"](predictors)
+    registry["freeze"](predictors, selection)
+    monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", runtime)
+    evaluations = EvaluationRunService(predictors.store, predictors.filesystem)
+    evaluations.jobs = ComputeJobService(
+        evaluations.store, runtime=runtime, execution_mode="task-center", task_center=center.client
+    )
+    service = BulkEvaluationService(evaluations.store, evaluations.filesystem, evaluations)
     service.background = True
     service._task_center = center.client
-    return service, cohort, executor, support
+    return service, cohort
+
+
+def run_request(selection, preview, operation="bulk-run"):
+    from histopilot.schemas.bulk_evaluations import RunBulkEvaluation
+
+    return RunBulkEvaluation(
+        **selection.model_dump(),
+        reviewedPredictorIds=preview["reviewedPredictorIds"],
+        previewHash=preview["previewHash"],
+        operationId=operation,
+    )
 
 
 def test_background_bulk_submission_is_a_task_and_members_read_queued(bulk, center, monkeypatch):
     from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
     from histopilot.taskcenter import jobs
 
-    service, cohort, executor, support = bulk
+    service, cohort = bulk
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
-    request = support["run_request"](choice, service.preview(choice))
+    request = run_request(choice, service.preview(choice))
     result = service.run(request)
-    assert executor.calls == []  # nothing launched inside the request
+    assert center.tasks(kind="compute-job") == []  # nothing launched inside the request
     assert result["status"] == "queued" and not result["submitted"]
     assert [row["status"] for row in result["items"] if row["eligible"]] == ["queued"]
     assert result["counts"]["planned"] == 0 and result["counts"]["queued"] == 1
@@ -1346,7 +1269,8 @@ def test_background_bulk_submission_is_a_task_and_members_read_queued(bulk, cent
     owner = center.store.owner(task["ownerKey"])
     assert (owner["kind"], owner["id"]) == ("evaluation-batch", result["id"])
     assert service.run(request)["id"] == result["id"]
-    assert len(center.store.list(limit=None)) == 1
+    assert [row["id"] for row in center.tasks(kind="bulk-submit")] == [task_id]
+    assert center.tasks(kind="compute-job") == []
 
     # The task's entrypoint submits members exactly as the inline path would.
     monkeypatch.setattr(compute_module, "training_runtime", runtime)
@@ -1384,11 +1308,11 @@ def test_background_submission_wakes_the_runner(bulk, center, monkeypatch):
     from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
     from histopilot.taskcenter import launcher
 
-    service, cohort, _executor, support = bulk
+    service, cohort = bulk
     calls = []
     monkeypatch.setattr(launcher, "ensure_runner", lambda: calls.append(1) or {"started": True})
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
-    request = support["run_request"](choice, service.preview(choice))
+    request = run_request(choice, service.preview(choice))
     service._default_task_center = False
     service.run(request)
     assert calls == []  # an injected client never starts a runner
@@ -1400,9 +1324,9 @@ def test_background_submission_wakes_the_runner(bulk, center, monkeypatch):
 def test_background_submission_retry_and_cancel(bulk, center):
     from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
 
-    service, cohort, _executor, support = bulk
+    service, cohort = bulk
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
-    request = support["run_request"](choice, service.preview(choice))
+    request = run_request(choice, service.preview(choice))
     result = service.run(request)
     task_id = ids.bulk_submit_task_id(str(service.store.folder), result["id"])
     center.store.transition(task_id, from_states="queued", to_state="failed")
@@ -1419,9 +1343,9 @@ def test_background_submission_waits_out_a_busy_workspace(bulk, center, monkeypa
     from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
     from histopilot.taskcenter import jobs
 
-    service, cohort, _executor, support = bulk
+    service, cohort = bulk
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
-    batch = service.run(support["run_request"](choice, service.preview(choice)))["id"]
+    batch = service.run(run_request(choice, service.preview(choice)))["id"]
     calls, sleeps = [], []
 
     def submit(_self, _batch, failures):
@@ -1470,3 +1394,52 @@ def test_orchestration_tasks_see_the_hosts_gpus_on_the_cpu_lane(tmp_path):
     # report cudaAvailable False and refuse every GPU refit.
     assert spawned(probe, "masked") == ""
     assert spawned(compute_module.host_gpu_argv(probe), "restored") == "None"
+
+
+# -- Records launched before the Task Center, on their tmux executor ---------------------------
+
+
+@pytest.mark.legacy_tmux
+def test_legacy_records_and_archives_keep_the_tmux_worker(job, center, monkeypatch):
+    service, identity, plan = job
+    # A record first launched before the Task Center ...
+    legacy = LegacyExecutor()
+    ComputeJobService(service.store, executor=legacy, runtime=runtime).launch(
+        identity, plan, "legacy-launch"
+    )
+    state = read_json(service.folder(identity) / "state.json")
+    assert "executor" not in state and state["sessionName"].startswith("hp-evaluation-")
+    service.legacy_executor = legacy
+    assert service.status(identity)["executor"] == "tmux"
+    assert service.status(identity)["status"] == "queued"
+    legacy.sessions.clear()
+    assert service.status(identity)["status"] == "interrupted"
+    # ... resumes from its pinned archive, which predates the Task Center protocol.
+    monkeypatch.setattr(compute_module, "archive_protocol", lambda _path: None)
+    resumed = service.launch(identity, plan, "legacy-resume", resume=True)
+    assert "executor" not in resumed and "taskId" not in resumed
+    assert len(legacy.calls) == 2 and center.tasks(kind="compute-job") == []
+    assert service.status(identity)["status"] == "queued"
+
+
+@pytest.mark.legacy_tmux
+def test_a_coordinator_archive_pinned_before_the_task_center_resumes_in_tmux(
+    coordinator, center, monkeypatch
+):
+    from histopilot.application import experiment_predictors
+
+    service, identity, _tmp_path = coordinator
+    tmux = LegacyExecutor()
+    service.legacy_executor = service.executor.legacy = tmux  # never probe real tmux
+    service.launch(identity, "start")
+    task_id = ids.coordinator_task_id(str(service.folder(identity)))
+    center.store.cancel_pending([task_id])
+    state_path = service.folder(identity) / "state.json"
+    state = read_json(state_path)
+    write_json(state_path, {**state, "status": "attention"})
+    monkeypatch.setattr(experiment_predictors, "archive_protocol", lambda _path: None)
+    resumed = service.launch(identity, "resume", resume=True)
+    assert resumed["status"] == "queued" and "executor" not in resumed
+    assert len(tmux.calls) == 1
+    assert "executor" not in read_json(state_path)
+    assert center.state(task_id) == "cancelled"
