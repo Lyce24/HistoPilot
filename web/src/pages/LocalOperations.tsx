@@ -36,6 +36,13 @@ function ArchiveReceipt({ job, busy, project, onRetry, onSettled }: { job: Archi
   </article>;
 }
 
+/**
+ * Active project jobs never block an export: the service queues it, and its worker waits in the
+ * Task Center until the project is idle.
+ */
+export const archiveSubmitDisabled = (action: ArchiveAction, archivePath: string, destination: string, busy: boolean) =>
+  busy || !archivePath.trim() || (action === 'restore' && !destination.trim());
+
 function SourceRow({ project, source, onSaved }: { project: string; source: SourceRegistration; onSaved: (note: string) => void }) {
   const [replacement, setReplacement] = useState('');
   const [busy, setBusy] = useState(false);
@@ -55,8 +62,8 @@ export default function LocalOperations({ workspace }: { workspace: Workspace })
   const project = workspace.project.id;
   const client = useQueryClient();
   const [action, setAction] = useState<ArchiveAction>('export');
-  // The inventory only gates Export (it waits for active project jobs): read it for export,
-  // often while jobs run and rarely otherwise.
+  // The inventory only informs Export, which the Task Center holds until the project's active
+  // jobs finish: read it for export, often while jobs run and rarely otherwise.
   const inventory = useQuery({ queryKey: ['operations', project], queryFn: () => operations.inventory(project), enabled: action === 'export', refetchInterval: (query) => query.state.data?.jobs.some((job) => active.has(job.job.status) || job.job.busy) ? 10_000 : 60_000 });
   const sources = useQuery({ queryKey: ['operation-sources', project], queryFn: () => operations.sources(project), staleTime: 30_000 });
   const archives = useQuery({ queryKey: ['operation-archives', project], queryFn: () => operations.archives(project), refetchInterval: (query) => query.state.data?.jobs.some((job) => active.has(job.status)) ? 10_000 : 30_000 });
@@ -78,7 +85,7 @@ export default function LocalOperations({ workspace }: { workspace: Workspace })
       const job = await operations.submit(project, input);
       if (!active.has(job.status)) submissions.current.delete(key);
       if (job.status === 'failed' || job.status === 'interrupted') setError(new Error(job.error ?? 'The archive worker could not complete the operation.'));
-      else setNotice(job.status === 'completed' ? 'Archive operation completed and verified.' : job.status === 'cancelled' ? 'Archive operation was cancelled.' : 'Archive operation saved. You can leave this page while its worker runs.');
+      else setNotice(job.status === 'completed' ? 'Archive operation completed and verified.' : job.status === 'cancelled' ? 'Archive operation was cancelled.' : job.action === 'export' ? 'Export saved. It starts in the Task Center once this project has no running jobs. You can leave this page.' : 'Archive operation saved. You can leave this page while its worker runs.');
       await client.invalidateQueries({ queryKey: ['operation-archives', project] });
     } catch (reason) { setError(readableError(reason)); void archives.refetch(); }
     finally { setBusy(false); }
@@ -100,14 +107,14 @@ export default function LocalOperations({ workspace }: { workspace: Workspace })
     {notice ? <p className="callout" role="status">{notice}</p> : null}
     <p className="callout operations-task-center" role="note"><Icon name="clock" size={16} /><span>{taskCenterWork(true)}, including the archive operations on this page, run in the <a href={taskCenterHref({ project })}>Task Center</a>, which orders and tracks them for every project on this machine.</span></p>
     <Panel title="Verified project archives" subtitle="Save the project database, frozen records, review notes, logs and project-contained outputs with checksums.">
-      <p className="callout">External slides, feature folders and outputs remain external references. The archive records unavailable references. Export after active jobs finish; restoring preserves the project identity and never overwrites an existing folder.</p>
+      <p className="callout">External slides, feature folders and outputs remain external references. The archive records unavailable references. You can submit an export at any time: it waits in the Task Center until this project's running jobs finish. Restoring preserves the project identity and never overwrites an existing folder.</p>
       <div className="operations-form"><label className="operations-field">Operation<select value={action} disabled={busy} onChange={(event) => setAction(event.target.value as ArchiveAction)}><option value="export">Export project</option><option value="verify">Verify archive</option><option value="restore">Restore archive</option></select></label>
         <label className="operations-field">{action === 'export' ? 'New archive file outside the project' : 'Existing archive file'}<input value={archivePath} disabled={busy} onChange={(event) => setArchivePath(event.target.value)} placeholder="/storage/backups/study.zip" /></label>
         <ServerFolderPicker purpose="storage" selection={action === 'export' ? 'folder' : 'file'} label={action === 'export' ? 'Choose export folder' : 'Choose archive'} onSelect={(path) => setArchivePath(action === 'export' ? `${path}/histopilot-${project.slice(-8)}-${Date.now()}.zip` : path)} />
         {action === 'restore' ? <label className="operations-field">New restore folder<input value={destination} disabled={busy} onChange={(event) => setDestination(event.target.value)} placeholder="/storage/restored-study" /></label> : null}
-        <button type="button" className="btn btn-primary" disabled={busy || !archivePath.trim() || (action === 'restore' && !destination.trim()) || (action === 'export' && (inventory.isPending || inventory.isError || activeJobs.length > 0))} onClick={() => void submit()}>{busy ? 'Submitting…' : action === 'export' ? 'Export & verify project' : action === 'verify' ? 'Verify every file' : 'Restore to new folder'}</button>
+        <button type="button" className="btn btn-primary" disabled={archiveSubmitDisabled(action, archivePath, destination, busy)} onClick={() => void submit()}>{busy ? 'Submitting…' : action === 'export' ? 'Export & verify project' : action === 'verify' ? 'Verify every file' : 'Restore to new folder'}</button>
       </div>
-      {action === 'export' ? inventory.isPending ? <p className="muted" role="status">Checking for active project jobs before export…</p> : activeJobs.length ? <p className="muted" role="status">Export waits for {activeJobs.length} active project job{activeJobs.length === 1 ? '' : 's'} to finish. Follow them in the <a href={taskCenterHref({ project })}>Task Center</a>.</p> : null : null}
+      {action === 'export' ? inventory.isPending ? <p className="muted" role="status">Checking this project's active jobs…</p> : activeJobs.length ? <p className="muted" role="status">{activeJobs.length} project job{activeJobs.length === 1 ? ' is' : 's are'} still active. An export submitted now waits until {activeJobs.length === 1 ? 'it finishes' : 'they finish'}, then starts by itself. Follow them in the <a href={taskCenterHref({ project })}>Task Center</a>.</p> : null : null}
       {archives.isPending ? <p role="status">Loading archive history…</p> : null}
       <div className="operations-receipts">{archives.data?.jobs.map((job) => <ArchiveReceipt key={job.id} job={job} busy={busy} project={project} onRetry={(id) => void retryArchive(id)} onSettled={() => void archives.refetch()} />)}</div>
     </Panel>

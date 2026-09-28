@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import LocalOperations from './LocalOperations';
+import LocalOperations, { archiveSubmitDisabled } from './LocalOperations';
 import type { Workspace } from '../api/types';
 import type { OperationsInventory } from '../api/operations';
 import { extractionActive } from '../api/trident';
@@ -27,17 +27,23 @@ describe('project operations workspace', () => {
     expect(extractionActive({ state: 'queued' } as ExtractionJob)).toBe(true);
     expect(featurePackActive({ state: 'queued' } as FeaturePackJob)).toBe(true);
   });
-  it('points compute work to the Task Center and keeps export gated on active project jobs', () => {
+  it('points compute work to the Task Center and lets an export wait for active project jobs', () => {
     const html = render({ ...empty, jobs: [{ key: 'extraction:x', id: 'x', kind: 'extraction', name: 'Slide embeddings', job: { status: 'running', cancellable: true } }] });
     expect(html).toContain('Study backups &amp; sources');
     expect(html).toContain('href="#task-center?project=project"');
     expect(html).toContain('Training folds and results, refits and predictors, evaluations and inference, attention maps, feature extraction and validation, feature packing, and study archives, including the archive operations on this page, run in the');
-    expect(html).toContain('Export waits for 1 active project job to finish');
+    expect(html).toContain('1 project job is still active. An export submitted now waits until it finishes, then starts by itself.');
+    // The service queues the export and its worker waits for an idle project, so only the path gates it.
+    expect(archiveSubmitDisabled('export', '/backups/study.zip', '', false)).toBe(false);
+    expect(archiveSubmitDisabled('export', ' ', '', false)).toBe(true);
+    expect(archiveSubmitDisabled('restore', '/backups/study.zip', '', false)).toBe(true);
+    expect(archiveSubmitDisabled('export', '/backups/study.zip', '', true)).toBe(true);
+    expect(html).toContain('it waits in the Task Center until this project&#x27;s running jobs finish');
     expect(html).not.toContain('Unified job queue');
     expect(html).not.toContain('Cancel job');
     expect(html).not.toContain('Host reservations across all projects');
     const idle = render(empty);
-    expect(idle).not.toContain('Export waits for');
+    expect(idle).not.toContain('still active');
   });
   it('explains external source policy and preserves honest failed verification status', () => {
     const html = render(empty, true);
