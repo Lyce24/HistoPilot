@@ -1,46 +1,179 @@
-# Local deployment and development
+# Deployment and runtime setup
 
-HistoPilot currently supports a single-user local service bound to loopback. A packaged installation serves the browser UI and `/api/v1` from one Python process. Development uses Vite on port 5173 with its API proxy pointed at the control service on port 8787.
+HistoPilot runs as a single-user service on the machine that holds your data, bound to a loopback address. One Python process serves the browser UI and the `/api/v1` API. Heavy work runs in separate Python environments, started by the [Task Center](task-center.md): feature extraction in a TRIDENT environment, and training, evaluation and attention in a training environment. The service itself never loads Torch, CUDA or model weights.
 
-## Build and run from source
+Storage needs POSIX file locking, directory sync and atomic rename, so run HistoPilot on Linux or WSL; native Windows storage is not supported.
 
-Use Python 3.11+, uv, Node.js 24, and npm. From the repository root:
+## Install from source
+
+You need Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 22.12+ with npm, and tmux for the Task Center runner. From the repository root:
 
 ```bash
 uv sync --locked
 npm --prefix web ci
 ```
 
-Then start the server yourself in a normal terminal. The first start builds the frontend:
+This installs the service into `.venv` and the frontend's build dependencies into `web/node_modules`. Add `--extra imaging` to the `uv sync` if you want to view SVS, TIFF and other OpenSlide slides in the browser. Repeat both commands after an update that changes dependencies. The launcher never installs anything itself.
+
+## Start and restart
 
 ```bash
 bash serve.sh
 ```
 
-Open `http://127.0.0.1:8787`. Choose **Open BLCA demo** for the bundled synthetic walkthrough, or create/load your own project. The demo requires no source data, model weights, training environment or GPU. Its direct link is `http://127.0.0.1:8787/?project=blca-demo-v1#overview`; see [BLCA demo](BLCA_DEMO.md).
+Open `http://127.0.0.1:8787`. Choose **Open BLCA demo** for the synthetic walkthrough, or start or load a project. Stop the service with **Ctrl+C**.
 
-The repository's [`serve.sh`](../serve.sh) checks for `uv` and a prepared Python environment, brings the frontend bundle up to date, then runs the service in the foreground. The bundle in `histopilot/static` records a fingerprint of the `web/` sources it was built from. When `web/` has changed, or no bundle exists, the launcher runs `npm run build` and bundles the result; otherwise it starts at once.
+`serve.sh` does four things in order:
 
-The launcher keeps a few guarantees:
+1. It checks that `uv` is on PATH and that the project environment (`$UV_PROJECT_ENVIRONMENT`, else `.venv`) can import HistoPilot. If not, it prints setup instructions.
+2. It rebuilds the browser UI when `web/` has changed. The bundle in `histopilot/static/` records a fingerprint of the `web/` sources it was built from; when the fingerprint differs or no bundle exists, the launcher runs `npm run build` and swaps the result in. When nothing changed it starts at once.
+3. It starts `histopilot serve` in the foreground, which loads the checkout's current Python code.
+4. `histopilot serve` starts the Task Center runner, or restarts it if the runner's code is outdated or it was started from another checkout. The restart waits for the runner's current step; running tasks are adopted, not stopped.
+
+The launcher keeps these guarantees:
+
 - A failed build never starts the service, and the existing bundle is replaced only after a successful build.
-- It never rebuilds while another service from the same checkout is running, because that service serves the same `histopilot/static`. Stop it first, or pass `--no-build` to start with the existing bundle.
-- It never installs dependencies. `web/node_modules` may be shared between worktrees.
+- It never rebuilds while another service from the same checkout is running, because that service serves the same bundle. Stop it first, or pass `--no-build` to start with the existing bundle.
+- It never installs dependencies. `web/node_modules` may be a link shared between worktrees.
 
-Missing prerequisites produce setup instructions. `bash serve.sh --help` works before setup and does not start a server. `histopilot serve` started directly prints a warning when its bundle is older than `web/`. `uv run python scripts/bundle_web.py --check` reports the state without changing anything.
-
-Pass normal service options through the launcher:
+Pass service options through the launcher:
 
 ```bash
 bash serve.sh --data-root /path/to/research-data --port 8788
 ```
 
-From another directory, use `bash /path/to/HistoPilot/serve.sh`. Relative option paths resolve from the repository root. The launcher defaults to `--no-browser`; pass `--browser` to open the URL automatically. It honors `UV_PROJECT_ENVIRONMENT` and uses the existing environment without syncing or downloading. The direct command `uv run histopilot serve --no-browser` remains available.
+| Option | Effect |
+| --- | --- |
+| `--data-root PATH` | Allow a source folder (repeatable). Overrides the configured list. |
+| `--workspace PATH` | Application workspace |
+| `--config PATH` | Alternate configuration file |
+| `--port PORT`, `--host HOST` | Local address. Only `127.0.0.1` and `localhost` are accepted. |
+| `--dev` | API auto-reload for frontend development with Vite; skips the UI build |
+| `--browser` | Open a browser (the launcher defaults to `--no-browser`) |
+| `--no-build` | Serve the existing bundle even if `web/` changed |
+| `--no-runner` | Do not start or restart the Task Center runner |
 
-Server startup and restart are manual. Builds and verification do not launch or restart HistoPilot, and the server is not hosted in tmux. After updating source, stop the existing service in its terminal and start it again with `bash serve.sh` when ready. The launcher rebuilds the frontend if needed, and the service loads the current Python code. Refresh the browser afterward. Avoid starting a second service against the same workspace.
+Run the launcher from any directory with `bash /path/to/HistoPilot/serve.sh`; relative option paths resolve from the repository root. `bash serve.sh --help` works before setup. `uv run python scripts/bundle_web.py --check` reports whether the bundle is current without changing it, and `histopilot serve` started directly warns when it is not.
+
+Start and restart the service yourself, in a normal terminal; it is never hosted in tmux. Builds and tests never start or restart it. After updating the source, stop the service and start it again with `bash serve.sh`, then refresh the browser. Running tasks keep the code they started with. Do not start two services against the same workspace; a lock file (`service.lock`) refuses the second.
+
+## Configuration
+
+| Setting | Default |
+| --- | --- |
+| Configuration file | `~/.histopilot/config.toml` |
+| Workspace | `~/.histopilot/workspace` |
+| Address | `127.0.0.1:8787` |
+| Data roots | None |
+
+The [example configuration](../examples/config.toml) shows the two accepted sections, `[server]` (`host`, `port`) and `[storage]` (`workspace`, `data_roots`). Unknown keys are rejected. Relative paths resolve from the configuration file's folder, and `~` expands to the service user's home. Command-line options override the file.
+
+```toml
+[storage]
+data_roots = ["/path/to/research-data", "/path/to/external-validation"]
+```
+
+**Data roots** are the only folders the source pickers can browse: metadata tables, slides and features. Nothing is inferred from the current directory or your home. Without data roots you can still create a project and open the demo. The storage picker, used to choose a project folder, also includes the workspace. A new project needs an empty or new folder whose parent exists inside the workspace or a data root. Paths always refer to the machine running the service, even when the browser runs elsewhere.
+
+## Runtime environments
+
+| Environment | Used for | Found through |
+| --- | --- | --- |
+| Service (`.venv`) | The API, UI, storage and OpenSlide slide viewing | `uv sync --locked`, plus `--extra imaging` for viewing |
+| Training | Fold training, refits, evaluations, inference and attention | `HISTOPILOT_TRAINING_PYTHON`, else `<checkout>/.venv-training/bin/python`, else the service's own Python |
+| TRIDENT | Feature extraction | `HISTOPILOT_TRIDENT_PYTHON` and `HISTOPILOT_TRIDENT_ROOT`, else the default search below |
+| SDPC reader | Reading `.sdpc` slides in the viewer | `HISTOPILOT_SDPC_PYTHON`, else the TRIDENT interpreter |
+
+The Task Center runner inherits `HISTOPILOT_*`, `PATH` and `LD_LIBRARY_PATH` from the service that starts it. Set these variables before `bash serve.sh`, and restart the service (which restarts the runner) after changing them.
+
+### Training environment
+
+Create the training environment once per checkout, from the same lock file:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-training uv sync --locked --extra training
+```
+
+The `training` extra adds Torch, Lightning, TorchMetrics and scikit-learn. The service finds `.venv-training/bin/python` automatically, and picks up a newly created one without a restart. To use another interpreter, set `HISTOPILOT_TRAINING_PYTHON` before starting the service. A new git worktree has no `.venv-training`, so training from it fails with "No module named 'torch'" until you create one.
+
+The training runtime panel probes this interpreter in a separate process: Torch, Lightning, h5py, PyArrow and scikit-learn imports, versions, CUDA and GPUs, plus tmux. A submitted experiment records the interpreter and package versions it ran with; follow-up work refuses to run in a changed environment (`EXPERIMENT_RUNTIME_CHANGED`). Restore the environment, or copy the experiment to plan it again. See [architecture](architecture.md#pinned-compute-archives).
+
+### TRIDENT feature extraction
+
+Extraction runs TRIDENT in its own Python environment. Point HistoPilot at its interpreter and checkout:
+
+```bash
+export HISTOPILOT_TRIDENT_PYTHON=/path/to/trident-environment/bin/python
+export HISTOPILOT_TRIDENT_ROOT=/path/to/TRIDENT
+bash serve.sh --data-root /path/to/research-data
+```
+
+Without these variables HistoPilot searches:
+
+| What | Search order |
+| --- | --- |
+| Interpreter | `~/miniconda3/envs/trident/bin/python`, `~/anaconda3/envs/trident/bin/python`, then the service's Python |
+| Checkout | `<checkout>/.local/TRIDENT` (or `.local/trident`), an editable TRIDENT install in that interpreter, `~/projects/TRIDENT` (or `trident`) |
+
+The first checkout containing `run_batch_of_slides.py` is used. A git worktree has no `.local/TRIDENT` of its own, so set `HISTOPILOT_TRIDENT_ROOT` there. When nothing is found, the extraction preview and the **System & storage** page report TRIDENT as unavailable, list the folders searched and name any sibling checkout that has one. Discovery never runs the interpreter; encoder dependencies, checkpoint access and gated-model logins must work inside that environment and are checked by the worker.
+
+### SDPC slides
+
+SDPC files need OpenSDPC in the TRIDENT interpreter, both for extraction and, by default, for viewing. Install the pinned version into that interpreter; installing it only into HistoPilot's `.venv` does not reach a separate TRIDENT environment:
+
+```bash
+uv pip install --python "$HISTOPILOT_TRIDENT_PYTHON" --reinstall-package opensdpc \
+  "opensdpc @ git+https://github.com/WonderLandxD/opensdpc@a07579eedde1dffddf8fa712ef236b97ca8cfc55"
+```
+
+Reinstalling repairs an editable install whose source folder moved. The same pin is HistoPilot's optional `sdpc` extra (`uv sync --locked --extra sdpc`). On Linux, HistoPilot finds OpenSDPC's bundled native libraries (`LINUX` and `LINUX/ffmpeg`) and adds them to the child process's `LD_LIBRARY_PATH`; no global export is needed.
+
+The viewer reads SDPC slides in an isolated child process using the TRIDENT interpreter. Set `HISTOPILOT_SDPC_PYTHON` to use a separate reader environment; it needs OpenSDPC, Pillow and OpenSlide. Missing dependencies, decoder failures and timeouts appear as recoverable slide-view errors.
+
+For extraction, HistoPilot applies two small runtime fixes to the recognized pinned OpenSDPC reader (no per-tile full garbage collection, and reuse of the open slide handle for metadata). No installed files are changed, and the worker log lists the fixes applied. Set `HISTOPILOT_SDPC_OPTIMIZATIONS=0` to compare against upstream behaviour.
+
+### Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `HISTOPILOT_TRAINING_PYTHON` | Training and compute interpreter |
+| `HISTOPILOT_TRIDENT_PYTHON`, `HISTOPILOT_TRIDENT_ROOT` | TRIDENT interpreter and checkout |
+| `HISTOPILOT_SDPC_PYTHON` | Interpreter for reading SDPC slides in the viewer |
+| `HISTOPILOT_SDPC_OPTIMIZATIONS=0` | Disable the OpenSDPC extraction fixes |
+| `HISTOPILOT_STATE_DIR` | Task Center state directory (default `$XDG_STATE_HOME/histopilot`, else `~/.local/state/histopilot`) |
+| `HISTOPILOT_TASK_CENTER_AUTOSTART=0` | Never start or restart the runner automatically |
+| `HISTOPILOT_CHROMIUM` | Chromium used by the offline browser checks in `web/scripts/` |
+
+## Slide viewing
+
+The viewer reads bounded image regions; it never decodes a whole slide at full resolution. Selecting a slide shows **Preparing slide** while the reader opens and a bounded set of pyramid tiles (at most 128 tiles of 512 pixels, over three zoom levels) is cached, then **Slide ready**. Unvisited high-resolution areas still load on demand.
+
+| Limit | Value |
+| --- | --- |
+| Reader processes | At most 2 isolated children, shared by OpenSDPC, OpenSlide and the Pillow fallback. Each is recycled after 128 requests, 5 minutes or 60 seconds idle. |
+| Native operation deadline | 20 seconds; a hung or crashed child is retired and the next request recovers |
+| Child resource limits | 4 GiB address space and 24 MiB output files, on POSIX |
+| Server image cache | 128 MiB or 512 lossless PNGs, shared across requests; entries expire after 10 minutes idle |
+| Browser cache per viewer | 192 tiles or 256 MiB |
+| Image size | 64–2048 pixels per side |
+
+Every image request carries the slide's source fingerprint, so a file that changed on disk is refused rather than mixed into a prepared view.
+
+## Remote workstation through SSH
+
+Run the service on the workstation, then forward the port from your laptop:
+
+```bash
+ssh -N -L 8787:127.0.0.1:8787 user@workstation
+```
+
+Open `http://127.0.0.1:8787` on the laptop. The folder pickers still browse the workstation. VS Code's Ports view does the same forwarding. Non-loopback hosts such as `0.0.0.0` are refused, because network authentication is not implemented.
+
+Tasks run in their own process groups under the Task Center runner, so closing the SSH session or the browser does not stop them. After a workstation reboot, the runner marks running tasks as interrupted and, with auto-resume on, requeues them from their checkpoints once you start the service again.
 
 ## Frontend development with Vite
 
-For hot reload, use the same installed dependencies and start the backend in Terminal A:
+Terminal A:
 
 ```bash
 bash serve.sh --dev
@@ -52,120 +185,36 @@ Terminal B:
 npm --prefix web run dev
 ```
 
-Open `http://127.0.0.1:5173`. Vite handles frontend updates and proxies `/api`; `--dev` enables the local development service configuration. Keep API calls through that proxy so the UI obtains its session token from the same origin it uses for requests.
+Open `http://127.0.0.1:5173`. Vite serves the UI with hot reload and proxies `/api` to port 8787; keep API calls on that proxy so the session token comes from the same origin. `--dev` allows the loopback Vite origins on port 5173 only. If you change the backend port, change the proxy in `web/vite.config.ts` too. When forwarding over SSH, forward port 5173 as well.
 
-The default Vite proxy expects port 8787. If changing the backend port, update the Vite proxy configuration consistently. The development origin allowlist is limited to the loopback aliases on port 5173; arbitrary origins and wildcard CORS are not supported.
-
-## Build a Python wheel with the UI
-
-From `web/`:
+## Build a wheel
 
 ```bash
-npm ci
-npm run build
-```
-
-From the repository root:
-
-```bash
+npm --prefix web ci
+npm --prefix web run build
 uv run python scripts/bundle_web.py
 uv build
 ```
 
-The bundle script copies the Vite output from `web/dist/` into `histopilot/static/`. The Python wheel includes those compiled assets. Rebuild and bundle after frontend changes before creating a release wheel; a Python build alone does not compile React.
-
-Install the resulting wheel into the intended Python environment, then run:
-
-```bash
-histopilot serve --no-browser
-```
-
-Open `http://127.0.0.1:8787`. End users do not need Node.js, npm, or a running Vite server. This describes building/installing the repository artifact; it does not assume a public package release exists.
-
-The root URL opens the start page. Choose **Start a new project** to name it and select its exact server storage folder, or **Load an existing project** to open a recent entry or saved folder. Optional source paths can be supplied later. Creation/loading opens the project roadmap; each workflow begins with its record library and proceeds through separate review pages. `?project=<id>#overview` preserves project context on refresh, and the active-project button returns to the start page. Older `?experiment=<id>` project links remain supported. **Open BLCA demo** opens a separate read-only example.
-
-## Configuration
-
-Defaults:
-
-| Setting | Default |
-| --- | --- |
-| Config file | `~/.histopilot/config.toml` |
-| Bind address | `127.0.0.1` |
-| Port | `8787` |
-| Workspace | `~/.histopilot/workspace` |
-| Allowed data roots | None |
-
-The [example config](../examples/config.toml) uses `[server]` and `[storage]` sections. Command-line workspace, host, port, and data-root settings override the corresponding configuration. Repeated `--data-root` options select the explicit directory allowlist for that launch:
-
-```bash
-histopilot serve --workspace /path/to/histopilot-workspace \
-  --data-root /path/to/research-data \
-  --data-root /path/to/external-validation \
-  --no-browser
-```
-
-Use `--config /path/to/config.toml` to read an alternate configuration file. Relative paths in TOML resolve against the configuration file directory; `~` expands to the service user's home directory.
-
-Each data root must refer to a directory on the server. Replace the example paths with your own directories. Source browsing (`purpose=source`, the API default) uses only this explicit allowlist; no source root is inferred from the current directory, workspace, or home directory. Storage browsing (`purpose=storage`) includes the application workspace and configured data roots, so a new project can be created with default settings before any data is connected. The demo requires no allowed source roots.
-
-The exact project storage folder must be empty or new, with its parent already present under a permitted storage root. HistoPilot writes `histopilot-project.json` there and indexes it in the central SQLite recent list. Choose a dedicated folder for each project. Scientific drafts, frozen versions and model-development experiments belong to that project. Optional source-directory selection saves read-only references without importing metadata or starting a WSI job; those folders must be under configured data roots.
-
-The CLI acquires an advisory service lock in the workspace and starts one Uvicorn worker. Do not launch several service processes against the same workspace. SQLite metadata uses WAL; long-running compute executes separately and retains job receipts, logs and supported checkpoints. See [workspace layout](workspace.md) and [current architecture](ARCHITECTURE.md) for storage and recovery contracts.
-
-## Remote workstation through SSH
-
-Run the service on the workstation with `--no-browser` and keep it bound to loopback. On your laptop:
-
-```bash
-ssh -N -L 8787:127.0.0.1:8787 user@gpu-workstation
-```
-
-Then open `http://127.0.0.1:8787` on the laptop. The folder picker still shows configured directories on the workstation. For frontend development, forward port 5173 as well and open the forwarded Vite URL. VS Code's Ports view can provide the same forwarding.
-
-Non-loopback hosts such as `0.0.0.0` are rejected because authenticated network deployment is not implemented. SSH forwarding preserves the supported local service boundary.
-
-Start and manage the HistoPilot service in your own terminal. Long-running extraction, packing, training, evaluation and archive work runs through the machine-level [Task Center](TASK_CENTER_DESIGN.md): `histopilot serve` starts its runner in the `hp-runner-<uid>` tmux session (`--no-runner` skips this), and `histopilot runner status|stop` manages it. That is separate from server hosting. Tasks run in their own process groups and survive client disconnection and service or runner restarts; after a workstation reboot, interrupted tasks are queued again (auto-resume, on by default) and resume from their checkpoints when the service starts. Jobs launched before the Task Center keep their own tmux sessions; before manually launching any long-running compute job, check existing sessions to avoid duplicates, retain persistent logs, and use the job's checkpoint/resume support. Updating HistoPilot does not change the code of running workers; `histopilot serve` restarts the runner when its code changed, after the current step.
+`scripts/bundle_web.py` copies `web/dist/` into `histopilot/static/`, which the wheel includes along with the synthetic demo resource. A Python build alone does not compile the UI. Install the wheel into an environment and run `histopilot serve --no-browser`; end users then need neither Node.js nor Vite.
 
 ## Diagnostics
 
 ```bash
 histopilot doctor
 histopilot doctor --json
+histopilot runner status
 ```
 
-`doctor` reports environment/package metadata without importing PyTorch or initializing CUDA. Package presence does not prove model access, working native libraries, or GPU availability. **System & storage** separately reports available CPU, RAM, GPU, VRAM and disk measurements; module runtime panels probe optional training/extraction dependencies in isolated processes. Missing measurements remain explicitly unavailable.
+`doctor` reports package metadata without importing Torch or starting CUDA. Package presence does not prove model access, working native libraries or a usable GPU. The **System & storage** page reports CPU, RAM, GPU, VRAM and disk measurements and TRIDENT readiness. The training runtime panel probes the training environment in a separate process.
 
-For saved training runs, resource charts read bounded recorded history. New CPU measurements require a worker version that records CPU counters. Old or already-running worker versions cannot gain historical CPU samples from a UI update; their available GPU/RAM snapshots remain useful. Restart the service manually to load new endpoints, while leaving independent workers under their existing lifecycle controls.
-
-## Validation
-
-From the repository root:
-
-```bash
-uv run pytest -n auto --dist worksteal -m "not slow"   # about 2 minutes
-uv run pytest -n auto --dist worksteal                 # full suite, about 8 minutes
-uv run ruff check .
-```
-
-Tests marked `slow` train real models or drive the real Task Center runner. Tests that
-need Torch or Pillow skip unless the environment has the `training` and `imaging` extras
-(`uv sync --extra training --extra imaging`).
-
-From `web/`:
-
-```bash
-npm run typecheck
-npm test
-npm run build
-```
-
-Browser verification should exercise record libraries, page transitions, saved-project reopening, dependency review, run details and system-state handling. Use temporary synthetic projects for API checks and the standalone fixtures under `web/scripts/` for browser interactions without a server or research jobs. Verify the BLCA walkthrough separately: all eight modules open from their libraries, navigation stays in the demo, and exported records remain synthetic. A mock browser fixture verifies interface behavior; it does not establish a real training outcome or clinical validity.
-
-Packaging checks should verify that the wheel contains the rebuilt `histopilot/static/` assets and the synthetic resources required by the demo. Source updates, UI builds and tests do not start the server. Keep real manifests, images, features, checkpoints, project folders and local research evidence outside version control.
+If the service or runner seems stuck, `kill -USR1 <pid>` writes every thread's stack to `server-<port>-stacks.log` or `runner-stacks.log` in the Task Center state directory.
 
 ## Local API protections
 
-The service checks allowed loopback Host/port and Origin, rejects cross-site fetches, and uses a random local session token for protected API routes. `/api/v1/session` establishes the token; subsequent API requests carry `X-HistoPilot-Token`. Health checks return only minimal public status. The React client handles the session exchange.
+- The service accepts only a loopback Host header and refuses cross-site browser requests.
+- A random per-process session token from `/api/v1/session` is required on every other API route, in the `X-HistoPilot-Token` header. The UI handles this.
+- Folder browsing resolves symlinks before checking the configured roots, and listings are bounded.
+- Downloads and slide images come only from validated project artifacts and frozen slide references. There is no general file download or slide upload route.
 
-Filesystem browsing resolves paths before enforcing configured roots, including symlink destinations, and bounds directory listings. Scientific downloads and slide-region routes resolve validated project artifacts; there is no general arbitrary-file download or WSI upload route. These controls support a local single-user application; institutional authentication, multiuser permissions, HTTPS reverse-proxy deployment, and remote job executors remain future work.
+These controls protect a single-user local service. Shared-lab authentication, per-user permissions, HTTPS reverse proxies and remote job executors are not implemented.

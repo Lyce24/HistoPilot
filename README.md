@@ -6,18 +6,18 @@
 <p align="center"><strong>From pathology slides to model evidence.</strong></p>
 <p align="center">
   <a href="#get-started">Get started</a> ·
-  <a href="#your-first-project">Your first project</a> ·
-  <a href="docs/BLCA_DEMO.md">BLCA walkthrough</a> ·
-  <a href="#guides">Guides</a>
+  <a href="#the-workflow">The workflow</a> ·
+  <a href="docs/blca-demo.md">BLCA walkthrough</a> ·
+  <a href="#documentation">Documentation</a>
 </p>
 
-A local research workspace for computational pathology. Prepare slide data and foundation-model features, train multiple instance learning (MIL) models, and explore their predictions. Your data and compute stay on your infrastructure.
+HistoPilot is a local research workspace for computational pathology. It takes you from a slide table to evaluated models: import slide and patient metadata, attach or extract foundation-model patch features, train multiple instance learning (MIL) models with cross-validation, then evaluate, apply and interpret the resulting predictors. It runs as a single-user service on your own workstation. Slides, features and results stay on that machine, and source files are referenced in place, never uploaded or copied.
 
 ![HistoPilot workspace showing the synthetic BLCA demo](docs/assets/blca/overview.png)
 
 ## Get started
 
-**Requirements:** Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 24, and npm.
+**Requirements:** Linux or WSL, Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 22.12+ with npm, and tmux. Feature extraction and training also need their own Python environments and, in practice, an NVIDIA GPU; the demo needs neither.
 
 One-time setup:
 
@@ -28,37 +28,41 @@ uv sync --locked
 npm --prefix web ci
 ```
 
-Start HistoPilot (the first start builds the browser UI, which takes a few seconds):
+Start HistoPilot in your terminal:
 
 ```bash
 bash serve.sh
 ```
 
-Open **http://127.0.0.1:8787** → **Open BLCA demo**. No research data, weights, or GPU are needed to explore it.
+Open `http://127.0.0.1:8787` and choose **Open BLCA demo**. The demo is synthetic and read-only; it needs no research data, model weights or GPU.
 
-Run `bash serve.sh` for each subsequent start; stop with **Ctrl+C**. Each start rebuilds the browser UI if `web/` changed since the last build, so a restart always serves the checkout's current version. Use `bash serve.sh --help` for options. After an update that changes dependencies, repeat the two setup commands, then restart manually. See [deployment](docs/deployment.md) for Vite development, packaged installation, and SSH forwarding.
+Stop the service with **Ctrl+C** and start it again with `bash serve.sh`. Each start rebuilds the browser UI when `web/` has changed. After an update that changes dependencies, repeat the two setup commands. Run `bash serve.sh --help` for options.
 
-## Your first project
+### Your own project
 
-Allow the folders containing your metadata, slides, and features when starting:
+Allow the folders that hold your metadata, slides and features:
 
 ```bash
 bash serve.sh --data-root /path/to/research-data
 ```
 
-Choose **Start a new project** and select a dedicated new or empty project folder. The folder picker browses the machine running HistoPilot; source files are referenced in place.
+Choose **Start a new project** and pick an empty or new project folder. The folder picker browses the machine running HistoPilot, not the computer running the browser. To train models, also create the training environment; see [deployment](docs/deployment.md#training-environment). For TRIDENT feature extraction, see [deployment](docs/deployment.md#trident-feature-extraction).
 
-1. **Datasets:** import and freeze the slide and patient metadata.
-2. **Prepare in parallel:** attach or extract **Slide features**, and independently freeze the target and fixed training/testing membership in **Targets & splits**.
-3. **Experimental Setup:** combine these inputs, check compatibility, configure folds and hyperparameters, and freeze the design.
-4. **Experiments:** start a frozen setup and follow training runs and predictors.
-5. **Apply predictors:** choose **Evaluate models** for labeled test performance, or **Run inference** for unlabeled cohorts, predictions, confidence, review and export. Both support compatible slide attention; SDPC slides use OpenSDPC. See the [inference design and assessment](docs/INFERENCE_MODE.md).
+## The workflow
 
-Models include ABMIL, nnMIL, mean/max pooling, slide-embedding probes, and clinical/image comparisons. Real extraction and training require their compute environments; clinical comparisons require verified patient identities. Follow the [workflow guide](docs/WORKFLOW_GUIDE.md) for setup and input requirements.
+1. **Datasets:** import a CSV/XLSX slide table, map slide and patient identifiers, link slide files and freeze a dataset version.
+2. **Slide features:** extract patch features with TRIDENT, or attach existing ones, then validate them and freeze a feature bundle.
+3. **Targets & splits:** choose the prediction target and freeze fixed training and testing sets. The testing set becomes a test cohort. Steps 2 and 3 can run in either order.
+4. **Experimental Setup:** combine a dataset, a target/split version and a feature bundle; design the cross-validation folds, model recipes and predictor choices; then freeze the setup.
+5. **Experiments:** start a frozen setup, follow its runs, and review cross-validated results and ready predictors.
+6. **Evaluate models** or **Run inference:** score ready predictors on a labeled test cohort, or apply them to unlabeled slides for predictions, review and export.
+7. **Clinical utility** and **Model interpretation:** examine calibration, thresholds and net benefit, and review attention maps and top patches on the slides.
+
+Compute runs through the **Task Center**, one queue per machine shared by all projects. Models include ABMIL, nnMIL, mean and max pooling MIL, and linear and MLP probes on slide embeddings.
 
 ## A look inside
 
-The **BLCA demo** follows 138 synthetic slides: 62 for development and 76 for testing. All displayed records, scores, and curves are illustrative. It includes no real slide images or attention maps; slide counts do not establish independent patients.
+The **BLCA demo** follows 138 synthetic slides: 62 for development and 76 for testing. All records, scores and curves are illustrative. It includes no real slide images or attention maps.
 
 | Prepare data | Follow training |
 | :---: | :---: |
@@ -68,12 +72,17 @@ The **BLCA demo** follows 138 synthetic slides: 62 for development and 76 for te
 | :---: | :---: |
 | [![Synthetic BLCA ROC curve and confusion matrix](docs/assets/blca/evaluation.png)](docs/assets/blca/evaluation.png) | [![Synthetic BLCA decision curve and threshold tradeoffs](docs/assets/blca/clinical-utility.png)](docs/assets/blca/clinical-utility.png) |
 
-Click an image to enlarge it. See the [full BLCA walkthrough](docs/BLCA_DEMO.md) for feature validation, targets, and predictor details.
+## Documentation
 
-## Guides
-
-- [Workflow](docs/WORKFLOW_GUIDE.md) — data, features, training, and recovery.
-- [Deployment](docs/deployment.md) — installation, configuration, and remote access.
-- [Experiments](docs/EXPERIMENT_LIFECYCLE.md) · [Evaluation](docs/MODEL_DEVELOPMENT.md) · [Clinical insights](docs/CLINICAL_INSIGHTS.md).
+| Guide | For |
+| --- | --- |
+| [User guide](docs/user-guide.md) | Running a study end to end, stage by stage |
+| [Methods](docs/methods.md) | How splits, cross-validation, metrics, intervals and predictors are defined |
+| [Deployment](docs/deployment.md) | Installation, runtime environments, configuration and remote access |
+| [BLCA demo](docs/blca-demo.md) | The synthetic walkthrough |
+| [Task Center](docs/task-center.md) | How compute is queued, admitted, cancelled and recovered |
+| [Architecture](docs/architecture.md) | Runtime, storage, execution model and code map |
+| [API](docs/api.md) | The local HTTP API |
+| [Contributing](CONTRIBUTING.md) | Development environments, tests and conventions |
 
 <sub>No project license has been selected. Third-party models and backends retain their own licenses.</sub>

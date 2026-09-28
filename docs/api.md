@@ -1,365 +1,228 @@
-# Local API foundation
+# Local HTTP API
 
-The implemented API serves **folder-backed projects, project-local scientific storage, and a read-only BLCA demo**. CSV/XLSX import, identifier/attribute mapping, immutable publication, grouped target/split validation and existing-feature header attachment are implemented. React and the CLI share this service. Feature validation and packing, extraction, training, evaluation and slide viewing are implemented by project routes; this page documents a subset of them, and compute runs through the machine-level [Task Center](#task-center).
+The HistoPilot service exposes a JSON API under `/api/v1`. The React UI and the `histopilot` CLI both use it. It serves a single user on a loopback address; see [deployment](deployment.md#local-api-protections). There is no OpenAPI or Swagger endpoint.
 
-All paths below are under `/api/v1`. The service validates Host/Origin and browser fetch context. Obtain a token from `GET /session`, then send it as `X-HistoPilot-Token` on protected requests. The health and session endpoints do not require that header. Tokens are local to the running service process; clients reacquire a token after a restart.
+This page lists every route group and documents the ones that scripts most often call. For what a route's work means scientifically, see the [user guide](user-guide.md) and [methods](methods.md). For how queued work runs, see the [Task Center](task-center.md).
 
-| Method / path | Behavior |
+## Session and conventions
+
+Obtain a token with `GET /api/v1/session`, then send it as the `X-HistoPilot-Token` header on every other request. `GET /health` and `GET /session` do not need it. Tokens belong to one service process; get a new one after a restart. Requests also pass Host, Origin and `Sec-Fetch-Site` checks: the Host must be a loopback name, and cross-site browser requests are refused.
+
+| Convention | Meaning |
 | --- | --- |
-| `GET /health` | Minimal service/version status; `executionEnabled: false`. |
-| `GET /session` | Establish a local-session token. |
-| `GET /projects` | Recent project summaries plus the BLCA demo; returns `defaultStoragePath` and availability for each folder. |
-| `POST /projects` | Create named experiment setup in an exact new or empty server folder; HTTP 201. |
-| `POST /projects/open` | Validate and register an existing folder's `histopilot-project.json`; return its summary. |
-| `GET /projects/{id}/workspace` | The project's latest dataset counts, scientific summary and saved setup/sources; the BLCA demo ID returns the demo. |
-| `PATCH /projects/{id}` | Replace a local experiment's optional configuration and persist its descriptor. |
-| `POST /projects/{id}/sources` | Add a read-only `data`, `slides`, or `features` directory reference; HTTP 201. |
-| `GET /projects/{id}/storage` | Project-local schema/journal mode, draft/dataset counts, and publication operation states. |
-| `POST /projects/{id}/drafts` | Save an unvalidated import/experiment draft; HTTP 201. |
-| `GET /projects/{id}/drafts` | Project-local drafts under `drafts`. |
-| `GET /projects/{id}/drafts/{draftId}` | Read one draft and its current revision. |
-| `PATCH /projects/{id}/drafts/{draftId}` | Replace draft name/payload only if required `expectedRevision` matches; stale or frozen drafts return 409. |
-| `GET /projects/{id}/datasets` | Published internal snapshots under `datasets`; partial publication is never listed as a dataset. |
-| `GET /projects/{id}/datasets/{datasetId}` | Read a published snapshot's manifest and artifact fingerprints. |
-| `GET /filesystem/roots?purpose=source` | Configured source roots by default; `purpose=storage` includes the application workspace and data roots. |
-| `GET /filesystem/list?path=...&purpose=source` | Bounded listing within the corresponding resolved roots; accepts `purpose=storage` for experiment folders. |
-| `GET /system` | Workspace/storage/control-service context and package metadata diagnostics. |
+| `{identity}` | The project ID. Project routes below are written relative to `/api/v1/projects/{identity}`. |
+| Strict request bodies | Command bodies reject unknown fields. |
+| Errors | Error responses carry `detail` and a stable `code`, for example a busy project writer, a stale revision or a changed source. |
+| `expectedRevision` | Draft updates and previews name the revision they read. A stale revision returns 409; reload, review and retry. |
+| `operationId` | Publications, launches and Task Center actions take an operation ID. Retrying the same ID replays the original result; reusing it with a different request is rejected. |
+| `previewHash` | Freeze requests repeat the hash of the preview the user reviewed. If inputs changed since, the freeze is refused. |
+| `versionLabel` | Every freeze of a dataset, feature binding or target/split version requires `{tag, note?}`: a tag of 1–80 characters and an optional note. |
 
-Unknown fields on command request schemas are rejected. This is a narrow command surface: there is no whole-workspace replacement endpoint and no arbitrary file-content or WSI upload route. Interactive OpenAPI/Swagger endpoints are not exposed by this local service.
+## Route map
 
-## Create and reopen experiment setup
-
-A project is created through `/projects` and opens the project roadmap.
-
-```json
-{
-  "name": "Bladder",
-  "storagePath": "/path/to/histopilot-workspace/bladder",
-  "slidePath": "/mnt/pathology/bladder/slides",
-  "config": {
-    "task": "binary_classification",
-    "targetColumn": "Binary WHO 2022",
-    "positiveLabel": "1",
-    "seed": 42,
-    "folds": 5
-  }
-}
-```
-
-Only `name` and `storagePath` are required. The exact destination must be empty or new with an existing parent, within the application workspace or a configured data root. Optional `dataPath`, `slidePath`, and `featurePath` are existing directories under source roots. Optional `description` and `config` may be omitted. Configuration accepts binary/multiclass `task`, `targetColumn`, `positiveLabel`, integer `seed` (0–4294967295), `folds` (2–10), and registered `encoderId`/`milId`. These are planning choices; they do not create a scientific target, split, or execution plan.
-
-Creation writes `histopilot-project.json` in the selected folder and adds a recent entry to SQLite. Reopen with `POST /projects/open` and `{"path":"/path/to/histopilot-workspace/bladder"}`, then load the returned ID through `/projects/{id}/workspace`. The descriptor is authoritative; missing or invalid folders produce errors, and the recent list retains unavailable entries. The UI's `?experiment=<id>#overview` link restores registered context after refresh.
-
-Use `PATCH /projects/{id}` with `{"config": {...}}` to replace the full optional configuration; `{ "config": {} }` clears it. The **MIL experiments** page exposes these settings. Add later source folders with `POST /projects/{id}/sources`, for example `{"path":"/mnt/pathology/bladder/features","role":"features"}`. Saved sources remain `readOnly: true` and `importStatus: "not-imported"`.
-
-## Project-local scientific storage
-
-Creating or opening a local project initializes `histopilot-state.sqlite` in the chosen folder and reconciles interrupted snapshot publication. Existing version-1 setup descriptors remain unchanged when opened. The central registry is not the authority for these drafts or snapshots; a new registry can reopen the same folder and read them. The workspace response includes a `scientificStorage` summary, and the Dataset UI reads project-local versions and import drafts.
-
-Create an unvalidated draft with `POST /projects/{id}/drafts`:
-
-```json
-{
-  "kind": "import",
-  "name": "Bladder mapping draft",
-  "payload": {"notes": "Map De ID to Slide_ID; patient mapping remains unresolved"}
-}
-```
-
-The response includes a server-generated `id`, owning `projectId`, `revision`, `status`, timestamps and saved payload. Supported kinds are `import` and `experiment`. Payloads are draft intent only: saving paths, label values, or a claimed readiness flag never reads files, validates a dataset, creates a split, or authorizes execution.
-
-Update with `PATCH /projects/{id}/drafts/{draftId}`:
-
-```json
-{
-  "expectedRevision": 1,
-  "name": "Bladder mapping draft",
-  "payload": {"notes": "Revised mapping choices"}
-}
-```
-
-Name/payload replacement is atomic and increments the revision. The client must reload after a conflict, review the latest value and intentionally retry. Missing or non-integer `expectedRevision` is rejected; there is no implicit last-write-wins path for scientific drafts. Existing setup configuration remains a separate descriptor command without draft-revision semantics.
-
-Storage errors return `detail` plus a stable `code`. They distinguish busy project writers, stale revisions, incompatible storage, unsafe paths and artifact problems. Project-scoped draft/dataset lookup never searches another project. The synthetic demo has no local scientific store.
-
-Dataset publication uses an internal storage boundary reached through the validated import workflow. The browser sends saved draft revision and preview hash; the server rereads sources and derives records before publishing. It never accepts browser-authored frozen records. Unresolved patient identity can be retained at import. Patient-grouped assignment requires supplied patient identities or the explicit `patientIdFallback: "slide_id"` import choice described below (slide-unit target/splits do not); fallback is recorded separately and does not verify patient independence.
-
-## Register a server directory
-
-`POST /projects/{id}/sources` with `{"path": "/mnt/pathology/crc", "role": "slides"}`.
-
-The absolute directory must exist and resolve within an explicitly configured root, including any symlinks. The result is a read-only directory reference marked `not-imported`. Listings are bounded and may report `truncated: true`; file content is never returned by this endpoint. With no data roots configured, the picker has no directories to browse.
-
-Future additions should preserve this intent-based boundary: real imports, splits, preflight, execution plans, worker progress/SSE, and artifact/tile reads must validate their own domain references and permissions rather than accept browser-authored scientific state.
-
-## Real import, exploration and protocols (P0.1/P0.2)
-
-All routes below use `/projects/{id}` and the same session boundary. A saved import payload is `{type: "dataset-import", spec: ImportSpec}` with draft kind `import`; a historical protocol payload is `{type: "analysis-protocol", spec: ProtocolSpec}` with kind `experiment`. New work uses [targets and splits](#targets-and-splits) instead; the protocol preview, freeze and preflight routes and the project-scoped `POST /jobs` stub were removed on 2026-09-27 (see [pipeline hardening](PIPELINE_HARDENING.md) 4.1). The strict intent schemas live in `histopilot/schemas/imports.py`, `protocols.py` and `features.py`.
-
-| Method / relative path | Behavior |
+| Prefix (under `/api/v1`) | Purpose |
 | --- | --- |
-| `POST /imports/inspect` | `{source: {path, sheet?}}` or `{source: {filename, contentBase64, sheet?}}`; column/sheet preview, SHA-256 source fingerprint and `columnSummaries` per header: up to four most frequent raw `examples`, `distinctCount` and `missingCount` across the complete table. Frequency ties follow source encounter order. Only null/empty cells count as missing here; declared missing tokens are applied during import preview. |
-| `POST /imports/{draftId}/preview` | `{expectedRevision}`; complete bounded reconciliation, dictionary, findings, counts and `previewHash`. |
-| `POST /imports/{draftId}/freeze` | `{expectedRevision, previewHash, operationId}`; reread/validate and publish immutable dataset; HTTP 201. |
-| `GET /datasets/{datasetId}/records?offset=0&limit=200` | Canonical records page with `total`, `offset`, `limit`. |
-| `POST /datasets/{datasetId}/query` | Field/compare/search/category filters plus pagination; identical server-side population for records, summary, distributions and cross-tab. |
-| `POST /features/preview` | `{datasetId,path,encoderId?,fileSuffix?,idSuffix?,recursive?}`; exact matching, HDF5 header/coverage report. |
-| `POST /features/freeze` | Same feature intent plus `{previewHash,operationId}`; recheck and publish immutable header binding. |
-| `POST /protocols/explore` | `{datasetId,cohortOnly?,targetField?,eligibility?,split?}`; read-only full-population target/cohort counts, sample rows and findings. `cohortOnly: true` validates eligibility only. Live partition counts cover version-4 development splits only; `rules` and `splitMode` are still accepted but ignored. No saved draft, label mapping or feature binding required. |
-| `GET /configurations?kind=protocol` | Frozen protocol configurations; `kind=feature` selects feature bindings and `kind=target-split` target/split versions. |
-| `GET /configurations/{configurationId}` | Checksum-verified immutable configuration envelope. |
+| `/health`, `/session`, `/system`, `/system/compute` | Service status, session token, workspace and runtime readiness, live compute measurements |
+| `/filesystem/roots`, `/filesystem/list`, `/filesystem/directories` | Browse allowed roots and create a folder |
+| `/projects`, `/projects/open`, `/projects/{identity}` | Create, open, read and configure projects |
+| `…/drafts`, `…/imports`, `…/datasets` | Drafts, CSV/XLSX import, frozen datasets, record queries, version labels |
+| `…/protocols/explore`, `…/target-splits` | Cohort exploration and Targets & splits |
+| `…/configurations` | Frozen configurations of any kind |
+| `…/features`, `…/feature-bundles`, `…/feature-packs`, `…/extractions` | Feature attachment, bundles, packing and TRIDENT extraction |
+| `…/mil-experiments` | Development batches: preview, freeze, launch, resume, cancel, results, histories, OOF exports |
+| `…/model-experiments` | Experimental setups and experiments: inputs, freeze, submit, results |
+| `…/predictors` | Predictor registry, builds and refits |
+| `…/evaluation-cohorts`, `…/drafts/{id}/evaluation-preview`, `…/evaluation-freeze` | Test cohorts |
+| `…/evaluation-runs` | Evaluations and inference runs, single and bulk, with case review, inference summaries and exports |
+| `…/clinical-analyses` | Clinical utility reports |
+| `…/interpretations` | Attention studies, slide gallery, slide and patch images |
+| `…/morphology` | Visual QC geometry and slide images |
+| `…/datasets/{dataset_id}/slide-reviews` | Per-slide review notes |
+| `…/cleanup` | Workspace cleanup: archive, Trash and restore |
+| `…/operations` | Study backups (archives) and source folder relinking |
+| `/task-center` | The machine-level task queue |
 
-Configuration envelopes contain `id`, `projectId`, `contentHash`, `manifest`, `createdAt`. The manifest distinguishes `kind:protocol` from `kind:feature` and pins `datasetId`. Protocol manifests retain the full spec, algorithm version, exact memberships, counts and findings. Publication retries use the same operation ID; changed content with that ID is rejected. See [implementation notes](p0-import-protocol-implementation.md) for limits and semantics.
+## Service and projects
 
-Targets and splits use dataset records, eligibility filters, target labels and split settings only. Legacy feature fields in construction requests are accepted and discarded; existing frozen manifests retain their original provenance. Experiments verifies the selected bundle, coverage of every frozen development slide and loading compatibility before training; feature availability never changes the saved cohort.
+| Method and path | Behaviour |
+| --- | --- |
+| `GET /health` | Minimal service status and version. Its legacy `executionEnabled` field is always `false`; runtime readiness is in `GET /system`. |
+| `GET /session` | The session token and the service's `scientificCapabilities`. |
+| `GET /system` | Workspace, storage and package diagnostics, plus worker, tmux and TRIDENT readiness. |
+| `GET /system/compute` | Current CPU, RAM, GPU and VRAM measurements. |
+| `GET /filesystem/roots?purpose=source` | Allowed roots. `purpose=source` (the default) lists only configured data roots; `purpose=storage` adds the application workspace. |
+| `GET /filesystem/list?path=…&purpose=…` | A bounded listing inside those roots. Symlinks are resolved before the root check. Long listings report `truncated: true`. |
+| `POST /filesystem/directories` | Create a folder inside an allowed root (201). Never replaces an existing entry. |
+| `GET /projects` | Recent projects with their availability, the BLCA demo, and `defaultStoragePath`. |
+| `POST /projects` | Create a project in an exact new or empty folder (201). |
+| `POST /projects/open` | Register an existing project folder by `{path}` and return its summary. |
+| `GET /projects/{identity}/workspace` | The project's summary, saved setup and sources. The demo ID `blca-demo-v1` returns the demo. |
+| `PATCH /projects/{identity}` | Replace the optional planning `config`. Send `expectedConfig` to detect concurrent edits. |
+| `POST /projects/{identity}/sources` | Register a read-only `data`, `slides` or `features` folder (201). Nothing is scanned or copied. |
+| `GET /projects/{identity}/storage` | Scientific store schema, journal mode, counts and publication operation states. |
 
-### Explicit patient-ID fallback
+Create a project:
 
-`ImportSpec.patientIdFallback` accepts `"unresolved"` (default) or `"slide_id"`. The UI asks **Patient ID unresolved, fallback to Slide ID** when included slides have missing patient IDs; Continue records the latter choice, and Go back returns to mapping. API clients opt in by saving `patientIdFallback: "slide_id"` in the import draft spec before preview and freeze. A saved opt-in is part of the scientific mapping and immutable dataset provenance.
+```json
+{
+  "name": "Example study",
+  "storagePath": "/path/to/histopilot-workspace/example-study",
+  "slidePath": "/path/to/slides",
+  "config": {"task": "binary_classification", "folds": 5, "seed": 42}
+}
+```
 
-The importer resolves main-table IDs and patient crosswalk/attribute joins first. It then fills only missing `patientId` values with the row's `slideId`. Fallback identifiers are never used to join a patient attribute table. New canonical records include `patientIdSource`:
+Only `name` and `storagePath` are required. The storage folder must be new or empty, with an existing parent inside the workspace or a data root. Optional `dataPath`, `slidePath` and `featurePath` must be existing folders under data roots. `config` holds planning choices only (`task`, `targetColumn`, `positiveLabel`, `seed`, `folds` 2–10, `encoderId`, `milId`); it creates no target, split or run.
+
+## Drafts, imports and datasets
+
+Project routes, relative to `/api/v1/projects/{identity}`:
+
+| Method and path | Behaviour |
+| --- | --- |
+| `GET, POST drafts` | List drafts, or save an unvalidated `import` or `experiment` draft (201). |
+| `GET, PATCH drafts/{draft_id}` | Read a draft, or replace its name and payload when `expectedRevision` matches. Frozen drafts cannot change. Experiment records use the typed `model-experiments` routes instead. |
+| `POST imports/inspect` | Inspect a table by `{source: {path, sheet?}}` or an uploaded `{filename, contentBase64, sheet?}`: sheets, columns, a SHA-256 fingerprint and per-column examples, distinct and missing counts. |
+| `POST imports/{draft_id}/preview` | `{expectedRevision}`: full reconciliation, dictionary, findings, counts and `previewHash`. |
+| `POST imports/{draft_id}/freeze` | `{expectedRevision, previewHash, operationId, versionLabel}`: reread the sources and publish an immutable dataset (201). |
+| `GET datasets`, `GET datasets/{dataset_id}` | Published datasets and one dataset's manifest and artifact fingerprints. Partial publications never appear. |
+| `GET datasets/{dataset_id}/records?offset=0&limit=200` | Canonical records, up to 1,000 per page. |
+| `POST datasets/{dataset_id}/query` | Filter, compare and search records with pagination; the same population feeds records, summaries and cross-tabs. |
+| `PUT datasets/{dataset_id}/label`, `PUT configurations/{configuration_id}/label` | Rename a frozen version: `{tag, note, expectedRevision}`. Labels never change scientific content or hashes. |
+
+A draft payload is intent only. Saving paths, labels or a readiness flag never reads files or validates a dataset. Dataset publication happens only through import preview and freeze, which reread the source; the server never accepts browser-built frozen records.
+
+### Patient identity
+
+`ImportSpec.patientIdFallback` is `"unresolved"` (default) or `"slide_id"`. The UI asks **Patient ID unresolved, fallback to Slide ID** when included slides lack patient IDs. Main-table IDs and patient crosswalks are resolved first; only missing patient IDs are then filled with the slide ID. Each record keeps `patientIdSource`:
 
 | Value | Meaning |
 | --- | --- |
-| `source` | Patient ID supplied in the main table. |
-| `crosswalk` | Patient ID linked through a slide-to-patient crosswalk. |
-| `unresolved` | No patient ID supplied and fallback not selected. |
-| `slide_fallback` | Explicit fallback: `patientId` equals `slideId`, representing one slide group. |
+| `source` | Patient ID supplied in the main table |
+| `crosswalk` | Patient ID linked through a slide-to-patient table |
+| `unresolved` | No patient ID, and fallback not chosen |
+| `slide_fallback` | Fallback chosen: the patient ID equals the slide ID, one group per slide |
 
-Import summaries return `verifiedPatientCount`, `fallbackSlideCount` and `unlinkedSlideCount`. The compatibility field `mappedPatientCount` counts all non-null grouping IDs, including fallback. Here, "verified" distinguishes supplied patient linkage from fallback; the service does not independently authenticate a clinical registry. A fallback-ID collision with a supplied patient ID returns the blocking finding `PATIENT_ID_FALLBACK_COLLISION`. The warning `PATIENT_ID_SLIDE_FALLBACK` records that slides from the same unknown patient could appear in different sets.
-
-Frozen records and mappings preserve this distinction across reloads and service registries. Older frozen records without `patientIdSource` continue to treat a non-null patient ID as supplied linkage. Revising an old dataset to acknowledge fallback creates a new dataset version; it does not rewrite existing records or automatically transfer a feature binding to another dataset ID.
-
-### Live target, cohort and rule exploration
-
-2026-09-27: live partition counts now cover version-4 development splits only. `rules` and `splitMode` are accepted but ignored, and a non-empty split of another version returns the eligibility and target counts with `INVALID_STRATEGY_CONFIG` and `partitions: null`. The rule-mode request and partition fields below describe the earlier behaviour for historical clients.
-
-Example request to `POST /projects/{id}/protocols/explore`, using a real frozen dataset ID in place of the placeholder:
-
-```json
-{
-  "datasetId": "<frozen-dataset-id>",
-  "targetField": "WHO 2022",
-  "eligibility": [],
-  "rules": {
-    "train": [],
-    "val": [],
-    "test": [{"field": "WHO 1973", "op": "eq", "value": "2"}]
-  },
-  "splitMode": "rules"
-}
-```
-
-Only `datasetId` is required. `targetField` is optional; eligibility and all three rule arrays default to empty. `splitMode` accepts `rules` (default), `kfold`, `holdout` or `imported`. Conditions use the same strict `Condition` schema as final protocol validation: `field`, `op` and a typed `value`. Numeric comparisons require JSON numbers; membership requires a scalar array; `exists` requires a boolean; regex requires a bounded pattern string. Unknown fields, invalid regex, nonnumeric values encountered by a numeric comparison, overlapping group rules and exhausted regex time budgets produce findings. All conditions within one rule must hold on the same slide.
-
-Response fields:
-
-| Field | Meaning |
-| --- | --- |
-| `datasetId`, `splitMode` | Echo the selected frozen dataset and assignment strategy. |
-| `valid` | Whether this exploration has no blocking findings; not a freeze or execution-readiness flag. |
-| `dataset` | Counts and sample rows from the complete dataset before eligibility. |
-| `cohort` | Counts and sample rows after eligibility, before label-mapping exclusions; null if eligibility cannot be evaluated. |
-| `target` | Optional `{field, values: [{value, slides}], distinctCount}` for raw labels in the eligible cohort. Up to 20 most frequent values are returned; `distinctCount` covers all observed values, including null. |
-| `partitions` | `train`, `val`, `test`, each with `selection`, `directMatches` and `expanded`; null if grouping/rules cannot be safely evaluated. |
-| `unassigned` | Counts and samples of remaining groups; generated/imported modes leave this pool for final assignment. |
-| `findings` | `{severity, code, message}` entries explaining invalid inputs or acknowledged fallback. |
-
-Every count/sample object (`dataset`, `cohort`, partition `directMatches`/`expanded`, `unassigned`) has this shape:
-
-```text
-totalSlides         Complete-population slide count
-patientCount        Distinct supplied patient IDs; excludes fallback IDs
-fallbackSlideCount  Slides explicitly marked slide_fallback
-groupCount          Supplied patient groups plus fallback slide groups
-unlinkedSlideCount  Slides without a usable grouping identity
-sample              Up to five rows sorted by Slide_ID:
-                    {slideId, patientId, patientIdSource?, attributes}
-```
-
-`directMatches` counts eligible slides that satisfy a partition's conditions. `expanded` includes all eligible slides in the matching groups; it never brings back slides excluded by eligibility. `selection` is `rules` for an explicit condition set, `remaining` for default training in rules mode, or `none` when there is no fixed selection. Default training has no direct rule matches; its expanded count is the actual remaining training cohort.
-
-An invalid eligibility expression returns null cohort/partition counts instead of unfiltered or previous totals. If only partition rules fail, the valid eligible-cohort counts remain available while partition counts are cleared. Explicit training rules that leave groups unassigned return the evaluated counts plus `UNASSIGNED_RULE_GROUPS`, and final freezing remains blocked. Unacknowledged null patient IDs allow dataset/cohort counts but block group-based partition feedback; confirmed fallback groups remain countable with a warning.
-
-The endpoint reads checksum-verified frozen records and never creates or changes drafts or configurations. It shares the final protocol evaluator and cumulative regex budget. Its counts precede missing/unmapped-label exclusion policies and all feature/constraint checks; **Preview & preflight** remains the authoritative final included population. Field examples and declared formats shown beside UI conditions come from the frozen dictionary and dataset query route, independent of the edited rule.
-
-### Version-1 rule-based and generated assignments
-
-The version 1–3 sections describe historical protocol records. The current UI creates [target/split](#targets-and-splits) versions, and Experimental Setup derives version-4 development protocols from their training members. Stored version 1–3 records stay readable; the HTTP routes that previewed and froze them were removed on 2026-09-27, so references below to "the current UI" or "new UI drafts" describe the retired protocol editor.
-
-`ProtocolSpec.split.mode` additionally accepts `"rules"`. In that mode:
-
-- Test and validation rules select whole eligible groups. Empty validation rules create no validation set.
-- Empty training rules assign every eligible group outside test and validation to training.
-- Explicit training rules assign only matching groups. Any remaining unassigned groups block with `UNASSIGNED_RULE_GROUPS`; groups are not silently excluded.
-- Overlapping train/validation/test group selections block. A configured rule that matches nothing also blocks.
-- Each selected seed produces one assignment at fold `0`. Multiple seeds reuse the same rule-based memberships with `RULE_ASSIGNMENTS_REUSED`; fold count and generation ratios do not generate additional partitions.
-- Training is required for minimum constraints. Validation and test are required when their rules are configured. The compatibility fields `minPatientsPerClass` and `minPatientsPerPartition` count grouping units, including explicitly acknowledged fallback slides; the UI calls these minimum groups.
-
-The UI defaults new protocols to **Choose sets with rules — train is the remainder**. Selecting generated k-fold, generated holdout or imported assignments retains their existing semantics: fixed rules reserve groups and the remaining cohort follows that strategy. The backend `SplitSpec` default remains `kfold` for existing API clients that omit `mode`.
-
-API clients using rules mode can omit `folds` and `ratios`; the existing defaults satisfy schema validation. An explicitly supplied `folds` still has the shared 2–10 bound, although rules mode emits only fold `0`. Non-default holdout ratios outside holdout mode remain a blocking `UNUSED_HOLDOUT_RATIOS` finding.
-
-Final protocol summaries expose `includedPatients` (supplied patients only), `includedGroups`, `fallbackSlideCount`, `unlinkedSlideCount` and a `grouping` value of `patient` or `patient_with_slide_fallback`. Partition summaries expose `patients`, `groups`, `fallbackSlides`, `slides` and class counts over groups. Membership rows retain `patientIdSource` when available. A fallback warning persists in the frozen protocol; no patient-leakage guarantee is asserted for unknown patient identities. These changes prepare immutable protocols and do not enable job execution.
-
-### Version-2 cross-validation strategies
-
-The current UI creates `split.version: 2` protocols. Version 1 remains the API default for older clients and retains its existing semantics. In version 2, `mode` is one of:
-
-| Mode | Meaning |
-| --- | --- |
-| `kfold` | Rotate reported test folds; reserve separate internal early-stop validation. |
-| `monte_carlo` | Repeat independent test/development sampling with derived repeat seeds. |
-| `leave_one_domain_out` | Hold out each selected site/cohort in turn; all early-stop data comes from other domains. |
-| `nested_kfold` | Outer reported test folds, inner tuning folds, and separate early-stop subsets. |
-| `held_out` | One fixed test allocation per seed, using fractions, rules, or a predefined partition column. |
-
-Example split object:
-
-```json
-{
-  "version": 2,
-  "mode": "kfold",
-  "folds": 5,
-  "seeds": [42],
-  "stratify": true,
-  "validationFraction": 0.2
-}
-```
-
-`validationFraction` is the early-stopping fraction of the available development/training pool after the reported test allocation, not a fraction of the entire dataset. Modern fraction-based modes use `testFraction` for the whole-cohort test allocation. All assignments use patient groups; acknowledged Slide_ID fallbacks retain their source markers and warnings.
-
-| Field | Use |
-| --- | --- |
-| `folds` | K-fold count; 2–10. |
-| `seeds` | Distinct reproducible base seeds; up to 10. |
-| `stratify` | Balance generated allocations by mapped target class; defaults true. |
-| `validationFraction` | Automatic early-stop fraction of the remaining training pool; defaults 0.2. |
-| `testFraction` | Test fraction for Monte Carlo and fraction-based held-out; defaults 0.2. |
-| `repeats` | Monte Carlo repetitions per seed; 1–100, default 5. |
-| `domainField` | Required site/cohort attribute for domain CV. |
-| `domainPolicy` | `all` or `selected`; selected values are listed in `heldOutDomains`. |
-| `heldOutDomains` | Domains to rotate as reported test; empty with the `all` policy. |
-| `outerFolds`, `innerFolds` | Nested fold counts; 2–10, defaults 5 and 3. |
-| `heldOutSource` | `fractions`, `rules`, or `imported`; applies to `held_out`. |
-| `rules` | Explicit train/val/test conditions for held-out rules only. Empty training rules use the complement; empty validation rules trigger automatic early-stop sampling from training. |
-| `imported` | Explicit partition-column mapping for held-out imported mode. Fold columns are not used here. A supplied validation set is preserved; otherwise validation is sampled from training. |
-
-Version-2 CV modes reject fixed partition rules. Use held-out validation when fixed test/validation/training conditions or existing partition labels define the experiment. A held-out test set is required. The legacy `ratios` object is used only for version-1 holdout behavior.
-
-Each modern membership retains `seed`, `fold`, `slideId`, `patientId`, `patientIdSource` when present, `label`, and `partition`, plus `planId` and `phase`. Plans may additionally include `repeat`, `outerFold`, `innerFold`, or `domain`. Partition-count rows carry the same plan identifiers, train/val/test counts, and a `tune` count for nested inner plans.
-
-`phase` distinguishes ordinary `evaluation`, nested `inner`, and nested `outer` plans. Inner plans use `train`, `val`, and `tune`; the outer test groups do not appear in them. Outer plans use `train`, `val`, and reported `test`. Early-stop `val` and inner model-selection `tune` remain distinct.
-
-Modern summaries include strategy/version information, evaluation and inner plan counts, and planned test/OOF coverage. These are assignment statistics, not generated predictions. Exact plans and role memberships are part of the preview hash and frozen configuration.
-
-The exploration endpoint accepts a partial `split` object so eligible-cohort counts remain available while strategy settings are incomplete. Generated assignments are available from the authoritative saved-draft preview after target mapping. The exploration response does not present fixed-rule counts as final generated CV assignments.
-
-See [split strategy behavior](split-strategies.md) for percentage examples, nesting, checks, and the boundary with MIL experiment settings.
-
-### Version-3 explicit training and test pools
-
-New UI drafts use `split.version: 3`. Every strategy requires `pools` to define training and final test groups before generating CV plans:
-
-```json
-{
-  "version": 3,
-  "mode": "kfold",
-  "folds": 5,
-  "seeds": [42],
-  "validationFraction": 0.15,
-  "pools": {
-    "source": "rules",
-    "trainSelection": "rules",
-    "validationSource": "training_fraction",
-    "rules": {
-      "train": [{"field": "Partition", "op": "eq", "value": "train"}],
-      "test": [{"field": "Partition", "op": "eq", "value": "test"}],
-      "val": []
-    }
-  }
-}
-```
-
-`pools.source` is `rules` or `imported`. Rule mode requires training and test conditions; explicitly selecting `trainSelection: "remaining"` uses the complement of test and fixed validation. Imported mode requires `pools.imported.partitionField` and an explicit `partitionLabels` map. Fold columns are not source-pool definitions. Version-3 top-level `rules`/`imported` are unused and must be empty/absent.
-
-`pools.validationSource` is `training_fraction` (default) or `fixed`. Version-3 protocols default `validationFraction` to 0.15; explicitly saved percentages and the version-1/version-2 default of 0.2 are preserved. Fixed validation requires nonempty validation conditions or actual mapped validation groups. With automatic validation, imported rows mapped to `val` block until the user chooses fixed validation or explicitly remaps those rows. Validation groups never become CV assessment or final test groups.
-
-CV plans carry `pool: "training"` and retain their evaluation/inner/outer phases. Each seed also gets a `phase: "final"`, `pool: "external_test"` plan using the selected training pool and reserved test pool. Held-out mode generates only final plans. Summaries include `poolCounts`, `finalPlanCount`, and CV-only `evaluationPlanCount`/OOF coverage. The exploration endpoint reports source-pool counts before target-label exclusions and generated CV assignments.
-
-New UI target fields start unconfigured; saved drafts may contain unfinished settings, while preview continues to require a valid target contract. Source-value suggestions do not alter that backend validation.
-
-Version-1 and version-2 serialized specs and hashes remain unchanged. See [split strategies](split-strategies.md) for the current UI and validation behavior.
+Import summaries report `verifiedPatientCount`, `fallbackSlideCount` and `unlinkedSlideCount`; `mappedPatientCount` counts every non-null grouping ID, including fallbacks. A fallback that collides with a supplied patient ID blocks with `PATIENT_ID_FALLBACK_COLLISION`, and `PATIENT_ID_SLIDE_FALLBACK` warns that slides of one unknown patient may land in different sets. Patient-level scoring and patient bootstrap intervals refuse fallback groups.
 
 ## Targets and splits
 
-A target/split draft has kind `experiment` and payload `{type: "target-split", spec: TargetSplitSpec}` (`histopilot/schemas/target_splits.py`). The spec holds `datasetId`, `splitUnit` (`slide` or `patient`; omitted in historical specs, which are patient-grouped and keep their hashes), `eligibility`, `split` (`method` `random`, `rules` or `imported`, `testFraction`, `seed`, `stratify`/`stratifyField`, `trainRules`, `testRules`, `testRemaining`, `partitionField`, `trainValues`, `testValues`), `target`, optional `testTarget` (`null` for pure inference) and a deprecated `predictors` list that must stay empty. See [split strategies](split-strategies.md).
+A target/split draft is an `experiment` draft whose payload is `{type: "target-split", spec: TargetSplitSpec}` (`histopilot/schemas/target_splits.py`). The spec holds `datasetId`, `splitUnit` (`slide` or `patient`), `eligibility`, `split` (method `random`, `rules` or `imported` with its settings), `target` and an optional `testTarget` (`null` for pure inference). See [split units and grouping](methods.md#split-units-and-grouping).
 
-| Method / relative path | Behavior |
+| Method and path | Behaviour |
 | --- | --- |
-| `POST /target-splits/partition-preview` | Live partition counts and distributions for an unsaved spec; accepts an unfinished target and reports target findings in place. |
-| `POST /target-splits/{draftId}/preview` | `{expectedRevision}`; spec, summary, exact memberships, partitions, findings, `canFreeze` and `previewHash`. |
-| `POST /target-splits/{draftId}/freeze` | `{expectedRevision,previewHash,operationId,versionLabel}`; publishes the version (HTTP 201), then derives its testing cohort. The response carries `testCohort`; if the version was published but the cohort could not be derived, it adds `testCohortError: {code, message}` instead of failing. Retries with the same operation ID replay the publication. |
-| `GET /target-splits/{configurationId}` | The frozen version plus `evaluationCohortId` (null when the cohort is in Trash) and `testCohort: {required, id, state}`. Side-effect free: reading never creates the cohort. |
-| `POST /target-splits/{configurationId}/test-cohort` | Idempotently derives the evaluation (labeled) or inference (no testing target) cohort; returns `{evaluationCohortId, cohort}`. |
+| `POST protocols/explore` | Read-only eligibility and raw target counts for a frozen dataset, and live development partition counts for a version-4 split. Accepts an unfinished spec. |
+| `POST target-splits/partition-preview` | Live training/testing counts and distributions for an unsaved spec. Target problems are reported in place. |
+| `POST target-splits/{draft_id}/preview` | `{expectedRevision}`: exact memberships, distributions, findings, `canFreeze` and `previewHash`. |
+| `POST target-splits/{draft_id}/freeze` | `{expectedRevision, previewHash, operationId, versionLabel}`: publish the version (201), then derive its test cohort. The response carries `testCohort`; if the cohort could not be derived, it adds `testCohortError` instead of failing. |
+| `GET target-splits/{configuration_id}` | The frozen version, `evaluationCohortId` and `testCohort: {required, id, state}`. Reading never creates the cohort. |
+| `POST target-splits/{configuration_id}/test-cohort` | Derive the evaluation (labeled) or inference (no testing target) cohort, idempotently. |
+| `GET configurations?kind=…`, `GET configurations/{configuration_id}` | Frozen configurations (`target-split`, `experiment-setup`, `feature`, `protocol`) and one checksum-verified envelope. |
 
-## Feature extraction jobs
+Historical protocol records from before Targets & splits (split versions 1–3) stay readable, but new work accepts only version 4. `protocols/explore` still accepts the old `rules` and `splitMode` fields; `rules` is ignored, and a non-empty split of another version returns eligibility and target counts with `INVALID_STRATEGY_CONFIG` and `partitions: null`.
 
-| Method / relative path | Behavior |
+## Features and extraction
+
+| Method and path | Behaviour |
 | --- | --- |
-| `GET /extractions/catalog` | Encoder and option catalog, the default output folder and the TRIDENT runtime (`runtime.searchedRoots`, and `runtime.otherCheckouts` when no TRIDENT checkout is found). |
-| `POST /extractions/preview` | Resolved command, slides and findings, plus `estimatedBytes` and `availableBytes`. Errors (`SLIDE_READER_UNAVAILABLE`, `INSUFFICIENT_SPACE`, …) block `canRun`; warnings (`LOW_DISK_SPACE`, `SINGLE_GPU_TASK`, …) do not. |
-| `POST /extractions` | Submit a previewed extraction (HTTP 201) as a Task Center extraction task plus a dependent validation task. |
-| `GET /extractions`, `GET /extractions/{job}` | Jobs with `executor` (`task-center` or `tmux`), `task`, `tasks.extraction`/`tasks.validation` and `ownerKey`. |
-| `POST /extractions/{job}/cancel` | Cancel the job. |
-| `POST /extractions/{job}/resume` | Task Center jobs only: requeue TRIDENT on the same output (finished slides are skipped, dead writers' locks are cleared first), which re-arms validation. Jobs from before the Task Center return 409 `EXTRACTION_RESUME_UNSUPPORTED` and resume through a new preview on the same output. |
+| `POST features/preview`, `POST features/freeze` | Attach existing HDF5 features: exact slide matching and a header/coverage report, then publish the binding (with `versionLabel`). `datasetId` is optional for a dataset-independent store. |
+| `GET features/{feature_id}/validation`, `GET, PUT features/{feature_id}/pack-selection` | Validation evidence and the default pack for a feature source. |
+| `GET feature-bundles`, `POST feature-bundles/preview`, `POST feature-bundles/freeze`, `GET feature-bundles/{bundle_id}` | Verified feature bundles. |
+| `GET, POST feature-packs`, `POST feature-packs/preview`, `GET feature-packs/{job_id}`, `POST feature-packs/{job_id}/cancel`, `GET feature-packs/artifacts/{artifact_id}` | Validation and packing jobs, run as Task Center tasks, and their pack artifacts. |
+| `GET extractions/catalog` | Encoders, options, the default output folder and the TRIDENT runtime, including `searchedRoots` and `otherCheckouts` when no checkout is found. |
+| `POST extractions/preview` | The resolved command and slide list, findings, `estimatedBytes` and `availableBytes`. Errors such as `SLIDE_READER_UNAVAILABLE` or `INSUFFICIENT_SPACE` block `canRun`; warnings such as `LOW_DISK_SPACE` or `SINGLE_GPU_TASK` do not. |
+| `POST extractions` | Submit a previewed extraction (201) as an extraction task plus a dependent validation task. |
+| `GET extractions`, `GET extractions/{job_id}` | Jobs with `executor`, `task`, `tasks.extraction`, `tasks.validation` and `ownerKey`. |
+| `POST extractions/{job_id}/cancel`, `POST extractions/{job_id}/resume` | Cancel, or requeue TRIDENT on the same output. Finished slides are skipped. Jobs from before the Task Center return 409 `EXTRACTION_RESUME_UNSUPPORTED`; resume those through a new preview on the same output folder. |
+
+## Experiments and development batches
+
+| Method and path | Behaviour |
+| --- | --- |
+| `GET model-experiments?state=active&summary=…`, `POST model-experiments` | List (`state` is `active`, `archived`, `trashed` or `all`) or create an experiment (201). |
+| `GET model-experiments/headlines` | One seed-mean headline per batch, for the list page. |
+| `GET, PATCH model-experiments/{experiment_id}` | Read or update an experiment's editable fields. |
+| `POST model-experiments/{experiment_id}/setup-inputs`, `/freeze-setup` | Save and check setup inputs, then freeze the setup (201). |
+| `POST model-experiments/{experiment_id}/submit` | Start the frozen experiment (202): enqueue its fold, collection and predictor tasks. |
+| `GET model-experiments/{experiment_id}/results` | The Results summary: per fold, per seed, seed average with intervals, seed ensemble and batch comparisons. See [methods](methods.md#cross-validated-results). |
+| `POST model-experiments/{experiment_id}/predictors/resume`, `/predictors/cancel` | Resume or cancel automatic predictor work (202). |
+| `POST mil-experiments/preview`, `GET mil-experiments/runtime` | Model input compatibility and the training runtime probe. |
+| `POST mil-experiments/batches/preview`, `/batches/freeze`, `GET mil-experiments/batches` | Development batches. |
+| `GET mil-experiments/batches/{batch_id}/execution`, `/results`, `/runs/{run_id}/history`, `/resources/history` | Progress, results, one run's epoch history and recorded resource history. |
+| `GET mil-experiments/batches/{batch_id}/oof/{candidate_id}/{training_seed}/{split_seed}/{unit}.csv` | Out-of-fold predictions of one configuration and seed pair, per slide or patient. |
+| `POST mil-experiments/batches/{batch_id}/launch`, `/resume`, `/cancel` | Batch controls (202). An experiment's batches are launched by `submit`; use `resume` to continue one. |
+
+## Predictors, evaluations and inference
+
+| Method and path | Behaviour |
+| --- | --- |
+| `GET predictors`, `GET predictors/choices`, `GET predictors/{predictor_id}` | Frozen predictors and the groups that can produce one. |
+| `POST predictors/preview`, `POST predictors/freeze`, `POST predictors/builds/preview`, `POST predictors/builds`, `GET predictors/builds/{operation_id}` | Build ensemble predictors, singly or in bulk. |
+| `GET, POST predictors/refits`, `GET predictors/refits/{refit_id}/execution`, `POST …/launch`, `…/resume`, `…/cancel`, `…/publish` | Refit plans, their execution and publication. |
+| `GET evaluation-cohorts`, `GET evaluation-cohorts/{configuration_id}` | Test cohorts. Created through `drafts/{draft_id}/evaluation-preview` and `evaluation-freeze`. |
+| `GET, POST evaluation-runs`, `POST evaluation-runs/preview`, `GET evaluation-runs/{evaluation_id}` | Evaluations and inference runs of one predictor on one cohort. |
+| `GET evaluation-runs/{evaluation_id}/execution`, `POST …/launch`, `…/resume`, `…/cancel`, `GET …/artifacts/{filename}` | Run control and checksummed artifacts. |
+| `GET evaluation-runs/bulk`, `POST evaluation-runs/bulk/preview`, `POST evaluation-runs/bulk`, `GET evaluation-runs/bulk/{batch_id}`, `POST …/cancel` | Evaluate or apply many predictors on one cohort. The reviewed predictor list is fixed at submission. |
+| `POST evaluation-runs/compare` | Paired comparison of two labeled runs. Inference runs return `COMPARISON_REQUIRES_LABELS`. |
+| `POST evaluation-runs/{evaluation_id}/cases/query`, `…/cases/export` | Case review and its CSV export. |
+
+An inference cohort is a test cohort with `"purpose": "inference"` and `"target": null`. Inference runs use the same routes as evaluations; they carry `purpose: inference`, read no labels and compute no metrics. Their artifacts are `predictions.json`, `summary.json`, `slide-predictions.csv` and `patient-predictions.csv`; there is no `metrics.json`.
+
+| Method and path | Behaviour |
+| --- | --- |
+| `POST evaluation-runs/{evaluation_id}/inference/summary` | Label-free summary. Body: `unit` (`selected`, `slide` or `patient`), optional `attribute` and optional `comparisonId` (another run on the same cohort). Returns predicted-class counts, confidence and margin histograms, a binary threshold sweep, fold-member agreement, the development-patient split, an attribute cross-tab and run agreement with Cohen's κ. |
+| `POST evaluation-runs/{evaluation_id}/inference/export` | CSV with one row per slide or patient: predicted class, probabilities, confidence, margin, member agreement, `Development_patient`, the chosen frozen attributes (`null` for all, `[]` for none) and the predictions SHA-256. |
+| `POST evaluation-runs/{evaluation_id}/attention` | Queue attention maps for 1–32 cohort slides through the run's frozen features (202). Requires `operationId`; completed or running studies are reused. |
+
+`cases/query` accepts `sort` (`confidence_desc`, `confidence_asc`, `margin_asc`, `agreement_asc`), `minConfidence`, `maxConfidence`, `maxMargin`, `memberDisagreement`, `developmentPatients` (`all`, `shared`, `new`), outcome and class filters, attribute filters, search and paging of up to 100 rows.
+
+## Clinical utility and interpretation
+
+| Method and path | Behaviour |
+| --- | --- |
+| `GET clinical-analyses`, `POST clinical-analyses/preview`, `POST clinical-analyses`, `GET clinical-analyses/{analysis_id}`, `GET …/artifacts/{filename}` | Clinical utility reports from completed evaluations. |
+| `GET interpretations`, `GET interpretations/sources`, `GET interpretations/datasets` | Attention studies and their selectable inputs. |
+| `POST interpretations/gallery`, `GET interpretations/gallery/thumbnail` | Browse a dataset's slide folder. |
+| `POST interpretations/visualize` | Prepare attention for selected slides (202), reusing completed and running studies. |
+| `POST interpretations/preview`, `POST interpretations`, `GET interpretations/{interpretation_id}`, `…/execution`, `POST …/launch`, `…/resume`, `…/cancel`, `GET …/artifacts/{filename}` | One attention study and its execution. |
+| `POST interpretations/slide-inspection`, `GET interpretations/{interpretation_id}/slides/{slide_id}/thumbnail`, `…/region`, `…/attention`, `…/attention/top`, `…/patches/{patch_index}/image` | Slide views, attention arrays, top patches and patch crops. |
+
+## Slide viewing
+
+| Method and path | Behaviour |
+| --- | --- |
+| `GET morphology/quality?datasetId=…&slideId=…` | Level-0 geometry and a `sourceFingerprint` (64 lowercase hex characters) of the resolved slide file. Optional `featureBundleId` adds patch coverage. |
+| `GET morphology/image?datasetId=…&slideId=…&sourceFingerprint=…&max_size=1024&x=…&y=…&width=…&height=…` | A lossless PNG. Coordinates are level-0 pixels; give all four or none (for an overview). `max_size` is 64–2048, default 1024. |
+| `GET morphology/patch-region?…&featureBundleId=…&patchIndex=…` | One feature patch's exact level-0 bounds, clipped to the slide. |
+| `GET morphology/patch?…&featureBundleId=…&patchIndex=…` | That patch as a PNG, at most 512 pixels on its longer side. |
+| `GET morphology/slides`, `POST morphology/index`, `POST morphology/neighbors` | Slide listing, a feature index and nearest-neighbour search. |
+| `GET, PUT datasets/{dataset_id}/slide-reviews/{slide_id}` | Per-slide review notes. |
+
+Send the fingerprint from `quality` with every image request. If the file changed, the route returns 409 `MORPHOLOGY_SLIDE_CHANGED`, so images from different file versions never mix. Native readers run in at most two isolated child processes, with a 20-second deadline per operation. Reader errors are `SLIDE_VIEWER_UNAVAILABLE` or `SLIDE_READER_BUSY` (503), `SLIDE_READER_TIMEOUT` (504) and `SLIDE_READER_FAILED` (422). An SDPC file is never decoded as a full raster.
+
+## Cleanup and study backups
+
+| Method and path | Behaviour |
+| --- | --- |
+| `GET cleanup`, `POST cleanup/preview`, `POST cleanup/apply`, `POST cleanup/cancel` | The cleanup inventory; preview an archive, Trash or restore selection with its dependencies and review hash; apply it; or cancel the jobs of a record (202). |
+| `GET operations`, `GET operations/sources`, `POST operations/sources/relink` | Operations inventory, registered source folders and their availability, and relinking a moved folder. |
+| `GET, POST operations/archives`, `GET operations/archives/{job_id}`, `POST …/cancel`, `POST …/retry` | Export, verify and restore study archives as Task Center tasks. Retry requeues the same task. |
 
 ## Task Center
 
-Machine-level queue shared by every workspace of this OS user; routes are under `/api/v1/task-center` (not project-scoped). Reads use only the task store and the workspace registry, never a project lock. Actions take `{operationId}` so a retried request is applied once. See the [Task Center design](TASK_CENTER_DESIGN.md#85-stage-pages-ui-and-api).
+These routes are machine-level, not project-scoped: `/api/v1/task-center/…`. Reads use only the task store and never take a project lock. Every action body requires `{operationId}`, so a repeated request is applied once. See [Task Center](task-center.md) for the states and rules.
 
-| Method / path | Behavior |
+| Method and path | Behaviour |
 | --- | --- |
-| `GET /task-center/summary` | Runner, capacity, task counts, ETA, foreign leases and failures of the last 24 h. |
-| `GET /task-center/snapshot` | Summary, running tasks and live owners in one read; the Task Center page polls it. |
-| `GET /task-center/rollup` | A stage page's run status. Scope with `owner`, `ownerKind`+`ownerId`, `recordKind`+`recordId` or `recordIds` (comma-separated), `project` (optionally `kinds`), or nothing for the whole machine. Returns `state` (`not-started`, `queued`, `running`, `held`, `stopping`, `attention`, `runner-stopped`, `completed`, `cancelled`), counts, progress, queue position, waiting reason, ETA, last failure and a deep link `href`. |
-| `GET /task-center/history` | Finished tasks grouped by owner, newest first; `project`, `kind`, `state`, `limit` (≤ 200), `offset`. |
-| `GET /task-center/tasks` | Tasks filtered by `state`, `owner`, `project`, `kind`; `limit` (≤ 2000); `offset` adds paging and `hasMore`. |
-| `GET /task-center/tasks/{id}` | One task: command, working folder, filtered environment, paths, progress, measured resources, labels, dependencies and dependents, attempts, events, log tail and a plain-language `failure`. |
-| `GET /task-center/tasks/{id}/log` | The whole log as text, streamed; `download=true` returns it as a file. |
-| `POST /task-center/tasks/{id}/cancel`, `/retry` | Cancel or retry one task. |
-| `GET /task-center/owners` | Owners (experiments, batches, records); `scope=live` (default) or `all`. |
-| `GET /task-center/owners/{key}` | One owner: task counts, queue position, ETA, waiting reason, back link and the actions it allows. Its tasks come from `GET /task-center/tasks?owner={key}`. |
-| `POST /task-center/owners/{key}/{action}` | `hold`, `release`, `stop` (stop and hold), `cancel`, `retry`, or `move` with `position` `top`, `up`, `down` or `bottom`. |
-| `GET /task-center/capacity` | Settings, effective limits and the parallelism suggestion with its breakdown. |
-| `PUT /task-center/capacity` | Change `parallelGpuTasks`, per-GPU `gpuSlots`, `cpuTaskSlots`, `paused`, `autoResume` or `defaults` (`cpuThreadsPerRun`, `dataLoaderWorkers`). |
-| `POST /task-center/runner/start`, `/runner/restart` | Start the runner, or restart it (for example after its code changed). |
-
-## Inference runs (unlabeled cohorts)
-
-An inference cohort is a test cohort with `"purpose": "inference"` and `"target": null`. `"review"` is accepted as its earlier name. Runs are created, launched and resumed with the `evaluation-runs` endpoints, as evaluations are. Their manifests carry `"purpose": "inference"`, no label analysis policy, and the development overlap disclosed at review. Runs never compute metrics; paired metric comparison returns `COMPARISON_REQUIRES_LABELS`.
-
-| Method / path | Behavior |
-| --- | --- |
-| `POST /projects/{id}/evaluation-runs/{run}/inference/summary` | Label-free summary of verified `predictions.json`. Body: `unit` (`selected`, `slide`, `patient`), optional `attribute` (a frozen dictionary key) and `comparisonId` (another run on the same cohort, unit and classes). Returns predicted-class counts, confidence and margin histograms, binary threshold sweep, fold-member agreement, development-patient split, attribute cross-tab and run agreement (agreement, Cohen's κ, matrix). |
-| `POST /projects/{id}/evaluation-runs/{run}/inference/export` | CSV, one row per slide or patient. Columns: predicted class, per-class probabilities, confidence, margin, member agreement, `Development_patient` and frozen attributes (`attributes: null` for all, `[]` for none), plus the predictions SHA-256. |
-| `POST /projects/{id}/evaluation-runs/{run}/attention` | Queue attention for 1–32 cohort slide IDs through the run's frozen feature bundle, pack and dataset slide folder. HTTP 202. Reuses completed or running studies; the `operationId` makes retries idempotent. |
-| `POST /projects/{id}/evaluation-runs/{run}/cases/query` | Case review. It adds `sort` (`confidence_desc`, `confidence_asc`, `margin_asc`, `agreement_asc`), `maxConfidence`, `developmentPatients` (`all`, `shared`, `new`) and `memberDisagreement`. Items report `margin`, `memberAgreement` and `developmentPatient`. |
-
-Inference artifacts are `predictions.json`, `summary.json`, `slide-predictions.csv` and `patient-predictions.csv`. `predictions.json` includes `memberProbabilities` for multi-member ensembles while retained member evidence ≤ 1,000,000 values (including optional `memberLogProbabilities` for patient mean-logit aggregation); `summary.json` states `memberProbabilities` as `recorded`, `omitted_for_size` or `single_model`. `metrics.json` is not produced. See [inference mode](INFERENCE_MODE.md).
-
-Slide inspection and image/patch endpoints use isolated native reader processes. Returned geometry reports `backend: "opensdpc"`, `"openslide"`, or `"pillow"` and `coordinateSpace: "level0"`. OpenSlide and bounded raster fallback share the same two-worker limit, native-operation deadline and crash isolation as OpenSDPC. Reader errors retain structured status: `SLIDE_VIEWER_UNAVAILABLE` / `SLIDE_READER_BUSY` (503), `SLIDE_READER_TIMEOUT` (504), and `SLIDE_READER_FAILED` (422). The service never falls back to decoding SDPC as a full raster.
-
-
-## Prepared slide viewing
-
-The React viewer prepares bounded whole-slide zoom levels through the existing authenticated region APIs; preparation does not create a new dataset or modify the source slide.
-
-- `GET /projects/{id}/morphology/quality?datasetId=...&slideId=...` returns level-0 geometry and a `sourceFingerprint` (64 lowercase hexadecimal characters) derived from the resolved slide path and file metadata.
-- `GET /projects/{id}/morphology/image?datasetId=...&slideId=...&sourceFingerprint=...&max_size=512&x=...&y=...&width=...&height=...` returns a lossless PNG region. Coordinates are level-0 pixels; supply all four coordinates or omit all four for an overview. `max_size` accepts 64–2048.
-- `GET /projects/{id}/morphology/patch-region?datasetId=...&slideId=...&featureBundleId=...&patchIndex=...&sourceFingerprint=...` returns the selected feature patch's exact level-0 bounds, clipped to the slide edge. `patchIndex` is a nonnegative integer.
-- `GET /projects/{id}/morphology/patch?datasetId=...&slideId=...&featureBundleId=...&patchIndex=...&sourceFingerprint=...` returns that patch as a lossless PNG, bounded to 512 pixels on its longest side.
-
-New viewers pass the geometry fingerprint for overview, detail, patch bounds and patch images. Each route accepts the optional `sourceFingerprint` query parameter as exactly 64 lowercase hexadecimal characters; invalid values return HTTP 422. A changed source returns HTTP 409 with `MORPHOLOGY_SLIDE_CHANGED`, preventing images from different file versions from sharing a prepared view. Patch geometry is checked before and after reading the slide and feature coordinates. A patch-image request pins geometry and pixels to one source identity even when an older client omits the parameter. Omitting it does not protect separate requests from an intervening legacy-file replacement; clients should use the fingerprint from `/quality`. Existing frozen-dataset inventory checks still apply and cannot be bypassed by supplying a fresh fingerprint. Image responses remain `private, no-store`; the viewer owns a bounded in-memory image cache. The server also retains bounded lossless encoded results, with source checks on every access and identical concurrent renders deduplicated; authentication and frozen-source validation still run before rendering or reuse.
-
-OpenSlide handles and OpenSDPC readers are reused inside one bounded pool of isolated processes. The 20-second native-operation deadline includes opening the file and reading the image; a hung or crashed child is retired so the next request can recover. Temporary reader-capacity errors preserve valid browser tiles and offer retry; changed-source errors invalidate the prepared view. Reloading a legacy slide obtains fresh geometry and a new fingerprint; a changed image in a modern frozen inventory still requires a new dataset version. See [slide viewer performance](SLIDE_VIEWER_PERFORMANCE.md) for preparation limits, reader lifetimes, measurements and verification.
+| `GET summary` | Runner state, capacity, task counts, time estimate, foreign leases and failures of the last 24 hours. |
+| `GET snapshot` | Summary, running tasks and live owners in one read. The page polls this. |
+| `GET rollup` | One stage's run status. Scope with `owner`, `ownerKind` + `ownerId`, `recordKind` + `recordId`, `recordIds` or `batchIds` (comma-separated), `project` (optionally with `kinds`), or nothing for the whole machine. Returns `state` (`not-started`, `queued`, `running`, `held`, `stopping`, `attention`, `runner-stopped`, `completed`, `cancelled`), counts, progress, queue position, waiting reason, estimate, last failure and a deep link. |
+| `GET history` | Finished tasks grouped by owner, newest first: `project`, `kind`, `state`, `limit` (1–200, default 25), `offset`. |
+| `GET tasks` | Tasks filtered by `state`, `owner`, `project`, `kind`; `limit` 1–2000 (default 200); `offset` adds paging and `hasMore`. |
+| `GET tasks/{task_id}` | One task: command, working folder, filtered environment, paths, progress, measurements, labels, dependencies, attempts, events, log tail and a plain-language `failure`. |
+| `GET tasks/{task_id}/log` | The whole log, streamed; `download=true` returns a file. |
+| `POST tasks/{task_id}/cancel`, `POST tasks/{task_id}/retry` | Cancel or retry one task. |
+| `GET owners?scope=live`, `GET owners/{key}` | Owners (experiments, batches and records), live or all, and one owner's counts, position, estimate, waiting reason and allowed actions. |
+| `POST owners/{key}/{action}` | `hold`, `release`, `stop` (stop and hold), `cancel`, `retry`, or `move` with `position` `top`, `up`, `down` or `bottom`. |
+| `GET capacity`, `PUT capacity` | Settings, effective limits and the parallelism suggestion. `PUT` accepts `parallelGpuTasks` (1–16), per-GPU `gpuSlots`, `cpuTaskSlots` (1–128), `paused`, `autoResume` and `defaults` (`cpuThreadsPerRun` 1–32, `dataLoaderWorkers` 0–16). |
+| `POST runner/start`, `POST runner/restart` | Start the runner, or restart it. |
