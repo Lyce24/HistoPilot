@@ -69,3 +69,9 @@
 @media (max-width: 560px) { .inference-class-bar { grid-template-columns: minmax(4rem, max-content) minmax(4rem, 1fr); grid-template-areas: "name track" "value value" "note note"; } }
 .inference-inline-select { margin-left: .3rem; padding: 0 .2rem; font: inherit; color: inherit; border: 1px solid var(--theme-line); border-radius: 6px; background: var(--theme-surface); }
 .inference-library-mix { font-variant-numeric: tabular-nums; }
+.inference-figure-controls { margin: 0 0 .5rem; }
+.inference-view-toggle { display: inline-flex; border: 1px solid var(--theme-line); border-radius: 8px; overflow: hidden; }
+.inference-view-toggle button { padding: .25rem .65rem; font: inherit; font-size: .85rem; color: var(--theme-muted); background: var(--theme-surface); border: 0; cursor: pointer; }
+.inference-view-toggle button + button { border-left: 1px solid var(--theme-line); }
+.inference-view-toggle button[aria-pressed="true"] { color: var(--theme-ink); background: var(--theme-next-soft); font-weight: 600; }
+.inference-view-toggle button:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: -2px; }

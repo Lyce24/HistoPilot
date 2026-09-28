@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import type { InferenceComparison, InferencePredictedClass, InferenceUnitSummary } from '../api/inference';
 import { decimal, percent } from '../lib/inference';
 import './InferenceResults.css';
@@ -38,9 +38,11 @@ interface HoverSegment { bin: number; series: number }
  * Unit-interval histogram. Several series stack in class order with a 2px surface
  * gap; the table view carries every value for readers who cannot rely on hover.
  */
-export function Histogram({ title, description, edges, series, xLabel, colorOffset = 0, marker }: {
+export function Histogram({ title, description, edges, series, xLabel, colorOffset = 0, marker, controls }: {
   title: string; description: string; edges: number[]; series: HistogramSeries[]; xLabel: string;
   colorOffset?: number; marker?: { value: number; label: string };
+  /** Shown beside the caption, for example a switch to another view of the same records. */
+  controls?: ReactNode;
 }) {
   const id = useId();
   const [hover, setHover] = useState<HoverSegment | null>(null);
@@ -58,6 +60,7 @@ export function Histogram({ title, description, edges, series, xLabel, colorOffs
   const total = totals.reduce((sum, value) => sum + value, 0);
   return <figure className="inference-figure inference-histogram" aria-labelledby={`${id}-title`}>
     <figcaption id={`${id}-title`}>{title}</figcaption>
+    {controls ? <div className="inference-figure-controls">{controls}</div> : null}
     <p className="muted">{description}</p>
     {series.length > 1 ? <ClassLegend classes={series.map((item) => item.label)} /> : null}
     <div className="inference-plot">
@@ -127,11 +130,14 @@ export function CompositionTable({ caption, groupLabel, rows, classes, unit }: {
 
 /** Predicted positives across thresholds; the frozen threshold row is marked. */
 export function ThresholdTable({ binary, total }: { binary: NonNullable<InferenceUnitSummary['binary']>; total: number }) {
-  const rows = binary.sweep.filter((item) => Math.abs(item.threshold * 10 - Math.round(item.threshold * 10)) < 1e-9 || item.threshold === binary.threshold);
+  // Every computed row: 0.05 steps plus the frozen threshold. Steps print with two decimals so the
+  // column lines up; the frozen threshold prints exactly as saved.
+  const rows = binary.sweep;
+  const shown = (value: number) => Math.abs(value * 20 - Math.round(value * 20)) < 1e-9 ? value.toFixed(2) : String(value);
   return <figure className="inference-figure">
     <figcaption>Predicted {binary.positiveClass} across decision thresholds</figcaption>
     <p className="muted">The frozen threshold is {binary.threshold}. {binary.nearThreshold.map((item) => `${item.count.toLocaleString()} within ±${item.band}`).join(' · ')} of it. Other thresholds are descriptive; the saved decisions never change.</p>
-    <div className="table-wrap"><table className="chain-table inference-threshold"><thead><tr><th scope="col">Threshold</th><th scope="col">Predicted {binary.positiveClass}</th><th scope="col">Share</th></tr></thead><tbody>{rows.map((item) => <tr key={item.threshold} className={item.threshold === binary.threshold ? 'is-frozen' : undefined}><th scope="row">{item.threshold}{item.threshold === binary.threshold ? ' · frozen' : ''}</th><td>{item.positive.toLocaleString()}</td><td><span className="inference-inline-bar" aria-hidden="true"><span style={{ width: `${total ? (item.positive / total) * 100 : 0}%`, background: seriesVar(1) }} /></span>{percent(total ? item.positive / total : null)}</td></tr>)}</tbody></table></div>
+    <div className="table-wrap"><table className="chain-table inference-threshold"><thead><tr><th scope="col">Threshold</th><th scope="col">Predicted {binary.positiveClass}</th><th scope="col">Share</th></tr></thead><tbody>{rows.map((item) => <tr key={item.threshold} className={item.threshold === binary.threshold ? 'is-frozen' : undefined}><th scope="row">{shown(item.threshold)}{item.threshold === binary.threshold ? ' · frozen' : ''}</th><td>{item.positive.toLocaleString()}</td><td><span className="inference-inline-bar" aria-hidden="true"><span style={{ width: `${total ? (item.positive / total) * 100 : 0}%`, background: seriesVar(1) }} /></span>{percent(total ? item.positive / total : null)}</td></tr>)}</tbody></table></div>
   </figure>;
 }
 

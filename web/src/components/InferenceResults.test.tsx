@@ -4,7 +4,7 @@ import type { CasePage, ReviewedCase } from '../api/caseReview';
 import type { InferenceSummary } from '../api/inference';
 import { attentionSlides, CaseDetail, MAX_ATTENTION_SLIDES } from './CaseReviewWorkspace';
 import { ComparisonMatrix, CompositionTable, Histogram, PredictedClassBars, ThresholdTable } from './InferenceCharts';
-import { InferenceOverview } from './InferenceResults';
+import { DistributionFigure, InferenceOverview, marginNote } from './InferenceResults';
 
 const edges = Array.from({ length: 21 }, (_, index) => index / 20);
 const bins = (entries: Record<number, number>) => Array.from({ length: 20 }, (_, index) => entries[index] ?? 0);
@@ -63,6 +63,33 @@ describe('inference results', () => {
     expect(renderToStaticMarkup(<InferenceOverview summary={binary} memberNote="Single model: a refit has no fold members" />)).toContain('a refit has no fold members');
     expect(html).not.toContain('From development patients');
     const table = renderToStaticMarkup(<ThresholdTable binary={binary.binary!} total={5} />);
+    expect(table.match(/<tr class="is-frozen">/g)).toHaveLength(1);
+    // Binary targets can switch to the margin, which runs from the frozen threshold.
+    expect(html).toContain('aria-label="Distribution to show"');
+    expect(html).toContain('aria-pressed="true">P(tumor)</button>');
+    expect(html).toContain('aria-pressed="false">Decision margin</button>');
+    const margin = renderToStaticMarkup(<DistributionFigure summary={binary} view="margin" onViewChange={() => {}} />);
+    expect(margin).toContain('Decision margin by predicted class');
+    expect(margin).toContain('frozen threshold 0.35');
+    expect(margin).toContain('aria-pressed="true">Decision margin</button>');
+    expect(margin).not.toContain('Probability of tumor');
+  });
+
+  it('describes the margin for each kind of target', () => {
+    expect(marginNote({ binary: summary({ binary: { positiveClass: 'tumor', threshold: 0.35, positiveProbability: { edges, counts: bins({}) }, sweep: [], nearThreshold: [] } }).binary })).toContain('How far P(tumor) lies from the frozen threshold 0.35');
+    expect(marginNote({})).toContain('predicted class minus the runner-up');
+    // Non-binary targets show only the margin, without a switch.
+    const multiclass = renderToStaticMarkup(<DistributionFigure summary={summary()} view="probability" onViewChange={() => {}} />);
+    expect(multiclass).toContain('Decision margin by predicted class');
+    expect(multiclass).not.toContain('Distribution to show');
+  });
+
+  it('lists every computed threshold row and marks the frozen one', () => {
+    const sweep = [...Array.from({ length: 19 }, (_, step) => Math.round(0.05 * (step + 1) * 100) / 100), 0.37].sort((a, b) => a - b).map((threshold) => ({ threshold, positive: Math.round((1 - threshold) * 10) }));
+    const table = renderToStaticMarkup(<ThresholdTable binary={{ positiveClass: 'tumor', threshold: 0.37, positiveProbability: { edges, counts: bins({}) }, sweep, nearThreshold: [{ band: 0.05, count: 1 }] }} total={10} />);
+    expect(table.match(/<tr[ >]/g)).toHaveLength(21);
+    for (const threshold of ['0.05', '0.10', '0.15', '0.35', '0.95']) expect(table).toContain(`<th scope="row">${threshold}</th>`);
+    expect(table).toContain('0.37 · frozen');
     expect(table.match(/<tr class="is-frozen">/g)).toHaveLength(1);
   });
 
