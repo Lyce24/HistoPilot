@@ -22,10 +22,10 @@ from histopilot.workers.training_process import read_json
 __all__ = ["execution"]
 
 
-@pytest.fixture
-def exports(execution):
-    service, frozen, _, _ = execution
+def _write_exports(service, frozen, split_unit=None):
     plan, state = synthetic_results(service, frozen)
+    if split_unit:
+        plan["splitUnit"] = split_unit
     folder = service._folder(frozen["id"])
     write_json(folder / "plan.json", plan)
     records = []
@@ -44,16 +44,23 @@ def exports(execution):
     training_seed = plan["runs"][0]["trainingSeed"]
     split_seed = plan["splitPlans"][0]["seed"]
     key = hashlib.sha256(f"{candidate['id']}/{training_seed}/{split_seed}".encode()).hexdigest()[:24]
+    scoring = {"records": records, "target": plan["target"], "recipe": candidate["recipe"],
+               "code": plan["code"], **({"splitUnit": split_unit} if split_unit else {})}
     document = {"batchId": frozen["id"], "candidateId": candidate["id"],
                 "trainingSeed": training_seed, "splitSeed": split_seed,
                 "protocolId": plan["protocolId"], "classOrder": plan["target"]["classes"],
                 "records": records, "purpose": "development_assessment",
-                "analysisInputHash": _hash({"records": records, "target": plan["target"],
-                                            "recipe": candidate["recipe"], "code": plan["code"]})}
+                "analysisInputHash": _hash(scoring)}
     path = folder / f"oof-{key}.json"
     write_json(path, document)
     arguments = (frozen["id"], candidate["id"], training_seed, split_seed)
     return service, arguments, folder, path
+
+
+@pytest.fixture
+def exports(execution):
+    service, frozen, _, _ = execution
+    return _write_exports(service, frozen)
 
 
 @pytest.mark.parametrize("unit", ["patient", "slide"])
@@ -66,6 +73,29 @@ def test_oof_csv_uses_frozen_labels_folds_and_class_order_without_torch(exports,
     assert all(row["predictedLabel"] == row["label"] for row in rows)
     assert list(rows[0])[-2:] == ["probability:low", "probability:high"]
     assert ("slideIds" in rows[0]) == (unit == "patient")
+
+
+def test_slide_level_design_exports_each_slides_own_fold(execution, monkeypatch):
+    """Slide-level designs record no patient folds, so the fold must come from the slide."""
+    service, frozen, _, _ = execution
+    original = service.store.get_configuration
+    protocol_id = frozen["manifest"]["spec"]["inputs"]["protocolId"]
+
+    def slide_unit(identity, *args, **kwargs):
+        document = original(identity, *args, **kwargs)
+        if identity == protocol_id:
+            document = deepcopy(document)
+            document["manifest"]["spec"]["splitUnit"] = "slide"
+        return document
+
+    monkeypatch.setattr(service.store, "get_configuration", slide_unit)
+    _, arguments, _, _ = _write_exports(service, frozen, "slide")
+    rows = list(csv.DictReader(io.StringIO(training_oof_csv(service.store, *arguments, "slide").decode())))
+    assert len(rows) == 30
+    assert {row["assessmentFold"] for row in rows} == {str(i) for i in range(5)}
+    with pytest.raises(StorageError) as error:
+        training_oof_csv(service.store, *arguments, "patient")
+    assert error.value.code == "TRAINING_OOF_UNIT_INVALID"
 
 
 @pytest.mark.parametrize("damage", ["missing_state", "unfinished", "duplicate_state",

@@ -66,7 +66,7 @@ def training_oof_csv(store, batch_id, candidate_id, training_seed, split_seed, u
         states = {row["id"]: row for row in state["runs"]}
         if len(states) != len(state["runs"]):
             raise _invalid("Duplicate run states cannot establish complete OOF evidence.")
-        expected, fold_records, patient_folds = {}, {}, {}
+        expected, fold_records, slide_folds, patient_folds = {}, {}, {}, {}
         for run in runs:
             current = states.get(run["id"], {})
             if current.get("status") != "completed":
@@ -122,6 +122,7 @@ def training_oof_csv(store, batch_id, candidate_id, training_seed, split_seed, u
                     raise _invalid("One patient's slides appear in different assessment folds.")
                 if plan.get("splitUnit") != "slide":
                     patient_folds[patient] = fold
+                slide_folds[identity] = fold
                 expected[identity], fold_records[identity] = member, row
         key = hashlib.sha256(f"{candidate_id}/{training_seed}/{split_seed}".encode()).hexdigest()[:24]
         document = read_evidence(folder / f"oof-{key}.json", folder)
@@ -173,7 +174,8 @@ def training_oof_csv(store, batch_id, candidate_id, training_seed, split_seed, u
             if unit == "patient":
                 value["slideIds"] = json.dumps(sorted(row["slideIds"]), ensure_ascii=False)
             value.update(label=row["label"], predictedLabel=classes[predicted],
-                         assessmentFold=patient_folds[row["patientId"]],
+                         assessmentFold=(patient_folds[row["patientId"]] if unit == "patient"
+                                         else slide_folds[row["slideId"]]),
                          trainingSeed=training_seed, splitSeed=split_seed)
             value.update({f"probability:{label}": probability
                           for label, probability in zip(classes, probabilities, strict=True)})
