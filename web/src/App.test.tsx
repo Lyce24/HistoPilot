@@ -20,7 +20,7 @@ function roadmap(unlocked = false, hasData = true): Roadmap {
 }
 
 describe('experiment predictor navigation and direct URL gates', () => {
-  it.each(['overview', 'dataset', 'experiments', 'source-cv', 'test-data', 'clinical-utility', 'interpretation'] as const)('keeps a trashed project on its recovery path for direct %s navigation', (page) => {
+  it.each(['overview', 'dataset', 'experiments', 'source-cv', 'apply', 'interpretation'] as const)('keeps a trashed project on its recovery path for direct %s navigation', (page) => {
     const html = renderToStaticMarkup(<Content page={page} workspace={{ ...workspace, project: { ...workspace.project, lifecycleState: 'trashed' } }} roadmap={roadmap(false, false)} />);
     expect(html).toContain('This project is in Trash');
     expect(html).toContain('href="#cleanup"');
@@ -44,7 +44,7 @@ describe('experiment predictor navigation and direct URL gates', () => {
     try {
       const html = await renderLoadedPage(<QueryClientProvider client={client}><DirectRoute /></QueryClientProvider>);
       expect(html).toContain('Retained experiment inputs');
-      expect(html).toContain('Prepare a setup');
+      expect(html).toContain('Create experiment');
       expect(html).not.toContain('Prepare the required inputs');
       expect(html).not.toContain('Launch batch');
     } finally { client.clear(); }
@@ -87,9 +87,12 @@ describe('experiment predictor navigation and direct URL gates', () => {
   });
 
   it.each([
-    ['#clinical', 'clinical-utility'], ['#clinical-utility?evaluation=one', 'clinical-utility'],
+    ['#apply?run=one&tab=cases', 'apply'], ['#clinical', 'apply'], ['#clinical-utility?evaluation=one', 'apply'],
+    ['#evaluation?predictor=one', 'apply'], ['#evaluate-models', 'apply'], ['#run-inference', 'apply'], ['#test-cohorts', 'apply'],
     ['#interpret', 'interpretation'], ['#interpretation?predictor=one', 'interpretation'],
-  ] as const)('routes %s to its Clinical insights module', (hash, page) => {
+    // An experiment's design moved from Experimental Setup into Experiments.
+    ['#experimental-setup?experiment=one&tab=batches', 'experiments'], ['#setup', 'experiments'], ['#experiment-setup', 'experiments'],
+  ] as const)('routes %s to the %s module', (hash, page) => {
     expect(pageFromHash(hash)).toBe(page);
     expect(moduleForPage(page)).toBe(page);
   });
@@ -102,10 +105,10 @@ describe('experiment predictor navigation and direct URL gates', () => {
     expect(pageFromHash('#unknown')).toBe('overview');
     // The pre-roadmap settings page and the synthetic CRC demo's tools are gone; their links open the roadmap.
     for (const hash of ['#explorer', '#provenance', '#example-results']) expect(pageFromHash(hash)).toBe('overview');
-    expect(pageFromHash('#reports')).toBe('evaluation');
+    expect(pageFromHash('#reports')).toBe('apply');
     expect(pageFromHash('#experiments?experiment=draft-1&tab=runs')).toBe('experiments');
     expect(pageFromHash('#post-development?experiment=draft-1')).toBe('post-development');
-    expect(pageFromHash('#evaluation?predictor=configuration-1')).toBe('evaluation');
+    expect(pageFromHash('#inference?batch=bulk-1')).toBe('apply');
     expect(pageFromHash('#cleanup?key=configuration%3Aone')).toBe('cleanup');
   });
 
@@ -131,18 +134,18 @@ describe('experiment predictor navigation and direct URL gates', () => {
     } finally { client.clear(); }
   });
 
-  it('opens evaluation history before selecting new evaluation inputs', async () => {
+  it('opens Apply models on its runs before any setup', async () => {
     const client = new QueryClient();
-    for (const key of ['predictors', 'model-evaluations', 'evaluation-cohorts']) client.setQueryData([key, 'project'], { items: [] });
+    for (const key of ['predictors', 'model-evaluations', 'evaluation-cohorts', 'evaluation-batches', 'model-experiment-summaries']) client.setQueryData([key, 'project'], { items: [] });
     try {
-      const html = await renderLoadedPage(<QueryClientProvider client={client}><Content page="evaluation" workspace={workspace} roadmap={roadmap(true)} /></QueryClientProvider>);
-      expect(html).not.toContain('aria-label="Search evaluations"');
-      expect(html).toContain('aria-label="Saved evaluations"');
-      expect(html).not.toContain('Stage 0 · Saved records');
-      expect(html).toContain('Create evaluation');
-      expect(html).toContain('Saved evaluations');
+      const html = await renderLoadedPage(<QueryClientProvider client={client}><Content page="apply" workspace={workspace} roadmap={roadmap(true)} /></QueryClientProvider>);
+      expect(html).not.toContain('aria-label="Search runs"');
+      expect(html).toContain('aria-label="Apply models"');
+      expect(html).toMatch(/aria-pressed="true">Runs<span>0<\/span>/);
+      for (const tab of ['Batches', 'Cohorts', 'Compare methods']) expect(html).toContain(`>${tab}`);
+      expect(html).toContain('No models applied yet');
+      expect(html).toContain('Apply predictors');
       expect(html).not.toContain('1. Select experiments');
-      expect(html).not.toContain('Review experiment evaluation');
     } finally { client.clear(); }
   });
 });
@@ -158,29 +161,29 @@ describe('project URL parameter', () => {
 
 describe('module prerequisites', () => {
   const moduleFor = (id: string, overrides: Record<string, unknown> = {}) => ({
-    id, shortTitle: 'Clinical utility', unlocked: true, status: 'not-started',
-    blockers: ['evaluation'], ...overrides,
+    id, shortTitle: 'Apply models', unlocked: true, status: 'not-started',
+    blockers: ['experiments'], ...overrides,
   }) as never;
   const roadmapWith = (modules: unknown[]) => ({
     hasData: true, modules,
     byId: Object.fromEntries((modules as { id: string }[]).map((item) => [item.id, item])),
   }) as never;
-  const evaluation = { id: 'evaluation', shortTitle: 'Evaluate models', unlocked: true, status: 'not-started', blockers: [] };
+  const experiments = { id: 'experiments', shortTitle: 'Experiments', unlocked: true, status: 'draft', blockers: [] };
 
   it('names the missing input and offers to open it', () => {
-    const module = moduleFor('clinical-utility');
-    const html = renderToStaticMarkup(<ModulePrerequisites module={module} roadmap={roadmapWith([module, evaluation])} />);
-    expect(html).toContain('Clinical utility is waiting for Evaluate models');
-    expect(html).toContain('href="#evaluation"');
-    expect(html).toContain('Open Evaluate models');
+    const module = moduleFor('apply');
+    const html = renderToStaticMarkup(<ModulePrerequisites module={module} roadmap={roadmapWith([module, experiments])} />);
+    expect(html).toContain('Apply models is waiting for Experiments');
+    expect(html).toContain('href="#experiments"');
+    expect(html).toContain('Open Experiments');
   });
 
   it('says nothing when the module can be worked on, is complete, or is still loading', () => {
-    const ready = moduleFor('clinical-utility', { blockers: [] });
+    const ready = moduleFor('apply', { blockers: [] });
     expect(renderToStaticMarkup(<ModulePrerequisites module={ready} roadmap={roadmapWith([ready])} />)).toBe('');
-    const done = moduleFor('clinical-utility', { status: 'complete' });
-    expect(renderToStaticMarkup(<ModulePrerequisites module={done} roadmap={roadmapWith([done, evaluation])} />)).toBe('');
-    const pending = moduleFor('clinical-utility');
+    const done = moduleFor('apply', { status: 'complete' });
+    expect(renderToStaticMarkup(<ModulePrerequisites module={done} roadmap={roadmapWith([done, experiments])} />)).toBe('');
+    const pending = moduleFor('apply');
     expect(renderToStaticMarkup(<ModulePrerequisites module={pending} roadmap={{ hasData: false, modules: [] } as never} />)).toBe('');
   });
 

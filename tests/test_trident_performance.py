@@ -70,9 +70,7 @@ def test_usable_cpu_count_falls_back_when_affinity_unavailable(monkeypatch):
     assert performance.usable_cpu_count() == 1
 
 
-def test_cpu_only_parallel_workers_are_reserved_individually(
-    extractions, task_center, monkeypatch
-):
+def test_cpu_only_parallel_workers_are_reserved_individually(extractions, task_center, monkeypatch):
     monkeypatch.setattr(performance, "usable_cpu_count", lambda: 48)
     _preview, request = task_request(extractions, task_center, {"gpus": [-1, -1]})
     assert request["lane"] == "cpu"

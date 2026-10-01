@@ -34,12 +34,15 @@ def _private_tempdir(request):
 
 
 @pytest.fixture(autouse=True)
-def _task_center_state(tmp_path, monkeypatch):
+def _task_center_state(tmp_path):
     from histopilot.taskcenter.client import _reset_default_client
 
-    monkeypatch.setenv("HISTOPILOT_STATE_DIR", str(tmp_path / "histopilot-state"))
-    _reset_default_client()
-    yield
+    # Its own patch, not the test's `monkeypatch`: a test that calls `monkeypatch.undo()`
+    # must not fall back to the person's real Task Center state.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HISTOPILOT_STATE_DIR", str(tmp_path / "histopilot-state"))
+        _reset_default_client()
+        yield
     _reset_default_client()
 
 

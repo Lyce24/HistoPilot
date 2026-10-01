@@ -152,7 +152,7 @@ for (const [token, hex] of Object.entries(palette)) {
   assert.equal(found, rule[1], `${token} is ${hex}, which reads ${found}; the grammar puts it in ${rule[1]}`);
 }
 
-/** Brown University's brown and gold are an affiliation mark, not a UI colour. */
+/** The institutional brown and gold are an affiliation mark, not a UI colour. */
 assert.doesNotMatch(theme, /#(4e3629|ffc72c)/i, 'Institutional colours belong to the logo, not the palette');
 
 // Data encodings keep their own scales and never live in this palette.

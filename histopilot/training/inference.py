@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from histopilot.application.predictors import checkpoint_snapshot
+from histopilot.cv_summary import evaluation_metrics
 from histopilot.datasets.datamodule import _worker_init
 from histopilot.datasets.mil import SlideDataset, collate_mil
 from histopilot.inference_summary import describe, patient_member_probabilities, summarize
@@ -21,7 +22,6 @@ from histopilot.storage.project_lock import ensure_managed_directory, reject_sym
 from histopilot.training.module import (
     MILTrainModule,
     class_logits,
-    validated_metrics,
     window_uncertainty_rows,
 )
 from histopilot.workers.train_batch import check_inputs
@@ -36,17 +36,6 @@ def _decisions(records, target, threshold):
             predicted = int(np.argmax(row["probabilities"]))
         row.update(predictedIndex=predicted, predictedLabel=target["classes"][predicted])
     return records
-
-
-def evaluation_metrics(records, target, threshold):
-    """Metrics use labeled rows only; threshold changes decisions, never ranking scores."""
-    labeled = [row for row in records if row["labelIndex"] is not None]
-    result = validated_metrics(labeled, target, decision_threshold=threshold)
-    return {
-        **result,
-        "predictionCount": len(records),
-        "unlabeledCount": len(records) - len(labeled),
-    }
 
 
 # Member probabilities are recorded per record only while predictions.json stays
@@ -149,8 +138,10 @@ def _finish_inference(plan, folder, records, *, method, checkpoints, input_hash,
                 raise
             patients, patient_summary = [], {"available": False, "count": 0, "reason": str(error)}
     slide_summary = summarize(records, target, threshold)
+    # Label-blind evaluations share this output; their files still say what the run is.
+    purpose = "evaluation" if plan.get("labelsWithheld") else "inference"
     summary = {
-        "purpose": "inference",
+        "purpose": purpose,
         "unit": target["unit"],
         "classOrder": classes,
         "positiveClass": target.get("positiveClass"),
@@ -201,7 +192,8 @@ def _finish_inference(plan, folder, records, *, method, checkpoints, input_hash,
         }
     result = {
         "state": "succeeded",
-        "purpose": "inference",
+        "purpose": purpose,
+        **({"labelsWithheld": True} if plan.get("labelsWithheld") else {}),
         "runId": plan.get("recordId", plan.get("runId")),
         "method": method,
         "checkpointCount": len(checkpoints),
@@ -323,17 +315,30 @@ def evaluate(plan, output_dir):
     method = plan.get("method", "ensemble")
     checkpoints = plan["checkpoints"]
     if (
-        method not in {"ensemble", "refit"}
+        method not in {"ensemble", "refit", "seed_ensemble"}
         or not checkpoints
         or (method == "refit" and len(checkpoints) != 1)
+        or (method == "seed_ensemble" and len(checkpoints) < 2)
     ):
         raise ValueError(
             "A refit requires one checkpoint; an ensemble requires its selected fold checkpoints."
         )
+    # A seed ensemble pools fold models trained under different training seeds. Each keeps
+    # its own seed for evaluation-bag subsampling, as its per-seed ensemble would.
+    if method == "seed_ensemble" and any(
+        type(item.get("trainingSeed")) is not int or item["trainingSeed"] < 0
+        for item in checkpoints
+    ):
+        raise ValueError("Every seed-ensemble member must record its training seed.")
     purpose = plan.get("purpose")
     if purpose not in {None, "inference"}:
         raise ValueError("Unsupported evaluation purpose.")
-    inference_only = purpose == "inference"
+    # A labeled evaluation saved for service scoring withholds its labels from this job:
+    # it predicts exactly as inference does, and the control service scores the result.
+    labels_withheld = plan.get("labelsWithheld", False)
+    if type(labels_withheld) is not bool or (labels_withheld and purpose is not None):
+        raise ValueError("Only a labeled evaluation can withhold its labels.")
+    inference_only = purpose == "inference" or labels_withheld
     split_unit = plan.get("splitUnit", "patient")
     if split_unit not in {"slide", "patient"}:
         raise ValueError("Unsupported split unit.")
@@ -345,7 +350,11 @@ def evaluate(plan, output_dir):
     if not identities or len(set(identities)) != len(identities):
         raise ValueError("Inference requires exactly one membership per selected slide.")
     if inference_only and any(row.get("label") is not None for row in rows):
-        raise ValueError("Inference runs predict unlabeled memberships only.")
+        raise ValueError(
+            "Label-blind evaluations predict unlabeled memberships only."
+            if labels_withheld
+            else "Inference runs predict unlabeled memberships only."
+        )
     if any(row.get("label") is not None and row["label"] not in classes for row in rows):
         raise ValueError("Test labels must preserve the frozen target class order.")
     if target["unit"] == "patient" and any(not row.get("patientId") for row in rows):
@@ -460,6 +469,9 @@ def evaluate(plan, output_dir):
                         "Checkpoint clinical schema differs from its frozen evaluation."
                     )
                 model.eval().to(device)
+                if "trainingSeed" in checkpoint:
+                    # Loader workers copy the dataset when each member's pass starts.
+                    dataset.training_seed = checkpoint["trainingSeed"]
                 collected, log_collected, observed, uncertainty_collected = [], [], [], []
                 with torch.inference_mode():
                     for batch in loader:

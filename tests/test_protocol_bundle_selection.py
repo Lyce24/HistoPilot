@@ -154,7 +154,7 @@ def test_dataset_only_protocol_binds_reusable_bundle_later_in_experiments(tmp_pa
         {
             "slideId": f"s{i:02}",
             "patientId": f"p{i:02}",
-            "attributes": {"label": str(i % 2), "cohort": "TCGA" if i < 12 else "SurGen"},
+            "attributes": {"label": str(i % 2), "cohort": "Site A" if i < 12 else "Site B"},
         }
         for i in range(26)
     ]
@@ -169,7 +169,7 @@ def test_dataset_only_protocol_binds_reusable_bundle_later_in_experiments(tmp_pa
         {
             "slideId": "unencoded",
             "patientId": None,
-            "attributes": {"label": None, "cohort": "RIH"},
+            "attributes": {"label": None, "cohort": "Site C"},
         }
     ]
     study, _ = projects.dataset(store, operation="new-study", rows=study_rows)
@@ -182,7 +182,7 @@ def test_dataset_only_protocol_binds_reusable_bundle_later_in_experiments(tmp_pa
             "mode": "kfold",
             "folds": 2,
             "pools": {
-                "rules": {"train": [{"field": "cohort", "op": "in", "value": ["TCGA", "SurGen"]}]}
+                "rules": {"train": [{"field": "cohort", "op": "in", "value": ["Site A", "Site B"]}]}
             },
         },
     }

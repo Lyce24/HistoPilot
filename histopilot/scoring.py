@@ -18,7 +18,9 @@ def patient_predictions(records, aggregation="mean"):
     groups = defaultdict(list)
     for row in records:
         if row.get("patientIdSource") == "slide_fallback":
-            raise ValueError("Patient scoring requires verified patient IDs, not slide-ID fallback.")
+            raise ValueError(
+                "Patient scoring requires verified patient IDs, not slide-ID fallback."
+            )
         if row["patientId"]:
             groups[row["patientId"]].append(row)
     patients = []
@@ -27,13 +29,15 @@ def patient_predictions(records, aggregation="mean"):
         if len(labels) > 1:
             raise ValueError("Patient evaluation requires consistent labels within each patient.")
         labeled = next((row for row in slides if row["labelIndex"] is not None), None)
-        patients.append({
-            "patientId": patient,
-            "slideIds": [row["slideId"] for row in slides],
-            "labelIndex": labeled["labelIndex"] if labeled else None,
-            "label": labeled["label"] if labeled else None,
-            "probabilities": np.mean([row["probabilities"] for row in slides], axis=0).tolist(),
-        })
+        patients.append(
+            {
+                "patientId": patient,
+                "slideIds": [row["slideId"] for row in slides],
+                "labelIndex": labeled["labelIndex"] if labeled else None,
+                "label": labeled["label"] if labeled else None,
+                "probabilities": np.mean([row["probabilities"] for row in slides], axis=0).tolist(),
+            }
+        )
         if all("logProbabilities" in row for row in slides):
             patients[-1]["logProbabilities"] = (
                 np.logaddexp.reduce([row["logProbabilities"] for row in slides], axis=0)

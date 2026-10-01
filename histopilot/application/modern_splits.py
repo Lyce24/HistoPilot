@@ -6,6 +6,7 @@ plans never contain an outer test group. No fitting or model choice occurs here.
 
 import hashlib
 import math
+import re
 from collections import Counter, defaultdict
 
 from histopilot.storage.io import canonical_json
@@ -13,6 +14,8 @@ from histopilot.storage.io import canonical_json
 # Part of every group's ordering key. Version 4 plans reuse it, so it never changes.
 ALGORITHM_V2 = "histopilot-patient-evaluation-v2"
 ROLES = ("train", "val", "test", "tune")
+# Predefined folds, such as those of a published study, are imported as column values.
+MAX_PREDEFINED_FOLDS = 20
 
 
 def _ordered(patients, seed, context):
@@ -134,6 +137,35 @@ def _domain_groups(spec, groups, evaluator, finding):
     return domains, selected
 
 
+def _fold_order(value):
+    """Numeric fold values in numeric order ("2" before "10"), then others by text."""
+    return (0, int(value), value) if re.fullmatch(r"[0-9]{1,9}", value) else (1, 0, value)
+
+
+def _fold_groups(spec, groups, evaluator, finding):
+    """Each group's predefined fold value, and the values in fold order."""
+    folds = {}
+    for group, rows in sorted(groups.items()):
+        values = {evaluator.field(row, spec.split.foldField) for row in rows}
+        if any(value is None or not str(value).strip() for value in values):
+            finding("MISSING_FOLD", "Every training group needs a fold value.")
+        elif len({str(value).strip() for value in values}) != 1:
+            finding(
+                "INCONSISTENT_GROUP_FOLD",
+                "All slides of a group must have the same fold value.",
+            )
+        else:
+            folds[group] = str(next(iter(values))).strip()
+    observed = sorted(set(folds.values()), key=_fold_order)
+    if len(observed) < 2:
+        finding("INSUFFICIENT_FOLDS", "Predefined folds need at least two fold values.")
+    if len(observed) > MAX_PREDEFINED_FOLDS:
+        finding(
+            "FOLD_LIMIT", f"Predefined folds support at most {MAX_PREDEFINED_FOLDS} fold values."
+        )
+    return folds, observed
+
+
 def modern_assignments(
     spec, groups, evaluator, finding, max_memberships, max_bytes, *, fixed_validation=None
 ):
@@ -143,7 +175,18 @@ def modern_assignments(
     validation_groups = fixed_validation or {}
     all_groups = {**groups, **validation_groups}
     domains, held_out_domains = {}, []
-    if split.mode == "leave_one_domain_out":
+    fold_of, fold_values = {}, []
+    if split.mode == "predefined_folds":
+        fold_of, fold_values = _fold_groups(spec, groups, evaluator, finding)
+        per_seed = len(fold_values)
+        if len(split.seeds) > 1:
+            finding(
+                "PREDEFINED_FOLDS_REUSED",
+                "Every split seed uses the same predefined folds; only early-stop validation "
+                "differs between seeds.",
+                "warning",
+            )
+    elif split.mode == "leave_one_domain_out":
         domains, held_out_domains = _domain_groups(spec, groups, evaluator, finding)
         for rows in validation_groups.values():
             values = {evaluator.field(row, split.domainField) for row in rows}
@@ -198,19 +241,25 @@ def modern_assignments(
         for patient, rows in all_groups.items()
         for row in rows
     )
-    # Each membership carries its domain twice: as a field and inside planId.
-    # Count both JSON-escaped copies conservatively before allocating any plans;
-    # the baseline planId already counted above provides additional headroom.
+    # Each membership carries its domain twice: as a field and inside planId, and a
+    # predefined fold its imported value. Count the JSON-escaped copies conservatively
+    # before allocating any plans; the baseline planId above provides more headroom.
     extra_domain_bytes = (
-        sum(
-            len(
-                canonical_json(
-                    {"domain": value, "planId": f"seed:4294967295/domain:{value}"},
-                    ascii=True,
-                    compact=True,
+        (
+            sum(
+                len(
+                    canonical_json(
+                        {"domain": value, "planId": f"seed:4294967295/domain:{value}"},
+                        ascii=True,
+                        compact=True,
+                    )
                 )
+                for value in held_out_domains
             )
-            for value in held_out_domains
+            + sum(
+                len(canonical_json({"foldValue": value}, ascii=True, compact=True))
+                for value in fold_values
+            )
         )
         * row_count
         * len(split.seeds)
@@ -222,6 +271,8 @@ def modern_assignments(
         )
         return []
     if len(domains) != len(patients) and split.mode == "leave_one_domain_out":
+        return []
+    if len(fold_of) != len(patients) and split.mode == "predefined_folds":
         return []
     plans = []
 
@@ -320,6 +371,11 @@ def modern_assignments(
             for fold, domain in enumerate(held_out_domains):
                 test = {patient for patient, value in domains.items() if value == domain}
                 add(seed, fold, patients - test, test, f"domain:{domain}", domain=domain)
+        elif split.mode == "predefined_folds":
+            # Plans are named like generated folds; the imported value travels with them.
+            for fold, value in enumerate(fold_values):
+                test = {group for group, assigned in fold_of.items() if assigned == value}
+                add(seed, fold, patients - test, test, f"fold:{fold}", foldValue=value)
         elif split.mode == "nested_kfold":
             outer = _folds(patients, split.outerFolds, seed, "outer_test", spec, groups, finding)
             for outer_fold, test in enumerate(outer or ()):
@@ -402,15 +458,23 @@ def check_modern_plan(spec, groups, metadata, assignment, finding):
             )
         for label in spec.target.classes:
             if classes[label] < spec.constraints.minPatientsPerClass:
-                domain_test = (
+                # A site, or a fold someone else defined, may lack a class. Its own
+                # metrics are then partial; the out-of-fold results still pool it.
+                given_test = (
                     role == "test"
-                    and spec.split.mode == "leave_one_domain_out"
+                    and spec.split.mode in {"leave_one_domain_out", "predefined_folds"}
                     and metadata["phase"] != "final"
                 )
                 finding(
-                    "DOMAIN_TEST_CLASS_IMBALANCE" if domain_test else "PARTITION_CLASS_TOO_SMALL",
+                    (
+                        "DOMAIN_TEST_CLASS_IMBALANCE"
+                        if spec.split.mode == "leave_one_domain_out"
+                        else "FOLD_TEST_CLASS_IMBALANCE"
+                    )
+                    if given_test
+                    else "PARTITION_CLASS_TOO_SMALL",
                     f"{metadata['planId']}: {role} has fewer than {spec.constraints.minPatientsPerClass} groups in class '{label}'.",
-                    "warning" if domain_test else "error",
+                    "warning" if given_test else "error",
                 )
     return result
 
@@ -428,8 +492,20 @@ def modern_summary(spec, groups, plans):
         if role == "test"
     )
     counts = [appearances[(seed, patient)] for seed in spec.split.seeds for patient in groups]
+    predefined = sorted(
+        {
+            (metadata["fold"], metadata["foldValue"])
+            for metadata, _assignment in evaluations
+            if "foldValue" in metadata
+        }
+    )
     return {
         "strategy": spec.split.mode,
+        **(
+            {"predefinedFolds": [{"fold": fold, "value": value} for fold, value in predefined]}
+            if predefined
+            else {}
+        ),
         "splitVersion": spec.split.version,
         "evaluationPlanCount": len(evaluations),
         "innerPlanCount": sum(metadata["phase"] == "inner" for metadata, _assignment in plans),

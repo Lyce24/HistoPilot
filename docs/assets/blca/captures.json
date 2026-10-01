@@ -49,14 +49,14 @@
     },
     {
       "file": "evaluation.png",
-      "route": "#evaluation?record=blca-evaluation&step=metrics",
+      "route": "#apply?record=blca-evaluation&step=metrics",
       "selector": ".blca-demo-record-view",
       "width": 1152,
       "height": 1277
     },
     {
       "file": "clinical-utility.png",
-      "route": "#clinical-utility?record=blca-clinical-utility&step=thresholds",
+      "route": "#apply?record=blca-clinical-utility&step=thresholds",
       "selector": ".blca-demo-record-view",
       "width": 1152,
       "height": 1486

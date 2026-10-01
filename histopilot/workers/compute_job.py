@@ -87,8 +87,14 @@ def verify_plan_inputs(plan):
                 for row in feature["manifest"]["files"]
                 if row["slideId"] in selected
             }
+            # A run scored by the control service withholds every label from its job.
+            withheld = manifest.get("labelSource") == "cohort"
+            memberships = [
+                {key: value for key, value in row.items() if key != "label" or not withheld}
+                for row in cohort["manifest"]["memberships"]
+            ]
             expected_data = {
-                "memberships": cohort["manifest"]["memberships"],
+                "memberships": memberships,
                 "featureDim": manifest["features"]["dimensions"],
                 "featureFiles": files,
                 "sourceStamps": {row["path"]: row for row in files.values()},
@@ -98,6 +104,7 @@ def verify_plan_inputs(plan):
                 # Inference plans skip label metrics; the saved record decides that.
                 or plan.get("purpose")
                 != ("inference" if manifest.get("purpose") == "inference" else None)
+                or plan.get("labelsWithheld", False) is not withheld
                 or plan["checkpoints"] != predictor["manifest"]["checkpoints"]
                 or plan["target"] != manifest["target"]
                 or plan["target"] != predictor["manifest"]["target"]
@@ -105,9 +112,7 @@ def verify_plan_inputs(plan):
                 or plan["method"] != predictor["manifest"].get("method", "ensemble")
                 or any(plan["data"].get(key) != value for key, value in expected_data.items())
             ):
-                raise ValueError(
-                    "Evaluation inputs differ from the immutable predictor and test cohort."
-                )
+                raise ValueError("Run inputs differ from the immutable predictor and cohort.")
             packed = plan["inference"]["loadingPolicy"] == "packed"
             pack_path = None
             if packed:

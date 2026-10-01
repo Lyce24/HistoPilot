@@ -22,6 +22,8 @@ class DraftValues(RequestModel):
 
 class CreateDraftRequest(DraftValues):
     kind: Literal["import", "experiment"]
+    # Optional: the same ID again returns the draft the first request created.
+    operationId: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class UpdateDraftRequest(DraftValues):

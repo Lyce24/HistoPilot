@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StrictInt, field_validator, model_serializer, model_validator
 
+from histopilot.resolvers import INFERENCE_PURPOSES
 from histopilot.schemas.protocols import (
     Conditions,
     ProtocolFreezeRequest,
@@ -13,10 +14,6 @@ from histopilot.schemas.protocols import (
 from histopilot.schemas.workspace import RequestModel
 
 ConfigurationId = Annotated[str, Field(pattern=r"^configuration-[a-f0-9]{64}$")]
-
-# Unlabeled cohorts that receive predictions only. ``review`` is the earlier name
-# of the same cohort type; it keeps its stricter rules and its stored value.
-INFERENCE_PURPOSES = frozenset({"inference", "review"})
 
 
 def is_inference_purpose(value):

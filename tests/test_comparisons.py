@@ -71,7 +71,7 @@ TWO_ARMS = [{"model": "abmil"}, {"model": "mean_pool"}]
     [
         (TWO_ARMS, {"candidateSelection": "best_validation"}, "build all configurations"),
         (TWO_ARMS, {"comparison": {"reference": 3}}, "reference arm"),
-        ([{"model": "abmil"}], {}, "two to eight"),
+        ([{"model": "abmil"}], {}, "2 to 8 explicit configurations"),
     ],
 )
 def test_comparisons_need_explicit_arms_all_built(arms, values, message):

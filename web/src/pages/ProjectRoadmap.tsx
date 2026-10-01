@@ -5,12 +5,11 @@ import { Icon } from '../components/ui';
 export type Roadmap = ReturnType<typeof useRoadmap>;
 type Module = Roadmap['modules'][number];
 export const moduleIcons: Record<string, string> = {
-  'experimental-setup': 'branch', dataset: 'dataset', cohort: 'cohort', features: 'features', experiments: 'experiments',
+  dataset: 'dataset', cohort: 'cohort', features: 'features', experiments: 'experiments',
   'source-cv': 'evaluation', selection: 'experiments', predictor: 'experiments',
-  'test-data': 'folder', evaluation: 'evaluation', inference: 'inference',
-  'clinical-utility': 'evaluation', interpretation: 'explorer',
+  apply: 'evaluation', interpretation: 'explorer',
 };
-export const completedModuleLabel = (id: string) => id === 'experiments' ? 'Experiment outputs available' : id === 'interpretation' ? 'Attention maps available' : id === 'clinical-utility' ? 'Analysis saved' : id === 'evaluation' ? 'Evaluation results available' : id === 'inference' ? 'Predictions available' : 'Complete & frozen';
+export const completedModuleLabel = (id: string) => id === 'experiments' ? 'Experiment outputs available' : id === 'interpretation' ? 'Attention maps available' : id === 'apply' ? 'Run results available' : 'Complete & frozen';
 
 const phases = ROADMAP_STEPS;
 

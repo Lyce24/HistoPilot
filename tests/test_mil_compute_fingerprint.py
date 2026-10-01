@@ -7,7 +7,9 @@ from histopilot.workers import training_process
 from histopilot.workers.compute_archive import prepare_compute_archive
 
 
-@pytest.mark.parametrize("name", ["scoring.py", "schemas/training_controls.py", "inference_summary.py"])
+@pytest.mark.parametrize(
+    "name", ["scoring.py", "schemas/training_controls.py", "inference_summary.py"]
+)
 def test_compute_fingerprint_tracks_metric_and_training_policy_changes(tmp_path, monkeypatch, name):
     expected = training_process.compute_snapshot()
     assert name in expected["files"]

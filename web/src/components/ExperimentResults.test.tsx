@@ -8,7 +8,7 @@ import { batch, comparisonResults, configuration, experimentResults } from '../t
 
 const clients: QueryClient[] = [];
 afterEach(() => clients.splice(0).forEach((client) => client.clear()));
-const record = { id: 'exp', key: 'draft:exp', name: 'gej4', notes: '', tags: [], revision: 1, state: 'active', status: 'completed', stage: 'finished', legacy: false,
+const record = { id: 'exp', key: 'draft:exp', name: 'study4', notes: '', tags: [], revision: 1, state: 'active', status: 'completed', stage: 'finished', legacy: false,
   createdAt: '', updatedAt: '', inputs: null, batches: [], drafts: [], predictorId: null, submission: { status: 'submitted' } } as unknown as ModelExperiment;
 
 function render(results?: Results, changes: Partial<ModelExperiment> = {}) {
@@ -62,6 +62,22 @@ describe('experiment results', () => {
     expect(render(experimentResults())).toMatch(/class="exp-heat" style="background:#[0-9a-f]{6}"/);
   });
 
+  it('describes a held-out assessment as one run per seed and shows no fold statistics over one row', () => {
+    const base = configuration();
+    const single = { ...base, splitSeeds: base.splitSeeds.map((split) => ({ ...split, folds: split.folds.slice(0, 1), seeds: split.seeds.map((seed) => ({ ...seed, folds: seed.folds.slice(0, 1) })) })) };
+    const results = experimentResults({ design: { strategy: 'held_out', splitUnit: 'slide', groupByPatient: false, folds: 1, splitSeeds: [7], slideCount: 40, resamplingUnit: 'slide' }, batches: [batch('abmil', 'ABMIL baseline', {}, single)], comparisons: [], findings: [] });
+    const html = render(results);
+    const plain = text(html);
+    expect(html).toContain('<th scope="col">Held-out assessment</th>');
+    expect(plain).toContain('Held-out assessment · Macro AUROC');
+    expect(plain).toContain('only the held-out set is assessed');
+    expect(plain).toContain('Every seed assesses the same slides');
+    expect(plain).not.toContain('Test fold');
+    expect(plain).not.toContain('Fold mean ± SD');
+    // A fold design keeps its fold wording and the spread over folds.
+    expect(text(render(experimentResults()))).toContain('One run’s held-out fold (one of 2 folds)');
+  });
+
   it('flags weak classes and prints the confusion shares', () => {
     const html = render(experimentResults());
     expect(text(html)).toMatch(/LG 8 slides 0\.250 ± 0\.050\s+Low/);
@@ -83,7 +99,7 @@ describe('experiment results', () => {
     partial.splitSeeds[0].seeds[1] = { ...partial.splitSeeds[0].seeds[1], oof: null, complete: false, completedRuns: 1 };
     const html = text(render(experimentResults({ batches: [batch('batch-abmil', 'ABMIL baseline', {}, partial)], comparisons: [] }), { stage: 'running', status: 'running' }));
     expect(html).toContain('Partial results.');
-    expect(html).toContain('1 of 2 folds finished; OOF waits for all folds');
+    expect(html).toContain('1 of 2 test folds finished; OOF waits for all of them');
   });
 
   it('ranks configurations by validation and never by OOF', () => {
@@ -128,7 +144,7 @@ describe('experiment results', () => {
 
   it('explains an empty experiment and a loading one', () => {
     const empty = experimentResults({ batches: [batch('b', 'Batch', {}, { seedCount: 0, foldCount: 0 })], comparisons: [], findings: [] });
-    expect(text(render(empty, { stage: 'running' }))).toContain('Test-fold results appear as each fold finishes');
+    expect(text(render(empty, { stage: 'running' }))).toContain('Test fold results appear as each fold finishes');
     expect(text(render(undefined))).toContain('Loading results…');
   });
 });

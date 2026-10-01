@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import Field, StrictInt, field_validator, model_serializer, model_validator
 
 from histopilot.models import catalog
+from histopilot.resolvers import MAX_COMPARISON_ARMS
 from histopilot.schemas.analysis import PatientAnalysisSettings
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.schemas.predictor_policy import ExperimentPredictorPolicy
@@ -19,24 +20,48 @@ Probability = Annotated[float, Field(ge=0, lt=1, allow_inf_nan=False)]
 # These defaults were implicit in previously frozen recipes. Omit them from the
 # serialized recipe so adding controls does not rewrite historical experiment hashes.
 EXPERIMENTAL_DEFAULTS = {
-    "lossType": "ce", "classWeighting": "none", "classWeights": None,
-    "focalGamma": 2.0, "labelSmoothing": 0.0,
-    "patientAggregation": "mean_probabilities", "ensembleAggregation": "mean_probability", "adamBetas": (0.9, 0.999),
-    "adamEps": 1e-8, "lrStepSize": 10, "lrGamma": 0.5, "lrPlateauPatience": 5,
-    "aggregatorLearningRate": None, "headLearningRate": None,
-    "samplingStrategy": "slide_uniform", "classWeightedSampling": False,
-    "samplingPositivePrevalence": 0.4, "cohortColumn": "cohort",
-    "instanceDropout": 0.0, "featureNoiseStd": 0.0, "bagCurriculum": False,
-    "bagCurriculumStart": 512, "bagCurriculumEnd": 8000, "bagCurriculumWarmupEpochs": 5,
-    "evalBagSize": None, "evalBatchSize": None,
-    "minValidationPositives": None, "fixedEpochBudget": None,
-    "bagSizeMode": "fixed", "bagSizeFraction": 0.5,
-    "nnmilFeatureSampling": True, "nnmilWindowStrideDivisor": 4,
-    "nnmilWindowShuffle": True, "nnmilWindowSeed": 42, "nnmilWindowSeedFromTraining": False,
-    "nnmilWindowAggregation": "mean_logits", "nnmilBatchSampler": "patient_weighted",
+    "lossType": "ce",
+    "classWeighting": "none",
+    "classWeights": None,
+    "focalGamma": 2.0,
+    "labelSmoothing": 0.0,
+    "patientAggregation": "mean_probabilities",
+    "ensembleAggregation": "mean_probability",
+    "adamBetas": (0.9, 0.999),
+    "adamEps": 1e-8,
+    "lrStepSize": 10,
+    "lrGamma": 0.5,
+    "lrPlateauPatience": 5,
+    "aggregatorLearningRate": None,
+    "headLearningRate": None,
+    "samplingStrategy": "slide_uniform",
+    "classWeightedSampling": False,
+    "samplingPositivePrevalence": 0.4,
+    "cohortColumn": "cohort",
+    "instanceDropout": 0.0,
+    "featureNoiseStd": 0.0,
+    "bagCurriculum": False,
+    "bagCurriculumStart": 512,
+    "bagCurriculumEnd": 8000,
+    "bagCurriculumWarmupEpochs": 5,
+    "evalBagSize": None,
+    "evalBatchSize": None,
+    "minValidationPositives": None,
+    "fixedEpochBudget": None,
+    "bagSizeMode": "fixed",
+    "bagSizeFraction": 0.5,
+    "nnmilFeatureSampling": True,
+    "nnmilWindowStrideDivisor": 4,
+    "nnmilWindowShuffle": True,
+    "nnmilWindowSeed": 42,
+    "nnmilWindowSeedFromTraining": False,
+    "nnmilWindowAggregation": "mean_logits",
+    "nnmilBatchSampler": "patient_weighted",
     "nnmilCheckpointSelection": "best_validation",
-    "weightDecayPolicy": "all", "lrScheduleInterval": "epoch",
-    "inputMode": "image", "clinicalFields": [],
+    "weightDecayPolicy": "all",
+    "lrScheduleInterval": "epoch",
+    "inputMode": "image",
+    "clinicalFields": [],
 }
 
 
@@ -90,9 +115,9 @@ class TrainingRecipe(RequestModel):
     # spread reflects nnMIL's full variance; the fixed seed above is then unused.
     nnmilWindowSeedFromTraining: bool = False
     nnmilWindowAggregation: Literal["mean_logits", "mean_probabilities"] = "mean_logits"
-    nnmilBatchSampler: Literal[
-        "patient_weighted", "class_balanced", "auc_stratified"
-    ] = "patient_weighted"
+    nnmilBatchSampler: Literal["patient_weighted", "class_balanced", "auc_stratified"] = (
+        "patient_weighted"
+    )
     nnmilCheckpointSelection: Literal["best_validation", "latest"] = "best_validation"
     classWeighting: Literal["none", "inverse_prevalence"] = "none"
     classWeights: list[PositiveFloat] | None = Field(default=None, min_length=2, max_length=50)
@@ -131,8 +156,11 @@ class TrainingRecipe(RequestModel):
     def historical_defaults(cls, values, info):
         if isinstance(values, dict) and (info.context or {}).get("legacy"):
             return {
-                "learningRate": 0.0003, "weightDecay": 0.0001,
-                "maxEpochs": 100, "patience": 15, **values,
+                "learningRate": 0.0003,
+                "weightDecay": 0.0001,
+                "maxEpochs": 100,
+                "patience": 15,
+                **values,
                 "checkpointMetric": values.get("checkpointMetric", "validation_loss"),
                 "analysis": values.get("analysis"),
                 "decisionThreshold": values.get("decisionThreshold"),
@@ -144,11 +172,15 @@ class TrainingRecipe(RequestModel):
         if len({item.field for item in self.clinicalFields}) != len(self.clinicalFields):
             raise ValueError("Clinical fields must be distinct.")
         if self.inputMode != "image" and not self.clinicalFields:
-            raise ValueError("Choose explicitly typed clinical fields for clinical or combined modeling.")
+            raise ValueError(
+                "Choose explicitly typed clinical fields for clinical or combined modeling."
+            )
         if self.inputMode == "image" and self.clinicalFields:
             raise ValueError("Image-only models do not consume clinical fields.")
         if self.inputMode == "clinical" and self.model != "abmil":
-            raise ValueError("Clinical-only uses a linear clinical head; retain the default model setting.")
+            raise ValueError(
+                "Clinical-only uses a linear clinical head; retain the default model setting."
+            )
         if self.minEpochs > self.maxEpochs:
             raise ValueError("Minimum epochs cannot exceed maximum epochs.")
         if self.warmupEpochs >= self.maxEpochs:
@@ -172,7 +204,9 @@ class TrainingRecipe(RequestModel):
         ):
             raise ValueError("Choose an nnMIL batch sampler or the existing slide/patient sampler.")
         if self.minValidationPositives is not None and self.fixedEpochBudget is None:
-            raise ValueError("A validation-positive threshold requires an explicit fixed epoch budget.")
+            raise ValueError(
+                "A validation-positive threshold requires an explicit fixed epoch budget."
+            )
         if self.fixedEpochBudget is not None and not (
             self.minEpochs <= self.fixedEpochBudget <= self.maxEpochs
             and self.warmupEpochs < self.fixedEpochBudget
@@ -185,7 +219,9 @@ class TrainingRecipe(RequestModel):
         if self.labelSmoothing and self.lossType != "ce":
             raise ValueError("Label smoothing is supported only with cross entropy.")
         if self.classWeightedSampling and self.samplingStrategy != "slide_uniform":
-            raise ValueError("Class-weighted sampling requires the slide-uniform sampling strategy.")
+            raise ValueError(
+                "Class-weighted sampling requires the slide-uniform sampling strategy."
+            )
         if self.bagCurriculum and self.bagCurriculumStart > self.bagCurriculumEnd:
             raise ValueError("The bag curriculum must start at or below its final bag size.")
         return self
@@ -215,7 +251,12 @@ class SearchGrid(RequestModel):
     @classmethod
     def historical_defaults(cls, values, info):
         if isinstance(values, dict) and (info.context or {}).get("legacy"):
-            return {"learningRates": [0.0003], "weightDecays": [0.0001], "maxEpochs": [100], **values}
+            return {
+                "learningRates": [0.0003],
+                "weightDecays": [0.0001],
+                "maxEpochs": [100],
+                **values,
+            }
         return values
 
     @field_validator("learningRates", "weightDecays", "maxEpochs")
@@ -270,17 +311,22 @@ class DevelopmentBatchSpec(RequestModel):
     notes: str = Field(default="", max_length=2000)
     predictorPolicy: ExperimentPredictorPolicy | None = None
     comparison: ComparisonSpec | None = None
-    selectionMetric: Literal["validation_auroc", "validation_loss", "validation_accuracy"] | None = (
-        "validation_auroc"
-    )
+    selectionMetric: (
+        Literal["validation_auroc", "validation_loss", "validation_accuracy"] | None
+    ) = "validation_auroc"
     candidateSelection: Literal["best_validation", "all"] | None = "best_validation"
 
     @model_validator(mode="before")
     @classmethod
     def historical_defaults(cls, values, info):
         if isinstance(values, dict) and (info.context or {}).get("legacy"):
-            return {"recipe": {}, "grid": {}, "selectionMetric": None,
-                    "candidateSelection": None, **values}
+            return {
+                "recipe": {},
+                "grid": {},
+                "selectionMetric": None,
+                "candidateSelection": None,
+                **values,
+            }
         return values
 
     @field_validator("experimentName", "batchName")
@@ -308,8 +354,10 @@ class DevelopmentBatchSpec(RequestModel):
                 "Explicit mode requires configuration rows; other modes use the recipe."
             )
         if self.comparison is not None:
-            if self.mode != "explicit" or not 2 <= len(self.configurations) <= 8:
-                raise ValueError("A comparison needs two to eight explicit configurations.")
+            if self.mode != "explicit" or not 2 <= len(self.configurations) <= MAX_COMPARISON_ARMS:
+                raise ValueError(
+                    f"A comparison needs 2 to {MAX_COMPARISON_ARMS} explicit configurations."
+                )
             if self.candidateSelection != "all":
                 raise ValueError("A comparison reports every arm; build all configurations.")
             if self.comparison.reference > len(self.configurations):

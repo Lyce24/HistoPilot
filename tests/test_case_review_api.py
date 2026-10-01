@@ -38,7 +38,12 @@ def test_review_routes_preserve_edits_and_conflict_response(client, cases):
     client.headers["X-HistoPilot-Token"] = client.get("/api/v1/session").json()["token"]
     path = base + "/" + quote("s1", safe="")
     assert client.get(path).json()["revision"] == 0
-    payload = {"expectedRevision": 0, "status": "review", "notes": "Inspect tumor", "evaluationId": evaluation["id"]}
+    payload = {
+        "expectedRevision": 0,
+        "status": "review",
+        "notes": "Inspect tumor",
+        "evaluationId": evaluation["id"],
+    }
     response = client.put(path, json=payload)
     assert response.status_code == 200, response.text
     assert response.json()["revision"] == 1

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from histopilot.application.development_splits import training_split_issue
 from histopilot.application.experiment_policy import (
     predictor_work_expected,
     resolve_batch_policy,
@@ -436,7 +437,7 @@ class ModelExperimentService:
             )
         if not metadata_only and self._configuration_locked(record):
             raise StorageError(
-                "This experimental setup is frozen or submitted. Copy it to adjust inputs or batches.",
+                "This experiment's design is frozen or started. Copy the experiment to adjust inputs or batches.",
                 "EXPERIMENT_CONFIGURATION_LOCKED",
                 409,
             )
@@ -632,7 +633,7 @@ class ModelExperimentService:
                 and request.model_dump()["inputs"] != record["payload"].get("inputs")
             ):
                 raise StorageError(
-                    "Choose dataset, targets, features and training design through Experimental Setup.",
+                    "Choose the dataset, targets, features and training design in the experiment's inputs.",
                     "EXPERIMENT_SETUP_INPUTS_REQUIRED",
                     409,
                 )
@@ -671,12 +672,9 @@ class ModelExperimentService:
 
         with lifecycle_guard(self.store.folder):
             record = self.require_editable(identity, request.expectedRevision)
-            if request.trainingSplit.mode != "kfold":
-                raise StorageError(
-                    "Experimental Setup currently supports k-fold training. Choose k-fold before verifying inputs.",
-                    "TRAINING_SPLIT_UNSUPPORTED",
-                    422,
-                )
+            issue = training_split_issue(request.trainingSplit.model_dump())
+            if issue:
+                raise StorageError(issue[1], issue[0], 422)
             target_split = self.store.get_configuration(request.targetSplitId)
             manifest = target_split["manifest"]
             if manifest.get("kind") != "target-split":
@@ -747,7 +745,7 @@ class ModelExperimentService:
         identity = record["payload"].get("frozenSetupId")
         if not identity:
             raise StorageError(
-                "Freeze Experimental Setup before starting this experiment.",
+                "Freeze the experiment's design before starting it.",
                 "EXPERIMENT_SETUP_REQUIRED",
                 409,
             )
@@ -765,7 +763,7 @@ class ModelExperimentService:
         for key in ("inputs", "setupDesign", "batchPlans", "predictorPolicy"):
             if record["payload"].get(key) != manifest.get(key):
                 raise StorageError(
-                    "The experimental setup no longer matches its frozen configuration.",
+                    "The experiment's design no longer matches its frozen configuration.",
                     "EXPERIMENT_SETUP_CHANGED",
                     409,
                 )
@@ -869,6 +867,7 @@ class ModelExperimentService:
                             ),
                             "BATCH_PREFLIGHT_BLOCKED",
                             422,
+                            findings=preview["findings"],
                         )
                     previews.append({"planId": plan["id"], "previewHash": preview["previewHash"]})
                 if any(
@@ -946,7 +945,7 @@ class ModelExperimentService:
                 )
         elif not resume or not self.training.execution(batch_id, include_inactive=True):
             raise StorageError(
-                "Submit this experiment to freeze all inputs and batches before training.",
+                "Start the experiment before training; starting locks its frozen inputs and batches.",
                 "EXPERIMENT_SUBMISSION_REQUIRED",
                 409,
             )
@@ -1073,6 +1072,7 @@ class ModelExperimentService:
                             ),
                             "BATCH_PREFLIGHT_BLOCKED",
                             409,
+                            findings=preview["findings"],
                         )
                     if (
                         frozen_setup
@@ -1080,7 +1080,7 @@ class ModelExperimentService:
                         not in frozen_setup["batchPreviews"]
                     ):
                         raise StorageError(
-                            "The batch no longer matches its frozen experimental setup.",
+                            "The batch no longer matches the experiment's frozen design.",
                             "EXPERIMENT_SETUP_CHANGED",
                             409,
                         )

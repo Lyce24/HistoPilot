@@ -7,7 +7,8 @@ describe('enum labels', () => {
     expect(unitLabel('patient')).toBe('Patient-level');
     expect(splitModeLabel('kfold')).toBe('K-fold cross-validation');
     expect(splitModeLabel('nested_kfold')).toBe('Nested cross-validation');
-    expect(splitModeLabel('leave_one_domain_out')).toBe('Leave-one-domain-out');
+    expect(splitModeLabel('leave_one_domain_out')).toBe('Leave one site or cohort out');
+    expect(splitModeLabel('predefined_folds')).toBe('Predefined folds');
     expect(taskLabel('ordinal_regression')).toBe('Ordinal regression');
   });
 });

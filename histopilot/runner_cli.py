@@ -38,9 +38,12 @@ def runner_status() -> dict:
 
 def register_runner_commands(app: typer.Typer) -> None:
     runner = typer.Typer(no_args_is_help=True, help="Machine-wide Task Center runner.")
-    app.add_typer(runner, name="runner")
+    app.add_typer(runner, name="runner", rich_help_panel="Local service")
     state_option = typer.Option(
-        None, "--state-dir", help="Task Center state directory (default: $XDG_STATE_HOME)."
+        None,
+        "--state-dir",
+        help="Task Center state directory (default: $HISTOPILOT_STATE_DIR, else "
+        "$XDG_STATE_HOME/histopilot, else ~/.local/state/histopilot).",
     )
 
     @runner.command("run")

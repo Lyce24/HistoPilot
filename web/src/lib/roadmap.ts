@@ -13,12 +13,8 @@ export type RoadmapModuleId =
   | 'dataset'
   | 'cohort'
   | 'features'
-  | 'experimental-setup'
   | 'experiments'
-  | 'test-data'
-  | 'evaluation'
-  | 'inference'
-  | 'clinical-utility'
+  | 'apply'
   | 'interpretation';
 
 export type RoadmapStatus = 'not-started' | 'draft' | 'complete';
@@ -50,35 +46,18 @@ export const ROADMAP_MODULES: readonly RoadmapModuleDefinition[] = [
     prerequisites: ['dataset'],
   },
   {
-    id: 'experimental-setup', title: 'Experimental Setup', shortTitle: 'Experimental Setup', phase: 'develop',
-    description: 'Combine a dataset, features and targets/splits. Design folds, validation and hyperparameters, then freeze the setup.',
+    id: 'experiments', title: 'Experiments', shortTitle: 'Experiments', phase: 'develop',
+    description: 'Design training on frozen targets, splits and features: folds, validation and hyperparameters. Freeze the design, start it, and review its results and predictors.',
     prerequisites: ['cohort', 'features'],
   },
   {
-    id: 'experiments', title: 'Experiments', shortTitle: 'Experiments', phase: 'develop',
-    description: 'Run frozen setups and track queued, active, completed and failed experiments.',
-    prerequisites: ['experimental-setup'],
-  },
-  {
-    id: 'evaluation', title: 'Evaluate models', shortTitle: 'Evaluate models', phase: 'evaluate',
-    description: 'Select development models and test cohorts, check matching targets and extracted or packed features, then evaluate.',
-    prerequisites: ['experiments', 'cohort'],
-  },
-  {
-    id: 'inference', title: 'Run inference', shortTitle: 'Run inference', phase: 'evaluate',
-    description: 'Apply ready predictors to unlabeled slides: predictions, label-free analysis, attention and exports. No labels or metrics.',
+    id: 'apply', title: 'Apply models', shortTitle: 'Apply models', phase: 'evaluate',
+    description: 'Apply ready predictors to a cohort. A labeled cohort is scored, by subgroup and for clinical utility; an unlabeled one gets predictions only.',
     prerequisites: ['experiments'],
-    optional: true,
-  },
-  {
-    id: 'clinical-utility', title: 'Clinical utility', shortTitle: 'Clinical utility', phase: 'insights',
-    description: 'Assess calibration, operating thresholds and net benefit using saved evaluation predictions.',
-    prerequisites: ['evaluation'],
-    optional: true,
   },
   {
     id: 'interpretation', title: 'Model interpretation', shortTitle: 'Model interpretation', phase: 'insights',
-    description: 'Load trained model weights with a dataset and its feature bundle, then review attention overlays, top patches and predicted labels. Needs no evaluation, inference or clinical results.',
+    description: 'Load trained model weights with a dataset and its feature bundle, then review attention overlays, top patches and predicted labels. Needs no runs from Apply models.',
     prerequisites: ['dataset', 'features', 'experiments'],
     optional: true,
   },
@@ -88,17 +67,15 @@ export interface RoadmapStep { id: string; step: string; title: string; modules:
 
 /**
  * The roadmap's numbered steps, the one source for stage numbers. Stages worked on side by side
- * share a step: slide features with targets & splits, and test cohorts with evaluation and
- * inference. The roadmap page and every stage page's eyebrow read their numbers from here.
+ * share a step: slide features with targets & splits. The roadmap page and every stage page's
+ * eyebrow read their numbers from here.
  */
 export const ROADMAP_STEPS: readonly RoadmapStep[] = [
   { id: 'datasets', step: '01', title: 'Datasets', modules: ['dataset'] },
   { id: 'prepare', step: '02', title: 'Prepare in parallel', modules: ['features', 'cohort'] },
-  { id: 'setup', step: '03', title: 'Experimental Setup', modules: ['experimental-setup'] },
-  { id: 'develop', step: '04', title: 'Experiments', modules: ['experiments'] },
-  { id: 'evaluate', step: '05', title: 'Evaluate models & run inference', modules: ['test-data', 'evaluation', 'inference'] },
-  { id: 'clinical', step: '06', title: 'Clinical utility', modules: ['clinical-utility'] },
-  { id: 'interpret', step: '07', title: 'Interpretation', modules: ['interpretation'] },
+  { id: 'develop', step: '03', title: 'Experiments', modules: ['experiments'] },
+  { id: 'apply', step: '04', title: 'Apply models', modules: ['apply'] },
+  { id: 'interpret', step: '05', title: 'Interpretation', modules: ['interpretation'] },
 ];
 
 /** A stage's roadmap step number, for example "02" for Slide features. */
@@ -107,7 +84,7 @@ export const stageStep = (id: RoadmapModuleId): string | undefined => ROADMAP_ST
 /** A stage page's eyebrow: its roadmap step number and short name, for example "02 Slide features". */
 export function stageEyebrow(id: RoadmapModuleId): string {
   const step = stageStep(id);
-  const name = ROADMAP_MODULES.find((item) => item.id === id)?.shortTitle ?? (id === 'test-data' ? 'Test cohorts' : id);
+  const name = ROADMAP_MODULES.find((item) => item.id === id)?.shortTitle ?? id;
   return step ? `${step} ${name}` : name;
 }
 
@@ -183,6 +160,22 @@ function bundleReady(bundle: FeatureBundle): boolean {
     && bundle.manifest.packs.every((pack) => pack.validation.tensorValidationComplete);
 }
 
+/**
+ * A completed run on any cohort completes Apply models: a labeled one is scored, an unlabeled
+ * one predicts only. Cohorts and runs still going are saved work.
+ */
+function applyProgress(runs: readonly ModelEvaluation[], cohorts: number, analyses: number): ModuleProgress {
+  const completed = runs.filter((item) => item.execution?.status === 'completed');
+  if (!completed.length) {
+    if (runs.length) return { status: 'draft', artifactCount: runs.length, evidence: `${runs.length} run${runs.length === 1 ? '' : 's'} not completed yet` };
+    return cohorts ? { status: 'draft', artifactCount: cohorts, evidence: `${cohorts} prepared cohort${cohorts === 1 ? '' : 's'} · no runs yet` } : { status: 'not-started', artifactCount: 0, evidence: 'No model applied to a cohort' };
+  }
+  const predicted = completed.filter(isInferenceRun).length, scored = completed.length - predicted;
+  const kinds = [scored ? `${scored} scored` : '', predicted ? `${predicted} predictions only` : ''].filter(Boolean).join(', ');
+  const clinical = analyses ? ` · ${analyses} clinical ${analyses === 1 ? 'analysis' : 'analyses'}` : '';
+  return { status: 'complete', artifactCount: completed.length, evidence: `${completed.length} completed run${completed.length === 1 ? '' : 's'} · ${kinds}${clinical}` };
+}
+
 /** Only a complete execution of a known immutable batch establishes development completion. */
 export function completedDevelopmentBatches(batches: readonly FrozenBatch[], executions: readonly TrainingExecution[]): FrozenBatch[] {
   const byBatch = new Map(executions.map((execution) => [execution.batchId, execution]));
@@ -224,7 +217,6 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
 
   states.dataset = progress(saved.datasets.length, importDrafts.length, 'frozen dataset', 'saved import draft', 'No frozen dataset or saved import');
   states.cohort = progress(targetSplits.length, protocolDrafts.length + saved.targetSplits.length - targetSplits.length, 'frozen target and split', 'saved target draft', 'No frozen targets and splits');
-  states['experimental-setup'] = progress(saved.setups.length, modelDrafts.filter((draft) => draft.status !== 'frozen').length, 'frozen setup', 'setup draft', 'No frozen experimental setup');
   states.features = progress(readyBundles.length, saved.features.length + saved.bundles.length - readyBundles.length, 'verified frozen bundle', 'saved feature artifact', 'No saved feature source or frozen bundle');
   if (states.features.status === 'draft') states.features.evidence += ' · complete bundle verification';
   const extraction = extractionEvidence(saved.extractions);
@@ -236,7 +228,9 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
       evidence: existing.status === 'not-started' ? extraction : `${existing.evidence} · ${extraction}`,
     };
   }
-  states.experiments = progress(0, saved.batches.length + saved.setups.length, '', 'setup ready to run', 'No experiments started');
+  // Designs (drafts and frozen designs) are saved work until training finishes or a predictor is ready.
+  const designDrafts = modelDrafts.filter((draft) => draft.status !== 'frozen').length;
+  states.experiments = progress(0, designDrafts + saved.setups.length + saved.batches.length, '', 'saved experiment design', 'No experiment designed yet');
   if (saved.executions.length) {
     const finishedBatches = completedDevelopmentBatches(saved.batches, saved.executions);
     const completed = saved.executions.reduce((sum, execution) => sum + execution.runCounts.completed, 0);
@@ -247,8 +241,6 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
       evidence: `${finishedBatches.length ? `${finishedBatches.length} completed development batch${finishedBatches.length === 1 ? '' : 'es'} · ` : ''}${completed}/${total} training runs completed${active ? ` · ${active} active batch${active === 1 ? '' : 'es'}` : ''}`,
     };
   }
-  const currentCohorts = saved.evaluationCohorts.filter((item) => item.current === true && !item.findings?.some((finding) => finding.severity === 'error'));
-  states['test-data'] = progress(currentCohorts.length, saved.evaluationCohorts.length - currentCohorts.length + saved.drafts.filter((draft) => draft.payload.type === 'evaluation-cohort').length, 'frozen test cohort', 'saved test cohort', 'No prepared test cohort');
 
   const retainedPredictors = saved.predictors.filter((item) => item.lifecycleState !== 'trashed');
   const retainedEvaluations = saved.modelEvaluations.filter((item) => item.lifecycleState !== 'trashed');
@@ -256,26 +248,19 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     const published = `${retainedPredictors.length} ready predictor${retainedPredictors.length === 1 ? '' : 's'}`;
     states.experiments = { status: 'complete', artifactCount: Math.max(states.experiments.artifactCount, retainedPredictors.length), evidence: states.experiments.artifactCount ? `${states.experiments.evidence} · ${published}` : published };
   }
-  // Inference runs share the evaluation record kind but never count as labeled evidence.
-  const scored = retainedEvaluations.filter((item) => !isInferenceRun(item));
-  const predicted = retainedEvaluations.filter(isInferenceRun);
-  const completedEvaluations = scored.filter((item) => item.execution?.status === 'completed').length;
-  states.evaluation = progress(completedEvaluations, scored.length - completedEvaluations, 'completed evaluation', 'saved evaluation plan', 'No evaluation of a predictor');
-  const completedInference = predicted.filter((item) => item.execution?.status === 'completed').length;
-  states.inference = progress(completedInference, predicted.length - completedInference, 'completed inference run', 'saved inference plan', 'No predictions for unlabeled slides');
+  const cohortDrafts = saved.drafts.filter((draft) => draft.payload.type === 'evaluation-cohort').length;
   const clinicalAnalyses = saved.clinicalAnalyses.filter((item) => item.lifecycleState !== 'trashed');
+  states.apply = applyProgress(retainedEvaluations, saved.evaluationCohorts.length + cohortDrafts, clinicalAnalyses.length);
   const interpretations = saved.interpretations.filter((item) => item.lifecycleState !== 'trashed');
   const completedInterpretations = interpretations.filter((item) => item.execution?.status === 'completed').length;
-  states['clinical-utility'] = progress(clinicalAnalyses.length, 0, 'saved clinical analysis', '', 'No saved clinical utility analysis');
   states.interpretation = progress(completedInterpretations, interpretations.length - completedInterpretations, 'completed attention map', 'saved interpretation plan', 'No attention overlay generated');
 
   const compatibleInputs = targetSplits.length > 0 && readyBundles.length > 0;
   const retained: Partial<Record<RoadmapModuleId, boolean>> = {
     cohort: saved.targetSplits.length > 0 || protocolDrafts.length > 0,
-    'experimental-setup': saved.setups.length > 0 || modelDrafts.length > 0,
     features: saved.features.length > 0 || saved.bundles.length > 0 || saved.extractions.length > 0,
-    experiments: saved.batches.length > 0 || saved.setups.length > 0 || retainedPredictors.length > 0,
-    'test-data': saved.evaluationCohorts.length > 0 || saved.drafts.some((draft) => draft.payload.type === 'evaluation-cohort'),
+    experiments: saved.batches.length > 0 || saved.setups.length > 0 || modelDrafts.length > 0 || retainedPredictors.length > 0,
+    apply: retainedEvaluations.length > 0,
   };
   return ROADMAP_MODULES.map((module) => {
     // Archived inputs disappear from new-input pickers. Retained records still
@@ -283,19 +268,18 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
     // new publication or run, which always passes the backend input checks.
     const retainedWork = retained[module.id] === true;
     const blockers = retainedWork ? [] : module.prerequisites.filter((id) => {
-      if (id === 'cohort' && module.id === 'evaluation') return !saved.evaluationCohorts.some((item) => item.current && !item.findings?.some((finding) => finding.severity === 'error'));
-      if (id === 'experiments' && (module.id === 'evaluation' || module.id === 'inference')) return retainedPredictors.length === 0;
+      if (id === 'experiments' && module.id === 'apply') return retainedPredictors.length === 0;
       if (id === 'experiments' && module.id === 'interpretation') return !retainedPredictors.some((item) => supportsAttention(item.manifest?.recipe?.model));
       return states[id].status !== 'complete';
     });
-    const compatibilityIssue = module.id === 'experimental-setup' && !retainedWork && blockers.length === 0 && !compatibleInputs
-      ? 'Freeze targets and splits and a current feature bundle, then check their training coverage in Experimental Setup.'
+    const compatibilityIssue = module.id === 'experiments' && !retainedWork && blockers.length === 0 && !compatibleInputs
+      ? 'Freeze targets and splits and a current feature bundle, then check their training coverage in an experiment’s inputs.'
       : undefined;
     if (compatibilityIssue) blockers.push('features');
     // These pages are registries: users can create an experiment before inputs,
     // inspect historical chains and recover records without completing all other
     // experiments. Individual training/freeze/evaluation actions check readiness.
-    const registry = ['dataset', 'features', 'cohort', 'experimental-setup', 'experiments', 'test-data', 'evaluation', 'inference', 'clinical-utility', 'interpretation'].includes(module.id);
+    const registry = ['dataset', 'features', 'cohort', 'experiments', 'apply', 'interpretation'].includes(module.id);
     return { ...module, ...states[module.id], blockers, unlocked: registry || blockers.length === 0, compatibilityIssue, retainedWork };
   });
 }

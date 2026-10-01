@@ -34,11 +34,23 @@ describe('predictor choices within a batch', () => {
     const skipped = render({ method: 'skip', refitPercentile: null }, 1);
     expect(skipped).toContain('0 predictors planned for this batch');
     expect(skipped).not.toContain('Refit epoch budget');
-    expect(skipped).toContain('No predictor is created for test-cohort evaluation');
+    expect(skipped).toContain('No predictor is created for Apply models');
     const custom = render({ method: 'refit', refitPercentile: 82.5 }, 1);
     expect(custom).toContain('Custom percentile (1–100)');
     expect(custom).toContain('value="82.5"');
     expect(batchPredictorLabel({ method: 'refit', refitPercentile: 82.5 })).toBe('Refit · P82.5 refit epochs');
+  });
+
+  it('names assessment runs after the training design and drops percentile wording for one run per group', () => {
+    const held = renderToStaticMarkup(<BatchPredictorFields value={{ method: 'refit', refitPercentile: 50 }} onChange={() => {}} configurationCount={1} trainingSeedCount={3} splitSeedCount={1} foldCount={1} split={{ mode: 'held_out' }} />);
+    expect(held).toContain('3 groups · 3 assessment runs');
+    expect(held).toContain('With one assessment run per group, every percentile gives the same budget');
+    expect(held).toContain('The testing set stays out of training.');
+    expect(held).not.toContain('Test cohorts');
+    const sites = renderToStaticMarkup(<BatchPredictorFields value={{ method: 'refit', refitPercentile: 75 }} onChange={() => {}} configurationCount={1} trainingSeedCount={1} splitSeedCount={1} foldCount={4} split={{ mode: 'leave_one_domain_out' }} />);
+    expect(sites).toContain('1 group · 4 held-out site runs');
+    expect(sites).toContain('its group’s held-out sites selected');
+    expect(render({ method: 'refit', refitPercentile: 50 }, 1)).toContain('its group’s folds selected');
   });
 
   it('uses the new training defaults while retaining explicit and omitted historical recipe budgets', () => {

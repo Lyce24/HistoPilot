@@ -1,0 +1,2319 @@
+{
+  "version": 1,
+  "predictors": [
+    {
+      "id": "p-ens-1",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c1",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "ensemble"
+      }
+    },
+    {
+      "id": "p-legacy",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c1",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        }
+      }
+    },
+    {
+      "id": "p-refit-1",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c1",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "refit"
+      }
+    },
+    {
+      "id": "p-seed-1",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c1",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "seed_ensemble"
+      }
+    },
+    {
+      "id": "p-trashed",
+      "lifecycleState": "trashed",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c1",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "ensemble"
+      }
+    },
+    {
+      "id": "p-ens-b",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-b",
+        "batchId": "b1",
+        "candidateId": "c1",
+        "inputs": {
+          "protocol": {
+            "id": "proto-2"
+          }
+        },
+        "method": "ensemble"
+      }
+    },
+    {
+      "id": "p-refit-b",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-b",
+        "batchId": "b1",
+        "candidateId": "c1",
+        "inputs": {
+          "protocol": {
+            "id": "proto-2"
+          }
+        },
+        "method": "refit"
+      }
+    },
+    {
+      "id": "p-seed-archived",
+      "lifecycleState": "archived",
+      "manifest": {
+        "experimentId": "exp-b",
+        "batchId": "b1",
+        "candidateId": "c1",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "seed_ensemble"
+      }
+    }
+  ],
+  "experimentPredictors": [
+    {
+      "experimentIds": [
+        "exp-a"
+      ],
+      "method": "both",
+      "expected": [
+        "p-ens-1",
+        "p-legacy",
+        "p-refit-1"
+      ]
+    },
+    {
+      "experimentIds": [
+        "exp-a"
+      ],
+      "method": "ensemble",
+      "expected": [
+        "p-ens-1",
+        "p-legacy"
+      ]
+    },
+    {
+      "experimentIds": [
+        "exp-a"
+      ],
+      "method": "refit",
+      "expected": [
+        "p-refit-1"
+      ]
+    },
+    {
+      "experimentIds": [
+        "exp-a"
+      ],
+      "method": "seed_ensemble",
+      "expected": [
+        "p-seed-1"
+      ]
+    },
+    {
+      "experimentIds": [
+        "exp-a",
+        "exp-b"
+      ],
+      "method": "both",
+      "expected": [
+        "p-ens-1",
+        "p-legacy",
+        "p-refit-1",
+        "p-ens-b",
+        "p-refit-b"
+      ]
+    },
+    {
+      "experimentIds": [
+        "exp-b"
+      ],
+      "method": "seed_ensemble",
+      "expected": []
+    },
+    {
+      "experimentIds": [],
+      "method": "both",
+      "expected": []
+    }
+  ],
+  "defaultMethod": [
+    {
+      "experimentIds": [
+        "exp-a"
+      ],
+      "linkedPredictor": "",
+      "expected": "seed_ensemble"
+    },
+    {
+      "experimentIds": [
+        "exp-b"
+      ],
+      "linkedPredictor": "",
+      "expected": "both"
+    },
+    {
+      "experimentIds": [
+        "exp-a",
+        "exp-b"
+      ],
+      "linkedPredictor": "",
+      "expected": "seed_ensemble"
+    },
+    {
+      "experimentIds": [
+        "exp-a"
+      ],
+      "linkedPredictor": "p-refit-1",
+      "expected": "refit"
+    },
+    {
+      "experimentIds": [
+        "exp-a"
+      ],
+      "linkedPredictor": "p-legacy",
+      "expected": "ensemble"
+    },
+    {
+      "experimentIds": [
+        "exp-a"
+      ],
+      "linkedPredictor": "missing",
+      "expected": "ensemble"
+    },
+    {
+      "experimentIds": [],
+      "linkedPredictor": "",
+      "expected": "both"
+    }
+  ],
+  "protocols": [
+    {
+      "id": "proto-1",
+      "manifest": {
+        "sourceTargetSplit": {
+          "id": "split-1"
+        }
+      }
+    },
+    {
+      "id": "proto-2",
+      "manifest": {
+        "spec": {
+          "sourceTargetSplitId": "split-2"
+        }
+      }
+    },
+    {
+      "id": "proto-3",
+      "manifest": {}
+    }
+  ],
+  "cohorts": [
+    {
+      "id": "cohort-stale",
+      "current": false,
+      "manifest": {
+        "spec": {
+          "sourceTargetSplitId": "split-1"
+        }
+      }
+    },
+    {
+      "id": "cohort-1",
+      "manifest": {
+        "spec": {
+          "sourceTargetSplitId": "split-1"
+        }
+      }
+    },
+    {
+      "id": "cohort-2",
+      "current": true,
+      "manifest": {
+        "spec": {
+          "sourceTargetSplitId": "split-2"
+        }
+      }
+    },
+    {
+      "id": "cohort-free",
+      "manifest": {
+        "spec": {}
+      }
+    }
+  ],
+  "reservedTestingCohort": [
+    {
+      "protocolIds": [
+        "proto-1"
+      ],
+      "expected": "cohort-1"
+    },
+    {
+      "protocolIds": [
+        "proto-2"
+      ],
+      "expected": "cohort-2"
+    },
+    {
+      "protocolIds": [
+        "proto-3"
+      ],
+      "expected": null
+    },
+    {
+      "protocolIds": [
+        "proto-2",
+        "proto-1"
+      ],
+      "expected": "cohort-1"
+    },
+    {
+      "protocolIds": [],
+      "expected": null
+    }
+  ],
+  "initialInputs": [
+    {
+      "cohort": null,
+      "expected": {
+        "inputs": {
+          "featureBundleId": "",
+          "patientIdentifiers": "shared",
+          "inference": {
+            "loadingPolicy": "per_slide",
+            "packArtifactId": null,
+            "batchSize": 1,
+            "numWorkers": 0,
+            "device": "auto",
+            "precision": "float32",
+            "patientAggregation": "predictor",
+            "decisionThreshold": "predictor"
+          }
+        },
+        "selection": {
+          "inference": {
+            "loadingPolicy": "per_slide",
+            "packArtifactId": null,
+            "batchSize": 1,
+            "numWorkers": 0,
+            "device": "auto",
+            "precision": "float32",
+            "patientAggregation": "predictor",
+            "decisionThreshold": "predictor"
+          },
+          "patientIdentifiers": "shared"
+        },
+        "labeled": true
+      }
+    },
+    {
+      "cohort": {
+        "id": "cohort-set",
+        "manifest": {
+          "spec": {
+            "featureBundleId": "bundle-1",
+            "patientIdentifiers": "independent",
+            "purpose": "inference",
+            "inference": {
+              "loadingPolicy": "per_slide",
+              "packArtifactId": null,
+              "batchSize": 4,
+              "numWorkers": 2,
+              "device": "cuda",
+              "precision": "float16",
+              "patientAggregation": "mean",
+              "decisionThreshold": 0.3
+            }
+          }
+        }
+      },
+      "expected": {
+        "inputs": {
+          "featureBundleId": "bundle-1",
+          "patientIdentifiers": "independent",
+          "inference": {
+            "loadingPolicy": "per_slide",
+            "packArtifactId": null,
+            "batchSize": 4,
+            "numWorkers": 2,
+            "device": "cuda",
+            "precision": "float16",
+            "patientAggregation": "predictor",
+            "decisionThreshold": "predictor"
+          }
+        },
+        "selection": {
+          "featureBundleId": "bundle-1",
+          "inference": {
+            "loadingPolicy": "per_slide",
+            "packArtifactId": null,
+            "batchSize": 4,
+            "numWorkers": 2,
+            "device": "cuda",
+            "precision": "float16",
+            "patientAggregation": "predictor",
+            "decisionThreshold": "predictor"
+          },
+          "patientIdentifiers": "independent"
+        },
+        "labeled": false
+      }
+    },
+    {
+      "cohort": {
+        "id": "cohort-bare",
+        "manifest": {
+          "spec": {
+            "inference": null
+          }
+        }
+      },
+      "expected": {
+        "inputs": {
+          "featureBundleId": "",
+          "patientIdentifiers": "shared",
+          "inference": {
+            "loadingPolicy": "per_slide",
+            "packArtifactId": null,
+            "batchSize": 1,
+            "numWorkers": 0,
+            "device": "auto",
+            "precision": "float32",
+            "patientAggregation": "predictor",
+            "decisionThreshold": "predictor"
+          }
+        },
+        "selection": {
+          "inference": {
+            "loadingPolicy": "per_slide",
+            "packArtifactId": null,
+            "batchSize": 1,
+            "numWorkers": 0,
+            "device": "auto",
+            "precision": "float32",
+            "patientAggregation": "predictor",
+            "decisionThreshold": "predictor"
+          },
+          "patientIdentifiers": "shared"
+        },
+        "labeled": true
+      }
+    }
+  ],
+  "configurationPredictors": [
+    {
+      "id": "fold-1",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c1",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "ensemble"
+      }
+    },
+    {
+      "id": "fold-2",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c2",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        }
+      }
+    },
+    {
+      "id": "fold-3",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c2",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "ensemble"
+      }
+    },
+    {
+      "id": "refit-1",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c1",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "refit"
+      }
+    },
+    {
+      "id": "seed-built",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c3",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "seed_ensemble"
+      }
+    },
+    {
+      "id": "seed-trashed",
+      "lifecycleState": "trashed",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c4",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "seed_ensemble"
+      }
+    },
+    {
+      "id": "fold-7a",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c7",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "ensemble"
+      }
+    },
+    {
+      "id": "fold-7b",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-a",
+        "batchId": "b1",
+        "candidateId": "c7",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "ensemble"
+      }
+    },
+    {
+      "id": "fold-other",
+      "lifecycleState": "active",
+      "manifest": {
+        "experimentId": "exp-b",
+        "batchId": "b1",
+        "candidateId": "c6",
+        "inputs": {
+          "protocol": {
+            "id": "proto-1"
+          }
+        },
+        "method": "ensemble"
+      }
+    }
+  ],
+  "seedEnsembleChoices": [
+    {
+      "experimentId": "exp-a",
+      "experimentName": "Exp A",
+      "batchId": "b1",
+      "batchName": "Baseline",
+      "candidateId": "c1",
+      "candidateNumber": 1,
+      "trainingSeeds": [
+        1,
+        2,
+        3
+      ],
+      "splitSeeds": [
+        42
+      ],
+      "seedGroups": 1,
+      "members": 5,
+      "completedRuns": 5,
+      "eligible": false,
+      "reason": "One seed group: its fold ensemble is the predictor.",
+      "existingPredictorId": null
+    },
+    {
+      "experimentId": "exp-a",
+      "experimentName": "Exp A",
+      "batchId": "b1",
+      "batchName": "Baseline",
+      "candidateId": "c2",
+      "candidateNumber": 2,
+      "trainingSeeds": [
+        1,
+        2
+      ],
+      "splitSeeds": [
+        42
+      ],
+      "seedGroups": 2,
+      "members": 10,
+      "completedRuns": 10,
+      "eligible": false,
+      "reason": "Seed group 2 is still training.",
+      "existingPredictorId": null
+    },
+    {
+      "experimentId": "exp-a",
+      "experimentName": "Exp A",
+      "batchId": "b1",
+      "batchName": "Baseline",
+      "candidateId": "c3",
+      "candidateNumber": 3,
+      "trainingSeeds": [
+        1,
+        2,
+        3
+      ],
+      "splitSeeds": [
+        42
+      ],
+      "seedGroups": 3,
+      "members": 15,
+      "completedRuns": 15,
+      "eligible": true,
+      "reason": null,
+      "existingPredictorId": "seed-built"
+    },
+    {
+      "experimentId": "exp-a",
+      "experimentName": "Exp A",
+      "batchId": "b1",
+      "batchName": "Baseline",
+      "candidateId": "c4",
+      "candidateNumber": 4,
+      "trainingSeeds": [
+        1,
+        2,
+        3
+      ],
+      "splitSeeds": [
+        42
+      ],
+      "seedGroups": 3,
+      "members": 15,
+      "completedRuns": 15,
+      "eligible": true,
+      "reason": null,
+      "existingPredictorId": "seed-trashed"
+    },
+    {
+      "experimentId": "exp-a",
+      "experimentName": "Exp A",
+      "batchId": "b1",
+      "batchName": "Baseline",
+      "candidateId": "c5",
+      "candidateNumber": 5,
+      "trainingSeeds": [
+        7
+      ],
+      "splitSeeds": [
+        1,
+        2
+      ],
+      "seedGroups": 2,
+      "members": 10,
+      "completedRuns": 10,
+      "eligible": true,
+      "reason": null,
+      "existingPredictorId": null
+    }
+  ],
+  "configurationChoice": [
+    {
+      "experiment": {
+        "id": "exp-a",
+        "name": "Exp A"
+      },
+      "batchId": "b1",
+      "candidateId": "c1",
+      "expected": {
+        "action": "apply",
+        "predictorId": "fold-1",
+        "detail": "Its fold ensemble is ready."
+      }
+    },
+    {
+      "experiment": {
+        "id": "exp-a",
+        "name": "Exp A"
+      },
+      "batchId": "b1",
+      "candidateId": "c2",
+      "expected": {
+        "action": "choose",
+        "predictorIds": [
+          "fold-2",
+          "fold-3"
+        ],
+        "detail": "Seed group 2 is still training."
+      }
+    },
+    {
+      "experiment": {
+        "id": "exp-a",
+        "name": "Exp A"
+      },
+      "batchId": "b1",
+      "candidateId": "c3",
+      "expected": {
+        "action": "apply",
+        "predictorId": "seed-built",
+        "detail": "Its seed ensemble is built: 3 training × 1 split seed · 15 fold models."
+      }
+    },
+    {
+      "experiment": {
+        "id": "exp-a",
+        "name": "Exp A"
+      },
+      "batchId": "b1",
+      "candidateId": "c4",
+      "expected": {
+        "action": "build-seed-ensemble",
+        "selection": {
+          "experimentId": "exp-a",
+          "batchId": "b1",
+          "candidateId": "c4",
+          "name": "Exp A · configuration 4 · seed ensemble"
+        },
+        "detail": "Its seed ensemble (3 training × 1 split seed · 15 fold models) is built from the verified fold checkpoints; nothing trains."
+      }
+    },
+    {
+      "experiment": {
+        "id": "exp-a",
+        "name": "Exp A"
+      },
+      "batchId": "b1",
+      "candidateId": "c5",
+      "expected": {
+        "action": "build-seed-ensemble",
+        "selection": {
+          "experimentId": "exp-a",
+          "batchId": "b1",
+          "candidateId": "c5",
+          "name": "Exp A · configuration 5 · seed ensemble"
+        },
+        "detail": "Its seed ensemble (1 training × 2 split seeds · 10 fold models) is built from the verified fold checkpoints; nothing trains."
+      }
+    },
+    {
+      "experiment": {
+        "id": "exp-a",
+        "name": "A very long experiment name A very long experiment name A very long experiment name A very long experiment name A very long experiment name "
+      },
+      "batchId": "b1",
+      "candidateId": "c5",
+      "expected": {
+        "action": "build-seed-ensemble",
+        "selection": {
+          "experimentId": "exp-a",
+          "batchId": "b1",
+          "candidateId": "c5",
+          "name": "A very long experiment name A very long experiment name A very long experiment name A very long experiment name A very l"
+        },
+        "detail": "Its seed ensemble (1 training × 2 split seeds · 10 fold models) is built from the verified fold checkpoints; nothing trains."
+      }
+    },
+    {
+      "experiment": {
+        "id": "exp-a",
+        "name": "Exp A"
+      },
+      "batchId": "b1",
+      "candidateId": "c6",
+      "expected": {
+        "action": "none",
+        "predictorIds": [],
+        "detail": "No predictor is ready for this configuration yet."
+      }
+    },
+    {
+      "experiment": {
+        "id": "exp-a",
+        "name": "Exp A"
+      },
+      "batchId": "b1",
+      "candidateId": "c7",
+      "expected": {
+        "action": "choose",
+        "predictorIds": [
+          "fold-7a",
+          "fold-7b"
+        ],
+        "detail": "2 fold ensembles are ready, one per seed group; choose among them in Apply models."
+      }
+    }
+  ],
+  "inferTarget": [
+    {
+      "values": [
+        "b",
+        "a",
+        "b",
+        " ",
+        null,
+        ""
+      ],
+      "truncated": false,
+      "expected": {
+        "task": "binary_classification",
+        "classes": [
+          "b",
+          "a"
+        ],
+        "labels": {
+          "b": "b",
+          "a": "a"
+        },
+        "positiveClass": null
+      }
+    },
+    {
+      "values": [
+        "x",
+        "y",
+        "z"
+      ],
+      "truncated": false,
+      "expected": {
+        "task": "multiclass_classification",
+        "classes": [
+          "x",
+          "y",
+          "z"
+        ],
+        "labels": {
+          "x": "x",
+          "y": "y",
+          "z": "z"
+        },
+        "positiveClass": null
+      }
+    },
+    {
+      "values": [
+        "only"
+      ],
+      "truncated": false,
+      "expected": {
+        "task": "",
+        "classes": [
+          "only"
+        ],
+        "labels": {
+          "only": "only"
+        },
+        "positiveClass": null
+      }
+    },
+    {
+      "values": [
+        "a",
+        "b"
+      ],
+      "truncated": true,
+      "expected": {
+        "task": "",
+        "classes": [],
+        "labels": {},
+        "positiveClass": null
+      }
+    },
+    {
+      "values": [],
+      "truncated": false,
+      "expected": {
+        "task": "",
+        "classes": [],
+        "labels": {},
+        "positiveClass": null
+      }
+    },
+    {
+      "values": [
+        "Yes",
+        "yes"
+      ],
+      "truncated": false,
+      "expected": {
+        "task": "binary_classification",
+        "classes": [
+          "Yes",
+          "yes"
+        ],
+        "labels": {
+          "Yes": "Yes",
+          "yes": "yes"
+        },
+        "positiveClass": null
+      }
+    }
+  ],
+  "suggestedClass": [
+    {
+      "value": "  hg ",
+      "classes": [
+        "ND",
+        "LG",
+        "HG"
+      ],
+      "expected": "HG"
+    },
+    {
+      "value": "IND",
+      "classes": [
+        "ND",
+        "LG",
+        "HG"
+      ],
+      "expected": null
+    },
+    {
+      "value": "lg",
+      "classes": [
+        " LG "
+      ],
+      "expected": " LG "
+    },
+    {
+      "value": "Positive",
+      "classes": [
+        "negative",
+        "positive"
+      ],
+      "expected": "positive"
+    }
+  ],
+  "standards": [
+    {
+      "id": "ref-b",
+      "lifecycleState": "active",
+      "manifest": {
+        "cohortId": "cohort-1",
+        "classes": [
+          "pos",
+          "neg"
+        ],
+        "name": "Second reader"
+      }
+    },
+    {
+      "id": "ref-a",
+      "manifest": {
+        "cohortId": "cohort-1",
+        "classes": [
+          "neg",
+          "pos"
+        ],
+        "name": "Expert panel"
+      }
+    },
+    {
+      "id": "ref-archived",
+      "lifecycleState": "archived",
+      "manifest": {
+        "cohortId": "cohort-1",
+        "classes": [
+          "neg",
+          "pos"
+        ],
+        "name": "Archived reader"
+      }
+    },
+    {
+      "id": "ref-trashed",
+      "lifecycleState": "trashed",
+      "manifest": {
+        "cohortId": "cohort-1",
+        "classes": [
+          "neg",
+          "pos"
+        ],
+        "name": "Trashed reader"
+      }
+    },
+    {
+      "id": "ref-other-cohort",
+      "manifest": {
+        "cohortId": "cohort-2",
+        "classes": [
+          "neg",
+          "pos"
+        ],
+        "name": "Other cohort"
+      }
+    },
+    {
+      "id": "ref-other-classes",
+      "manifest": {
+        "cohortId": "cohort-1",
+        "classes": [
+          "neg",
+          "pos",
+          "ind"
+        ],
+        "name": "Three classes"
+      }
+    },
+    {
+      "id": "ref-same-name",
+      "manifest": {
+        "cohortId": "cohort-1",
+        "classes": [
+          "neg",
+          "pos"
+        ],
+        "name": "Expert panel"
+      }
+    }
+  ],
+  "labelSources": [
+    {
+      "run": {
+        "id": "run-1",
+        "manifest": {
+          "cohortId": "cohort-1",
+          "purpose": "evaluation",
+          "target": {
+            "classes": [
+              "neg",
+              "pos"
+            ]
+          }
+        }
+      },
+      "linked": null,
+      "reference": null,
+      "expected": [
+        {
+          "id": null,
+          "name": "Cohort labels"
+        },
+        {
+          "id": "ref-a",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-same-name",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-b",
+          "name": "Second reader"
+        }
+      ],
+      "expectedSource": null
+    },
+    {
+      "run": {
+        "id": "run-1",
+        "manifest": {
+          "cohortId": "cohort-1",
+          "purpose": "evaluation",
+          "target": {
+            "classes": [
+              "neg",
+              "pos"
+            ]
+          }
+        }
+      },
+      "linked": null,
+      "reference": "ref-b",
+      "expected": [
+        {
+          "id": null,
+          "name": "Cohort labels"
+        },
+        {
+          "id": "ref-a",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-same-name",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-b",
+          "name": "Second reader"
+        }
+      ],
+      "expectedSource": "ref-b"
+    },
+    {
+      "run": {
+        "id": "run-1",
+        "manifest": {
+          "cohortId": "cohort-1",
+          "purpose": "evaluation",
+          "target": {
+            "classes": [
+              "neg",
+              "pos"
+            ]
+          }
+        }
+      },
+      "linked": null,
+      "reference": "ref-other-cohort",
+      "expected": [
+        {
+          "id": null,
+          "name": "Cohort labels"
+        },
+        {
+          "id": "ref-a",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-same-name",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-b",
+          "name": "Second reader"
+        }
+      ],
+      "expectedSource": null
+    },
+    {
+      "run": {
+        "id": "run-2",
+        "manifest": {
+          "cohortId": "cohort-1",
+          "purpose": "inference",
+          "target": {
+            "classes": [
+              "neg",
+              "pos"
+            ]
+          }
+        }
+      },
+      "linked": null,
+      "reference": null,
+      "expected": [
+        {
+          "id": "ref-a",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-same-name",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-b",
+          "name": "Second reader"
+        }
+      ],
+      "expectedSource": "ref-a"
+    },
+    {
+      "run": {
+        "id": "run-2",
+        "manifest": {
+          "cohortId": "cohort-1",
+          "purpose": "inference",
+          "target": {
+            "classes": [
+              "neg",
+              "pos"
+            ]
+          }
+        }
+      },
+      "linked": "ref-archived",
+      "reference": "ref-archived",
+      "expected": [
+        {
+          "id": "ref-archived",
+          "name": "Archived reader"
+        },
+        {
+          "id": "ref-a",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-same-name",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-b",
+          "name": "Second reader"
+        }
+      ],
+      "expectedSource": "ref-archived"
+    },
+    {
+      "run": {
+        "id": "run-3",
+        "manifest": {
+          "cohortId": "cohort-1",
+          "purpose": "review",
+          "target": {
+            "classes": [
+              "pos",
+              "neg"
+            ]
+          }
+        }
+      },
+      "linked": "ref-trashed",
+      "reference": null,
+      "expected": [
+        {
+          "id": "ref-a",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-same-name",
+          "name": "Expert panel"
+        },
+        {
+          "id": "ref-b",
+          "name": "Second reader"
+        }
+      ],
+      "expectedSource": "ref-a"
+    }
+  ],
+  "withArmModel": [
+    {
+      "base": {
+        "model": "abmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": []
+      },
+      "model": "abmil",
+      "expected": {
+        "model": "abmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": []
+      }
+    },
+    {
+      "base": {
+        "model": "abmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": []
+      },
+      "model": "nnmil",
+      "expected": {
+        "model": "nnmil",
+        "inputMode": "image",
+        "attentionDim": 256,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [],
+        "nnmilWindowSeedFromTraining": true
+      }
+    },
+    {
+      "base": {
+        "model": "abmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": []
+      },
+      "model": "mean_pool",
+      "expected": {
+        "model": "mean_pool",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [],
+        "nnmilCheckpointSelection": "best_validation",
+        "nnmilWindowSeedFromTraining": false
+      }
+    },
+    {
+      "base": {
+        "model": "abmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": []
+      },
+      "model": "slide_mlp",
+      "expected": {
+        "model": "slide_mlp",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 1,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [],
+        "nnmilCheckpointSelection": "best_validation",
+        "nnmilWindowSeedFromTraining": false,
+        "bagCurriculum": false,
+        "instanceDropout": 0,
+        "evalBagSize": null,
+        "gradientCheckpointing": false
+      }
+    },
+    {
+      "base": {
+        "model": "nnmil",
+        "inputMode": "multimodal",
+        "attentionDim": 256,
+        "gatedAttention": true,
+        "nnmilWindowSeedFromTraining": true,
+        "nnmilBatchSampler": "random",
+        "clinicalFields": [
+          {
+            "field": "stage",
+            "kind": "categorical"
+          }
+        ]
+      },
+      "model": "abmil",
+      "expected": {
+        "model": "abmil",
+        "inputMode": "multimodal",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "nnmilWindowSeedFromTraining": false,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [
+          {
+            "field": "stage",
+            "kind": "categorical"
+          }
+        ],
+        "nnmilCheckpointSelection": "best_validation"
+      }
+    },
+    {
+      "base": {
+        "model": "slide_linear",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 1,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": []
+      },
+      "model": "slide_mlp",
+      "expected": {
+        "model": "slide_mlp",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 1,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [],
+        "nnmilCheckpointSelection": "best_validation",
+        "nnmilWindowSeedFromTraining": false
+      }
+    }
+  ],
+  "ablationArms": [
+    {
+      "base": {
+        "model": "abmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": []
+      },
+      "models": [
+        "abmil",
+        "nnmil",
+        "mean_pool"
+      ],
+      "inputs": [
+        "image",
+        "multimodal",
+        "clinical"
+      ],
+      "expected": [
+        {
+          "model": "abmil",
+          "inputMode": "image",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": []
+        },
+        {
+          "model": "nnmil",
+          "inputMode": "image",
+          "attentionDim": 256,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [],
+          "nnmilWindowSeedFromTraining": true
+        },
+        {
+          "model": "mean_pool",
+          "inputMode": "image",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [],
+          "nnmilCheckpointSelection": "best_validation",
+          "nnmilWindowSeedFromTraining": false
+        }
+      ]
+    },
+    {
+      "base": {
+        "model": "abmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [
+          {
+            "field": "age",
+            "kind": "numeric"
+          }
+        ]
+      },
+      "models": [
+        "abmil",
+        "nnmil"
+      ],
+      "inputs": [
+        "image",
+        "multimodal",
+        "clinical"
+      ],
+      "expected": [
+        {
+          "model": "abmil",
+          "inputMode": "image",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [
+            {
+              "field": "age",
+              "kind": "numeric"
+            }
+          ]
+        },
+        {
+          "model": "nnmil",
+          "inputMode": "image",
+          "attentionDim": 256,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [],
+          "nnmilWindowSeedFromTraining": true
+        },
+        {
+          "model": "abmil",
+          "inputMode": "multimodal",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [
+            {
+              "field": "age",
+              "kind": "numeric"
+            }
+          ]
+        },
+        {
+          "model": "nnmil",
+          "inputMode": "multimodal",
+          "attentionDim": 256,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [
+            {
+              "field": "age",
+              "kind": "numeric"
+            }
+          ],
+          "nnmilWindowSeedFromTraining": true
+        },
+        {
+          "model": "abmil",
+          "inputMode": "clinical",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [
+            {
+              "field": "age",
+              "kind": "numeric"
+            }
+          ],
+          "bagCurriculum": false,
+          "nnmilCheckpointSelection": "best_validation",
+          "nnmilWindowSeedFromTraining": false
+        }
+      ]
+    },
+    {
+      "base": {
+        "model": "nnmil",
+        "inputMode": "multimodal",
+        "attentionDim": 256,
+        "gatedAttention": true,
+        "nnmilWindowSeedFromTraining": true,
+        "nnmilBatchSampler": "random",
+        "clinicalFields": [
+          {
+            "field": "stage",
+            "kind": "categorical"
+          }
+        ]
+      },
+      "models": [
+        "abmil",
+        "nnmil"
+      ],
+      "inputs": [
+        "image",
+        "multimodal"
+      ],
+      "expected": [
+        {
+          "model": "nnmil",
+          "inputMode": "multimodal",
+          "attentionDim": 256,
+          "gatedAttention": true,
+          "nnmilWindowSeedFromTraining": true,
+          "nnmilBatchSampler": "random",
+          "clinicalFields": [
+            {
+              "field": "stage",
+              "kind": "categorical"
+            }
+          ]
+        },
+        {
+          "model": "abmil",
+          "inputMode": "image",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "nnmilWindowSeedFromTraining": false,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [],
+          "nnmilCheckpointSelection": "best_validation"
+        },
+        {
+          "model": "nnmil",
+          "inputMode": "image",
+          "attentionDim": 256,
+          "gatedAttention": true,
+          "nnmilWindowSeedFromTraining": true,
+          "nnmilBatchSampler": "random",
+          "clinicalFields": []
+        },
+        {
+          "model": "abmil",
+          "inputMode": "multimodal",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "nnmilWindowSeedFromTraining": false,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [
+            {
+              "field": "stage",
+              "kind": "categorical"
+            }
+          ],
+          "nnmilCheckpointSelection": "best_validation"
+        }
+      ]
+    },
+    {
+      "base": {
+        "model": "abmil",
+        "inputMode": "clinical",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [
+          {
+            "field": "age",
+            "kind": "numeric"
+          }
+        ]
+      },
+      "models": [
+        "slide_linear"
+      ],
+      "inputs": [
+        "image",
+        "clinical"
+      ],
+      "expected": [
+        {
+          "model": "abmil",
+          "inputMode": "clinical",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [
+            {
+              "field": "age",
+              "kind": "numeric"
+            }
+          ]
+        },
+        {
+          "model": "slide_linear",
+          "inputMode": "image",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 1,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [],
+          "nnmilCheckpointSelection": "best_validation",
+          "nnmilWindowSeedFromTraining": false,
+          "bagCurriculum": false,
+          "instanceDropout": 0,
+          "evalBagSize": null,
+          "gradientCheckpointing": false
+        }
+      ]
+    },
+    {
+      "base": {
+        "model": "abmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [
+          {
+            "field": "age",
+            "kind": "numeric"
+          }
+        ]
+      },
+      "models": [
+        "nnmil"
+      ],
+      "inputs": [
+        "clinical"
+      ],
+      "expected": [
+        {
+          "model": "abmil",
+          "inputMode": "image",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [
+            {
+              "field": "age",
+              "kind": "numeric"
+            }
+          ]
+        },
+        {
+          "model": "abmil",
+          "inputMode": "clinical",
+          "attentionDim": 384,
+          "gatedAttention": true,
+          "learningRate": 0.0002,
+          "bagSizeMode": "fixed",
+          "bagSize": 4096,
+          "nnmilBatchSampler": "patient_weighted",
+          "clinicalFields": [
+            {
+              "field": "age",
+              "kind": "numeric"
+            }
+          ],
+          "bagCurriculum": false,
+          "nnmilCheckpointSelection": "best_validation",
+          "nnmilWindowSeedFromTraining": false
+        }
+      ]
+    }
+  ],
+  "featureSpec": {
+    "datasetId": "ds-1",
+    "path": "/data/features",
+    "encoderId": null,
+    "fileSuffix": ".h5",
+    "idSuffix": "",
+    "recursive": true,
+    "layout": "auto",
+    "featureKind": "patch"
+  },
+  "featureSpecFromExtraction": [
+    {
+      "job": {
+        "id": "extract-patch",
+        "state": "succeeded",
+        "spec": {
+          "datasetId": "ds-2",
+          "options": {
+            "patch_encoder": "uni_v2",
+            "slide_encoder": null
+          }
+        },
+        "result": {
+          "featurePath": "/out/features_uni_v2",
+          "outputLayout": {
+            "featureKind": "patch"
+          }
+        }
+      },
+      "expected": {
+        "datasetId": "ds-2",
+        "path": "/out/features_uni_v2",
+        "encoderId": "uni_v2",
+        "fileSuffix": ".h5",
+        "idSuffix": "",
+        "recursive": false,
+        "layout": "auto",
+        "featureKind": "patch",
+        "sourceExtractionJobId": "extract-patch",
+        "slideList": null,
+        "slideListPath": null,
+        "coordinatesPath": null
+      }
+    },
+    {
+      "job": {
+        "id": "extract-slide",
+        "state": "succeeded",
+        "spec": {
+          "options": {
+            "patch_encoder": "conch_v15",
+            "slide_encoder": "titan"
+          }
+        },
+        "outputLayout": {
+          "featureKind": "slide"
+        },
+        "result": {
+          "featureDirectory": "/out/slide_features_titan"
+        }
+      },
+      "expected": {
+        "datasetId": null,
+        "path": "/out/slide_features_titan",
+        "encoderId": "titan",
+        "fileSuffix": ".h5",
+        "idSuffix": "",
+        "recursive": false,
+        "layout": "auto",
+        "featureKind": "slide",
+        "sourceExtractionJobId": "extract-slide",
+        "slideList": null,
+        "slideListPath": null,
+        "coordinatesPath": null
+      }
+    },
+    {
+      "job": {
+        "id": "extract-no-encoder",
+        "state": "succeeded",
+        "spec": {
+          "datasetId": "ds-3",
+          "options": {}
+        },
+        "result": {
+          "featurePath": "/out/features"
+        }
+      },
+      "expected": {
+        "datasetId": "ds-3",
+        "path": "/out/features",
+        "encoderId": null,
+        "fileSuffix": ".h5",
+        "idSuffix": "",
+        "recursive": false,
+        "layout": "auto",
+        "featureKind": "patch",
+        "sourceExtractionJobId": "extract-no-encoder",
+        "slideList": null,
+        "slideListPath": null,
+        "coordinatesPath": null
+      }
+    },
+    {
+      "job": {
+        "id": "extract-running",
+        "state": "running",
+        "spec": {
+          "datasetId": "ds-2",
+          "options": {}
+        },
+        "result": null
+      },
+      "expected": null
+    },
+    {
+      "job": {
+        "id": "extract-empty",
+        "state": "succeeded",
+        "spec": {
+          "datasetId": "ds-2",
+          "options": {}
+        },
+        "result": {}
+      },
+      "expected": null
+    }
+  ],
+  "resultsCsv": [
+    {
+      "results": {
+        "batches": [
+          {
+            "name": "Baseline, \"v2\"",
+            "configurations": [
+              {
+                "number": 1,
+                "selected": true,
+                "splitSeeds": [
+                  {
+                    "splitSeed": 42,
+                    "seeds": [
+                      {
+                        "trainingSeed": 1,
+                        "oof": {
+                          "count": 120,
+                          "auroc": 1.0,
+                          "auprc": 0.875,
+                          "balancedAccuracy": 0.5,
+                          "macroF1": null,
+                          "accuracy": 0.3333333333333333,
+                          "loss": 5e-05
+                        },
+                        "folds": [
+                          {
+                            "fold": 0,
+                            "metrics": {
+                              "count": 24,
+                              "auroc": 0.9,
+                              "loss": 1e-07,
+                              "accuracy": 1e+21
+                            },
+                            "bestEpoch": 7,
+                            "epochsCompleted": 20
+                          },
+                          {
+                            "fold": 1,
+                            "metrics": null,
+                            "bestEpoch": null,
+                            "epochsCompleted": 3
+                          },
+                          {
+                            "fold": 2,
+                            "metrics": {
+                              "auroc": 1e-06,
+                              "accuracy": 123.45
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "trainingSeed": 2,
+                        "oof": null,
+                        "folds": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "number": 2,
+                "selected": false,
+                "splitSeeds": [
+                  {
+                    "splitSeed": 7,
+                    "seeds": [
+                      {
+                        "trainingSeed": 1,
+                        "oof": {
+                          "auroc": -0.5,
+                          "loss": 2.5e-08
+                        },
+                        "folds": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Empty\nbatch",
+            "configurations": []
+          }
+        ]
+      },
+      "expected": "batch,configuration,selected,split_seed,training_seed,level,fold,count,auroc,auprc,balancedAccuracy,macroF1,accuracy,loss,best_epoch,epochs_completed\n\"Baseline, \"\"v2\"\"\",1,true,42,1,oof,,120,1,0.875,0.5,,0.3333333333333333,0.00005,,\n\"Baseline, \"\"v2\"\"\",1,true,42,1,test_fold,1,24,0.9,,,,1e+21,1e-7,7,20\n\"Baseline, \"\"v2\"\"\",1,true,42,1,test_fold,3,,0.000001,,,,123.45,,,\n\"Baseline, \"\"v2\"\"\",2,false,7,1,oof,,,-0.5,,,,,2.5e-8,,\n"
+    },
+    {
+      "results": {
+        "batches": []
+      },
+      "expected": "batch,configuration,selected,split_seed,training_seed,level,fold,count,auroc,auprc,balancedAccuracy,macroF1,accuracy,loss,best_epoch,epochs_completed\n"
+    }
+  ],
+  "modelDescription": {
+    "experiments": [
+      {
+        "id": "exp-a",
+        "name": "Exp A",
+        "batches": [
+          {
+            "id": "b-abmil",
+            "name": "ABMIL baseline"
+          },
+          {
+            "id": "b-nnmil",
+            "name": "nnMIL"
+          }
+        ]
+      },
+      {
+        "id": "exp-b",
+        "name": "Exp B",
+        "batches": []
+      }
+    ],
+    "cases": [
+      {
+        "manifest": {
+          "batchId": "b-abmil",
+          "candidateId": "c1",
+          "candidateNumber": 1,
+          "method": "ensemble",
+          "trainingSeed": 42,
+          "splitSeed": 42,
+          "checkpoints": [
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            }
+          ]
+        },
+        "expected": "ABMIL baseline · Configuration 1 · Fold ensemble · Train 42 / split 42"
+      },
+      {
+        "manifest": {
+          "batchId": "b-nnmil",
+          "candidateId": "c1",
+          "candidateNumber": 1,
+          "method": "ensemble",
+          "trainingSeed": 42,
+          "splitSeed": 42,
+          "checkpoints": [
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            }
+          ]
+        },
+        "expected": "nnMIL · Configuration 1 · Fold ensemble · Train 42 / split 42"
+      },
+      {
+        "manifest": {
+          "batchId": "b-nnmil",
+          "candidateId": "c1",
+          "candidateNumber": 1,
+          "method": "refit",
+          "trainingSeed": 43,
+          "splitSeed": 42,
+          "checkpoints": [
+            {
+              "runId": "r0"
+            }
+          ]
+        },
+        "expected": "nnMIL · Configuration 1 · Refit · Train 43 / split 42"
+      },
+      {
+        "manifest": {
+          "batchId": "b-nnmil",
+          "candidateId": "c1",
+          "candidateNumber": 1,
+          "method": "seed_ensemble",
+          "trainingSeeds": [
+            42,
+            43,
+            44
+          ],
+          "splitSeeds": [
+            42
+          ],
+          "checkpoints": [
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            },
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            },
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            }
+          ]
+        },
+        "expected": "nnMIL · Configuration 1 · Seed ensemble · 3 training × 1 split seed · 15 models"
+      },
+      {
+        "manifest": {
+          "batchId": "b-abmil",
+          "candidateId": "c2",
+          "candidateNumber": 2,
+          "method": "seed_ensemble",
+          "trainingSeeds": [
+            42,
+            43
+          ],
+          "splitSeeds": [
+            42,
+            43
+          ],
+          "checkpoints": [
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            },
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            },
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            },
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            }
+          ]
+        },
+        "expected": "ABMIL baseline · Configuration 2 · Seed ensemble · 2 training × 2 split seeds · 20 models"
+      },
+      {
+        "manifest": {
+          "batchId": "configuration-0123456789abcdef0123456789abcdef",
+          "candidateId": "candidate-abcdefghijklmnopqrstuvwxyz0123",
+          "trainingSeed": 7,
+          "splitSeed": 7,
+          "checkpoints": [
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            }
+          ]
+        },
+        "expected": "Batch configuratio…6789abcdef · Configuration candidate-ab…uvwxyz0123 · Fold ensemble · Train 7 / split 7"
+      },
+      {
+        "manifest": {
+          "batchId": "b-short",
+          "candidateId": "c9",
+          "candidateNumber": 0,
+          "method": "seed_ensemble",
+          "trainingSeeds": [
+            1
+          ],
+          "checkpoints": [
+            {
+              "runId": "r0"
+            },
+            {
+              "runId": "r1"
+            },
+            {
+              "runId": "r2"
+            },
+            {
+              "runId": "r3"
+            },
+            {
+              "runId": "r4"
+            }
+          ]
+        },
+        "expected": "Batch b-short · Configuration 0 · Seed ensemble · 1 training × 1 split seed · 5 models"
+      }
+    ]
+  }
+}

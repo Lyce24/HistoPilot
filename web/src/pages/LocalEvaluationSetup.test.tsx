@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -17,8 +18,10 @@ const preview: EvaluationPreview = {
   findings: [{ severity: 'error', code: 'MISSING_TEST_FEATURES', message: 'One selected test slide has no features.' }, { severity: 'error', code: 'DEVELOPMENT_OVERLAP', message: 'One selected slide occurs in development.' }],
   canFreeze: false, executionEnabled: false, previewHash: 'preview',
 };
+// Apply models places the cohort library in its own page; this stands in for that frame.
+const frame = (library: ReactNode, actions: ReactNode) => <section data-frame=""><div data-frame-actions="">{actions}</div>{library}</section>;
 
-describe('later test cohort setup', () => {
+describe('cohorts in Apply models', () => {
   it('requires explicit numeric inference values, including zero workers and threshold boundaries', () => {
     const html = renderToStaticMarkup(<EvaluationInferenceFields value={{ ...newEvaluationSpec().inference, numWorkers: 0, decisionThreshold: 0 }} target={preview.target!} onChange={() => {}} />);
     expect(html.match(/<input[^>]*required=""/g)).toHaveLength(3);
@@ -38,24 +41,43 @@ describe('later test cohort setup', () => {
     expect(legacy).toContain('value="predictor"');
   });
 
-  it('lists inference cohorts by type and offers to create one', () => {
+  it('lists cohorts by their labels inside the Apply models frame and offers both kinds', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     client.setQueryData(['scientific', 'project', 'datasets'], { datasets: [] });
-    client.setQueryData(['evaluation-drafts', 'project'], { drafts: [{ id: 'unlabeled', name: 'No-consensus slides', revision: 1, status: 'editable', payload: { type: 'evaluation-cohort', spec: newInferenceSpec() } }] });
+    client.setQueryData(['evaluation-drafts', 'project'], { drafts: [{ id: 'unlabeled', name: 'Unlabeled slides', revision: 1, status: 'editable', payload: { type: 'evaluation-cohort', spec: newInferenceSpec() } }] });
     client.setQueryData(['evaluation-cohorts', 'project'], { items: [] });
-    const workspace = { project: { id: 'project', name: 'BD' } } as Workspace;
+    const workspace = { project: { id: 'project', name: 'Demo' } } as Workspace;
     try {
-      const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={workspace} /></QueryClientProvider>);
-      expect(html).toContain('No-consensus slides');
-      expect(html).toContain('<div class="eyebrow">05 Test cohorts</div>');
-      expect(html).toContain('Inference · unlabeled');
-      expect(html).toContain('Type · target');
-      expect(html).toContain('Create inference cohort');
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={workspace} frame={frame} /></QueryClientProvider>);
+      expect(html).toContain('data-frame=""');
+      // The module's page names the stage; the library adds no heading of its own.
+      expect(html).not.toContain('class="eyebrow"');
+      expect(html).toContain('Unlabeled slides');
+      expect(html).toContain('>Unlabeled<');
+      expect(html).toContain('Labels · target');
+      expect(html).toMatch(/data-frame-actions="">.*Create labeled cohort.*Create unlabeled cohort/);
+    } finally { client.clear(); }
+  });
+
+  it('opens a new cohort of the kind a link asks for, on a page of its own', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['scientific', 'project', 'datasets'], { datasets: [] });
+    client.setQueryData(['evaluation-drafts', 'project'], { drafts: [] });
+    client.setQueryData(['evaluation-cohorts', 'project'], { items: [] });
+    const workspace = { project: { id: 'project', name: 'Demo' } } as Workspace;
+    try {
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={workspace} frame={frame} newCohort="unlabeled" /></QueryClientProvider>);
+      expect(html).not.toContain('data-frame=""');
+      expect(html).toContain('<div class="eyebrow">04 Apply models</div>');
+      expect(html).toContain('Create unlabeled cohort');
+      expect(html).toContain('Back to cohorts');
+      expect(html).toContain('value="Demo unlabeled cohort"');
+      expect(html).toContain('1. Choose the slides');
     } finally { client.clear(); }
   });
 
   it('summarizes inference cohorts without a labeled-slide count', () => {
-    const preview = { summary: { includedSlides: 383, includedPatients: 256, excludedSlides: 728, labeledSlides: 0, classCounts: {}, developmentSlideOverlap: 0, developmentPatientOverlap: 0 }, findings: [], coverage: { selectedSlideIds: [] } };
+    const preview = { summary: { includedSlides: 120, includedPatients: 80, excludedSlides: 240, labeledSlides: 0, classCounts: {}, developmentSlideOverlap: 0, developmentPatientOverlap: 0 }, findings: [], coverage: { selectedSlideIds: [] } };
     const inference = renderToStaticMarkup(<TestCohortSummary preview={preview} inference />);
     expect(inference).toContain('Slides to predict');
     expect(inference).not.toContain('Labeled slides');
@@ -71,21 +93,21 @@ describe('later test cohort setup', () => {
     client.setQueryData(['evaluation-cohorts', 'project'], { items: [] });
     const workspace = { project: { id: 'project', name: 'BLCA' } } as Workspace;
     try {
-      const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={workspace} /></QueryClientProvider>);
+      const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={workspace} frame={frame} /></QueryClientProvider>);
       expect(html).toContain('Existing test cohort');
-      expect(html).toContain('Create test cohort');
-      expect(html).toContain('Search test cohorts');
-      expect(html).toContain('Test cohort status');
-      expect(html).toContain('Sort test cohorts');
+      expect(html).toContain('Create labeled cohort');
+      expect(html).toContain('Search cohorts');
+      expect(html).toContain('Cohort status');
+      expect(html).toContain('Sort cohorts');
       expect(html).toContain('Manage');
       expect(html).toContain('data-record-key="draft:saved-cohort');
       expect(html).not.toContain('Your test cohorts');
       expect(html).not.toContain('Stage 0 · Saved records');
       expect(html).toContain('Planned');
       expect(html).not.toContain('Development protocol');
-      expect(html).not.toContain('Test feature bundle');
+      expect(html).not.toContain('Feature bundle');
       expect(html).not.toContain('Cohort name');
-      expect(html).not.toContain('Test cohort stages');
+      expect(html).not.toContain('Cohort stages');
       expect(html).not.toContain('Save draft');
       expect(html).not.toContain('Cross-validation folds');
       expect(html).not.toContain('Split seed');
@@ -93,10 +115,10 @@ describe('later test cohort setup', () => {
     } finally { client.clear(); }
   });
 
-  it('summarizes selected test records and class distributions without evaluation checks', () => {
+  it('summarizes selected slides and class distributions without model checks', () => {
     const html = renderToStaticMarkup(<TestCohortSummary preview={{ ...preview, findings: [] }} />);
-    expect(html).toContain('Selected test slides');
-    expect(html).toContain('Prediction target · selected test slides by class');
+    expect(html).toContain('Selected slides');
+    expect(html).toContain('Prediction target · selected slides by class');
     expect(html).toContain('Patient / slide groups');
     expect(html).toContain('Excluded slides');
     expect(html).toContain('test-1');
@@ -165,13 +187,13 @@ describe('later test cohort setup', () => {
   });
 });
 
-it('continues earlier review cohorts and inference cohorts as unlabeled inference cohorts', () => {
+it('continues earlier review cohorts and unlabeled cohorts as unlabeled cohorts', () => {
   const spec = independentCohortSpec({ ...newEvaluationSpec(), purpose: 'review', target: null });
   expect(spec.purpose).toBe('inference');
   expect(spec.patientIdentifiers).toBe('shared');
   expect(spec.target).toBeNull();
   expect(independentCohortSpec(newInferenceSpec())).toMatchObject({ purpose: 'inference', target: null });
-  // A labeled evaluation cohort stays an evaluation cohort with its target.
+  // A labeled cohort stays labeled, with its target.
   const labeled = independentCohortSpec(newEvaluationSpec());
   expect(labeled.purpose).toBeUndefined();
   expect(labeled.target).not.toBeNull();

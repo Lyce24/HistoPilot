@@ -15,18 +15,27 @@ from histopilot.workers.train_batch import execute_plan
 
 def completed_nnmil(service, monkeypatch, selection="best_validation"):
     choice, folder, state = candidate(
-        service, monkeypatch, model="nnmil", attentionDim=2, bagSizeMode="training_median",
-        nnmilCheckpointSelection=selection, nnmilWindowStrideDivisor=2,
-        nnmilWindowSeed=17, nnmilWindowAggregation="mean_probabilities",
+        service,
+        monkeypatch,
+        model="nnmil",
+        attentionDim=2,
+        bagSizeMode="training_median",
+        nnmilCheckpointSelection=selection,
+        nnmilWindowStrideDivisor=2,
+        nnmilWindowSeed=17,
+        nnmilWindowAggregation="mean_probabilities",
     )
     plan = json.loads((folder / "plan.json").read_text())
     for run in state["runs"]:
         run_plan = execute_plan(plan, run, None)
         result = run["result"]
-        result.update(effectiveRecipe=run_plan["effectiveRecipe"],
-                      nnmilPlanning=run_plan["nnmilPlanning"], bestEpoch=1,
-                      selectedEpoch=2 if selection == "latest" else 1,
-                      checkpointSelection=selection)
+        result.update(
+            effectiveRecipe=run_plan["effectiveRecipe"],
+            nnmilPlanning=run_plan["nnmilPlanning"],
+            bestEpoch=1,
+            selectedEpoch=2 if selection == "latest" else 1,
+            checkpointSelection=selection,
+        )
         if selection == "latest":
             latest = Path(result["bestCheckpointPath"]).with_name("last.ckpt")
             latest.write_bytes(b"A distinct completed final checkpoint.")
@@ -36,7 +45,9 @@ def completed_nnmil(service, monkeypatch, selection="best_validation"):
 
 
 @pytest.mark.parametrize("selection", ["best_validation", "latest"])
-def test_nnmil_promotes_selected_weights_and_resolved_fold_settings(registry, monkeypatch, selection):
+def test_nnmil_promotes_selected_weights_and_resolved_fold_settings(
+    registry, monkeypatch, selection
+):
     service, _ = registry
     choice, _, _ = completed_nnmil(service, monkeypatch, selection)
     predictor, _ = freeze(service, choice)
@@ -69,7 +80,9 @@ def test_changed_resolution_or_checkpoint_epoch_blocks_promotion(registry, monke
 
 
 @pytest.mark.parametrize("selection,budget", [("best_validation", 1), ("latest", 2)])
-def test_refit_uses_selected_epoch_and_recomputes_training_population(registry, monkeypatch, selection, budget):
+def test_refit_uses_selected_epoch_and_recomputes_training_population(
+    registry, monkeypatch, selection, budget
+):
     service, _ = registry
     choice, _, _ = completed_nnmil(service, monkeypatch, selection)
     preview = service.preview(choice.model_copy(update={"method": "refit"}))
@@ -80,7 +93,9 @@ def test_refit_uses_selected_epoch_and_recomputes_training_population(registry, 
     assert manifest["effectiveRecipe"]["maxEpochs"] == budget
     assert manifest["planTemplate"]["effectiveRecipe"] == manifest["effectiveRecipe"]
     assert manifest["planTemplate"]["nnmilPlanning"] == manifest["nnmilPlanning"]
-    assert {row["partition"] for row in manifest["planTemplate"]["data"]["memberships"]} == {"train"}
+    assert {row["partition"] for row in manifest["planTemplate"]["data"]["memberships"]} == {
+        "train"
+    }
 
 
 def test_external_evaluation_freezes_nnmil_window_policy_and_all_patches(registry, monkeypatch):
@@ -88,11 +103,18 @@ def test_external_evaluation_freezes_nnmil_window_policy_and_all_patches(registr
     choice, _, _ = completed_nnmil(service, monkeypatch)
     predictor, _ = freeze(service, choice)
     evaluations = EvaluationRunService(service.store, service.filesystem)
-    preview = evaluations.preview(EvaluationRunSelection(
-        predictorId=predictor["id"], cohortId=cohort["id"], name="nnMIL external",
-        inference={**cohort["manifest"]["spec"]["inference"],
-                   "patientAggregation": "predictor", "device": "cpu"},
-    ))
+    preview = evaluations.preview(
+        EvaluationRunSelection(
+            predictorId=predictor["id"],
+            cohortId=cohort["id"],
+            name="nnMIL external",
+            inference={
+                **cohort["manifest"]["spec"]["inference"],
+                "patientAggregation": "predictor",
+                "device": "cpu",
+            },
+        )
+    )
     assert preview["canSave"], preview
     manifest = preview["manifest"]
     assert manifest["bagPolicy"]["evalBagSize"] is None

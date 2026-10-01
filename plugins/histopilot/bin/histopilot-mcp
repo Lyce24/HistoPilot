@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Start HistoPilot's MCP server for Claude Code: `histopilot agent serve` with a scoped token.
+#
+# Each setting comes from the plugin (/plugin configure histopilot), else the environment:
+#   service URL  HISTOPILOT_PLUGIN_URL, else HISTOPILOT_URL, else http://127.0.0.1:8787
+#   agent token  HISTOPILOT_PLUGIN_TOKEN, else HISTOPILOT_TOKEN
+#   executable   HISTOPILOT_PLUGIN_COMMAND, else HISTOPILOT_AGENT_COMMAND, else uvx running
+#                HistoPilot from HISTOPILOT_SOURCE (default: its GitHub repository)
+# HISTOPILOT_MCP_DRY_RUN=1 prints the command instead of running it; the token is never
+# printed or passed as an argument.
+set -euo pipefail
+
+# The first value that is set and is not an unexpanded ${...} placeholder.
+setting() {
+  local value
+  for value in "$@"; do
+    if [[ -n "$value" && "$value" != '${'* ]]; then
+      printf '%s' "$value"
+      return
+    fi
+  done
+}
+
+url=$(setting "${HISTOPILOT_PLUGIN_URL:-}" "${HISTOPILOT_URL:-}" "http://127.0.0.1:8787")
+token=$(setting "${HISTOPILOT_PLUGIN_TOKEN:-}" "${HISTOPILOT_TOKEN:-}")
+executable=$(setting "${HISTOPILOT_PLUGIN_COMMAND:-}" "${HISTOPILOT_AGENT_COMMAND:-}")
+source_spec="${HISTOPILOT_SOURCE:-git+https://github.com/Lyce24/HistoPilot}"
+
+if [[ -z "$token" ]]; then
+  echo "HistoPilot: no agent token. Create one for a shared project with" \
+    "\`histopilot token create --scope read --scope preview\`, then add it with" \
+    "/plugin configure histopilot." >&2
+  exit 2
+fi
+if [[ -n "$executable" ]]; then
+  run=("${executable/#\~/$HOME}" agent serve --url "$url")
+elif command -v uvx >/dev/null 2>&1; then
+  run=(uvx --quiet --python ">=3.11" --from "histopilot[agent] @ ${source_spec}"
+    histopilot agent serve --url "$url")
+else
+  echo "HistoPilot: install uv (https://docs.astral.sh/uv/), or set the histopilot executable" \
+    "with /plugin configure histopilot." >&2
+  exit 2
+fi
+
+export HISTOPILOT_TOKEN="$token"
+unset HISTOPILOT_PLUGIN_TOKEN
+if [[ "${HISTOPILOT_MCP_DRY_RUN:-}" == 1 ]]; then
+  printf '%q ' "${run[@]}"
+  printf '\n'
+  exit 0
+fi
+exec "${run[@]}"

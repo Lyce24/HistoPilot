@@ -1,4 +1,5 @@
 """Explicit slide experiments never group or score by patient metadata."""
+
 import copy
 import json
 
@@ -36,7 +37,9 @@ def test_slide_memberships_preserve_exact_rows_and_ignore_patient_metadata(tmp_p
     _validate_plan(plan)
     grouped = validate_memberships({**plan, **plan["data"]})
     assert plan == before
-    assert {row["slideId"] for rows in grouped.values() for row in rows} == set(plan["data"]["featureFiles"])
+    assert {row["slideId"] for rows in grouped.values() for row in rows} == set(
+        plan["data"]["featureFiles"]
+    )
     assert any(row["patientId"] is None for row in grouped["train"])
     damaged = copy.deepcopy(plan)
     damaged["data"]["memberships"].append(damaged["data"]["memberships"][0])
@@ -60,12 +63,16 @@ def test_slide_validation_positive_threshold_counts_slides(tmp_path):
         row["patientId"] = "one-patient"
     assert resolve_stopping(recipe, plan["target"], rows, split_unit="slide")[1] is None
     assert resolve_stopping(recipe, plan["target"], rows)[1]["positivePatients"] == 1
-    decision = resolve_stopping({**recipe, "minValidationPositives": 3}, plan["target"], rows, split_unit="slide")[1]
+    decision = resolve_stopping(
+        {**recipe, "minValidationPositives": 3}, plan["target"], rows, split_unit="slide"
+    )[1]
     assert decision["positiveSlides"] == 2
     assert decision["reason"] == "insufficient_validation_positive_slides"
 
 
-@pytest.mark.parametrize("recipe", [{"samplingStrategy": "patient_natural"}, {"samplingStrategy": "cohort_balanced"}])
+@pytest.mark.parametrize(
+    "recipe", [{"samplingStrategy": "patient_natural"}, {"samplingStrategy": "cohort_balanced"}]
+)
 def test_slide_mode_rejects_patient_computation_controls(recipe):
     with pytest.raises(ValueError, match="[Pp]atient"):
         validate_split_unit(recipe, {"unit": "slide"}, "slide")
@@ -77,6 +84,7 @@ def test_slide_cpu_fit_scoring_checkpoint_and_refit_never_aggregate_patients(tmp
     plan["recipe"]["analysis"] = {"bootstrapResamples": 200}
     monkeypatch.setattr(module, "aggregate_patients", forbid_patient_work)
     import histopilot.statistics
+
     monkeypatch.setattr(histopilot.statistics, "patient_analysis", forbid_patient_work)
     result = train_fold(plan, tmp_path / "run")
     for role in ("validation", "assessment"):
@@ -86,7 +94,9 @@ def test_slide_cpu_fit_scoring_checkpoint_and_refit_never_aggregate_patients(tmp
         assert result["metrics"][role]["unit"] == "slide"
         assert result["metrics"][role]["patient"]["available"] is False
         assert "patientAnalysis" not in result["metrics"][role]
-    model = module.MILTrainModule.load_from_checkpoint(result["bestCheckpointPath"], map_location="cpu", weights_only=True)
+    model = module.MILTrainModule.load_from_checkpoint(
+        result["bestCheckpointPath"], map_location="cpu", weights_only=True
+    )
     assert model.split_unit == "slide"
     refit = copy.deepcopy(plan)
     for row in refit["data"]["memberships"]:
@@ -97,21 +107,49 @@ def test_slide_cpu_fit_scoring_checkpoint_and_refit_never_aggregate_patients(tmp
 
 
 def test_oof_slides_from_shared_patient_across_folds_are_complete(tmp_path, monkeypatch):
-    target = {"unit": "slide", "task": "binary_classification", "classes": ["a", "b"], "positiveClass": "b"}
+    target = {
+        "unit": "slide",
+        "task": "binary_classification",
+        "classes": ["a", "b"],
+        "positiveClass": "b",
+    }
     runs, memberships = [], {}
     for fold in range(2):
         split = f"fold-{fold}"
-        rows = [{"slideId": f"s-{fold}-{i}", "patientId": "shared" if i else None,
-                 "label": target["classes"][i], "labelIndex": i,
-                 "probabilities": [0.8, 0.2] if i == 0 else [0.2, 0.8]} for i in range(2)]
+        rows = [
+            {
+                "slideId": f"s-{fold}-{i}",
+                "patientId": "shared" if i else None,
+                "label": target["classes"][i],
+                "labelIndex": i,
+                "probabilities": [0.8, 0.2] if i == 0 else [0.2, 0.8],
+            }
+            for i in range(2)
+        ]
         memberships[split] = [{**row, "partition": "test"} for row in rows]
         path = tmp_path / f"{split}.json"
         write_json_atomic(path, {"classOrder": target["classes"], "records": rows})
-        runs.append({"id": split, "candidateId": "candidate", "splitPlanId": split, "trainingSeed": 42,
-                     "status": "completed", "result": {"predictions": {"assessment": str(path)}}})
-    plan = {"batchId": "batch", "protocolId": "protocol", "target": target, "splitUnit": "slide",
-            "configurations": [{"id": "candidate", "recipe": {"analysis": {"bootstrapResamples": 200}}}],
-            "memberships": memberships, "splitPlans": [{"id": f"fold-{i}", "seed": 42} for i in range(2)]}
+        runs.append(
+            {
+                "id": split,
+                "candidateId": "candidate",
+                "splitPlanId": split,
+                "trainingSeed": 42,
+                "status": "completed",
+                "result": {"predictions": {"assessment": str(path)}},
+            }
+        )
+    plan = {
+        "batchId": "batch",
+        "protocolId": "protocol",
+        "target": target,
+        "splitUnit": "slide",
+        "configurations": [
+            {"id": "candidate", "recipe": {"analysis": {"bootstrapResamples": 200}}}
+        ],
+        "memberships": memberships,
+        "splitPlans": [{"id": f"fold-{i}", "seed": 42} for i in range(2)],
+    }
     monkeypatch.setattr(module, "aggregate_patients", forbid_patient_work)
     collect_results(plan, {"status": "completed", "runs": runs}, tmp_path)
     candidate = json.loads((tmp_path / "results.json").read_text())["candidates"][0]

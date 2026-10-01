@@ -87,7 +87,8 @@ class MILDataModule(L.LightningDataModule):
                 fields,
                 unit=self.plan.get("splitUnit", "patient"),
             )
-            if fields else None
+            if fields
+            else None
         )
 
     def setup(self, stage=None):

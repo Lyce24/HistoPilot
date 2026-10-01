@@ -39,7 +39,7 @@ def register_archive_commands(app):
             "Read the state JSON for the verified completion result before opening the restored folder."
         )
 
-    @app.command("restore-study")
+    @app.command("restore-study", rich_help_panel="Local service")
     def restore_study(
         archive: Path = typer.Argument(..., exists=True, dir_okay=False),
         destination: Path = typer.Argument(..., help="New destination folder; never overwritten."),
@@ -52,7 +52,7 @@ def register_archive_commands(app):
         """Verify and restore an archive as a Task Center task, without the original project."""
         execute(archive, destination, workspace, data_root, config)
 
-    @app.command("verify-study")
+    @app.command("verify-study", rich_help_panel="Local service")
     def verify_study(
         archive: Path = typer.Argument(..., exists=True, dir_okay=False),
         workspace: Path | None = typer.Option(None),

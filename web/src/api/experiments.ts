@@ -56,11 +56,11 @@ export interface SetupInput extends SetupDesign {
   packArtifactId: string | null;
 }
 /** One execution status for a submitted experiment, shared by the library, the detail header
- * and the setup list. Live work first; `needs-attention` covers failed or interrupted runs and a
+ * and the Task Center's planned list. Live work first; `needs-attention` covers failed or interrupted runs and a
  * coordinator that stopped, and `waiting` work that resumes by itself (a busy workspace, earlier
  * batches). */
 export type ExperimentExecutionStatus = 'queued' | 'running' | 'waiting' | 'held' | 'needs-attention' | 'cancelled' | 'completed';
-/** Before submission a record is `created`, `planned` or `ready` (a frozen setup). */
+/** Before submission a record is `created`, `planned` or `ready` (a frozen design). */
 export type ExperimentStatus = 'created' | 'planned' | 'ready' | ExperimentExecutionStatus;
 export interface ModelExperiment {
   setupVersion?: 1 | null;
@@ -97,7 +97,8 @@ export interface ExperimentInput {
   name: string; notes?: string; tags?: string[]; inputs?: MILExperimentSpec | null;
   predictorPolicy?: ExperimentPredictorPolicy;
 }
-export interface CreateExperimentInput extends ExperimentInput { setupVersion?: 1 | null; sourceExperimentId?: string; operationId: string }
+/** A new experiment states its setup version: 1 for an experiment design, null for the legacy form. */
+export interface CreateExperimentInput extends ExperimentInput { setupVersion: 1 | null; sourceExperimentId?: string; operationId: string }
 export interface UpdateExperimentInput extends ExperimentInput { expectedRevision: number; batchPlans?: ExperimentBatchPlan[] }
 const prefix = (project: string) => `/projects/${encodeURIComponent(project)}/model-experiments`;
 export const experiments = {

@@ -14,6 +14,15 @@ from collections import defaultdict
 
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.predictors import finding, lifecycle_document, reference
+from histopilot.application.references import ReferenceService
+from histopilot.application.run_evidence import (
+    development_flag,
+    development_patients,
+    join_labels,
+    join_reference,
+    labels_withheld,
+    patient_evidence,
+)
 from histopilot.schemas.clinical import ClinicalSelection
 from histopilot.scoring import class_ranking_score
 from histopilot.scoring import logsumexp as _logsumexp
@@ -611,6 +620,13 @@ class ClinicalService:
         evaluation = self.evaluations.get(selection.evaluationId)
         manifest = evaluation["manifest"]
         self.store.lifecycle.assert_document_usable(manifest)
+        standard = (
+            ReferenceService(self.store, self.evaluations.filesystem).for_run(
+                manifest, selection.referenceId
+            )
+            if selection.referenceId
+            else None
+        )
         predictor = self.store.get_configuration(manifest["predictorId"])
         cohort = self.store.get_configuration(manifest["cohortId"])
         standalone = cohort["manifest"].get("overlap", {}).get("deferred", False)
@@ -637,19 +653,41 @@ class ClinicalService:
             overlap.get("deferred")
             or not {"slideIds", "patientIds", "patientsComparable"} <= overlap.keys()
         ):
-            raise _invalid(
-                "Clinical utility requires the model evaluation's reviewed overlap evidence."
-            )
-        if overlap.get("slideIds") or overlap.get("patientIds") or overlap.get("sourceSlideIds"):
-            raise _invalid(
-                "Clinical utility requires an evaluation cohort without development overlap."
-            )
+            raise _invalid("Clinical utility requires the run's reviewed overlap evidence.")
+        # A label-blind run is scored without development patients, so their new slides
+        # may be predicted; the report leaves them out exactly as its metrics do. Scores
+        # against a reference standard follow the same rule.
+        blind = labels_withheld(manifest)
+        serviced = blind or standard is not None
+        if (
+            overlap.get("slideIds")
+            or overlap.get("sourceSlideIds")
+            or (overlap.get("patientIds") and not serviced)
+        ):
+            raise _invalid("Clinical utility requires a cohort without development overlap.")
         content = self.evaluations.artifact(selection.evaluationId, "predictions.json")
-        metrics_content = self.evaluations.artifact(selection.evaluationId, "metrics.json")
+        if standard:
+            metrics = self.evaluations.reference_metrics(selection.evaluationId, standard["id"])
+            metrics_hash = content_hash(metrics)
+        elif blind:
+            result = evaluation["execution"].get("result") or {}
+            if "metrics" not in result:
+                raise _invalid(
+                    (result.get("metricsError") or {}).get("message")
+                    or "This evaluation has no scored metrics."
+                )
+            metrics = result["metrics"]
+            metrics_hash = content_hash(metrics)
+        else:
+            metrics_content = self.evaluations.artifact(selection.evaluationId, "metrics.json")
+            metrics_hash = hashlib.sha256(metrics_content).hexdigest()
         try:
-            predictions, metrics = json.loads(content), json.loads(metrics_content)
+            predictions = json.loads(content)
+            if not serviced:
+                metrics = json.loads(metrics_content)
             if not isinstance(metrics, dict):
                 raise ValueError
+            slide_split = manifest.get("splitUnit") == "slide"
             if any(
                 metrics.get(key) != value
                 for key, value in {
@@ -657,7 +695,10 @@ class ClinicalService:
                     "unit": manifest["target"]["unit"],
                     "positiveClass": manifest["target"].get("positiveClass"),
                     "decisionThreshold": manifest["inference"]["decisionThreshold"],
-                    "patientAggregation": "mean_logits"
+                    # Slide-split runs never aggregate patients; their metrics record none.
+                    "patientAggregation": None
+                    if slide_split
+                    else "mean_logits"
                     if manifest["inference"]["patientAggregation"] == "mean_logits"
                     else "mean_probabilities",
                 }.items()
@@ -665,32 +706,51 @@ class ClinicalService:
                 raise _invalid("Saved metrics differ from the frozen evaluation settings.")
             if not isinstance(predictions, dict):
                 raise ValueError
-            records = validate_records(predictions.get("records"), manifest["target"]["classes"])
-            expected = {
-                row["slideId"]: (row.get("patientId"), row.get("label"))
-                for row in cohort["manifest"]["memberships"]
-            }
-            observed = {
-                row["slideId"]: (row.get("patientId"), row.get("label"))
-                for row in predictions["records"]
-            }
-            if expected != observed:
+            validate_records(predictions.get("records"), manifest["target"]["classes"])
+            try:
+                if standard:
+                    records, _conflicting = join_reference(
+                        manifest, standard["manifest"], predictions["records"]
+                    )
+                else:
+                    records = join_labels(manifest, cohort["manifest"], predictions["records"])
+            except ValueError as error:
                 raise _invalid(
-                    "Saved predictions differ from the frozen evaluation cohort membership or labels."
-                )
+                    "Saved predictions differ from the frozen cohort membership or labels."
+                ) from error
             memberships = {row["slideId"]: row for row in cohort["manifest"]["memberships"]}
             for row in records:
                 source = memberships[row["slideId"]].get("patientIdSource")
                 if "patientIdSource" in row and row["patientIdSource"] != source:
                     raise _invalid(
-                        "Saved patient identity provenance differs from the frozen evaluation cohort."
+                        "Saved patient identity provenance differs from the frozen cohort."
                     )
                 # Older predictions omitted this field. The frozen membership
                 # remains authoritative, including acknowledged slide fallbacks.
                 row["patientIdSource"] = source
+            excluded = 0
+            if serviced:
+                shared = development_patients(manifest)
+                scored = [row for row in records if development_flag(row, shared) is not True]
+                excluded = len(records) - len(scored)
+                predictions = {
+                    **predictions,
+                    "records": scored,
+                    "patientRecords": patient_evidence(
+                        manifest,
+                        scored,
+                        predictions.get("patientRecords"),
+                        rebuild=True if standard else None,
+                    ),
+                }
             report = clinical_report(
                 predictions, manifest["target"], manifest["inference"], selection
             )
+            if excluded:
+                report["warnings"].append(
+                    f"{excluded} slides from patients used in this predictor's development were "
+                    "predicted but are left out of this analysis and of every metric."
+                )
             if overlap.get("patientsComparable") is False:
                 report["warnings"].append(
                     "Development and evaluation patient identifier namespaces were declared independent. Cross-dataset patient overlap could not be verified; confirm the cohorts contain different patients before interpreting external performance."
@@ -718,7 +778,15 @@ class ClinicalService:
             "selection": selection.model_dump(),
             "source": {
                 "predictionsSha256": hashlib.sha256(content).hexdigest(),
-                "metricsSha256": hashlib.sha256(metrics_content).hexdigest(),
+                # Service-scored metrics have no file; their hash covers the canonical document.
+                "metricsSha256": metrics_hash,
+                **(
+                    {"labelSource": "reference", "reference": reference(standard)}
+                    if standard
+                    else {"labelSource": "cohort"}
+                    if blind
+                    else {}
+                ),
                 "planHash": evaluation["execution"].get("planHash"),
                 "inputHash": evaluation["execution"].get("result", {}).get("inputHash"),
             },

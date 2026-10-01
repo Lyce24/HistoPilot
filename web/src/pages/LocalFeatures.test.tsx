@@ -54,7 +54,7 @@ describe('feature bundle stage entry', () => {
     const html = render([version], [frozen(), frozen('older', 'Older dataset bundle')]);
     expect(html).toContain('Older dataset bundle');
     expect(html).toContain('UNI features only');
-    expect(html).toContain('Targets and splits saved. Use them with a feature bundle in Experimental Setup.');
+    expect(html).toContain('Targets and splits saved. Use them with a feature bundle in a new experiment.');
     expect(html).toContain('All project bundles are available.');
     expect(html).toContain('Search feature bundles');
     expect(html).not.toContain('Stage 0 · Saved records');

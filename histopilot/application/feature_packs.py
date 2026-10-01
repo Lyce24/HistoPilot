@@ -47,9 +47,9 @@ _UNREAD = object()
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(__file__).parents[1] / "workers" / "pack_features.py"
 PACKING_GRACE_SECONDS = 60
-# Receipts are immutable once written and can be large (a 1,111-slide pack receipt is
-# about 9 MB); the list polls every few seconds. Parsed receipts are cached by file
-# identity, and source freshness checks for the list view for a short while.
+# Receipts are immutable once written and can be large (about 9 MB for a thousand slides);
+# the list polls every few seconds. Parsed receipts are cached by file identity, and source
+# freshness checks for the list view for a short while.
 RECEIPT_CACHE_BYTES = 64 * 1024 * 1024
 SOURCE_FINDINGS_SECONDS = 30.0
 _RECEIPTS: OrderedDict = OrderedDict()
@@ -438,7 +438,12 @@ class FeaturePackService:
         if preview["previewHash"] != preview_hash:
             raise StorageError("Feature inputs or output changed. Preview again.", "PREVIEW_STALE")
         if not preview["canRun"]:
-            raise StorageError("Resolve preview findings before starting.", "PACKING_INVALID", 422)
+            raise StorageError(
+                "Resolve preview findings before starting.",
+                "PACKING_INVALID",
+                422,
+                findings=preview["findings"],
+            )
         with writer_lock(self.store.folder):
             existing = self._existing(spec, preview_hash, operation_id)
             if existing:

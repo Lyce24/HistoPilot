@@ -124,7 +124,9 @@ def collect_results(batch: dict, state: dict, folder: Path):
                             patient = row.get("patientId")
                             previous = patient_folds.setdefault(patient, run["splitPlanId"])
                             if previous != run["splitPlanId"]:
-                                raise ValueError("An assessment patient appears in multiple folds of one k-fold seed.")
+                                raise ValueError(
+                                    "An assessment patient appears in multiple folds of one k-fold seed."
+                                )
             actual = Counter(row["slideId"] for row in records)
             if set(actual) != set(expected) or any(count != 1 for count in actual.values()):
                 raise ValueError(
@@ -144,7 +146,9 @@ def collect_results(batch: dict, state: dict, folder: Path):
                     )
                 source = expected_row.get("patientIdSource")
                 if "patientIdSource" in record and record["patientIdSource"] != source:
-                    raise ValueError("An OOF patient identity source differs from frozen membership.")
+                    raise ValueError(
+                        "An OOF patient identity source differs from frozen membership."
+                    )
                 if "patientIdSource" in expected_row:
                     record["patientIdSource"] = source
             recipe = next(
@@ -156,18 +160,26 @@ def collect_results(batch: dict, state: dict, folder: Path):
             path = folder / f"oof-{key}.json"
             # Completed groups are collected repeatedly while other groups train.
             # Reuse analysis only when the actual predictions and scoring policy match.
-            analysis_hash = content_hash({"records": records, "target": batch["target"],
-                                   "recipe": recipe, "code": batch.get("code"),
-                                   **({"splitUnit": batch["splitUnit"]} if "splitUnit" in batch else {})})
+            analysis_hash = content_hash(
+                {
+                    "records": records,
+                    "target": batch["target"],
+                    "recipe": recipe,
+                    "code": batch.get("code"),
+                    **({"splitUnit": batch["splitUnit"]} if "splitUnit" in batch else {}),
+                }
+            )
             cached = None
             if path.exists():
                 try:
                     cached = read_json_bounded(path)
                 except (OSError, ValueError):
                     pass
-            summary = cached.get("summary") if (
-                isinstance(cached, dict) and cached.get("analysisInputHash") == analysis_hash
-            ) else None
+            summary = (
+                cached.get("summary")
+                if (isinstance(cached, dict) and cached.get("analysisInputHash") == analysis_hash)
+                else None
+            )
             if isinstance(summary, dict):
                 try:
                     if cached.get("analysisSummaryHash") != content_hash(summary):
@@ -176,7 +188,9 @@ def collect_results(batch: dict, state: dict, folder: Path):
                     summary = None
             if not isinstance(summary, dict):
                 summary = classification_metrics(
-                    records, batch["target"], recipe.get("patientAggregation", "mean_probabilities"),
+                    records,
+                    batch["target"],
+                    recipe.get("patientAggregation", "mean_probabilities"),
                     analysis=recipe.get("analysis"),
                     decision_threshold=recipe.get("decisionThreshold", 0.5),
                     split_unit=batch.get("splitUnit"),
@@ -214,10 +228,13 @@ def collect_results(batch: dict, state: dict, folder: Path):
             )
         candidates.append(item)
         if selection:
-            candidate_score = next(row for row in selection["candidates"]
-                                   if row["candidateId"] == candidate)
-            item.update(selectionScore=candidate_score["score"],
-                        selected=selection["selectedCandidateId"] == candidate)
+            candidate_score = next(
+                row for row in selection["candidates"] if row["candidateId"] == candidate
+            )
+            item.update(
+                selectionScore=candidate_score["score"],
+                selected=selection["selectedCandidateId"] == candidate,
+            )
     write_json_atomic(
         folder / "results.json",
         {

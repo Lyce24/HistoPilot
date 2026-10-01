@@ -13,18 +13,22 @@ def protocol_bundle_findings(protocol: dict, bundle: dict) -> list[dict]:
     """Honor feature bindings on legacy frozen protocols during experiment checks."""
     pinned = protocol["spec"].get("featureBundleId")
     if pinned and pinned != bundle["id"]:
-        return [{
-            "severity": "error",
-            "code": "PROTOCOL_BUNDLE_MISMATCH",
-            "message": "This older protocol pins another feature bundle. Use that bundle or create a dataset-only protocol revision.",
-        }]
+        return [
+            {
+                "severity": "error",
+                "code": "PROTOCOL_BUNDLE_MISMATCH",
+                "message": "This older protocol pins another feature bundle. Use that bundle or create a dataset-only protocol revision.",
+            }
+        ]
     snapshot = protocol.get("featureBundle")
     if snapshot and snapshot["contentHash"] != bundle.get("contentHash"):
-        return [{
-            "severity": "error",
-            "code": "PROTOCOL_BUNDLE_CHANGED",
-            "message": "The feature bundle no longer matches the version saved in this older protocol.",
-        }]
+        return [
+            {
+                "severity": "error",
+                "code": "PROTOCOL_BUNDLE_CHANGED",
+                "message": "The feature bundle no longer matches the version saved in this older protocol.",
+            }
+        ]
     return []
 
 
@@ -70,10 +74,13 @@ class MILInputService:
         findings.extend(protocol_bundle_findings(protocol, bundle))
         protocol_spec = protocol["spec"]
         if protocol_spec.get("predictors"):
-            findings.append({
-                "severity": "info", "code": "CLINICAL_INPUTS_AVAILABLE",
-                "message": "Clinical fields are declared. Choose image-only, clinical-only, or combined inputs in each training recipe; all arms share this frozen development cohort.",
-            })
+            findings.append(
+                {
+                    "severity": "info",
+                    "code": "CLINICAL_INPUTS_AVAILABLE",
+                    "message": "Clinical fields are declared. Choose image-only, clinical-only, or combined inputs in each training recipe; all arms share this frozen development cohort.",
+                }
+            )
         if protocol_spec.get("featureSetId") not in (None, "", feature_id):
             error(
                 "BUNDLE_FEATURE_MISMATCH",

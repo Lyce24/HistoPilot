@@ -113,7 +113,7 @@ describe('editable experiment batch plans', () => {
   });
 
   it('blocks planning runs and results for direct component navigation', () => {
-    for (const tab of ['runs', 'results'] as const) expect(render(experiment, tab)).toContain('Runs and results unlock after submission.');
+    for (const tab of ['runs', 'results'] as const) expect(render(experiment, tab)).toContain('Runs and results unlock once the experiment starts.');
   });
 
   it('edits one recipe without changing sibling plans and preserves the ID across uncertain saves', () => {

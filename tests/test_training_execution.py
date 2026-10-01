@@ -150,6 +150,7 @@ def test_archived_experiment_blocks_new_training_but_preserves_launch_replay(
     with pytest.raises(StorageError) as unsubmitted:
         service.launch(batch["id"], "owned-launch")
     assert unsubmitted.value.code == "EXPERIMENT_SUBMISSION_REQUIRED"
+    assert "Start the experiment before training" in str(unsubmitted.value)
     submitted = ModelExperimentService(service.store, service.filesystem, training=service).submit(
         owner["id"], SubmitModelExperiment(expectedRevision=1, operationId="submit-owner")
     )

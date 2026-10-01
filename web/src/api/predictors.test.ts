@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { computePollInterval, hasPatientPredictions } from './predictors';
+import { computePollInterval, hasPatientPredictions, predictorMethodLabel, predictorSeedLabel } from './predictors';
 import type { ComputeExecution, EvaluationSelection } from './predictors';
+import { fixturePredictor, fixtureSeedEnsemble } from '../testFixtures/predictors';
 
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 const evaluation: EvaluationSelection = { predictorId: 'configuration-predictor', cohortId: 'configuration-cohort', name: 'External validation' };
@@ -18,6 +19,33 @@ describe('evaluation result files', () => {
     expect(hasPatientPredictions({ metrics: { splitUnit: 'slide' } as never })).toBe(false);
     expect(hasPatientPredictions({ metrics: { splitUnit: 'patient' } as never })).toBe(true);
     expect(hasPatientPredictions({})).toBe(true);
+  });
+});
+
+describe('seed ensembles', () => {
+  it('names the method and describes the seeds of either kind of predictor', () => {
+    expect(predictorMethodLabel('seed_ensemble')).toBe('Seed ensemble');
+    expect(predictorMethodLabel('ensemble')).toBe('Fold ensemble');
+    expect(predictorSeedLabel(fixtureSeedEnsemble(1).manifest)).toBe('3 training × 1 split seed · 15 models');
+    expect(predictorSeedLabel(fixturePredictor(1, 11, 'ensemble').manifest)).toBe('Train 11 / split 42');
+  });
+  it('lists, reviews and freezes seed ensembles on their own routes', async () => {
+    const selection = { experimentId: 'exp', batchId: 'batch', candidateId: 'candidate', name: 'Pooled' };
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' }))
+      .mockResolvedValueOnce(response({ items: [] }))
+      .mockResolvedValueOnce(response({ canFreeze: true, previewHash: 'review', findings: [], manifest: null }))
+      .mockResolvedValueOnce(response({ id: 'predictor' }, 201));
+    vi.stubGlobal('fetch', fetcher);
+    const { predictors } = await import('./predictors');
+    await predictors.seedEnsembles('project/one', 'exp/1');
+    await predictors.previewSeedEnsemble('project/one', selection);
+    await predictors.freezeSeedEnsemble('project/one', selection, 'review', 'build-once');
+    expect(fetcher.mock.calls.slice(1).map(([path]) => path)).toEqual([
+      '/api/v1/projects/project%2Fone/predictors/seed-ensembles?experiment_id=exp%2F1',
+      '/api/v1/projects/project%2Fone/predictors/seed-ensembles/preview',
+      '/api/v1/projects/project%2Fone/predictors/seed-ensembles',
+    ]);
+    expect(JSON.parse(fetcher.mock.calls[3][1].body)).toEqual({ ...selection, previewHash: 'review', operationId: 'build-once' });
   });
 });
 

@@ -1,0 +1,612 @@
+{
+  "version": 1,
+  "analysis": {
+    "version": 1,
+    "confidenceLevel": 0.95,
+    "bootstrapResamples": 2000,
+    "bootstrapSeed": 42,
+    "oneSlideSeed": 42
+  },
+  "recipes": {
+    "default": {
+      "model": "abmil",
+      "learningRate": 0.0003,
+      "weightDecay": 0.0001,
+      "maxEpochs": 40,
+      "optimizer": "adamw",
+      "batchSize": 1,
+      "bagSize": 4096,
+      "earlyStopping": true,
+      "patience": 8,
+      "checkpointMetric": "validation_auroc",
+      "analysis": {
+        "version": 1,
+        "confidenceLevel": 0.95,
+        "bootstrapResamples": 2000,
+        "bootstrapSeed": 42,
+        "oneSlideSeed": 42
+      },
+      "decisionThreshold": 0.5,
+      "embedDim": 512,
+      "attentionDim": 384,
+      "numFcLayers": 1,
+      "gatedAttention": true,
+      "dropout": 0.25,
+      "inputDropout": 0,
+      "gradientCheckpointing": false,
+      "precision": "32-true",
+      "gradientClipNorm": 0,
+      "accumulateGradBatches": 1,
+      "lrScheduler": "none",
+      "warmupEpochs": 0,
+      "finalLrFraction": 0.01,
+      "earlyStoppingMinDelta": 0,
+      "minEpochs": 1
+    },
+    "experimentalDefaults": {
+      "lossType": "ce",
+      "classWeighting": "none",
+      "classWeights": null,
+      "focalGamma": 2,
+      "labelSmoothing": 0,
+      "patientAggregation": "mean_probabilities",
+      "ensembleAggregation": "mean_probability",
+      "adamBetas": [
+        0.9,
+        0.999
+      ],
+      "adamEps": 1e-08,
+      "aggregatorLearningRate": null,
+      "headLearningRate": null,
+      "lrStepSize": 10,
+      "lrGamma": 0.5,
+      "lrPlateauPatience": 5,
+      "samplingStrategy": "slide_uniform",
+      "classWeightedSampling": false,
+      "samplingPositivePrevalence": 0.4,
+      "cohortColumn": "cohort",
+      "instanceDropout": 0,
+      "featureNoiseStd": 0,
+      "bagCurriculum": false,
+      "bagCurriculumStart": 512,
+      "bagCurriculumEnd": 8000,
+      "bagCurriculumWarmupEpochs": 5,
+      "evalBagSize": null,
+      "evalBatchSize": null,
+      "minValidationPositives": null,
+      "fixedEpochBudget": null,
+      "bagSizeMode": "fixed",
+      "bagSizeFraction": 0.5,
+      "nnmilFeatureSampling": true,
+      "nnmilWindowStrideDivisor": 4,
+      "nnmilWindowShuffle": true,
+      "nnmilWindowSeed": 42,
+      "nnmilWindowSeedFromTraining": false,
+      "nnmilWindowAggregation": "mean_logits",
+      "nnmilBatchSampler": "patient_weighted",
+      "nnmilCheckpointSelection": "best_validation",
+      "weightDecayPolicy": "all",
+      "lrScheduleInterval": "epoch"
+    },
+    "presets": {
+      "nnmil": {
+        "base": [
+          "default",
+          "experimental"
+        ],
+        "values": {
+          "model": "nnmil",
+          "attentionDim": 256,
+          "nnmilWindowSeedFromTraining": true,
+          "dropout": 0.25,
+          "batchSize": 32,
+          "bagSize": null,
+          "bagSizeMode": "training_median",
+          "bagSizeFraction": 0.5,
+          "optimizer": "adamw",
+          "lrScheduler": "cosine",
+          "warmupEpochs": 5,
+          "maxEpochs": 100,
+          "patience": 10,
+          "minEpochs": 1,
+          "evalBagSize": null,
+          "evalBatchSize": 1,
+          "checkpointMetric": "validation_auroc"
+        }
+      },
+      "oceanpath": {
+        "base": [
+          "default"
+        ],
+        "values": {
+          "maxEpochs": 20,
+          "minEpochs": 10,
+          "patience": 5,
+          "lrScheduler": "cosine",
+          "finalLrFraction": 0.01,
+          "gradientClipNorm": 1,
+          "checkpointMetric": "validation_auroc",
+          "patientAggregation": "mean_probabilities",
+          "ensembleAggregation": "mean_probability",
+          "bagSize": null
+        }
+      },
+      "oceanpath-kras": {
+        "base": [
+          "default"
+        ],
+        "values": {
+          "weightDecay": 0.01,
+          "maxEpochs": 40,
+          "minEpochs": 0,
+          "patience": 8,
+          "lrScheduler": "cosine",
+          "finalLrFraction": 0.001,
+          "gradientClipNorm": 1,
+          "checkpointMetric": "validation_auroc",
+          "patientAggregation": "mean_probabilities",
+          "ensembleAggregation": "mean_probability",
+          "bagSize": 4096,
+          "lossType": "bce",
+          "classWeighting": "none"
+        }
+      },
+      "quick": {
+        "base": [
+          "default"
+        ],
+        "values": {
+          "maxEpochs": 5,
+          "bagSize": 1024,
+          "patience": 3
+        }
+      }
+    }
+  },
+  "batchPresets": [
+    {
+      "id": "blank",
+      "name": "Start blank",
+      "description": "Start with default settings and give this batch a name.",
+      "recipe": "default"
+    },
+    {
+      "id": "baseline",
+      "name": "ABMIL baseline",
+      "description": "One configuration with standard training settings.",
+      "recipe": "default"
+    },
+    {
+      "id": "nnmil",
+      "name": "nnMIL",
+      "description": "Editable feature-sampling attention, automatic fitting-fold patch limits, and feature-window testing with the patient protocol.",
+      "recipe": "nnmil"
+    },
+    {
+      "id": "oceanpath",
+      "name": "OceanPath standard",
+      "description": "20 epochs, whole training bags, cosine decay, and patient AUROC checkpoints with mean probabilities.",
+      "recipe": "oceanpath"
+    },
+    {
+      "id": "oceanpath-kras",
+      "name": "OceanPath binary (BCE)",
+      "description": "Binary cross entropy, equal patient weight, 4096-patch bags, weight decay 0.01, and mean probabilities.",
+      "recipe": "oceanpath-kras"
+    },
+    {
+      "id": "quick",
+      "name": "Quick check",
+      "description": "Five epochs and smaller sampled bags to check the training setup.",
+      "recipe": "quick"
+    },
+    {
+      "id": "learning-rate",
+      "name": "Learning-rate comparison",
+      "description": "Compare three learning rates with the same folds and training seed.",
+      "recipe": "default",
+      "mode": "grid",
+      "learningRates": [
+        0.0001,
+        0.0003,
+        0.001
+      ]
+    }
+  ],
+  "batchDefaults": {
+    "version": 1,
+    "mode": "single",
+    "configurations": [],
+    "trainingSeeds": [
+      42
+    ],
+    "notes": "",
+    "predictorPolicy": {
+      "method": "ensemble",
+      "refitPercentile": null
+    },
+    "selectionMetric": "validation_auroc",
+    "candidateSelection": "best_validation"
+  },
+  "predictorPolicy": {
+    "method": "ensemble",
+    "refitPercentile": null
+  },
+  "coupling": {
+    "modelSelect": {
+      "nnmil": {
+        "attentionDim": 256,
+        "gatedAttention": true,
+        "nnmilWindowSeedFromTraining": true
+      },
+      "other": {
+        "bagSizeMode": "fixed",
+        "nnmilBatchSampler": "patient_weighted",
+        "nnmilCheckpointSelection": "best_validation",
+        "nnmilWindowSeedFromTraining": false
+      },
+      "slide": {
+        "bagSize": 1,
+        "bagCurriculum": false,
+        "instanceDropout": 0,
+        "evalBagSize": null,
+        "gradientCheckpointing": false
+      }
+    },
+    "comparisonArm": {
+      "nnmil": {
+        "attentionDim": 256,
+        "gatedAttention": true,
+        "nnmilWindowSeedFromTraining": true
+      },
+      "nnmilOff": {
+        "nnmilBatchSampler": "patient_weighted",
+        "nnmilCheckpointSelection": "best_validation",
+        "nnmilWindowSeedFromTraining": false
+      }
+    },
+    "clinicalOnly": {
+      "inputMode": "clinical",
+      "model": "abmil",
+      "bagSizeMode": "fixed",
+      "bagCurriculum": false,
+      "nnmilBatchSampler": "patient_weighted",
+      "nnmilCheckpointSelection": "best_validation",
+      "nnmilWindowSeedFromTraining": false
+    },
+    "nonCosineSchedule": {
+      "warmupEpochs": 0,
+      "lrScheduleInterval": "epoch"
+    }
+  },
+  "starters": {
+    "datasetImport": {
+      "source": {
+        "path": ""
+      },
+      "slideIdColumn": "",
+      "recursive": true,
+      "includeMissingSlides": true,
+      "missingValues": [
+        ""
+      ],
+      "attributes": [],
+      "patientIdFallback": "unresolved"
+    },
+    "testTarget": {
+      "field": "",
+      "task": "",
+      "unit": "slide",
+      "classes": [],
+      "labels": {},
+      "missing": "block",
+      "unmapped": "block"
+    },
+    "targetSplit": {
+      "datasetId": "",
+      "splitUnit": "slide",
+      "target": {
+        "field": "",
+        "task": "",
+        "unit": "slide",
+        "classes": [],
+        "labels": {},
+        "missing": "block",
+        "unmapped": "block"
+      },
+      "predictors": [],
+      "eligibility": [],
+      "split": {
+        "method": "random",
+        "testFraction": 0.2,
+        "seed": 42,
+        "stratify": false,
+        "trainRules": [],
+        "testRules": [],
+        "trainValues": [],
+        "testValues": []
+      }
+    },
+    "cohort": {
+      "protocolId": "",
+      "developmentFeatureBundleId": "",
+      "datasetId": "",
+      "featureBundleId": "",
+      "target": {
+        "field": "",
+        "task": "",
+        "unit": "slide",
+        "classes": [],
+        "labels": {},
+        "missing": "block",
+        "unmapped": "block"
+      },
+      "eligibility": [],
+      "patientIdentifiers": "shared",
+      "inference": {
+        "loadingPolicy": "per_slide",
+        "packArtifactId": null,
+        "batchSize": 1,
+        "numWorkers": 0,
+        "device": "auto",
+        "precision": "float32",
+        "patientAggregation": "mean",
+        "decisionThreshold": 0.5
+      }
+    },
+    "trainingSplit": {
+      "version": 4,
+      "pools": {
+        "source": "rules",
+        "trainSelection": "remaining",
+        "validationSource": "training_fraction",
+        "rules": {
+          "train": [],
+          "val": [],
+          "test": []
+        }
+      },
+      "mode": "kfold",
+      "folds": 5,
+      "seeds": [
+        42
+      ],
+      "stratify": true,
+      "validationFraction": 0.15,
+      "testFraction": 0.2,
+      "repeats": 5,
+      "outerFolds": 5,
+      "innerFolds": 3,
+      "domainPolicy": "all",
+      "heldOutDomains": [],
+      "heldOutSource": "fractions",
+      "ratios": {
+        "train": 0.8,
+        "val": 0.2,
+        "test": 0
+      },
+      "rules": {
+        "train": [],
+        "val": [],
+        "test": []
+      }
+    }
+  },
+  "specStarters": {
+    "targets": {
+      "datasetId": "@dataset-tag",
+      "splitUnit": "slide",
+      "target": {
+        "field": "",
+        "task": "",
+        "unit": "slide",
+        "classes": [],
+        "labels": {},
+        "missing": "block",
+        "unmapped": "block"
+      },
+      "predictors": [],
+      "eligibility": [],
+      "split": {
+        "method": "random",
+        "testFraction": 0.2,
+        "seed": 42,
+        "stratify": false,
+        "trainRules": [],
+        "testRules": [],
+        "trainValues": [],
+        "testValues": []
+      }
+    },
+    "cohort": {
+      "protocolId": "configuration-…",
+      "developmentFeatureBundleId": "configuration-…",
+      "datasetId": "@dataset-tag",
+      "featureBundleId": "configuration-…",
+      "target": {
+        "field": "",
+        "task": "",
+        "unit": "slide",
+        "classes": [],
+        "labels": {},
+        "missing": "block",
+        "unmapped": "block"
+      },
+      "eligibility": [],
+      "patientIdentifiers": "shared",
+      "inference": {
+        "loadingPolicy": "per_slide",
+        "packArtifactId": null,
+        "batchSize": 1,
+        "numWorkers": 0,
+        "device": "auto",
+        "precision": "float32",
+        "patientAggregation": "mean",
+        "decisionThreshold": 0.5
+      }
+    },
+    "unlabeled-cohort": {
+      "protocolId": "configuration-…",
+      "developmentFeatureBundleId": "configuration-…",
+      "datasetId": "@dataset-tag",
+      "featureBundleId": "configuration-…",
+      "target": null,
+      "eligibility": [],
+      "patientIdentifiers": "shared",
+      "inference": {
+        "loadingPolicy": "per_slide",
+        "packArtifactId": null,
+        "batchSize": 1,
+        "numWorkers": 0,
+        "device": "auto",
+        "precision": "float32",
+        "patientAggregation": "mean",
+        "decisionThreshold": 0.5
+      },
+      "purpose": "inference"
+    },
+    "import": {
+      "source": {
+        "path": "/absolute/path/to/table.csv"
+      },
+      "slideIdColumn": "",
+      "recursive": true,
+      "includeMissingSlides": true,
+      "missingValues": [
+        ""
+      ],
+      "attributes": [],
+      "patientIdFallback": "unresolved"
+    },
+    "reference": {
+      "cohortId": "@cohort-tag",
+      "name": "",
+      "datasetIds": [
+        "@dataset-tag"
+      ],
+      "field": "",
+      "classes": [],
+      "labels": {}
+    },
+    "features": {
+      "datasetId": "@dataset-tag",
+      "path": "/absolute/path/to/features",
+      "encoderId": null,
+      "fileSuffix": ".h5",
+      "idSuffix": "",
+      "recursive": true,
+      "layout": "auto",
+      "featureKind": "patch"
+    },
+    "feature-bundle": {
+      "featureSetId": "@features-tag",
+      "packArtifactIds": []
+    },
+    "feature-pack": {
+      "featureSetId": "@features-tag",
+      "action": "validate",
+      "outputPath": null,
+      "existingPath": null,
+      "dtype": "preserve"
+    },
+    "extraction": {
+      "datasetId": "@dataset-tag",
+      "slideRoot": "/absolute/path/to/slides",
+      "recursive": true,
+      "outputPath": "/absolute/path/to/output",
+      "options": {}
+    },
+    "interpretation": {
+      "name": "Attention study",
+      "predictorId": "configuration-…",
+      "evaluationId": null,
+      "clinicalAnalysisId": null,
+      "featureBundleId": "configuration-…",
+      "packArtifactId": null,
+      "slideFolder": null,
+      "encoderId": "",
+      "slides": [
+        {
+          "slideId": "",
+          "slidePath": "/absolute/path/to/slide.svs",
+          "sourceFormat": "h5"
+        }
+      ],
+      "resources": {
+        "maxConcurrentRuns": 1,
+        "gpuIds": [],
+        "runsPerGpu": 1,
+        "cpuThreadsPerRun": 4,
+        "dataLoaderWorkers": 0,
+        "ramGbPerRun": 8
+      }
+    },
+    "clinical-analysis": {
+      "evaluationId": "configuration-…",
+      "name": "Clinical utility analysis",
+      "unit": "selected",
+      "positiveClass": null,
+      "threshold": null,
+      "bins": 10,
+      "thresholdMin": 0.01,
+      "thresholdMax": 0.99,
+      "thresholdSteps": 99,
+      "referenceId": null
+    },
+    "apply": {
+      "cohortId": "@cohort-tag",
+      "scope": "selected",
+      "predictorIds": [
+        "configuration-…"
+      ],
+      "namePrefix": "Evaluation",
+      "inference": {
+        "loadingPolicy": "per_slide",
+        "packArtifactId": null,
+        "batchSize": 1,
+        "numWorkers": 0,
+        "device": "auto",
+        "precision": "float32",
+        "patientAggregation": "predictor",
+        "decisionThreshold": "predictor"
+      },
+      "patientIdentifiers": "shared"
+    }
+  },
+  "apply": {
+    "scope": "selected",
+    "namePrefix": {
+      "labeled": "Evaluation",
+      "unlabeled": "Inference"
+    },
+    "inference": {
+      "loadingPolicy": "per_slide",
+      "packArtifactId": null,
+      "batchSize": 1,
+      "numWorkers": 0,
+      "device": "auto",
+      "precision": "float32",
+      "patientAggregation": "predictor",
+      "decisionThreshold": "predictor"
+    },
+    "patientIdentifiers": "shared"
+  },
+  "resources": {
+    "training": {
+      "maxConcurrentRuns": 1,
+      "gpuIds": [
+        0
+      ],
+      "runsPerGpu": 1,
+      "cpuThreadsPerRun": 2,
+      "dataLoaderWorkers": 2,
+      "ramGbPerRun": 8
+    },
+    "interpretation": {
+      "device": "cpu",
+      "gpu": 0,
+      "cpuThreadsPerRun": 4,
+      "ramGbPerRun": 8
+    }
+  }
+}

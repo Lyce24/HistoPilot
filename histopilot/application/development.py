@@ -4,6 +4,7 @@ from itertools import product
 
 from pydantic import ValidationError
 
+from histopilot.application.development_splits import training_split_issue
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.mil_inputs import MILInputService
 from histopilot.application.model_experiments import ModelExperimentService, input_snapshot
@@ -41,8 +42,10 @@ def expand_recipes(spec: DevelopmentBatchSpec) -> list[dict]:
     else:
         recipes = [spec.recipe.model_dump()]
     try:
-        recipes = [TrainingRecipe.model_validate(recipe, context={"legacy": True}).model_dump()
-                   for recipe in recipes]
+        recipes = [
+            TrainingRecipe.model_validate(recipe, context={"legacy": True}).model_dump()
+            for recipe in recipes
+        ]
     except ValidationError as error:
         raise StorageError(
             f"A resolved training recipe is invalid: {error}", "INVALID_TRAINING_RECIPE", 422
@@ -144,8 +147,10 @@ class DevelopmentService:
             or recipe.get("minValidationPositives") is not None
             or recipe.get("fixedEpochBudget") is not None
             or recipe.get("model", "abmil").lower() != "abmil"
-            or (recipe.get("inputMode", "image") != "clinical"
-                and catalog.feature_kind(recipe.get("model")) != feature_kind)
+            or (
+                recipe.get("inputMode", "image") != "clinical"
+                and catalog.feature_kind(recipe.get("model")) != feature_kind
+            )
         ]
         if not experimental or not plans:
             return []
@@ -194,8 +199,10 @@ class DevelopmentService:
                         plan_id,
                     )
                     continue
-                if (recipe.get("inputMode", "image") != "clinical"
-                        and catalog.feature_kind(recipe.get("model")) != feature_kind):
+                if (
+                    recipe.get("inputMode", "image") != "clinical"
+                    and catalog.feature_kind(recipe.get("model")) != feature_kind
+                ):
                     record(
                         "error",
                         "TRAINING_FEATURE_KIND_MISMATCH",
@@ -281,16 +288,21 @@ class DevelopmentService:
                 from histopilot.schemas.training_controls import validate_split_unit
 
                 for recipe in recipes:
-                    validate_split_unit(recipe, protocol["spec"]["target"], protocol["spec"].get("splitUnit"))
+                    validate_split_unit(
+                        recipe, protocol["spec"]["target"], protocol["spec"].get("splitUnit")
+                    )
                 clinical_values = development_clinical_values(
                     self.store, self.filesystem, protocol, recipes
                 )
                 for recipe in recipes:
                     if clinical_fields(recipe):
                         for split in plans:
-                            fitting = [row for row in protocol["memberships"]
-                                       if row["partition"] == "train"
-                                       and content_hash(plan_metadata(row)) == split["id"]]
+                            fitting = [
+                                row
+                                for row in protocol["memberships"]
+                                if row["partition"] == "train"
+                                and content_hash(plan_metadata(row)) == split["id"]
+                            ]
                             fit_clinical_preprocessor(
                                 fitting,
                                 clinical_values,
@@ -299,22 +311,29 @@ class DevelopmentService:
                             )
                 findings.extend(_label_separation_findings(protocol, recipes, clinical_values))
             except (StorageError, ValueError) as error:
-                findings.append({"severity": "error", "code": getattr(error, "code", "CLINICAL_INPUTS_INVALID"),
-                                 "message": str(error)})
+                findings.append(
+                    {
+                        "severity": "error",
+                        "code": getattr(error, "code", "CLINICAL_INPUTS_INVALID"),
+                        "message": str(error),
+                    }
+                )
             if protocol["spec"]["target"]["unit"] == "patient" and any(
-                row.get("patientIdSource") == "slide_fallback"
-                for row in protocol["memberships"]
+                row.get("patientIdSource") == "slide_fallback" for row in protocol["memberships"]
             ):
-                findings.append({
-                    "severity": "error", "code": "VERIFIED_PATIENTS_REQUIRED",
-                    "message": "Patient targets require verified patient IDs, including when confidence intervals are disabled. Map patient identities before creating this batch.",
-                })
+                findings.append(
+                    {
+                        "severity": "error",
+                        "code": "VERIFIED_PATIENTS_REQUIRED",
+                        "message": "Patient targets require verified patient IDs, including when confidence intervals are disabled. Map patient identities before creating this batch.",
+                    }
+                )
             if protocol["spec"].get("split", {}).get("version", 1) != 4:
                 findings.append(
                     {
                         "severity": "error",
                         "code": "LEGACY_DEVELOPMENT_PROTOCOL",
-                        "message": "Create a development-only protocol revision in Stage 2 before planning new batches. Existing protocols and batches remain available.",
+                        "message": "This targets & splits version predates development-only training designs. Freeze a new version in Targets & splits before planning new batches; existing protocols and batches remain available.",
                     }
                 )
             if not plans:
@@ -325,32 +344,23 @@ class DevelopmentService:
                         "message": "The protocol has no development split memberships.",
                     }
                 )
-            if protocol["spec"].get("split", {}).get("mode") == "nested_kfold":
+            split_issue = training_split_issue(protocol["spec"].get("split", {}))
+            if split_issue:
                 findings.append(
-                    {
-                        "severity": "error",
-                        "code": "NESTED_SELECTION_REQUIRED",
-                        "message": "Nested CV requires a separate search and selected refit inside each outer fold. Batch planning for that dependency is not connected yet.",
-                    }
-                )
-            elif (
-                protocol["spec"].get("split", {}).get("version") == 4
-                and protocol["spec"]["split"].get("mode") != "kfold"
-            ):
-                findings.append(
-                    {
-                        "severity": "error",
-                        "code": "TRAINING_SPLIT_UNSUPPORTED",
-                        "message": "Training currently supports development-only k-fold protocols. Create a k-fold protocol revision and select it before saving this training batch. This protocol remains available for reviewing its study design.",
-                    }
+                    {"severity": "error", "code": split_issue[0], "message": split_issue[1]}
                 )
             if not any(item["severity"] == "error" for item in findings):
-                findings.extend(self._training_control_findings(
-                    recipes, protocol, plans,
-                    selection_metric=spec.selectionMetric
-                    if spec.candidateSelection == "best_validation" else None,
-                    feature_kind=binding.get("featureKind", "patch"),
-                ))
+                findings.extend(
+                    self._training_control_findings(
+                        recipes,
+                        protocol,
+                        plans,
+                        selection_metric=spec.selectionMetric
+                        if spec.candidateSelection == "best_validation"
+                        else None,
+                        feature_kind=binding.get("featureKind", "patch"),
+                    )
+                )
         total = len(recipes) * len(spec.trainingSeeds) * len(plans)
         if total > MAX_RUNS:
             findings.append(
@@ -380,7 +390,9 @@ class DevelopmentService:
                         "trainingSeed": seed,
                         "splitPlanId": plan["id"],
                     }
-                    runs.append({"id": "run-" + content_hash(intent), **intent, "status": "planned"})
+                    runs.append(
+                        {"id": "run-" + content_hash(intent), **intent, "status": "planned"}
+                    )
         nnmil_planning = []
         if candidates and any(
             item["recipe"].get("model", "abmil").lower() == "nnmil"
@@ -399,13 +411,17 @@ class DevelopmentService:
                     for plan_id, rows in groups.items():
                         _, resolution = resolve_nnmil_recipe(candidate["recipe"], rows, files)
                         if resolution:
-                            nnmil_planning.append({
-                                "candidateId": candidate["id"], "splitPlanId": plan_id,
-                                **resolution,
-                            })
+                            nnmil_planning.append(
+                                {
+                                    "candidateId": candidate["id"],
+                                    "splitPlanId": plan_id,
+                                    **resolution,
+                                }
+                            )
             except ValueError as error:
-                findings.append({"severity": "error", "code": "MIL_BAG_PLANNING_INVALID",
-                                 "message": str(error)})
+                findings.append(
+                    {"severity": "error", "code": "MIL_BAG_PLANNING_INVALID", "message": str(error)}
+                )
                 candidates, runs, nnmil_planning = [], [], []
         manifest = {
             "kind": "mil-batch",
@@ -471,7 +487,10 @@ class DevelopmentService:
             preview = self._preview(spec, experiment_record=experiment_record)
             if not preview["canFreeze"]:
                 raise StorageError(
-                    "Resolve batch findings before freezing.", "BATCH_PREFLIGHT_BLOCKED", 409
+                    "Resolve batch findings before freezing.",
+                    "BATCH_PREFLIGHT_BLOCKED",
+                    409,
+                    findings=preview["findings"],
                 )
             if preview["previewHash"] != preview_hash:
                 raise StorageError(
@@ -482,7 +501,7 @@ class DevelopmentService:
             bundle = bundles.get(spec.inputs.featureBundleId)
             if not bundle["current"]:
                 raise StorageError(
-                    "Feature verification changed. Review the batch again.", "STALE_PREVIEW", 409
+                    "Feature verification changed. Review the batch again.", "PREVIEW_STALE", 409
                 )
             feature = self.store.get_configuration(bundle["manifest"]["feature"]["id"])
             before_publish = bundles._freshness_guard(feature, bundle["manifest"])

@@ -92,8 +92,8 @@ ENCODER_DIMENSIONS = {
 }
 DEFAULT_DIMENSION = 1536
 # Bytes of float32 patch features per byte of compressed slide input at 20x / 256 px with a
-# 1024-wide encoder. Measured on gej_v2 (1,111 SDPC slides, UNI v1): 32.6 GB of features
-# from 155.8 GiB of slides, about 0.2; TCGA SVS runs land near 0.1. 0.25 keeps a margin.
+# 1024-wide encoder. Measured on an SDPC study with UNI v1: features came to about 0.2 of the
+# slides' size; TCGA SVS runs land near 0.1. 0.25 keeps a margin.
 FEATURE_BYTES_PER_INPUT_BYTE = 0.25
 PER_SLIDE_OVERHEAD_BYTES = 2 * 1024 * 1024  # contours, geojson, thumbnail, coordinates
 

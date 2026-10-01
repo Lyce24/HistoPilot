@@ -183,3 +183,41 @@ def preview(service, spec):
 def codes(result):
     """The error codes among a review's findings."""
     return {item["code"] for item in result["findings"] if item["severity"] == "error"}
+
+
+def slide_bundle(store, filesystem, root, dataset, rows, name):
+    """Publish real validation-worker receipts, never synthesize a valid bundle."""
+    source = root / name
+    source.mkdir()
+    random = np.random.default_rng(37)
+    for index, row in enumerate(rows):
+        values = random.standard_normal(8).astype("float32")
+        # A single inventory mixes the two supported on-disk storage shapes.
+        values = values if index % 2 else values.reshape(1, -1)
+        with h5py.File(source / f"{row['slideId']}.h5", "w") as handle:
+            handle.create_dataset("features", data=values)
+    features = FeatureService(store, filesystem)
+    spec = FeatureSpec(
+        datasetId=dataset["id"],
+        path=str(source),
+        featureKind="slide",
+        encoderId="titan",
+        layout="flat",
+    )
+    reviewed = features.preview(spec)
+    assert reviewed["canFreeze"], reviewed["findings"]
+    feature = features.freeze(spec, reviewed["previewHash"], name)
+    packing = packing_service(store, filesystem)
+    request = FeaturePackSpec(featureSetId=feature["id"], action="validate")
+    preview = packing.preview(request)
+    assert preview["canRun"], preview["findings"]
+    job = packing.submit(request, preview["previewHash"], name + "-validation")
+    result = run_pack(packing.tasks.client.store, job)
+    assert result["state"] == "succeeded", result
+    assert result["validation"]["tensorValidationComplete"]
+    assert result["validation"]["featureKind"] == "slide"
+    bundles = FeatureBundleService(store, filesystem)
+    request = FeatureBundleSpec(featureSetId=feature["id"])
+    preview = bundles.preview(request)
+    assert preview["canFreeze"], preview["findings"]
+    return bundles.freeze(request, preview["previewHash"], name + "-bundle")

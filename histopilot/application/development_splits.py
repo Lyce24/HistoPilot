@@ -10,6 +10,39 @@ from histopilot.application.modern_splits import group_class_counts, modern_assi
 ALGORITHM_V4 = "histopilot-development-plans-v4"
 ALGORITHM_V4_MIXED = "histopilot-development-labelset-plans-v4"
 ROLES = ("train", "val", "test")
+# Designs that train: every unit is assessed at most once per split seed, so the
+# out-of-fold predictions of a seed pool into one result.
+TRAINABLE_MODES = ("kfold", "predefined_folds", "leave_one_domain_out", "held_out")
+
+
+def training_split_issue(split):
+    """``(code, message)`` when a development training design cannot train, else None.
+
+    Monte Carlo repeats assess a unit in several plans of one seed, and nested designs
+    need a search inside each outer fold; both stay available for planning only. A
+    held-out assessment trains with one split seed, so its seeds share one assessment set.
+    """
+    mode = split.get("mode")
+    if mode == "nested_kfold":
+        return (
+            "NESTED_SELECTION_REQUIRED",
+            "Nested CV requires a separate search and selected refit inside each outer fold. "
+            "Batch planning for that dependency is not connected yet.",
+        )
+    if mode not in TRAINABLE_MODES:
+        return (
+            "TRAINING_SPLIT_UNSUPPORTED",
+            "Monte Carlo designs assess a unit in several plans of one split seed, so their "
+            "out-of-fold predictions cannot be pooled. Choose k-fold, predefined folds, "
+            "leave-one-site-out or a held-out assessment.",
+        )
+    if mode == "held_out" and len(split.get("seeds") or ()) != 1:
+        return (
+            "TRAINING_SPLIT_UNSUPPORTED",
+            "A held-out assessment trains with one split seed. Repeat it over training seeds, "
+            "or choose k-fold to assess every unit.",
+        )
+    return None
 
 
 def select_development_pools(groups, pools, evaluator, finding, fixed_assignments):

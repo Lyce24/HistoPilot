@@ -9,11 +9,22 @@ def case_review_router(projects, filesystem):
 
     @router.post("/query")
     def query(identity: str, evaluation_id: str, payload: CaseReviewQuery):
-        return CaseReviewService(projects.scientific_store(identity), filesystem).query(evaluation_id, payload)
+        return CaseReviewService(projects.scientific_store(identity), filesystem).query(
+            evaluation_id, payload
+        )
 
     @router.post("/export")
     def export(identity: str, evaluation_id: str, payload: CaseReviewQuery):
-        content = CaseReviewService(projects.scientific_store(identity), filesystem).export(evaluation_id, payload)
-        return Response(content, media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="case-reviews.csv"', "Cache-Control": "no-store"})
+        content = CaseReviewService(projects.scientific_store(identity), filesystem).export(
+            evaluation_id, payload
+        )
+        return Response(
+            content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": 'attachment; filename="case-reviews.csv"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     return router

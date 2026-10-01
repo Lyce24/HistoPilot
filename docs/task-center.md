@@ -1,10 +1,10 @@
 # Task Center
 
-The Task Center runs all of HistoPilot's long-running compute: training folds and result collection, predictor coordination, refits, evaluations, inference, interpretation, feature extraction and its validation, feature packing, and study archives. There is one queue per operating-system user on a machine, shared by every project and workspace, because they all share the same GPUs.
+The Task Center runs all of HistoPilot's long-running compute: training folds and result collection, predictor coordination, refits, predictor runs on cohorts, interpretation, feature extraction and its validation, feature packing, and study archives. There is one queue per operating-system user on a machine, shared by every project and workspace, because they all share the same GPUs.
 
 The work is split in two:
 
-- **Stage pages own the science.** Experiments, Evaluate models, Slide features and the other pages hold inputs, previews and results, plus one science action (**Run**, or **Resume**/**Retry** when work needs attention). Each shows a status chip that links to its tasks.
+- **Stage pages own the science.** Experiments, Apply models, Slide features and the other pages hold inputs, previews and results, plus one science action (**Run**, or **Resume**/**Retry** when work needs attention). Each shows a status chip that links to its tasks.
 - **The Task Center owns operations.** It decides when and where each task runs, and holds queue order, hold, cancel, retry, logs, measured resources, attempts and history.
 
 A single **runner** process owns the queue. It admits tasks against GPU slots, GPU memory, RAM and CPU threads, starts each in its own process group, records outcomes, and resumes interrupted work after a restart. It knows nothing about MIL; it runs commands and reads their result files.
@@ -28,14 +28,14 @@ Open **Task Center** under **Project tools**. It has these panels:
 | `mil-fold` | One training fold (`histopilot.workers.managed_fold`) | GPU, or CPU without a GPU | Normal |
 | `mil-collect` | A batch's result collection: OOF assembly, configuration selection and results (`managed_collect`) | CPU | Interactive |
 | `predictor-coordinator` | An experiment's predictor work: publishes ensembles and launches refits (`workers.experiment_predictors`) | CPU service task | Normal |
-| `compute-job` | A refit, evaluation, inference run or interpretation (`workers.compute_job`) | GPU, or CPU | Interactive for a single evaluation or interpretation; normal for refits and bulk members |
-| `bulk-submit` | Creates the member runs of a bulk evaluation or inference batch | CPU | Interactive |
+| `compute-job` | A refit, predictor run or interpretation (`workers.compute_job`) | GPU, or CPU | Interactive for a single run or interpretation; normal for refits and bulk members |
+| `bulk-submit` | Creates the member runs of a batch in Apply models | CPU | Interactive |
 | `extraction` | TRIDENT feature extraction | GPU (CPU when every device is −1) | Normal |
 | `extraction-validation` | Checks the extraction's outputs, after it succeeds | CPU | Normal |
 | `packing` | Feature validation, pack verification or packing (`workers/pack_features.py`) | CPU | Normal |
 | `archive` | Study archive export, verification or restore (`workers/portability.py`) | CPU | Normal |
 
-Each task belongs to an **owner**, such as an experiment, a batch, an evaluation batch, an extraction, a feature pack or an archive job. Owners group tasks in the queue and receive bulk actions.
+Each task belongs to an **owner**, such as an experiment, a batch, a batch of predictor runs, an extraction, a feature pack or an archive job. Owners group tasks in the queue and receive bulk actions.
 
 Some tasks share an **exclusive key** and never run at the same time: the collections of one batch, extractions writing one output folder, packing jobs of one feature source, and archive jobs of one project.
 
@@ -108,7 +108,7 @@ A worker that cannot get its project lock (`PROJECT_BUSY`) or its output lock (`
 
 | Worker | Waits before exiting 75 |
 | --- | --- |
-| Refit, evaluation or interpretation, before computing | 60 s. After computing it waits up to 15 minutes, so finished work is not thrown away. |
+| Refit, predictor run or interpretation, before computing | 60 s. After computing it waits up to 15 minutes, so finished work is not thrown away. |
 | Predictor coordinator | 120 s of busy passes |
 | Bulk submission | 60 s |
 

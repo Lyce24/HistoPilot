@@ -16,13 +16,17 @@ export interface PredictorChoice {
   existingPredictorIds?: Partial<Record<PredictorMethod, string>>;
   existingRefitId?: string | null; eligibleMethods?: PredictorMethod[];
 }
-export type PredictorMethod = 'ensemble' | 'refit';
-export const predictorMethodLabel = (method?: PredictorMethod) => method === 'refit' ? 'Refit' : 'Fold ensemble';
+export type PredictorMethod = 'ensemble' | 'refit' | 'seed_ensemble';
+export const predictorMethodLabel = (method?: PredictorMethod) => method === 'refit' ? 'Refit' : method === 'seed_ensemble' ? 'Seed ensemble' : 'Fold ensemble';
 export interface PredictorSelection {
   experimentId: string; batchId: string; candidateId: string; trainingSeed: number; splitSeed: number; name: string;
   method?: PredictorMethod; refitPercentile?: number;
 }
-export interface PredictorManifest extends PredictorSelection {
+/** A seed ensemble pools every seed group of one configuration, so it has no single seed. */
+export interface PredictorManifest extends Omit<PredictorSelection, 'trainingSeed' | 'splitSeed'> {
+  trainingSeed?: number; splitSeed?: number;
+  trainingSeeds?: number[]; splitSeeds?: number[];
+  seedGroups?: { trainingSeed: number; splitSeed: number; runIds: string[] }[];
   candidateNumber?: number;
   kind: 'frozen-predictor'; runIds: string[];
   checkpoints: { runId: string; path: string; sha256: string; bytes: number }[];
@@ -35,6 +39,21 @@ export interface PredictorManifest extends PredictorSelection {
   trainingSlideCount?: number; trainingPatientCount?: number;
   refitId?: string;
 }
+/** "Train 42 / split 42" for one seed group; the seed counts and models for a seed ensemble. */
+export function predictorSeedLabel(manifest: Pick<PredictorManifest, 'trainingSeed' | 'splitSeed' | 'trainingSeeds' | 'splitSeeds' | 'checkpoints'>) {
+  if (manifest.trainingSeeds) {
+    const training = manifest.trainingSeeds.length, split = manifest.splitSeeds?.length ?? 1;
+    return `${training} training × ${split} split seed${split === 1 ? '' : 's'} · ${manifest.checkpoints.length} models`;
+  }
+  return `Train ${manifest.trainingSeed} / split ${manifest.splitSeed}`;
+}
+export interface SeedEnsembleChoice {
+  experimentId: string; experimentName: string; batchId: string; batchName: string;
+  candidateId: string; candidateNumber: number; trainingSeeds: number[]; splitSeeds: number[];
+  seedGroups: number; members: number; completedRuns: number;
+  eligible: boolean; reason: string | null; existingPredictorId: string | null;
+}
+export interface SeedEnsembleSelection { experimentId: string; batchId: string; candidateId: string; name: string }
 export interface FrozenPredictor {
   id: string; createdAt: string; contentHash: string; lifecycleState: LifecycleState;
   manifest: PredictorManifest;
@@ -44,6 +63,17 @@ export interface PredictorPreview {
 }
 export interface EvaluationMetrics extends TrainingMetricDetails {
   decisionThreshold?: number;
+  /** Label-blind runs: slides of development patients were predicted but not scored. */
+  developmentExcluded?: { slides: number; patients: number; reason: string };
+  /** Label-blind runs are scored by the control service from the frozen cohort labels, or
+   * from a reference standard attached to the cohort later. */
+  scoredBy?: { method: string; predictionsSha256: string; cohort?: { id: string; contentHash: string }; reference?: { id: string; contentHash: string } };
+  /** Scores against a reference standard name it. */
+  reference?: { id: string; name: string };
+  /** Patients whose slides disagree under a reference standard, left unlabeled for patient scores. */
+  conflictingPatients?: number;
+  /** List reads of a run not yet opened carry point metrics; its bootstrap intervals come with the run itself. */
+  analysisPending?: boolean;
   /** Present on evaluations of frozen splits; slide-split evaluations have no patient results. */
   splitUnit?: 'slide' | 'patient';
   slide: TrainingMetrics & { predictionCount?: number; unlabeledCount?: number };
@@ -60,7 +90,8 @@ export interface ComputeExecution {
   /** `runnerAlive` is null when the service cannot tell; false means queued work cannot start. */
   task?: { id: string; state: TaskState; attempt: number; waitingReason: string | null; held: boolean; ownerKey?: string; runnerAlive?: boolean | null } | null;
   waitingReason?: string | null;
-  result?: { metrics?: EvaluationMetrics; purpose?: 'inference'; summary?: InferenceResultSummary; [key: string]: unknown } | null;
+  /** A label-blind run's `metrics` are scored by the service; `metricsError` says why they are missing. */
+  result?: { metrics?: EvaluationMetrics; metricsError?: { code: string; message: string }; purpose?: 'inference' | 'evaluation'; labelsWithheld?: boolean; summary?: InferenceResultSummary; [key: string]: unknown } | null;
   progress?: { epoch?: number; maxEpochs?: number; trainingLoss?: number | null; completedModels?: number; totalModels?: number; slideCount?: number; completedPairs?: number; totalPairs?: number; currentSlide?: string; completedSlides?: number; totalSlides?: number } | null;
 }
 /**
@@ -88,7 +119,7 @@ export interface RefitBuild {
 export interface EvaluationSelection { predictorId: string; cohortId: string; name: string; featureBundleId?: string; inference?: EvaluationInference; patientIdentifiers?: 'shared' | 'independent' }
 export interface ModelEvaluation {
   id: string; createdAt: string; contentHash: string; lifecycleState: LifecycleState;
-  manifest: EvaluationSelection & { kind: 'model-evaluation'; experimentId: string; status: 'planned'; purpose?: 'inference' | 'review'; coverage?: EvaluationPreview['coverage']; overlap?: EvaluationPreview['overlap']; [key: string]: unknown };
+  manifest: EvaluationSelection & { kind: 'model-evaluation'; experimentId: string; status: 'planned'; purpose?: 'inference' | 'review'; target?: ProtocolSpec['target']; coverage?: EvaluationPreview['coverage']; overlap?: EvaluationPreview['overlap']; [key: string]: unknown };
   execution?: ComputeExecution;
 }
 export interface ModelEvaluationPreview {
@@ -103,6 +134,9 @@ export const predictors = {
   refitExecution: (project: string, id: string) => request<ComputeExecution>(`${base(project)}/predictors/refits/${encodeURIComponent(id)}/execution`),
   refitJob: (project: string, id: string, action: 'launch' | 'resume' | 'cancel', operationId: string, resources?: ResourcePolicy) => request<ComputeExecution>(`${base(project)}/predictors/refits/${encodeURIComponent(id)}/${action}`, post({ operationId, ...(resources ? { resources } : {}) })),
   publishRefit: (project: string, id: string, operationId: string) => request<FrozenPredictor>(`${base(project)}/predictors/refits/${encodeURIComponent(id)}/publish`, post({ operationId })),
+  seedEnsembles: (project: string, experimentId?: string) => request<{ items: SeedEnsembleChoice[] }>(`${base(project)}/predictors/seed-ensembles${experimentId ? `?experiment_id=${encodeURIComponent(experimentId)}` : ''}`),
+  previewSeedEnsemble: (project: string, selection: SeedEnsembleSelection) => request<PredictorPreview>(`${base(project)}/predictors/seed-ensembles/preview`, post(selection)),
+  freezeSeedEnsemble: (project: string, selection: SeedEnsembleSelection, previewHash: string, operationId: string) => request<FrozenPredictor>(`${base(project)}/predictors/seed-ensembles`, post({ ...selection, previewHash, operationId })),
 };
 export const modelEvaluations = {
   compare: (project: string, leftEvaluationId: string, rightEvaluationId: string, signal?: AbortSignal) => request<PatientComparison>(`${base(project)}/evaluation-runs/compare`, { ...post({ leftEvaluationId, rightEvaluationId }), signal }),

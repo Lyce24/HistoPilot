@@ -14,21 +14,19 @@ Repeat `--data-root` for more folders, or list them under `[storage] data_roots`
 
 **Create a project.** On the start page choose **Start a new project**, give it a name and pick a new or empty folder. To create one, open its parent, choose **New folder**, then **Use this folder**. The project keeps all of its records in that folder. Reopen it later from the recent list or from its folder with **Load an existing project**. Links of the form `?project=<id>#overview` keep your place on refresh.
 
-**Set up compute.** Training and evaluation need the training environment, and extraction needs TRIDENT; see [runtime environments](deployment.md#runtime-environments). The rest of the workflow works without them.
+**Set up compute.** Training and predictor runs need the training environment, and extraction needs TRIDENT; see [runtime environments](deployment.md#runtime-environments). The rest of the workflow works without them.
 
 ## The workflow at a glance
 
-The **Project roadmap** groups the modules into seven steps. Every module opens a library of its records; open or create one and work through its steps with **Back** and **Next**. A module whose inputs are missing tells you what it needs.
+The **Project roadmap** groups the modules into five steps. Every module opens a library of its records; open or create one and work through its steps with **Back** and **Next**. A module whose inputs are missing tells you what it needs.
 
 | Step | Modules | You produce |
 | --- | --- | --- |
 | 01 | Datasets | A frozen dataset: slide and patient records linked to slide files |
 | 02 | Slide features and Targets & splits, in either order | A verified feature bundle; a frozen target with fixed training and testing sets |
-| 03 | Experimental Setup | A frozen design: inputs, folds, model recipes and predictor choices |
-| 04 | Experiments | Trained folds, cross-validated results and predictors |
-| 05 | Evaluate models and Run inference | Test-cohort metrics, or predictions for unlabeled slides |
-| 06 | Clinical utility (optional) | Calibration, operating-point and net-benefit report |
-| 07 | Model interpretation (optional) | Attention maps and top patches |
+| 03 | Experiments | A frozen design (inputs, folds, model recipes and predictor choices), then trained folds, cross-validated results and predictors |
+| 04 | Apply models | Predictor runs on cohorts: metrics, subgroups, agreement and clinical utility wherever there are labels, predictions everywhere |
+| 05 | Model interpretation (optional) | Attention maps and top patches |
 
 Under **Project tools** you also find the **Task Center** (all running and queued compute), **Study backups & sources**, **Workspace cleanup** and **System & storage**.
 
@@ -132,25 +130,40 @@ A frozen bundle pins its sources, packs, precision and validation evidence. Inpu
 
 A slide or patient matching both sets, or one physical file in both, blocks freezing. Training must contain every class. Small strata can make the actual testing share differ from the requested percentage, so check the counts before freezing.
 
-**Testing target.** Choose **Same field and mapping as training**, **Separate testing field and mapping** (it must keep the classes and positive class), or **None · Pure inference**, which keeps the testing slides without reading their labels.
+**Testing target.** Choose one of:
+- **Same field and mapping as training**.
+- **Separate testing field and mapping**. It must keep the classes and positive class. It may reuse the training field and set missing or unmapped values to **Keep as unlabeled**: those testing slides stay in the testing set and are predicted but never scored.
+- **None · Pure inference**, which keeps the testing slides without reading their labels.
 
-Freezing also creates the testing set's **test cohort**: an evaluation cohort when testing has a target, an inference cohort when it does not. If that step fails, the version stays frozen and offers **Retry test cohort**, also after a reload, until a retry succeeds; versions from before test cohorts offer **Create test cohort**. The frozen version never changes when you later add features or design folds.
+Freezing also saves the testing set as a **testing cohort** in Apply models: a labeled cohort when testing has a target, an unlabeled one when it does not. If that step fails, the version stays frozen and offers **Retry testing cohort**, also after a reload, until a retry succeeds; versions from before testing cohorts offer **Create testing cohort**. The frozen version never changes when you later add features or design folds.
 
-## 4. Experimental Setup
+## 4. Experiments
 
-**Experimental Setup** combines a dataset, a target/split version and a feature bundle into a frozen design. Create a setup or copy an existing one, then work through its steps.
+**Experiments** takes one experiment from its design to its results. The library lists every experiment: drafts still being designed, frozen designs ready to run, and started experiments with their status. Search by name, ID, notes or tag; filter by state (Active, Archived, Trash, All records) and status; sort by update time, creation time or name. Select two to four experiments and **Compare** their saved inputs and training settings against a baseline.
 
-**Inputs & training design.** Choose the three inputs and the training design:
+Choose **Create experiment**, or start from an existing one as a template. Until it starts, an experiment is its design, which combines a dataset, a target/split version and a feature bundle in three steps. Links saved by the former Experimental Setup module open the same experiment here.
 
-- **K-fold** cross-validation, 2–10 folds (default 5). Other strategies are not available for new setups.
+### Inputs & training design
+
+Choose the three inputs and the training design:
+
+- **Strategy**, one of four that train:
+  - **K-fold** cross-validation, 2–10 generated folds (default 5).
+  - **Predefined folds** from a dataset column, such as the folds of a published study: each value is one assessment fold.
+  - **Leave one site/cohort out**: each value of a site or cohort column is held out in turn, or only the sites you select.
+  - **Held-out assessment**: one stratified share of the training set (20% by default), with one split seed.
+
+  Monte Carlo and nested designs can be planned but not trained. Every training group needs one fold or site value.
 - **Early-stop validation**, the share of each fold's fitting groups held out for early stopping (default 15%).
-- **Split seeds** (default 42, up to 10), each giving a different fold assignment.
+- **Split seeds** (default 42, up to 10). For k-fold each seed deals new folds; predefined folds and sites stay fixed, and each seed draws a new early-stop validation.
 - **Keep all slides of a case in the same fold**, offered for slide-unit targets.
 - **Loading:** Auto, Original feature files, or Packed mmap with a chosen pack.
 
-**Check & continue to hyperparameters** checks that every training slide has features and that the inputs are compatible. Missing features block the setup; they never silently shrink the training set. Folds are drawn from the training set only. See [cross-validation](methods.md#cross-validation).
+**Check & continue to hyperparameters** checks that every training slide has features and that the inputs are compatible. Missing features block the design; they never silently shrink the training set. Folds are drawn from the training set only. See [cross-validation](methods.md#cross-validation).
 
-**Hyperparameters.** Add one or more **batches**. Each batch is a single configuration, a **Parameter grid** (learning rate × weight decay × maximum epochs) or **Custom configurations** (explicit rows that keep their pairings), repeated over **training seeds** (default 42). For example, a 3 × 2 grid over 3 training seeds and 5 folds is 6 configurations and 90 runs.
+### Hyperparameters
+
+Add one or more **batches**. Each batch is a single configuration, a **Parameter grid** (learning rate × weight decay × maximum epochs) or **Custom configurations** (explicit rows that keep their pairings), repeated over **training seeds** (default 42). For example, a 3 × 2 grid over 3 training seeds and 5 folds is 6 configurations and 90 runs.
 
 | Model | Input | Attention maps |
 | --- | --- | --- |
@@ -181,16 +194,15 @@ Batches carry no compute settings. The Task Center decides at run time how many 
 
 A refit budget is a percentile of the folds' best epochs: P50 (preselected), P75, P90, P100 or a custom percentile. It counts epochs, not a share of the data. See [predictors](methods.md#predictors).
 
-**Review & freeze.** Freezing pins inputs, folds, recipes and predictor choices. It starts nothing. To change scientific settings, copy the setup.
+### Review & freeze, then start
 
-## 5. Experiments
+**Review & freeze** pins inputs, folds, recipes and predictor choices. It starts nothing. To change scientific settings, copy the experiment.
 
-**Experiments** lists every experiment. Search by name, ID, notes or tag; filter by state (Active, Archived, Trash, All records) and status; sort by update time, creation time or name. Select two to four experiments and **Compare** their saved inputs and training settings against a baseline.
-
-Open a frozen setup and choose **Start experiment**. HistoPilot rechecks the inputs, features and training runtime, records the code and environment, and queues every fold in the [Task Center](task-center.md). Queue order, hold, cancel, logs and resources live there.
+The frozen design then offers **Start experiment**, in the same step. HistoPilot rechecks the inputs, features and training runtime, records the code and environment, and queues every fold in the [Task Center](task-center.md). Queue order, hold, cancel, logs and resources live there.
 
 | Status | Meaning |
 | --- | --- |
+| Draft | Its design is still being edited |
 | Ready to run | Frozen, not yet started |
 | Queued | Waiting in the Task Center; the reason says for what |
 | Running | At least one task is running |
@@ -200,58 +212,84 @@ Open a frozen setup and choose **Start experiment**. HistoPilot rechecks the inp
 | Cancelled | Its work was cancelled. It can be resumed. |
 | Completed | All of its tasks succeeded |
 
-An experiment has three tabs:
+### Runs, results and predictors
+
+A started experiment keeps its design as read-only **Inputs** and **Hyperparameters** views, followed by:
 
 - **Runs:** a status line linking to the Task Center, the run table, and each run's training and validation curves. Curves show the latest 2,000 epochs, numbered from 1.
-- **Results:** cross-validated results for each batch's validation-selected configuration. Pick a metric (AUROC, AUPRC, balanced accuracy, macro-F1, accuracy) to see the OOF mean ± SD across seeds with a 95% bootstrap interval, every fold and seed, a seed ensemble, per-class results, the OOF confusion matrix, and paired differences between batches. **Things to know** flags partial results, weak classes, seed or fold variation, very early checkpoints and a missing validation choice. Download the fold and seed table (CSV), the full summary (JSON) and per-seed OOF predictions. See [cross-validated results](methods.md#cross-validated-results).
+- **Results:** cross-validated results for each batch's validation-selected configuration. Leave-one-site-out folds are named by their site. A held-out design, or one holding out selected sites, reports out-of-fold results over the units it assessed. Pick a metric (AUROC, AUPRC, balanced accuracy, macro-F1, accuracy) to see the OOF mean ± SD across seeds with a 95% bootstrap interval, every fold and seed, a seed ensemble, per-class results, the OOF confusion matrix, and paired differences between batches. **Things to know** flags partial results, weak classes, seed or fold variation, very early checkpoints and a missing validation choice. Download the fold and seed table (CSV), the full summary (JSON) and per-seed OOF predictions. See [cross-validated results](methods.md#cross-validated-results).
 
   A batch run as a controlled comparison reports its reference configuration and adds a **Controlled comparison** section. It lists every configuration with its primary metric (seed mean ± SD and 95% interval), then compares each one with the reference: the difference reference − arm (positive means the reference scored higher), its paired 95% interval, a p-value, the Holm-adjusted p-value that accounts for comparing several configurations, and the number of test folds in which the reference did better. A configuration that has not finished shows why instead of numbers.
-- **Predictors:** the ready ensemble and refit predictors. Predictors are built after their whole batch finishes; each refit runs as its own task. A finished ensemble can be evaluated while refits are still running.
+- **Predictors:** the ready ensemble and refit predictors. Predictors are built after their whole batch finishes; each refit runs as its own task. A finished ensemble can be applied while refits are still running. Each predictor links to its runs in Apply models.
 
-OOF results are development evidence. Choosing a configuration or batch from them does not give an independent estimate; score the chosen predictor on a test cohort for that.
+  **Seed ensembles** lists each configuration trained with more than one seed group. **Build seed ensemble** pools the fold models of all its training and split seeds into one predictor, the deployable form of the seed ensemble shown in Results. It reuses verified checkpoints and trains nothing, so it works on finished experiments too. See [predictors](methods.md#predictors).
 
-## 6. Test cohorts
+OOF results are development evidence. Choosing a configuration or batch from them does not give an independent estimate; apply the chosen configuration to its reserved testing set for that. **Apply this configuration**, under the seed table in Results, opens Apply models with the configuration's seed ensemble (built first from the verified checkpoints if needed) or, for a single seed, its fold ensemble.
 
-Each frozen target/split version already provides its testing set as a cohort. To prepare another one, such as an external cohort, open **Additional test cohorts** from Evaluate models (or **Create inference cohort** from Run inference). The steps are **Test Data** (datasets and conditions), **Prediction Targets** or **Cohort type**, and **Review and Freeze**. An **evaluation cohort** has a target compatible with the predictors; an **inference cohort** has none. Cohorts do not depend on models or features; compatibility is checked when you evaluate.
+## 5. Apply models
 
-## 7. Evaluate models
+**Apply models** runs ready predictors on cohorts. Its library has four views: **Runs**, **Batches**, **Cohorts** and **Compare methods**. Every link to a run, batch or view opens it directly, so a run can be shared or reopened.
 
-**Evaluate models** scores ready predictors on a labeled cohort:
+### Cohorts
 
-1. **Experiments:** choose one or more experiments. Each shows its ready ensemble and refit counts.
-2. **Evaluation inputs:** choose the methods (both, ensemble or refit), the test cohort and the feature settings. **Advanced: choose individual predictors** picks predictors one by one.
-3. **Review and run:** the review lists every predictor and every blocker. It checks target and class encoding, development overlap, encoder, dimension and dtype, feature and pack coverage of the cohort, the frozen threshold and patient aggregation, and the checkpoint hashes. Acknowledge and choose **Run reviewed predictors**. The reviewed list is fixed; predictors created afterwards are not added.
-4. **Batch results.**
+A cohort is a frozen set of slides that predictors are applied to:
+- A **labeled cohort** maps a label column to the predictors' classes, so its runs are scored. Missing or unmapped values can be set to **Keep as unlabeled**: those slides are predicted but never scored.
+- An **unlabeled cohort** reads no labels, so its runs predict only.
 
-Each evaluation reports slide and patient predictions, metrics and confusion matrices linked to case review, with checksummed CSV and JSON downloads. Patient-unit evaluations add 95% patient bootstrap intervals for AUROC and AUPRC and a one-slide-per-patient sensitivity analysis. Predictions use the predictor's frozen decision threshold. Where a batch has both an ensemble and a refit of the same group, results compare them within the same cohort and unit. A comparison used to pick a strategy spends that cohort's independence; see [evaluation and inference](methods.md#evaluation-and-inference).
+Each frozen target/split version already provides its testing set as a cohort. To prepare another one, such as an external cohort, open **Cohorts** and choose **Create labeled cohort** or **Create unlabeled cohort**. The steps are **Slides** (datasets and conditions), **Labels** and **Review and Freeze**. Cohorts do not depend on models or features; compatibility is checked when you apply predictors. A frozen cohort offers **Apply predictors to this cohort** and lists its reference standards.
 
-Cancel an evaluation batch from the Task Center. Completed results stay. Retry failed evaluations from their own controls.
+### Reference standards
 
-## 8. Run inference
+A cohort's labels are fixed when it is frozen, and an unlabeled cohort has none. A **reference standard** attaches labels that arrive later, without changing the cohort or predicting again: each reader's grades, their consensus, or a final diagnosis. It is one dataset column mapped to the runs' classes for every slide of the cohort.
 
-Use **Run inference** for slides without labels, when you want the model's predictions rather than a performance estimate.
+- Add one from a run (**Scored against → Add reference standard**) or from a frozen cohort (**Reference standards → Add reference standard**).
+- Choose the column and the datasets that hold it. Slides are matched to the cohort by slide ID, so a newer version of the cohort's dataset can supply labels its frozen version lacked.
+- Map each value to a class. Values that name a class are mapped to it; values you leave unmapped, missing values and slides outside the chosen datasets stay unlabeled and are never scored.
+- Review the counts and findings, then save. A reference is frozen like the cohort it labels.
 
-1. Prepare an inference cohort: freeze a target/split with **None · Pure inference**, or choose **Create inference cohort**.
-2. In **Run inference**, choose experiments and methods, then the cohort. The review checks features, packs and development overlap as for evaluation.
-3. Run it. Each predictor gets its own run with the same predictions an evaluation of the same inputs would make.
+Every run on the cohort whose classes the reference maps to can then be scored against it.
 
-A development slide or source file is never predicted; use that predictor's OOF predictions for it instead. In a patient-grouped design, development patients are refused for patient-level predictors, and allowed but flagged for slide-level ones. Slide-unit designs do not check patients.
+### Applying predictors
 
-A run shows the predicted-class distribution, confidence and margin histograms, for binary targets the positive probability against the frozen threshold with a threshold sweep, fold-member agreement for ensembles, new versus development patients, a breakdown by any frozen attribute, and agreement with Cohen's κ against another run on the same cohort. None of these is an accuracy estimate.
+Choose **Apply predictors**, or start from a predictor, an experiment's **Apply predictors →**, or **Apply this configuration** in Results.
 
-The review queue starts with the predictions **closest to a decision boundary**, measured from the frozen threshold. It can also sort by least or most confident or by fold-member disagreement, and filter to margins below a cutoff (0.2 by default). **Compute attention** queues attention maps for up to 32 listed slides without leaving the run. **Download predictions with metadata (CSV)** gives one row per slide or patient with probabilities, confidence, margin, agreement, the development-patient flag and chosen attributes.
+1. **Experiments:** choose one or more experiments. Each shows its ready ensemble, refit and seed-ensemble counts. A linked predictor skips this step.
+2. **Methods and cohort:** choose the methods, the cohort and the feature settings.
+   - Methods are **Seed ensembles** (the default when the experiments have them), **Fold ensembles and refits** of every seed group, or either one alone. **Advanced: choose individual predictors** picks predictors one by one.
+   - The cohort list marks each cohort as labeled or unlabeled, and proposes the testing set the predictors' development reserved.
+3. **Review and run:** the review lists every predictor and every blocker. It checks the target and class encoding, development overlap, encoder, dimension and dtype, feature and pack coverage of the cohort, the frozen threshold and patient aggregation, and the checkpoint hashes. Acknowledge and choose **Run reviewed predictors**. The reviewed list is fixed; predictors created afterwards are not added.
+4. **Batch results:** one run per predictor, named after its batch and predictor.
 
-## 9. Clinical utility
+No job reads a label. A development slide or source file is never predicted; use that predictor's OOF predictions for it instead. In a patient-grouped design, development patients are refused for patient-level predictors, and allowed but flagged for slide-level ones. Slide-unit designs do not check patients. Cancel a batch from the Task Center; completed runs stay. Retry a failed run from its own controls.
 
-**Clinical utility** looks beyond discrimination at a completed evaluation that has no development overlap. Choose the evaluation, the unit (slide or patient) and the positive class, review, and save. HistoPilot reads the evaluation's checksummed predictions; it never refits, recalibrates or tunes a threshold.
+### Runs
+
+A run opens on what it is for: **Performance** when it has labels to score against, **Predictions** otherwise. **Scored against** chooses the labels: the cohort's own (labeled cohorts), or any reference standard of the cohort with the run's classes. A run on an unlabeled cohort is scored against its first reference standard by name until you choose another. The choice is part of the run's link, and every view below follows it.
+
+- **Performance** scores the labeled records against the chosen labels: metrics for the target, slide or patient unit, and confusion matrices linked to case review.
+  - **Recalibration** compares calibration as predicted and after a map fitted on the predictor's out-of-fold development predictions (Platt scaling for binary targets, temperature scaling for multiclass ones), never on this cohort: Brier score, log loss, calibration error, slope and intercept, and a reliability chart. Decisions and ranking metrics keep the original probabilities. See [recalibration](methods.md#recalibration). Patient-unit runs add 95% patient bootstrap intervals for AUROC and AUPRC and a one-slide-per-patient sensitivity analysis. Slides from development patients are left out of every metric and counted under the metrics. Predictions use the predictor's frozen decision threshold.
+  - **Performance by subgroup** repeats the metrics within each value of a frozen attribute, such as site or scanner. Groups with fewer than 10 labeled units are dimmed; the breakdown is descriptive.
+  - **Clinical utility** looks beyond discrimination; see below.
+  - Downloads: the scored slide and patient tables, which carry each row's label and whether it was scored, and the metrics JSON. Files scored against a reference standard are named after it.
+  - Under a patient target, a patient whose slides a reference labels differently is left unlabeled rather than guessed; the metrics count such patients.
+- **Agreement** pairs the run's decisions with every label source of its cohort, and the sources with each other: Cohen's κ, percent agreement and, for three or more classes, linear weighted κ, each over the units both sides label. Select a pair for its cross-tabulation; a pair with the run opens its errors against that source in **Cases**. In a reader study, this compares the model with each reader, their consensus and the final diagnosis at once. Read weighted κ only when the classes are ordered.
+- **Predictions** describes what the model predicts, for every run: the predicted-class distribution, confidence and margin histograms, for binary targets the positive probability against the frozen threshold with a threshold sweep, fold-member agreement for ensembles, new versus development patients, and a breakdown by any frozen attribute. None of these is an accuracy estimate. **Predictions with metadata (CSV)** gives one row per slide or patient with probabilities, confidence, margin, agreement, the development-patient flag and frozen attributes.
+- **Cases** is the review queue. A scored run starts with the most confident cases and filters by outcome and actual class, from the chosen labels; every run can sort by the margin **closest to a decision boundary**, least or most confident, or fold-member disagreement, and filter to margins below a cutoff. **Compute attention** queues attention maps for up to 32 listed slides without leaving the run.
+- **Compare** pairs the run with another completed run on the same cohort and target: agreement with Cohen's κ and the cases where they disagree. It also shows both runs' metrics against the chosen labels side by side and, against the cohort's own labels at patient units, a paired patient comparison.
+
+**Compare methods** in the library contrasts fold ensembles with refits of the same groups within one cohort and scoring unit. It compares runs on labeled cohorts, scored against the cohort's own labels; runs scored against reference standards are not included. A comparison used to pick a strategy spends that cohort's independence; see [applying models](methods.md#applying-models).
+
+### Clinical utility
+
+A scored run has a **Clinical utility** section on its Performance view, with outcomes from the chosen labels. Choose **New analysis**, then the unit (slide or patient) and the positive class, review and save. The run keeps its analyses for each label source; open one from the section, or copy it into a new analysis. HistoPilot reads the run's checksummed predictions; it never refits, recalibrates or tunes a threshold. Slides from development patients are left out, as they are from the run's metrics.
 
 The report covers the Brier score and skill score, log loss, observed-to-expected ratio, ROC and precision-recall curves, calibration bins (10 by default) with expected and maximum calibration error, the operating point at the frozen threshold (sensitivity, specificity, predictive values, likelihood ratios and more), operating curves, decision curves with net benefit against treat-all and treat-none, net interventions avoided per 100, and a clinical impact curve. Formulas are in [clinical utility](methods.md#clinical-utility).
 
 An **Operating threshold** you enter is labeled as a descriptive override. Choose threshold ranges that reflect the clinical decision and the relative harms of false positives and false negatives. Wilson intervals appear only when units are independent patients. The focused decision-curve view clips values below −0.10; switch to the full range or the table to see them. Save separate analyses to compare choices; JSON and CSV exports keep the source lineage.
 
-## 10. Model interpretation
+## 6. Model interpretation
 
-**Model interpretation** shows where a predictor's attention falls on the slides. It needs no evaluation or clinical results.
+**Model interpretation** shows where a predictor's attention falls on the slides. It needs no runs from Apply models.
 
 1. **Model & features.** Choose an ABMIL or nnMIL ensemble or refit predictor and a compatible feature bundle, with original files or a verified pack. The slide folder comes from the bundle's dataset.
 2. **Slides.** Browse the dataset's slide folder with thumbnails and search, and select up to 128 slides. Selecting starts nothing.
@@ -276,7 +314,7 @@ Selecting a slide shows **Preparing slide** while nearby zoom levels are cached,
 
 ## Task Center
 
-All extraction, packing, training, refit, evaluation, inference, interpretation and archive work runs in the **Task Center**, one queue shared by every project on the machine. Stage pages show one status chip that links to the relevant tasks. The Task Center holds queue order, hold, cancel, retry, logs, measured resources and history, and a single **Parallel GPU tasks** setting with a measured suggestion. Tasks survive closing the browser, restarting the service and rebooting; interrupted work resumes from its checkpoints. See [Task Center](task-center.md).
+All extraction, packing, training, refit, predictor run, interpretation and archive work runs in the **Task Center**, one queue shared by every project on the machine. Stage pages show one status chip that links to the relevant tasks. The Task Center holds queue order, hold, cancel, retry, logs, measured resources and history, and a single **Parallel GPU tasks** setting with a measured suggestion. Tasks survive closing the browser, restarting the service and rebooting; interrupted work resumes from its checkpoints. See [Task Center](task-center.md).
 
 ## Study backups & sources
 
@@ -295,7 +333,7 @@ Use a record's **Manage** action, or **Project tools → Workspace cleanup**, to
 
 | Action | Effect |
 | --- | --- |
-| Cancel job | Stops a running extraction, packing, training, refit or evaluation job. Completed work, logs and checkpoints are kept. |
+| Cancel job | Stops a running extraction, packing, training, refit or predictor run job. Completed work, logs and checkpoints are kept. |
 | Archive | Hides a record from ordinary lists and pickers. Saved references keep working. Restore at any time. |
 | Move to Trash | Hides a record and blocks new use. Restore at any time. |
 
@@ -303,28 +341,26 @@ Nothing is ever purged and no disk space is reclaimed: tables, slides, features,
 
 ## Drafts and recovery
 
-- Unsaved input in **Datasets**, **Targets & splits** and **Test cohorts** is kept for the browser tab. Returning to the module offers **Return to current import** (or draft, or test cohort). Review and freeze steps always recheck with the server.
-- Setup inputs, batch edits and experiment forms restore automatically with a notice.
+- Unsaved input in **Datasets**, **Targets & splits** and the **Cohorts** of Apply models is kept for the browser tab. Returning to the module offers **Return to current import** (or draft, or cohort). Review and freeze steps always recheck with the server.
+- Experiment inputs, batch edits and experiment forms restore automatically with a notice.
 - **Slide features** settings are not recovered; finish or save them before leaving the page.
 
 **Cancel** keeps completed work and checkpoints. **Resume** continues from the last completed epoch and replays an interrupted one. Work always resumes with its original code and environment; if the environment changed, restore it or copy the experiment.
 
 ## Command line
 
-The CLI talks to the running service through the same API as the browser. Add `--url http://127.0.0.1:PORT` for a non-default port. IDs come from the saved-record details.
+The `histopilot` command talks to the running service through the same API as the browser, and shows the same records. Run it as `uv run histopilot` from the checkout; add `--url http://127.0.0.1:PORT` for a non-default port. IDs come from the saved-record details, tagged versions can be named `@tag`, and experiments can be named by their name.
 
 ```bash
-# Feature validation and packing
-uv run histopilot pack-features FEATURE_ID --project PROJECT_ID --validate-only
-uv run histopilot pack-features FEATURE_ID --project PROJECT_ID --preview
-uv run histopilot pack-features FEATURE_ID --project PROJECT_ID --output /path/to/new-pack   # add --dtype float16 to reduce precision
-uv run histopilot pack-features FEATURE_ID --project PROJECT_ID --existing-pack /path/to/pack
-uv run histopilot feature-jobs --project PROJECT_ID [--job JOB_ID --cancel]
-uv run histopilot verify-feature-pack /path/to/pack                                          # standalone
-
-# Development batches
-uv run histopilot training-status BATCH_ID --project PROJECT_ID [--results | --cancel]
-uv run histopilot train-batch BATCH_ID --project PROJECT_ID --resume
+uv run histopilot project roadmap                                  # each stage's status
+uv run histopilot experiment results "Baseline study"              # results with intervals
+uv run histopilot run list --experiment "Baseline study"           # its runs and their models
+uv run histopilot run summary RUN_ID --comparison OTHER_RUN_ID     # how two runs agree
+uv run histopilot tasks list --state live                          # running and waiting work
+uv run histopilot batch resume BATCH_ID                            # continue a stopped batch
+uv run histopilot pack create --from pack.yaml --wait              # validate or pack features
+uv run histopilot apply template --experiment EXPERIMENT_ID -o apply.yaml
+uv run histopilot verify-feature-pack /path/to/pack                # standalone, no service
 ```
 
-An experiment's batches are started by **Start experiment**; use `train-batch --resume` to continue one. `histopilot runner status` reports the Task Center runner ([the runner](task-center.md#the-runner)).
+An experiment's batches are started by **Start experiment** (`histopilot experiment start`); use `histopilot batch resume` to continue one. `histopilot runner status` reports the Task Center runner ([the runner](task-center.md#the-runner)). The older flat commands (`pack-features`, `feature-jobs`, `train-batch`, `training-status`) still work and name their replacements. See [Command line](cli.md) for every command, and [AI agents](agents.md) for the **AI agent access** panel on the **Study backups & sources** page, where you choose what AI agents may see of a project, make their tokens and approve their requests.

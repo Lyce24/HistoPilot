@@ -87,7 +87,7 @@ export function ExperimentComparison({ items }: { items: ModelExperiment[] }) {
     return selected.startsWith('plan:') && experimentStage(item) !== 'planning' ? '' : selected;
   };
   const rows = experimentDifferences(ordered.map((item) => comparisonSnapshot(item, chosenBatch(item))), differencesOnly);
-  return <Panel title="Compare experiment inputs" subtitle="Compare saved inputs, editable batch recipes or submitted batch snapshots. Training differences include saved recipe fields, configurations, seeds and resource settings.">
+  return <Panel title="Compare experiment inputs" subtitle="Compare saved inputs, editable batch recipes or the batch snapshots of started experiments. Training differences include saved recipe fields, configurations, seeds and resource settings.">
     <div className="experiment-compare-controls"><label className="label">Baseline<select className="field" value={items.some((item) => item.id === baseline) ? baseline : items[0]?.id ?? ''} onChange={(event) => setBaseline(event.target.value)}>{items.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id}</option>)}</select></label><label className="development-check"><input type="checkbox" checked={differencesOnly} onChange={(event) => setDifferencesOnly(event.target.checked)} /> Differences only</label></div>
     <div className="experiment-table-scroll"><table className="experiment-comparison"><thead><tr><th scope="col">Input / setting</th>{ordered.map((item, index) => <th scope="col" key={item.id}><strong>{item.name}</strong>{index === 0 ? <Badge>Baseline</Badge> : null}<small title={item.id}>{shortRecordId(item.id)}</small><label className="label"><span className="sr-only">Snapshot for {item.name} {item.id}</span><select className="field" value={chosenBatch(item)} onChange={(event) => setBatchIds((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">Saved experiment inputs</option>{experimentStage(item) === 'planning' ? item.batchPlans?.map((plan) => <option key={`plan:${plan.id}`} value={`plan:${plan.id}`}>{plan.spec.batchName} · Editable recipe</option>) : null}{item.batches.map((batch) => <option key={batch.id} value={batch.id}>{batch.manifest.spec.batchName} · {lifecycleLabel[batch.state]}</option>)}</select></label></th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.path} className={row.different ? 'experiment-different' : ''}><th scope="row">{comparisonFieldLabel(row.path)}<small><code>{row.path}</code></small></th>{row.values.map((value, index) => <td key={ordered[index].id}><pre>{displayValue(value)}</pre></td>)}</tr>)}</tbody></table></div>
     {!rows.length ? <p className="muted">No differences in the selected snapshots.</p> : null}
@@ -95,8 +95,7 @@ export function ExperimentComparison({ items }: { items: ModelExperiment[] }) {
   </Panel>;
 }
 
-export function CreateExperiment({ project, copy, templates = [], onCreated, onClose, setup = false }: {
-  setup?: boolean;
+export function CreateExperiment({ project, copy, templates = [], onCreated, onClose }: {
   project: string; copy?: ModelExperiment; templates?: Pick<ModelExperiment, 'id' | 'name' | 'notes' | 'tags' | 'state' | 'stage' | 'status' | 'configurationLocked'>[];
   onCreated: (item: ModelExperiment) => void; onClose: () => void;
 }) {
@@ -131,7 +130,7 @@ export function CreateExperiment({ project, copy, templates = [], onCreated, onC
     if (creating.current || complete || !name.trim()) return;
     creating.current = true;
     setBusy(true); setError(null);
-    const input = pending ?? { name: name.trim(), notes: notes.trim(), tags: [...new Set(tags.split(',').map((value) => value.trim()).filter(Boolean))], ...(sourceId ? { sourceExperimentId: sourceId } : {}), ...(setup ? { setupVersion: 1 as const } : {}), operationId: crypto.randomUUID() };
+    const input = pending ?? { name: name.trim(), notes: notes.trim(), tags: [...new Set(tags.split(',').map((value) => value.trim()).filter(Boolean))], ...(sourceId ? { sourceExperimentId: sourceId } : {}), setupVersion: 1 as const, operationId: crypto.randomUUID() };
     // Persist the exact operation before starting I/O so a reload can retry the
     // accepted request rather than creating a second experiment.
     setPending(input);
@@ -152,24 +151,24 @@ export function CreateExperiment({ project, copy, templates = [], onCreated, onC
     }
     finally { creating.current = false; setBusy(false); }
   }
-  return <><PageHeader eyebrow={stageEyebrow(setup ? 'experimental-setup' : 'experiments')} title={setup ? 'Create experimental setup' : 'Create experiment'} description={setup ? 'Name the setup, then select its data, training design and hyperparameters.' : 'Name your experiment or reuse a saved template, then continue to its inputs.'} actions={<StageBackButton disabled={busy} onClick={close}>Back to {setup ? 'setups' : 'experiments'}</StageBackButton>} />
-    <StageSteps label="New experiment steps" current="details" steps={[{ id: 'details', title: 'Experiment details', description: 'Name and optional template' }, { id: 'inputs', title: 'Inputs', description: 'Continue after creating the record', disabled: true }]} onChange={() => {}} />
-    <Panel title={setup ? 'Setup details' : 'Experiment details'} subtitle={setup ? 'Prepare inputs and training batches, then freeze the design. Training starts later in Experiments.' : 'Name your experiment, then adjust its inputs and batches. Everything stays editable until you submit it.'}>
+  return <><PageHeader eyebrow={stageEyebrow('experiments')} title="Create experiment" description="Name the experiment or reuse a saved one as a template, then choose its data, training design and hyperparameters." actions={<StageBackButton disabled={busy} onClick={close}>Back to experiments</StageBackButton>} />
+    <StageSteps label="New experiment steps" current="details" steps={[{ id: 'details', title: 'Experiment details', description: 'Name and optional template' }, { id: 'inputs', title: 'Inputs & training design', description: 'Continue after creating the record', disabled: true }]} onChange={() => {}} />
+    <Panel title="Experiment details" subtitle="Design the inputs and training batches, freeze the design, then start it. Everything stays editable until you freeze it.">
     {recovered ? <p className="callout" role="status">Recovered this tab’s unfinished experiment details. {pending ? 'Retry creation to recover the original request.' : 'Review them before creating the experiment.'}</p> : null}
     {draft && backup.error ? <p className="callout callout-warning" role="alert">{backup.error}</p> : null}
     <form onSubmit={(event) => { event.preventDefault(); void create(); }}><fieldset disabled={busy || Boolean(pending)} className="experiment-create-fields"><legend className="sr-only">Experiment details</legend>
       <label className="label experiment-template-field">Start from template<select className="field" value={sourceId} onChange={(event) => selectSource(event.target.value)}>
-        <option value="">{setup ? 'Blank setup' : 'Blank experiment'}</option>
+        <option value="">Blank experiment</option>
         {sourceId && !source ? <option value={sourceId} disabled>Selected template unavailable</option> : null}
         {copy && !sources.some((item) => item.id === copy.id) ? <option value={copy.id}>{copy.name} · {shortRecordId(copy.id)}</option> : null}
         {sources.map((item) => <option value={item.id} key={item.id}>{item.name} · {experimentStageLabel[experimentStage(item)]} · {shortRecordId(item.id)}</option>)}
       </select><small>{source ? `Copies the saved inputs and batch recipes from “${source.name}” into an editable plan. Runs and results stay with the source experiment.` : 'Use an existing experiment as a template to reuse its inputs and batch recipes.'}</small></label>
-      <label className="label">{setup ? 'Setup name' : 'Experiment name'}<input autoFocus required className="field" value={name} maxLength={120} onChange={(event) => setName(event.target.value)} /></label>
+      <label className="label">Experiment name<input autoFocus required className="field" value={name} maxLength={120} onChange={(event) => setName(event.target.value)} /></label>
       <label className="label">Tags<input className="field" value={tags} maxLength={20000} onChange={(event) => setTags(event.target.value)} placeholder="baseline, abmil, comparison" /><small>Comma-separated labels for filtering and organization.</small></label>
       <label className="label">Notes<textarea className="field" value={notes} maxLength={10000} onChange={(event) => setNotes(event.target.value)} placeholder="What are you testing in this experiment?" /></label>
     </fieldset>
     <ErrorNotice error={error} />{pending && !busy ? <p className="callout" role="status">The creation response is not confirmed. Retry sends the same creation request and cannot create a second record.</p> : null}
-    <div className="stage-actions"><StageBackButton type="button" disabled={busy} onClick={close}>Back to {setup ? 'setups' : 'experiments'}</StageBackButton><StageCreateButton disabled={busy || !name.trim()} type="submit">{busy ? 'Creating…' : pending ? 'Retry creation' : 'Create & open inputs'}</StageCreateButton></div></form>
+    <div className="stage-actions"><StageBackButton type="button" disabled={busy} onClick={close}>Back to experiments</StageBackButton><StageCreateButton disabled={busy || !name.trim()} type="submit">{busy ? 'Creating…' : pending ? 'Retry creation' : 'Create & open inputs'}</StageCreateButton></div></form>
   </Panel></>;
 }
 
@@ -243,15 +242,19 @@ export interface ExperimentLibraryFilters {
 }
 export const newExperimentLibraryFilters = (): ExperimentLibraryFilters => ({ state: 'active', status: '', search: '', sort: 'recent', selected: [] });
 
-export type ExperimentLibraryMode = 'setup' | 'execution';
-export function stageExperiments<T extends Pick<ModelExperiment, 'legacy' | 'stage' | 'status' | 'configurationLocked' | 'frozenSetupId' | 'setupVersion'>>(items: T[], mode: ExperimentLibraryMode): T[] {
-  return items.filter((item) => mode === 'setup'
-    ? !item.legacy && (item.setupVersion === 1 || experimentStage(item) === 'planning')
-    : Boolean(item.frozenSetupId) || experimentStage(item) !== 'planning');
+/**
+ * The experiments the library lists: designs, frozen designs and started experiments. A legacy
+ * plan never submitted has no design to edit or run, so it is left out; its record stays in
+ * Workspace cleanup.
+ */
+export function libraryExperiments<T extends Pick<ModelExperiment, 'legacy' | 'stage' | 'status' | 'configurationLocked' | 'frozenSetupId'>>(items: T[]): T[] {
+  return items.filter((item) => !(item.legacy && !item.frozenSetupId && experimentStage(item) === 'planning'));
 }
+/** A design still being edited; every other experiment has an execution status. */
+export const experimentDraft = (item: Pick<ModelExperiment, 'stage' | 'status' | 'configurationLocked' | 'frozenSetupId'>) => experimentStage(item) === 'planning' && !item.frozenSetupId;
+const libraryStatusFilters: Record<string, string> = { draft: 'Draft', ...experimentStatusFilters };
 
-export default function ExperimentRegistry({ project, onOpen, filters, onFiltersChange, mode }: {
-  mode: ExperimentLibraryMode;
+export default function ExperimentRegistry({ project, onOpen, filters, onFiltersChange }: {
   project: string; onOpen: (id: string) => void;
   filters?: ExperimentLibraryFilters; onFiltersChange?: Dispatch<SetStateAction<ExperimentLibraryFilters>>;
 }) {
@@ -269,21 +272,21 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
   const [comparing, setComparing] = useState(false);
   useStageLibrary(() => { if (!creating) setComparing(false); });
   const allItems = query.data?.items ?? [];
-  const items = stageExperiments(allItems, mode);
-  const title = mode === 'setup' ? 'Experimental Setup' : 'Experiments';
+  const items = libraryExperiments(allItems);
+  const title = 'Experiments';
   const visible = filterExperiments(items, state, '', search, sort)
-    .filter((item) => !status || (mode === 'execution' ? experimentExecutionStatus(item.status) === status : status === 'frozen' ? Boolean(item.frozenSetupId) : !item.frozenSetupId));
+    .filter((item) => !status || (status === 'draft' ? experimentDraft(item) : !experimentDraft(item) && experimentExecutionStatus(item.status) === status));
   const comparisonQueries = useQueries({ queries: selected.map((id) => ({ queryKey: ['model-experiment', project, id], queryFn: () => experiments.get(project, id), refetchInterval: 15000 })) });
   // One headline per experiment; folds, seeds and intervals load when an experiment opens.
-  const headlines = useQuery({ queryKey: ['experiment-headlines', project], queryFn: () => experimentHeadlines.list(project), enabled: mode !== 'setup',
+  const headlines = useQuery({ queryKey: ['experiment-headlines', project], queryFn: () => experimentHeadlines.list(project),
     refetchInterval: allItems.some((item) => experimentStage(item) === 'running') ? 30000 : false });
   const headlineOf = new Map((headlines.data?.items ?? []).map((row) => [row.experimentId, row.batches]));
   const compared = comparisonQueries.flatMap((value) => value.data ? [value.data] : []);
   return <div className="clinical-workspace experiment-registry">
-    {!creating ? <PageHeader eyebrow={stageEyebrow(mode === 'setup' ? 'experimental-setup' : 'experiments')} title={comparing ? 'Compare saved designs' : title} description={comparing ? 'Compare saved inputs and training settings.' : mode === 'setup' ? 'Prepare datasets, targets, training splits and hyperparameters. Freeze a setup when the full design is ready.' : 'Run frozen setups and follow queued, active, completed and failed experiments.'} actions={comparing ? <StageBackButton onClick={() => setComparing(false)}>Back to experiments</StageBackButton> : mode === 'execution' ? <a className="btn btn-primary" href="#experimental-setup">Prepare a setup</a> : <StageCreateButton onClick={() => setCreating(true)}>Create setup</StageCreateButton>} /> : null}
+    {!creating ? <PageHeader eyebrow={stageEyebrow('experiments')} title={comparing ? 'Compare saved designs' : title} description={comparing ? 'Compare saved inputs and training settings.' : 'Design training on frozen targets, splits and features, freeze the design and start it, then follow its runs, results and predictors.'} actions={comparing ? <StageBackButton onClick={() => setComparing(false)}>Back to experiments</StageBackButton> : <StageCreateButton onClick={() => setCreating(true)}>Create experiment</StageCreateButton>} /> : null}
 
     <StagePage pageKey={creating ? 'create' : comparing ? 'comparison' : 'library'}>
-    {creating ? <CreateExperiment setup={mode === 'setup'} project={project} templates={allItems} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); void client.invalidateQueries({ queryKey: ['scientific', project, 'drafts'] }); onOpen(item.id); }} /> : comparing ? <>
+    {creating ? <CreateExperiment project={project} templates={allItems} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); void client.invalidateQueries({ queryKey: ['scientific', project, 'drafts'] }); onOpen(item.id); }} /> : comparing ? <>
       <ErrorNotice error={comparisonQueries.find((value) => value.error)?.error ?? null} />
       {compared.length !== selected.length ? <p role="status">Loading selected experiment snapshots…</p> : compared.length >= 2 ? <ExperimentComparison items={compared} /> : <p>Select at least two experiments from the library to compare.</p>}
       <div className="stage-actions"><StageBackButton type="button" onClick={() => setComparing(false)}>Back to experiment selection</StageBackButton></div>
@@ -294,27 +297,27 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
         onReset={search || status || state !== 'active' || sort !== 'recent' ? () => { setSearch(''); setStatus(''); setState('active'); setSort('recent'); } : undefined}
         actions={<button type="button" className="btn btn-secondary btn-small" disabled={query.isFetching} onClick={() => void query.refetch()}>{query.isFetching ? 'Refreshing…' : 'Refresh'}</button>}>
         <label className="label">State<select className="field" aria-label="Experiment state" value={state} onChange={(event) => setState(event.target.value as LifecycleState | 'all')}>{(['active', 'archived', 'trashed', 'all'] as const).map((value) => <option key={value} value={value}>{value === 'all' ? 'All records' : lifecycleLabel[value]} ({items.filter((item) => value === 'all' || item.state === value).length})</option>)}</select></label>
-        <label className="label">Status<select className="field" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{Object.entries(mode === 'setup' ? { draft: 'Draft', frozen: 'Frozen' } : experimentStatusFilters).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="label">Status<select className="field" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{Object.entries(libraryStatusFilters).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="label">Sort<select className="field" value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">Last updated</option><option value="oldest">Oldest first</option><option value="name">Name</option></select></label>
       </StageLibraryToolbar>
       {selected.length ? <div className="experiment-selection"><span>{selected.length} selected <span className="muted">· Choose 2–4 to compare</span></span><div className="inline-actions"><button type="button" className="text-button" onClick={() => setSelected([])}>Clear comparison</button><button type="button" className="btn btn-secondary btn-small" disabled={selected.length < 2} onClick={() => setComparing(true)}>Compare selected experiments</button></div></div> : null}
-      {query.isPending ? <p className="panel-body" role="status">Loading experiments…</p> : visible.length ? <div className="experiment-table-scroll"><table className="experiment-record-table" aria-label="Saved experiments"><thead><tr><th scope="col"><span className="sr-only">Select 2–4 experiments to compare</span></th><th scope="col">{mode === 'setup' ? 'Setup' : 'Experiment'}</th><th scope="col">Status</th><th scope="col">Training</th>{mode !== 'setup' ? <th scope="col" className="experiment-result-column" title="Out-of-fold result of the best batch: mean ± SD across training seeds">Result</th> : null}<th scope="col">Updated</th><th scope="col">Actions</th></tr></thead><tbody>{visible.map((item) => <tr key={item.id}>
+      {query.isPending ? <p className="panel-body" role="status">Loading experiments…</p> : visible.length ? <div className="experiment-table-scroll"><table className="experiment-record-table" aria-label="Saved experiments"><thead><tr><th scope="col"><span className="sr-only">Select 2–4 experiments to compare</span></th><th scope="col">Experiment</th><th scope="col">Status</th><th scope="col">Training</th><th scope="col" className="experiment-result-column" title="Out-of-fold result of the best batch: mean ± SD across training seeds">Result</th><th scope="col">Updated</th><th scope="col">Actions</th></tr></thead><tbody>{visible.map((item) => <tr key={item.id}>
         <td><input aria-label={`Compare ${item.name} ${item.id}`} type="checkbox" checked={selected.includes(item.id)} disabled={selected.length >= 4 && !selected.includes(item.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} /></td>
         <th scope="row"><button className="text-button stage-record-name experiment-name" title={`Open ${item.name}`} onClick={() => onOpen(item.id)}>{item.name}</button><small title={item.id}>{shortRecordId(item.id)}</small>{item.tags.length || item.legacy ? <div className="experiment-tags">{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}{item.legacy ? <Badge>Legacy record</Badge> : null}</div> : null}</th>
-        {/* A setup's badge describes the setup; run outcomes belong to the Experiments page. */}
-        <td><Badge tone={mode === 'setup' ? item.frozenSetupId ? 'green' : 'neutral' : experimentStage(item) === 'planning' ? 'neutral' : experimentStatusTone(item.status)}>{mode === 'setup' ? item.frozenSetupId ? 'Frozen' : 'Draft' : experimentStatusLabel(item.status)}</Badge>{(() => { const reason = mode === 'execution' ? experimentStatusReason(item) : null; return reason ? <small title={reason}>{reason}</small> : null; })()}{item.state !== 'active' ? <small>{lifecycleLabel[item.state]}</small> : null}</td>
+        {/* A draft design is still being edited; a frozen one is ready to run; then execution. */}
+        <td><Badge tone={experimentStage(item) === 'planning' ? 'neutral' : experimentStatusTone(item.status)}>{experimentDraft(item) ? 'Draft' : experimentStatusLabel(item.status)}</Badge>{(() => { const reason = experimentStatusReason(item); return reason ? <small title={reason}>{reason}</small> : null; })()}{item.state !== 'active' ? <small>{lifecycleLabel[item.state]}</small> : null}</td>
         <td>{(() => { const count = item.batches.length + (experimentStage(item) === 'planning' ? item.batchPlans?.length ?? 0 : 0); return `${count} ${count === 1 ? 'batch' : 'batches'}`; })()}<small>{item.batches.length ? `${item.batches.reduce((total, batch) => total + batch.manifest.summary.runCount, 0)} planned runs` : item.batchPlans?.length ? item.frozenSetupId ? 'Frozen recipes' : 'Editable recipes' : item.inputs ? 'Inputs selected' : 'Inputs not set'}</small></td>
 
-        {mode !== 'setup' ? <td><ExperimentHeadline batches={headlineOf.get(item.id)} /></td> : null}
+        <td><ExperimentHeadline batches={headlineOf.get(item.id)} /></td>
         <td><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString()}</time></td>
         <td><RecordManageButton recordKey={item.key} name={item.name} /></td>
       </tr>)}</tbody></table></div> : <EmptyState
       icon="experiments"
-      title={items.length ? 'No records match this view' : mode === 'execution' ? 'No frozen setups ready to run' : 'Create your first setup'}
-      description={items.length ? 'Adjust the status, search or archive filters to find earlier work.' : mode === 'execution' ? 'Prepare and freeze an Experimental Setup, then return here to start training.' : 'Start with a name and a question. Add your dataset, target and splits, features, training design and hyperparameters.'}
+      title={items.length ? 'No records match this view' : 'Create your first experiment'}
+      description={items.length ? 'Adjust the status, search or archive filters to find earlier work.' : 'Start with a name and a question. Choose the dataset, targets and splits and features, design the training folds and hyperparameters, then freeze the design and start it.'}
       action={items.length
         ? <button type="button" className="btn btn-secondary" onClick={() => setFilters(newExperimentLibraryFilters())}>Clear filters</button>
-        : mode === 'execution' ? <a className="btn btn-primary" href="#experimental-setup">Open Experimental Setup</a> : <StageCreateButton onClick={() => setCreating(true)}>Create setup</StageCreateButton>}
+        : <StageCreateButton onClick={() => setCreating(true)}>Create experiment</StageCreateButton>}
     />}
     </StageLibrary>
     </>}

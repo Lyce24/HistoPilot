@@ -1,30 +1,8 @@
 import type { Configuration, ProtocolSpec, ScientificDraft } from '../api/scientific';
-import { DEFAULT_VALIDATION_FRACTION } from './split';
+import { fromTemplate, templates } from './templates';
 
 export function newDevelopmentSplit(seeds: number[] = [42], folds = 5): ProtocolSpec['split'] {
-  return {
-    version: 4,
-    pools: {
-      source: 'rules',
-      trainSelection: 'remaining',
-      validationSource: 'training_fraction',
-      rules: { train: [], val: [], test: [] },
-    },
-    mode: 'kfold',
-    folds,
-    seeds,
-    stratify: true,
-    validationFraction: DEFAULT_VALIDATION_FRACTION,
-    testFraction: 0.2,
-    repeats: 5,
-    outerFolds: 5,
-    innerFolds: 3,
-    domainPolicy: 'all',
-    heldOutDomains: [],
-    heldOutSource: 'fractions',
-    ratios: { train: 0.8, val: 0.2, test: 0 },
-    rules: { train: [], val: [], test: [] },
-  };
+  return { ...fromTemplate<ProtocolSpec['split']>(templates.starters.trainingSplit), folds, seeds };
 }
 
 /** Retain an existing positive-class choice only while it is still a class. */
@@ -59,13 +37,13 @@ export function inferTargetSettings(values: (string | null)[], truncated = false
   };
 }
 
-/** Training designs derived in Experimental Setup belong to their experiments, not to history. */
+/** Training designs derived for an experiment's inputs belong to that experiment, not to history. */
 export function setupDerivedProtocol(configuration: Pick<Configuration, 'manifest'>): boolean {
   const { manifest } = configuration;
   return Boolean(manifest.sourceTargetSplit || (manifest.spec as { sourceTargetSplitId?: string | null } | undefined)?.sourceTargetSplitId);
 }
 
-/** Combined target/split protocols saved before Targets & Splits and Experimental Setup existed. */
+/** Combined target/split protocols saved before Targets & Splits and experiment designs existed. */
 export function historicalProtocols(configurations: readonly Configuration[], drafts: readonly ScientificDraft[]) {
   return {
     versions: configurations.filter((item) => !setupDerivedProtocol(item)),

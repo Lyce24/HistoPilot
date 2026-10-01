@@ -1,9 +1,10 @@
+import { fromTemplate, templates } from './templates';
 import { withRecipeDefaults, type DevelopmentBatchSpec } from '../api/development';
 import type { ExperimentPredictorPolicy, ModelExperiment } from '../api/experiments';
 import type { ProtocolSpec } from '../api/scientific';
 import { sameJSON } from './json';
 
-export const defaultPredictorPolicy = (): ExperimentPredictorPolicy => ({ method: 'ensemble', refitPercentile: null });
+export const defaultPredictorPolicy = (): ExperimentPredictorPolicy => fromTemplate(templates.predictorPolicy);
 export const predictorPolicyLabel = (policy: ExperimentPredictorPolicy) => ({ skip: 'Skip', refit: 'Refit', ensemble: 'Ensemble', both: 'Both' })[policy.method];
 export const includesRefit = (policy: ExperimentPredictorPolicy) => policy.method === 'refit' || policy.method === 'both';
 
@@ -16,12 +17,26 @@ function countsFor(groups: number, foldRuns: number, policy: ExperimentPredictor
   return { groups, foldRuns, ensembles, refits, total: ensembles + refits };
 }
 
-export function plannedBatchPredictorCount(spec: DevelopmentBatchSpec, protocol?: ProtocolSpec, fallback?: ExperimentPredictorPolicy | null) {
-  if (!protocol || protocol.split.mode !== 'kfold') return null;
+/**
+ * Assessment plans per split seed of a training design: k-fold's folds, the selected sites, or
+ * one held-out set. Predefined folds and every-site designs are known once the design is derived
+ * (its `evaluationPlanCount` over all seeds); undefined until then, or for designs that do not train.
+ */
+export function plansPerSeed(split: ProtocolSpec['split'], evaluationPlanCount?: number) {
+  if (split.mode === 'kfold') return split.folds;
+  if (split.mode === 'held_out') return 1;
+  if (split.mode === 'leave_one_domain_out' && split.domainPolicy === 'selected') return split.heldOutDomains?.length || undefined;
+  if (split.mode !== 'predefined_folds' && split.mode !== 'leave_one_domain_out') return undefined;
+  return evaluationPlanCount && split.seeds.length ? evaluationPlanCount / split.seeds.length : undefined;
+}
+
+export function plannedBatchPredictorCount(spec: DevelopmentBatchSpec, protocol?: ProtocolSpec, fallback?: ExperimentPredictorPolicy | null, evaluationPlanCount?: number) {
+  const perSeed = protocol ? plansPerSeed(protocol.split, evaluationPlanCount) : undefined;
+  if (!protocol || perSeed === undefined) return null;
   const seedGroups = new Set(spec.trainingSeeds).size * new Set(protocol.split.seeds).size;
   const configurations = plannedConfigurationCount(spec);
   const groups = (spec.candidateSelection === 'best_validation' ? 1 : configurations) * seedGroups;
-  return countsFor(groups, configurations * seedGroups * protocol.split.folds, batchPredictorPolicy(spec, fallback));
+  return countsFor(groups, configurations * seedGroups * perSeed, batchPredictorPolicy(spec, fallback));
 }
 
 /** The service deduplicates scientific configurations, including repeated explicit rows. */
@@ -39,7 +54,7 @@ export function plannedConfigurationCount(spec: Pick<DevelopmentBatchSpec, 'mode
 }
 
 /** Planning estimate; the frozen backend manifest remains authoritative at submission. */
-export function experimentPredictorCount(record: ModelExperiment, fallback?: ExperimentPredictorPolicy | null, protocol?: ProtocolSpec) {
+export function experimentPredictorCount(record: ModelExperiment, fallback?: ExperimentPredictorPolicy | null, protocol?: ProtocolSpec, evaluationPlanCount?: number) {
   const total = countsFor(0, 0, defaultPredictorPolicy());
   const add = (value: typeof total) => { for (const key of Object.keys(total) as (keyof typeof total)[]) total[key] += value[key]; };
   const batches = record.batches.filter((batch) => batch.state === 'active');
@@ -52,9 +67,10 @@ export function experimentPredictorCount(record: ModelExperiment, fallback?: Exp
   }
   // Submitted records retain their planning recipes as history: never count them twice.
   if ((!record.configurationLocked || (record.frozenSetupId && record.stage === 'planning')) && !record.submission && (record.batchPlans?.length ?? 0) > 0) {
-    if (!protocol || protocol.split.mode !== 'kfold') return null;
     for (const plan of record.batchPlans ?? []) {
-      add(plannedBatchPredictorCount(plan.spec, protocol, fallback ?? record.predictorPolicy)!);
+      const planned = plannedBatchPredictorCount(plan.spec, protocol, fallback ?? record.predictorPolicy, evaluationPlanCount);
+      if (!planned) return null;
+      add(planned);
     }
   }
   return total;

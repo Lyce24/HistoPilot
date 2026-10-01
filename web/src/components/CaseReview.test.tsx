@@ -44,13 +44,13 @@ describe('case review and editor recovery', () => {
     const slide = { slideId: 's1', slidePath: '/slides/s1.sdpc' } as CaseSlide;
     const run = { evaluationId: 'run', predictorId: 'predictor', featureBundleId: 'bundle', packArtifactId: 'pack' };
     const study = { lifecycleState: 'active', manifest: { ...run, slides: [slide] } } as unknown as Interpretation;
-    expect(matchesRunAttention(study, slide, run, true)).toBe(true);
+    expect(matchesRunAttention(study, slide, run)).toBe(true);
     for (const key of ['evaluationId', 'predictorId', 'featureBundleId', 'packArtifactId'] as const) {
-      expect(matchesRunAttention({ ...study, manifest: { ...study.manifest, [key]: 'other' } }, slide, run, true)).toBe(false);
+      expect(matchesRunAttention({ ...study, manifest: { ...study.manifest, [key]: 'other' } }, slide, run)).toBe(false);
     }
-    expect(matchesRunAttention(study, { ...slide, slidePath: '/other/s1.sdpc' }, run, true)).toBe(false);
-    expect(matchesRunAttention({ ...study, lifecycleState: 'trashed' }, slide, run, true)).toBe(false);
-    expect(matchesRunAttention({ ...study, manifest: { ...study.manifest, packArtifactId: undefined } }, slide, { ...run, packArtifactId: null }, true)).toBe(true);
+    expect(matchesRunAttention(study, { ...slide, slidePath: '/other/s1.sdpc' }, run)).toBe(false);
+    expect(matchesRunAttention({ ...study, lifecycleState: 'trashed' }, slide, run)).toBe(false);
+    expect(matchesRunAttention({ ...study, manifest: { ...study.manifest, packArtifactId: undefined } }, slide, { ...run, packArtifactId: null })).toBe(true);
   });
 
   it('rejects corrupt recovery copies and preserves revision and annotations in valid drafts', () => {
@@ -64,7 +64,7 @@ describe('case review and editor recovery', () => {
   it('renders explicit verified-evidence loading and labeled controls without made-up results', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><CaseReviewWorkspace project="project" evaluation={record('evaluation')} comparisons={[]} /></QueryClientProvider>);
-    for (const text of ['Case and error review', 'Review unit', 'False negatives', 'Compare with', 'Verifying saved predictions']) expect(html).toContain(text);
+    for (const text of ['Review cases', 'Review unit', 'False negatives', 'Compare with', 'Decision margin below', 'Verifying saved predictions']) expect(html).toContain(text);
     expect(html).not.toContain('No matching cases');
     client.clear();
   });

@@ -41,7 +41,9 @@ def test_refit_requires_an_explicit_finite_percentile(method, percentile):
 
 
 def test_example_counts_seed_configuration_groups_once_per_method():
-    configurations = [{"id": "candidate-" + content_hash(index), "number": index} for index in range(15)]
+    configurations = [
+        {"id": "candidate-" + content_hash(index), "number": index} for index in range(15)
+    ]
     splits = [{"id": str(fold), "seed": 42} for fold in range(5)]
     runs = [
         {
@@ -154,9 +156,7 @@ def test_worker_launch_failure_is_recoverable_without_replaying_cv(
     assert jobs.launches == []
 
 
-def test_lost_coordinator_acknowledgement_keeps_worker_ownership(
-    managed, task_center, monkeypatch
-):
+def test_lost_coordinator_acknowledgement_keeps_worker_ownership(managed, task_center, monkeypatch):
     service, identity, _jobs, _ = managed
     enqueue = task_center.client.enqueue
 
@@ -269,9 +269,7 @@ def test_published_build_receipt_recovers_a_lost_reply(managed, task_center, mon
 
 
 @pytest.mark.parametrize("policy", [None, {"method": "skip", "refitPercentile": None}])
-def test_historical_and_skip_submissions_cannot_start_automatic_work(
-    managed, task_center, policy
-):
+def test_historical_and_skip_submissions_cannot_start_automatic_work(managed, task_center, policy):
     service, identity, _jobs, _ = managed
     record = service.store.get_draft(identity)
     payload = copy.deepcopy(record["payload"])

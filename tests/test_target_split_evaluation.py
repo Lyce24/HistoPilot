@@ -129,7 +129,16 @@ def test_derived_testing_cohort_binds_to_predictor_and_preserves_exact_rows(
         },
     )
     plan = runs._execution_plan(record["id"])
-    assert plan["data"]["memberships"] == cohort["manifest"]["memberships"]
+    # Labeled runs predict label-blind; inference cohorts carry no labels to withhold.
+    assert plan.get("labelsWithheld", False) == (purpose == "evaluation")
+    assert plan["data"]["memberships"] == (
+        [
+            {key: value for key, value in row.items() if key != "label"}
+            for row in cohort["manifest"]["memberships"]
+        ]
+        if purpose == "evaluation"
+        else cohort["manifest"]["memberships"]
+    )
     assert run_purpose(plan) == purpose
     assert ("analysis" in plan) == (purpose == "evaluation")
     # Planning alone never creates a worker or result artifacts.
@@ -244,7 +253,15 @@ def test_slide_unit_preserves_metadata_and_never_groups_training_or_testing(
     plan = runs._execution_plan(record["id"])
     assert plan["splitUnit"] == "slide"
     assert "analysis" not in plan
-    assert plan["data"]["memberships"] == cohort["manifest"]["memberships"]
+    assert plan.get("labelsWithheld", False) == (purpose == "evaluation")
+    assert plan["data"]["memberships"] == (
+        [
+            {key: value for key, value in row.items() if key != "label"}
+            for row in cohort["manifest"]["memberships"]
+        ]
+        if purpose == "evaluation"
+        else cohort["manifest"]["memberships"]
+    )
     assert all(
         row["patientId"] == original[row["slideId"]]["patientId"]
         for row in plan["data"]["memberships"]

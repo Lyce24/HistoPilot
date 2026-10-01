@@ -19,6 +19,7 @@ from uuid import uuid4
 from pydantic import Field, ValidationError
 from sqlalchemy import select
 
+from histopilot.application import creations
 from histopilot.application.blca_demo import DEMO_ID, demo_summary, load_demo
 from histopilot.models import catalog
 from histopilot.schemas.workspace import (
@@ -38,9 +39,10 @@ DESCRIPTOR_LIMIT = 1024 * 1024
 
 
 class WorkspaceError(ValueError):
-    def __init__(self, message: str, status_code: int = 422):
+    def __init__(self, message: str, status_code: int = 422, *, code: str):
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 def _identity(prefix: str, value: Any) -> str:
@@ -70,6 +72,9 @@ class ProjectDocument(RequestModel):
     updatedAt: datetime
     config: ProjectConfig = Field(default_factory=ProjectConfig)
     sources: list[StoredSource] = Field(default_factory=list, max_length=1000)
+    # What AI agents may see; absent means none, so private descriptors never change.
+    # Only the admin exposure route writes it, never the planning settings.
+    aiExposure: Literal["metadata", "full"] | None = None
 
 
 class ProjectWorkspace:
@@ -107,32 +112,50 @@ class ProjectWorkspace:
         descriptor = path / DESCRIPTOR
         try:
             if descriptor.is_symlink():
-                raise WorkspaceError("The project descriptor must not be a symbolic link.", 403)
+                raise WorkspaceError(
+                    "The project descriptor must not be a symbolic link.",
+                    403,
+                    code="PROJECT_DESCRIPTOR_UNSAFE",
+                )
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
             descriptor_fd = os.open(descriptor, flags)
             try:
                 metadata = os.fstat(descriptor_fd)
                 if not stat.S_ISREG(metadata.st_mode):
-                    raise WorkspaceError("The project descriptor must be a regular file.")
+                    raise WorkspaceError(
+                        "The project descriptor must be a regular file.",
+                        code="PROJECT_DESCRIPTOR_UNSAFE",
+                    )
                 if metadata.st_size > DESCRIPTOR_LIMIT:
-                    raise WorkspaceError("The project descriptor exceeds the supported size.")
+                    raise WorkspaceError(
+                        "The project descriptor exceeds the supported size.",
+                        code="PROJECT_DESCRIPTOR_TOO_LARGE",
+                    )
                 with os.fdopen(descriptor_fd, "rb", closefd=False) as handle:
                     content = handle.read(DESCRIPTOR_LIMIT + 1)
                 if len(content) > DESCRIPTOR_LIMIT:
-                    raise WorkspaceError("The project descriptor exceeds the supported size.")
+                    raise WorkspaceError(
+                        "The project descriptor exceeds the supported size.",
+                        code="PROJECT_DESCRIPTOR_TOO_LARGE",
+                    )
             finally:
                 os.close(descriptor_fd)
             document = ProjectDocument.model_validate_json(content)
             return document.model_dump(mode="json", exclude_none=True)
         except FileNotFoundError:
             raise WorkspaceError(
-                f"This folder has no {DESCRIPTOR}. Select an existing HistoPilot project.", 404
+                f"This folder has no {DESCRIPTOR}. Select an existing HistoPilot project.",
+                404,
+                code="PROJECT_DESCRIPTOR_NOT_FOUND",
             ) from None
         except (OSError, RuntimeError):
-            raise WorkspaceError("The project descriptor cannot be read.", 403) from None
+            raise WorkspaceError(
+                "The project descriptor cannot be read.", 403, code="PROJECT_DESCRIPTOR_UNREADABLE"
+            ) from None
         except ValidationError:
             raise WorkspaceError(
-                "The project descriptor is invalid or uses an unsupported format."
+                "The project descriptor is invalid or uses an unsupported format.",
+                code="PROJECT_DESCRIPTOR_INVALID",
             ) from None
 
     @staticmethod
@@ -141,7 +164,10 @@ class ProjectWorkspace:
         temporary: str | None = None
         content = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
         if len(content.encode("utf-8")) > DESCRIPTOR_LIMIT:
-            raise WorkspaceError("The project descriptor exceeds the supported size.")
+            raise WorkspaceError(
+                "The project descriptor exceeds the supported size.",
+                code="PROJECT_DESCRIPTOR_TOO_LARGE",
+            )
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w",
@@ -163,11 +189,15 @@ class ProjectWorkspace:
             fsync_directory(path)
         except FileExistsError:
             raise WorkspaceError(
-                "A project already exists in this folder. Load it instead.", 409
+                "A project already exists in this folder. Load it instead.",
+                409,
+                code="PROJECT_EXISTS",
             ) from None
         except OSError:
             raise WorkspaceError(
-                "The project folder cannot be written. Choose a writable location.", 403
+                "The project folder cannot be written. Choose a writable location.",
+                403,
+                code="PROJECT_FOLDER_UNWRITABLE",
             ) from None
         finally:
             if temporary is not None:
@@ -194,7 +224,11 @@ class ProjectWorkspace:
                 path = self.storage.directory(summary["storagePath"])
                 document = self._read(path)
                 if document["id"] != summary["id"]:
-                    raise WorkspaceError("The folder now belongs to a different project.", 409)
+                    raise WorkspaceError(
+                        "The folder now belongs to a different project.",
+                        409,
+                        code="PROJECT_FOLDER_REASSIGNED",
+                    )
                 projects.append(self._summary(document, path))
             except (FilesystemError, WorkspaceError, StorageError) as error:
                 projects.append({**summary, "available": False, "unavailableReason": str(error)})
@@ -206,7 +240,10 @@ class ProjectWorkspace:
 
     def _validate_config(self, config: ProjectConfig) -> dict:
         if config.milId is not None and not catalog.is_supported(config.milId):
-            raise WorkspaceError(f"Choose a supported MIL model: {catalog.choices()}.")
+            raise WorkspaceError(
+                f"Choose a supported MIL model: {catalog.choices()}.",
+                code="PROJECT_MIL_MODEL_UNSUPPORTED",
+            )
         return config.model_dump(exclude_none=True)
 
     def _source(self, identity: str, value: str, role: str) -> dict:
@@ -223,6 +260,18 @@ class ProjectWorkspace:
         }
 
     def create(self, request: ProjectRequest) -> dict:
+        values = request.model_dump(mode="json", exclude={"operationId"})
+        with self.lock:
+            return creations.once(
+                self.database,
+                "project",
+                request.operationId,
+                values,
+                lambda: self._create(request),
+                lambda identity: self._summary(*self._load(identity)),
+            )
+
+    def _create(self, request: ProjectRequest) -> dict:
         config = self._validate_config(request.config)
         identity = f"project-{uuid4().hex}"
         sources = [
@@ -255,6 +304,7 @@ class ProjectWorkspace:
                             "The selected folder is not empty. Choose a new or empty folder, "
                             "or load its existing project.",
                             409,
+                            code="PROJECT_FOLDER_NOT_EMPTY",
                         )
                 else:
                     path.mkdir()
@@ -279,7 +329,9 @@ class ProjectWorkspace:
                 self._write(path, document, create=True)
             except OSError:
                 raise WorkspaceError(
-                    "The project folder cannot be created or inspected.", 403
+                    "The project folder cannot be created or inspected.",
+                    403,
+                    code="PROJECT_FOLDER_INACCESSIBLE",
                 ) from None
             finally:
                 if created and not (path / DESCRIPTOR).exists():
@@ -304,7 +356,9 @@ class ProjectWorkspace:
                     previous = Path(record.payload["storagePath"])
                     if previous != path and previous.exists():
                         raise WorkspaceError(
-                            "This project ID is already registered at another folder.", 409
+                            "This project ID is already registered at another folder.",
+                            409,
+                            code="PROJECT_ALREADY_REGISTERED",
                         )
             ScientificStore(path, document["id"]).initialize()
             summary = self._summary(document, path)
@@ -313,16 +367,32 @@ class ProjectWorkspace:
 
     def _load(self, identity: str) -> tuple[dict, Path]:
         if identity == DEMO_ID:
-            raise WorkspaceError("The BLCA demo is read only and has no local project folder.", 409)
+            raise WorkspaceError(
+                "The BLCA demo is read only and has no local project folder.",
+                409,
+                code="DEMO_PROJECT_READ_ONLY",
+            )
         with self.database.sessions.begin() as session:
             record = session.get(Record, ("project", identity))
             if record is None:
-                raise WorkspaceError("The project does not exist. Load its folder first.", 404)
+                raise WorkspaceError(
+                    "The project does not exist. Load its folder first.",
+                    404,
+                    code="PROJECT_NOT_FOUND",
+                )
             path = self.storage.directory(record.payload["storagePath"])
         document = self._read(path)
         if document["id"] != identity:
-            raise WorkspaceError("The folder now belongs to a different project.", 409)
+            raise WorkspaceError(
+                "The folder now belongs to a different project.",
+                409,
+                code="PROJECT_FOLDER_REASSIGNED",
+            )
         return document, path
+
+    def locate(self, identity: str) -> tuple[dict, Path]:
+        """The project's descriptor and folder, read once, for callers that need both."""
+        return self._load(identity)
 
     def scientific_store(self, identity: str) -> ScientificStore:
         """Resolve storage from the folder; the central registry holds no scientific state."""
@@ -391,7 +461,11 @@ class ProjectWorkspace:
                 LifecycleStore(path, identity).assert_usable([f"project:{identity}"])
                 document = self._read(path)
                 if document["id"] != identity:
-                    raise WorkspaceError("The folder now belongs to a different project.", 409)
+                    raise WorkspaceError(
+                        "The folder now belongs to a different project.",
+                        409,
+                        code="PROJECT_FOLDER_REASSIGNED",
+                    )
                 if (
                     expected_config is not None
                     and document["config"] != expected_config.model_dump(exclude_none=True)
@@ -414,6 +488,41 @@ class ProjectWorkspace:
             self._register(summary)
             return summary
 
+    def name(self, identity: str) -> str:
+        document, _ = self._load(identity)
+        return document["name"]
+
+    def exposure(self, identity: str) -> str:
+        """The project's AI-exposure level: none unless a person raised it."""
+        if identity == DEMO_ID:
+            return "none"
+        document, _ = self._load(identity)
+        return document.get("aiExposure") or "none"
+
+    def set_exposure(self, identity: str, level: str, expected: str) -> dict:
+        """Change what AI agents may see, if nobody changed it since ``expected`` was read."""
+        with self.lock:
+            _, path = self._load(identity)
+            with lifecycle_guard(path), writer_lock(path):
+                document = self._read(path)
+                current = document.get("aiExposure") or "none"
+                if current != level:
+                    if current != expected:
+                        raise StorageError(
+                            f"The AI-exposure level is now {current}; review it before changing it.",
+                            "EXPOSURE_CONFLICT",
+                            409,
+                        )
+                    if level == "none":
+                        document.pop("aiExposure", None)
+                    else:
+                        document["aiExposure"] = level
+                    document["updatedAt"] = utc_now(zulu=True)
+                    self._write(path, document)
+            summary = self._summary(document, path)
+            self._register(summary)
+            return {"projectId": identity, "level": level, "previous": current}
+
     def add_source(self, identity: str, value: str, role: str) -> dict:
         with self.lock:
             _, path = self._load(identity)
@@ -421,14 +530,19 @@ class ProjectWorkspace:
                 LifecycleStore(path, identity).assert_usable([f"project:{identity}"])
                 document = self._read(path)
                 if document["id"] != identity:
-                    raise WorkspaceError("The folder now belongs to a different project.", 409)
+                    raise WorkspaceError(
+                        "The folder now belongs to a different project.",
+                        409,
+                        code="PROJECT_FOLDER_REASSIGNED",
+                    )
                 source = self._source(identity, value, role)
                 for existing in document["sources"]:
                     if existing["id"] == source["id"]:
                         return existing
                 if len(document["sources"]) >= 1000:
                     raise WorkspaceError(
-                        "The project has reached the maximum of 1000 source folders."
+                        "The project has reached the maximum of 1000 source folders.",
+                        code="PROJECT_SOURCE_LIMIT",
                     )
                 document["sources"].append(source)
                 document["updatedAt"] = utc_now(zulu=True)

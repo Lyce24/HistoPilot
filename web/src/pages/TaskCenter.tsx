@@ -296,7 +296,7 @@ export function ParallelTasks({ capacity, actions }: { capacity: CapacityRespons
   </section>;
 }
 
-/** "gej · Experiment" or "Another workspace": where an owner's work comes from. */
+/** "Study · Experiment" or "Another workspace": where an owner's work comes from. */
 export function ownerWhere(owner: Pick<TaskOwnerRef, 'sameWorkspace' | 'projectId' | 'projectName'>, project: string) {
   if (!owner.sameWorkspace) return 'Another workspace';
   if (owner.projectId === project) return null;
@@ -629,9 +629,9 @@ export function QueueTable({ owners, project, actions, navigate = noNavigation, 
 export function PlannedSetups({ project }: { project: string }) {
   const summaries = useQuery({ queryKey: ['model-experiments', project, 'summary'], queryFn: () => experiments.summaries(project), refetchInterval: (query) => experimentPollInterval(query.state.data), refetchIntervalInBackground: false });
   const planned = (summaries.data?.items ?? []).filter((item) => item.status === 'ready' && item.state === 'active');
-  if (summaries.isPending) return <p role="status">Loading frozen setups…</p>;
+  if (summaries.isPending) return <p role="status">Loading frozen experiments…</p>;
   if (summaries.error && !summaries.data) return <ErrorNotice error={summaries.error} />;
-  if (!planned.length) return <p className="muted">No frozen setups are waiting to start in this project.</p>;
+  if (!planned.length) return <p className="muted">No frozen experiment is waiting to start in this project.</p>;
   return <ul className="tc-planned">{planned.map((item) => {
     const plans = item.batchPlans ?? [];
     const groups = plans.reduce((total, plan) => total + plannedConfigurationCount(plan.spec) * plan.spec.trainingSeeds.length, 0);
@@ -815,7 +815,7 @@ export default function TaskCenter({ workspace }: { workspace: Workspace }) {
         {summary?.foreignLeases.length ? <details className="tc-foreign"><summary>Other jobs using this machine ({summary.foreignLeases.length})</summary><ul>{summary.foreignLeases.map((lease, index) => <li key={index}>{lease.kind ? ownerKindLabel(lease.kind) : 'Compute job'}{lease.batchId ? ` · batch ${lease.batchId}` : ''}{lease.runId ? ` · run ${lease.runId}` : ''} · {lease.gpu === null ? 'CPU' : `GPU ${lease.gpu}`} · {lease.cpus} CPU threads · {gib(lease.ramGb)} RAM</li>)}</ul></details> : null}
       </Panel>
     </>}
-    {route.owner ? null : <Panel title="Planned in this project" subtitle="Frozen setups that have not started. Start them from Experiments; their tasks then join the end of the queue.">
+    {route.owner ? null : <Panel title="Planned in this project" subtitle="Experiments whose design is frozen but not started. Start them from Experiments; their tasks then join the end of the queue.">
       {workspace.project.lifecycleState === 'trashed' ? <p className="muted">This project is in Trash.</p> : <PlannedSetups project={project} />}
     </Panel>}
     {unsupported || route.owner ? null : <Panel title="History" subtitle="Finished tasks grouped by the experiment or record they belong to, newest first.">

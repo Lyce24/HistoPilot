@@ -266,7 +266,7 @@ describe('experiment tracking', () => {
       expect(html).not.toContain('Cancel batch');
       expect(html).not.toContain('Launch batch');
       expect(html).not.toContain('Resume unfinished runs');
-      if (stage === 'planning') expect(html).toContain('Runs and results are locked during planning');
+      if (stage === 'planning') expect(html).toContain('Runs and results unlock once the experiment starts');
     } finally { client.clear(); }
   });
 

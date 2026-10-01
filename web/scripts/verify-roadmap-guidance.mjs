@@ -1,4 +1,4 @@
-/** Verify the seven-stage pipeline roadmap offline; starts no server. */
+/** Verify the six-stage pipeline roadmap offline; starts no server. */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
@@ -149,7 +149,7 @@ try {
   await cdp('Page.enable'); await cdp('Runtime.enable'); await cdp('Network.enable');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: pathToFileURL(join(dist, 'index.html')).href + '?project=project#overview' });
-  await waitFor('document.querySelectorAll(".project-roadmap [data-module]").length === 9');
+  await waitFor('document.querySelectorAll(".project-roadmap [data-module]").length === 6');
   await screenshot('roadmap-desktop');
   const layout = () => evaluate(`({
     width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
@@ -172,27 +172,25 @@ try {
   assert.deepEqual(desktop.phases, [
     {name:'Datasets', modules:['dataset']},
     {name:'Prepare in parallel', modules:['features','cohort']},
-    {name:'Experimental Setup', modules:['experimental-setup']},
     {name:'Experiments', modules:['experiments']},
-    {name:'Evaluate models & run inference', modules:['evaluation','inference']},
-    {name:'Clinical utility', modules:['clinical-utility']},
+    {name:'Apply models', modules:['apply']},
     {name:'Interpretation', modules:['interpretation']},
   ]);
   for (let index=1; index<desktop.stages.length; index+=1) {
     assert.ok(desktop.stages[index].top >= desktop.stages[index-1].bottom, 'Stages follow a vertical sequence');
     assert.equal(desktop.stages[index].width, desktop.stages[0].width, 'Stage cards share a consistent width');
   }
-  for (const [first, second] of [['features','cohort'],['evaluation','inference']]) {
+  for (const [first, second] of [['features','cohort']]) {
     assert.equal(desktop.positions[first].top, desktop.positions[second].top, 'Parallel modules share a desktop row');
     assert.ok(desktop.positions[first].right <= desktop.positions[second].left, 'Parallel desktop modules do not overlap');
   }
   assert.equal(desktop.graphCount, 0);
-  assert.equal(desktop.moduleIcons, 9, 'Every module row carries exactly one icon');
-  assert.match(desktop.progress, /^[0-6] of 6 required steps complete$/, 'Progress counts required modules only');
+  assert.equal(desktop.moduleIcons, 6, 'Every module row carries exactly one icon');
+  assert.match(desktop.progress, /^[0-5] of 5 required steps complete$/, 'Progress counts required modules only');
   // At most one suggested step, and the card and the marked row always agree.
   assert.deepEqual(desktop.markedNext, desktop.nextCard ? [desktop.nextCard] : [], 'The suggested step is marked where it sits in the sequence');
   assert.equal(desktop.explanationParagraphs, 1, 'Parallel preparation has one short explanation');
-  assert.equal(desktop.nextCard, 'experimental-setup', 'Frozen targets and ready features lead to Experimental Setup');
+  assert.equal(desktop.nextCard, 'experiments', 'Frozen targets and ready features lead to Experiments');
   assert.ok(desktop.scrollWidth <= desktop.width + 1, 'Launcher overflows desktop viewport');
   assert.ok(desktop.actions.every(item => item.height >= 44 && item.text === 'Open'));
   await evaluate('document.querySelector(".project-roadmap a[data-module]").focus()');
@@ -206,7 +204,7 @@ try {
   assert.ok(mobile.scrollWidth <= mobile.width + 1, 'Launcher overflows mobile viewport');
   assert.ok(mobile.actions.every(item => item.height >= 44), 'Module touch target smaller than 44px');
   assert.ok(mobile.navInert);
-  for (const [first, second] of [['features','cohort'],['evaluation','inference']]) {
+  for (const [first, second] of [['features','cohort']]) {
     assert.ok(mobile.positions[second].top >= mobile.positions[first].bottom, 'Parallel modules stack on mobile');
     assert.equal(mobile.positions[first].left, mobile.positions[second].left);
   }
@@ -215,16 +213,16 @@ try {
   await screenshot('roadmap-empty-mobile');
   const gates = await evaluate(`({statuses: Object.fromEntries([...document.querySelectorAll('.project-roadmap [data-module]')].map(item=>[item.dataset.module,item.querySelector('.roadmap-item-status').textContent])), blocked: [...document.querySelectorAll('.project-roadmap [aria-disabled=true][data-module]')].map(item=>item.dataset.module), open: [...document.querySelectorAll('.project-roadmap a[data-module]')].map(item=>item.dataset.module), scrollWidth:document.documentElement.scrollWidth})`);
   assert.deepEqual(gates.blocked, [], 'Local module libraries stay accessible without required creation inputs');
-  assert.deepEqual(gates.open, ['dataset','features','cohort','experimental-setup','experiments','evaluation','inference','clinical-utility','interpretation']);
+  assert.deepEqual(gates.open, ['dataset','features','cohort','experiments','apply','interpretation']);
   assert.equal(gates.statuses.features, 'Needs Datasets');
   assert.equal(gates.statuses.cohort, 'Needs Datasets');
-  assert.match(gates.statuses['experimental-setup'], /Needs Targets & splits and Slide features/);
-  assert.equal(gates.statuses.experiments, 'Needs Experimental Setup');
+  assert.match(gates.statuses.experiments, /Needs Targets & splits and Slide features/);
+  assert.equal(gates.statuses.apply, 'Needs Experiments');
   assert.ok(gates.scrollWidth <=390);
   assert.deepEqual(await evaluate('window.workflow.errors'), []);
   assert.deepEqual(exceptions, [], 'Unexpected browser errors');
-  await writeFile(join(artifacts, 'roadmap-verification.json'), JSON.stringify({passed: true, scope: 'Actual App with seven-stage pipeline roadmap; in-memory records, Chromium file://, no server.', desktop, mobile, gates, exceptions}, null, 2));
-  console.log('PASS: seven vertical stages, parallel desktop rows and mobile stacking, setup handoff, keyboard navigation, accessible empty libraries, touch targets, and desktop/mobile overflow.');
+  await writeFile(join(artifacts, 'roadmap-verification.json'), JSON.stringify({passed: true, scope: 'Actual App with five-stage pipeline roadmap; in-memory records, Chromium file://, no server.', desktop, mobile, gates, exceptions}, null, 2));
+  console.log('PASS: five vertical stages, parallel desktop rows and mobile stacking, experiment handoff, keyboard navigation, accessible empty libraries, touch targets, and desktop/mobile overflow.');
   console.log('Artifacts: ' + artifacts);
 } catch(error) {
   try { await writeFile(join(artifacts, 'roadmap-failure.txt'), await evaluate('document.body.innerText')); await screenshot('roadmap-failure'); } catch {}

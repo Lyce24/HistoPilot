@@ -6,9 +6,9 @@ import { targetSplits, targetSplitUnit } from '../api/targetSplits';
 import { type ProtocolSpec } from '../api/scientific';
 import { ApiError } from '../api/client';
 import { newDevelopmentSplit } from '../lib/protocol';
-import { splitSeedsError } from '../lib/split';
+import { splitSeedsError, trainingDesignIssue, trainingDesignText, TRAINABLE_MODES } from '../lib/split';
 import { sameJSON } from '../lib/json';
-import { preparationLink, type PreparationContext } from '../lib/preparationRoute';
+import type { PreparationContext } from '../lib/preparationRoute';
 import { readSessionDraft, sessionDraftKey, useSessionDraftBackup, writeSessionDraft } from '../lib/sessionDraft';
 import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import { versionLabelText } from '../lib/versionLabels';
@@ -52,7 +52,7 @@ export function ExperimentalSetupInputs({ project, record, context, readOnly, on
   const stale = !sameJSON(base, source);
   const dirty = !readOnly && (!record.setupDesign || !sameJSON(design, source) || seedsText !== design.trainingSplit.seeds.join(', '));
   const recovery = useSessionDraftBackup(recoveryKey, !readOnly && (dirty || stale) ? { design, base, seedsText } : null, isDraft);
-  useWorkspaceNavigationGuard(busy ? 'Setup input verification is still pending.' : dirty && recovery.error ? recovery.error : null);
+  useWorkspaceNavigationGuard(busy ? 'Input verification is still pending.' : dirty && recovery.error ? recovery.error : null);
   useEffect(() => { onDirtyChange(dirty || stale); }, [dirty, stale, onDirtyChange]);
   useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
   useEffect(() => () => { onDirtyChange(false); onBusyChange(false); }, [onDirtyChange, onBusyChange]);
@@ -63,10 +63,11 @@ export function ExperimentalSetupInputs({ project, record, context, readOnly, on
   const selectedPacks = bundle?.manifest.packs ?? [];
   const seedsError = splitSeedsError(seedsText);
   const validSeeds = !seedsError;
+  const designIssue = readOnly ? '' : trainingDesignIssue(current.trainingSplit);
   function edit(update: Partial<Design>) { setDesign((value) => ({ ...value, ...update })); setError(null); }
   function split(update: Partial<ProtocolSpec['split']>) { edit({ trainingSplit: { ...design.trainingSplit, ...update } }); }
   async function verify() {
-    if (inFlight.current || readOnly || stale || !validSeeds || design.trainingSplit.mode !== 'kfold') return;
+    if (inFlight.current || readOnly || stale || !validSeeds || trainingDesignIssue(design.trainingSplit)) return;
     inFlight.current = true; setBusy(true); setError(null);
     try {
       const result = await experiments.setupInputs(project, record.id, { ...design, expectedRevision: record.revision });
@@ -75,13 +76,13 @@ export function ExperimentalSetupInputs({ project, record, context, readOnly, on
       client.setQueryData(['model-experiment', project, record.id], result);
       await client.invalidateQueries({ queryKey: ['scientific', project, 'configurations', 'protocol'] });
       onVerified(result);
-    } catch (reason) { setError(reason instanceof Error ? reason : new Error('Setup inputs could not be verified.')); }
+    } catch (reason) { setError(reason instanceof Error ? reason : new Error('The inputs could not be verified.')); }
     finally { inFlight.current = false; setBusy(false); }
   }
   return <>
     <ErrorNotice error={error ?? datasets.error ?? partitions.error ?? features.error} />
-    {stale && !readOnly ? <p className="callout" role="alert">Saved setup inputs changed. <button type="button" className="text-button" onClick={() => { setBase(source); setDesign(source); setSeedsText(source.trainingSplit.seeds.join(', ')); }}>Reload saved design</button></p> : null}
-    {recovered && dirty ? <p className="callout">Recovered your unfinished setup input changes.</p> : null}
+    {stale && !readOnly ? <p className="callout" role="alert">The saved inputs changed. <button type="button" className="text-button" onClick={() => { setBase(source); setDesign(source); setSeedsText(source.trainingSplit.seeds.join(', ')); }}>Reload saved design</button></p> : null}
+    {recovered && dirty ? <p className="callout">Recovered your unfinished input changes.</p> : null}
     <fieldset className="science-fieldset" disabled={readOnly || busy || stale}>
       <Panel title="1. Dataset, features, targets and splits" subtitle="Choose the saved training/testing population and the features to use for training.">
         <div className="science-grid-two">
@@ -104,12 +105,13 @@ export function ExperimentalSetupInputs({ project, record, context, readOnly, on
       </Panel>
       <Panel title="2. Training design" subtitle="Folds, validation and model selection use training records only. The testing set remains reserved for evaluation or inference.">
         <label className="label">Early-stop validation (% of fitting data)<input className="field" type="number" min="1" max="90" value={Number(((current.trainingSplit.validationFraction ?? 0.15) * 100).toFixed(6))} onChange={(event) => split({ validationFraction: Number(event.target.value) / 100 })} /></label>
-        <SplitStrategy splitUnit={targetSplit ? targetSplitUnit(targetSplit.manifest.spec) : record.setupDesign ? record.setupDesign.splitUnit ?? 'patient' : 'unknown'} supportedModes={['kfold']} split={current.trainingSplit} onChange={split} seedsText={readOnly ? current.trainingSplit.seeds.join(', ') : seedsText} seedsError={readOnly ? '' : seedsError} onSeedsChange={(value) => { setSeedsText(value); if (value.split(',').every((seed) => /^\d+$/.test(seed.trim()))) split({ seeds: value.split(',').map(Number) }); }} fieldContext={{ project, datasetId: current.datasetId, dictionary: dataset?.manifest.dictionary ?? [] }} />
+        <SplitStrategy splitUnit={targetSplit ? targetSplitUnit(targetSplit.manifest.spec) : record.setupDesign ? record.setupDesign.splitUnit ?? 'patient' : 'unknown'} supportedModes={TRAINABLE_MODES} split={current.trainingSplit} onChange={split} seedsText={readOnly ? current.trainingSplit.seeds.join(', ') : seedsText} seedsError={readOnly ? '' : seedsError} onSeedsChange={(value) => { setSeedsText(value); if (value.split(',').every((seed) => /^\d+$/.test(seed.trim()))) split({ seeds: value.split(',').map(Number) }); }} fieldContext={{ project, datasetId: current.datasetId, dictionary: dataset?.manifest.dictionary ?? [] }} />
       </Panel>
     </fieldset>
-    {!readOnly ? <Panel title="Check setup inputs" subtitle="Verify training membership, feature coverage, and fold feasibility before adding hyperparameters.">
+    {!readOnly ? <Panel title="Check inputs" subtitle="Verify training membership, feature coverage and the training design before adding hyperparameters.">
       <p>Feature bundles can originate from another dataset. Every training slide must be covered. Testing slides are excluded from all folds and validation sets.</p>
-      <StageContinueButton disabled={busy || stale || !dataset || !targetSplit || !bundle || !validSeeds || current.trainingSplit.mode !== 'kfold' || targetSplit.manifest.spec.datasetId !== current.datasetId || !bundle.current || (current.trainingSplit.validationFraction ?? 0) <= 0 || (current.trainingSplit.validationFraction ?? 1) >= 1} onClick={() => void verify()}>{busy ? 'Checking setup…' : 'Check & continue to hyperparameters'}</StageContinueButton>
+      {designIssue ? <p className="callout" role="status">{designIssue}</p> : null}
+      <StageContinueButton disabled={busy || stale || !dataset || !targetSplit || !bundle || !validSeeds || Boolean(designIssue) || targetSplit.manifest.spec.datasetId !== current.datasetId || !bundle.current || (current.trainingSplit.validationFraction ?? 0) <= 0 || (current.trainingSplit.validationFraction ?? 1) >= 1} onClick={() => void verify()}>{busy ? 'Checking inputs…' : 'Check & continue to hyperparameters'}</StageContinueButton>
     </Panel> : null}
   </>;
 }
@@ -121,7 +123,7 @@ export function FreezeSetupControl({ project, record, disabledReason, onFrozen, 
   const recoveryKey = sessionDraftKey(project, record.id, 'freeze-setup');
   const [pending, setPending] = useState(() => readSessionDraft(recoveryKey, (value): value is { expectedRevision: number; operationId: string } => Boolean(value && typeof value === 'object' && 'expectedRevision' in value && Number.isSafeInteger(value.expectedRevision) && 'operationId' in value && typeof value.operationId === 'string')));
   useSessionDraftBackup(recoveryKey, record.frozenSetupId ? null : pending);
-  useWorkspaceNavigationGuard(busy ? 'Setup freezing is still pending.' : null);
+  useWorkspaceNavigationGuard(busy ? 'Freezing the design is still pending.' : null);
   useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
   async function freeze() {
     if (busy || inFlight.current || (disabledReason && !pending)) return;
@@ -130,17 +132,17 @@ export function FreezeSetupControl({ project, record, disabledReason, onFrozen, 
     setPending(input);
     writeSessionDraft(recoveryKey, input);
     try { const saved = await experiments.freezeSetup(project, record.id, input); setPending(null); writeSessionDraft(recoveryKey, null); onFrozen(saved); }
-    catch (reason) { if (reason instanceof ApiError && reason.status < 500 && reason.status !== 408) { setPending(null); writeSessionDraft(recoveryKey, null); } setError(reason instanceof Error ? reason : new Error('The setup could not be frozen.')); }
+    catch (reason) { if (reason instanceof ApiError && reason.status < 500 && reason.status !== 408) { setPending(null); writeSessionDraft(recoveryKey, null); } setError(reason instanceof Error ? reason : new Error('The design could not be frozen.')); }
     finally { inFlight.current = false; setBusy(false); }
   }
-  return <Panel title={record.frozenSetupId ? 'Frozen experimental setup' : 'Review & freeze setup'} subtitle="Freezing saves this complete design. Training starts separately in Experiments.">
-    {record.frozenSetupId ? <><Badge tone="green">Frozen</Badge><p>This setup is ready to run. Its inputs, training design, hyperparameters and predictor choices are fixed.</p><StageContinueButton href={preparationLink('experiments', {}, { experiment: record.id })}>Continue to Experiments</StageContinueButton></> : <>
+  return <Panel title={record.frozenSetupId ? 'Frozen design' : 'Review & freeze design'} subtitle="Freezing saves the complete design. Training starts when you start the experiment.">
+    {record.frozenSetupId ? <><Badge tone="green">Frozen</Badge><p>The design is ready to run. Its inputs, training design, hyperparameters and predictor choices are fixed; to change them, copy the experiment into a new one.</p></> : <>
       <p><strong>{record.name}</strong> · {record.batchPlans?.length ?? 0} saved training batches. Review your inputs, validation design, configurations, training seeds and predictor settings before freezing.</p>
-      {record.setupDesign ? <dl className="science-summary"><div><dt>Dataset</dt><dd>{record.setupDesign.datasetId}</dd></div><div><dt>Targets &amp; splits</dt><dd>{record.setupDesign.targetSplitId}</dd></div><div><dt>Feature bundle</dt><dd>{record.inputs?.featureBundleId}</dd></div><div><dt>Split unit</dt><dd>{record.setupDesign.splitUnit === 'slide' ? record.setupDesign.trainingSplit.groupByPatient ? 'Slide labels · cases kept together in folds' : 'Slide' : 'Patient'}</dd></div><div><dt>Training design</dt><dd>{record.setupDesign.trainingSplit.folds} folds · {record.setupDesign.trainingSplit.seeds.length} split seeds · {Number(((record.setupDesign.trainingSplit.validationFraction ?? 0.15) * 100).toFixed(6))}% early-stop validation</dd></div></dl> : null}
+      {record.setupDesign ? <dl className="science-summary"><div><dt>Dataset</dt><dd>{record.setupDesign.datasetId}</dd></div><div><dt>Targets &amp; splits</dt><dd>{record.setupDesign.targetSplitId}</dd></div><div><dt>Feature bundle</dt><dd>{record.inputs?.featureBundleId}</dd></div><div><dt>Split unit</dt><dd>{record.setupDesign.splitUnit === 'slide' ? record.setupDesign.trainingSplit.groupByPatient ? 'Slide labels · cases kept together in folds' : 'Slide' : 'Patient'}</dd></div><div><dt>Training design</dt><dd>{trainingDesignText(record.setupDesign.trainingSplit)}</dd></div></dl> : null}
       {record.batchPlans?.map((plan) => <details key={plan.id}><summary>{plan.spec.batchName} · {plan.spec.trainingSeeds.length} training seeds</summary><BatchPlanSettings spec={plan.spec} fallbackPredictorPolicy={record.predictorPolicy ?? undefined} /></details>)}
       {disabledReason ? <p className="callout">{disabledReason}</p> : null}
       <ErrorNotice error={error} />
-      <StageContinueButton disabled={busy || (Boolean(disabledReason) && !pending)} onClick={() => void freeze()}>{busy ? 'Freezing setup…' : pending ? 'Retry setup freeze' : 'Freeze experimental setup'}</StageContinueButton>
+      <StageContinueButton disabled={busy || (Boolean(disabledReason) && !pending)} onClick={() => void freeze()}>{busy ? 'Freezing design…' : pending ? 'Retry freezing' : 'Freeze design'}</StageContinueButton>
     </>}
   </Panel>;
 }

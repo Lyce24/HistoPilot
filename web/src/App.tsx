@@ -1,4 +1,5 @@
-import { confirmWorkspaceNavigation } from './lib/workspaceNavigation';
+import { confirmWorkspaceNavigation, rememberWorkspaceLocation } from './lib/workspaceNavigation';
+import { canonicalHash } from './lib/canonicalRoutes';
 import { Suspense, useEffect, useRef, useState } from 'react';
 import type { Page, Workspace } from './api/types';
 import { useWorkspace } from './api/queries';
@@ -21,11 +22,8 @@ const LocalTargetSplit = lazyPage(() => import('./pages/LocalTargetSplit'));
 const HistoricalProtocols = lazyPage(() => import('./pages/HistoricalProtocols'));
 const LocalFeatures = lazyPage(() => import('./pages/LocalFeatures'));
 const LocalExperiments = lazyPage(() => import('./pages/LocalExperiments'));
-const LocalEvaluationSetup = lazyPage(() => import('./pages/LocalEvaluationSetup'));
 const LegacyPredictorRoute = lazyPage(() => import('./components/LegacyPredictorRoute'));
-const LocalModelEvaluation = lazyPage(() => import('./pages/LocalModelEvaluation'));
-const LocalInference = lazyPage(() => import('./pages/LocalInference'));
-const LocalClinicalUtility = lazyPage(() => import('./pages/LocalClinicalUtility'));
+const LocalApplyModels = lazyPage(() => import('./pages/LocalApplyModels'));
 const LocalInterpretation = lazyPage(() => import('./pages/LocalInterpretation'));
 const LocalOperations = lazyPage(() => import('./pages/LocalOperations'));
 const TaskCenter = lazyPage(() => import('./pages/TaskCenter'));
@@ -35,27 +33,36 @@ const BlcaDemoOverview = lazyPage<{ workspace: Workspace }>(() => import('./page
 const pages: Record<Page, string> = {
   overview: 'Project roadmap', dataset: 'Datasets',
   cohort: 'Targets & splits', features: 'Slide features',
-  'experimental-setup': 'Experimental Setup', 'legacy-protocol': 'Historical protocols', experiments: 'Experiments', 'source-cv': 'Development results',
+  'legacy-protocol': 'Historical protocols', experiments: 'Experiments', 'source-cv': 'Development results',
   'post-development': 'Historical predictors',
   selection: 'Experiments', predictor: 'Experiments',
-  'test-data': 'Test cohorts', evaluation: 'Evaluate models', inference: 'Run inference',
-  'clinical-utility': 'Clinical utility', interpretation: 'Model interpretation',
+  apply: 'Apply models', interpretation: 'Model interpretation',
   cleanup: 'Workspace cleanup', operations: 'Study backups & sources', 'task-center': 'Task Center', system: 'System & storage',
 };
 const toolIcons: Partial<Record<Page, string>> = { operations: 'folder', 'task-center': 'clock' };
 export function pageFromHash(value: string): Page {
-  const hash = value.replace(/^#/, '').split('?')[0];
+  const hash = canonicalHash(`#${value.replace(/^#/, '')}`).replace(/^#/, '').split('?')[0];
   if (['selection', 'predictor', 'predictors', 'build-predictors'].includes(hash)) return 'post-development';
-  if (['setup', 'setups', 'experiment-setup'].includes(hash)) return 'experimental-setup';
-  if (hash === 'test-cohorts') return 'test-data';
-  if (hash === 'evaluate-models' || hash === 'reports') return 'evaluation';
-  if (hash === 'predict' || hash === 'run-inference') return 'inference';
-  if (hash === 'clinical') return 'clinical-utility';
   if (hash === 'interpret') return 'interpretation';
   if (hash === 'tasks') return 'task-center';
   return Object.hasOwn(pages, hash) ? (hash as Page) : 'overview';
 }
 function currentPage(): Page { return pageFromHash(window.location.hash); }
+/**
+ * Links saved by merged modules (Experimental Setup, and the modules Apply models replaced) are
+ * rewritten in place before any page reads them, so every listener sees only the canonical form.
+ */
+function canonicalizeLocation() {
+  const canonical = canonicalHash(window.location.hash);
+  if (canonical === window.location.hash) return;
+  window.history.replaceState(window.history.state, '', canonical);
+  rememberWorkspaceLocation();
+}
+if (typeof window !== 'undefined') {
+  canonicalizeLocation();
+  window.addEventListener('hashchange', canonicalizeLocation, true);
+  window.addEventListener('popstate', canonicalizeLocation, true);
+}
 /** The workspace is a project; `?experiment=` remains an alias for links saved by earlier versions. */
 export function projectFromUrl(href = window.location.href): string | null {
   const params = new URL(href).searchParams;
@@ -90,7 +97,7 @@ export function ModulePrerequisites({ module, roadmap }: { module?: Roadmap['mod
 }
 export function Content({ page, workspace, roadmap }: { page: Page; workspace: Workspace; roadmap: Roadmap }) {
   const stage = moduleForPage(page);
-  const stageNames: Partial<Record<Page, string>> = { dataset: 'datasets', cohort: 'targets and splits', 'experimental-setup': 'setups', features: 'feature bundles', experiments: 'experiments', 'test-data': 'test cohorts', evaluation: 'evaluations', inference: 'inference runs', 'clinical-utility': 'clinical analyses' };
+  const stageNames: Partial<Record<Page, string>> = { dataset: 'datasets', cohort: 'targets and splits', features: 'feature bundles', experiments: 'experiments', apply: 'Apply models' };
   const stageName = stageNames[stage];
   return <Suspense fallback={<PageLoading name={pages[page]} />}>{workspace.mode === 'local' && stageName
     ? <RecordManagementScope key={`${workspace.project.id}:${stage}`} project={workspace.project.id} backLabel={`Back to ${stageName}`}><StageContent page={page} workspace={workspace} roadmap={roadmap} /></RecordManagementScope>
@@ -124,19 +131,15 @@ function StageContent({ page, workspace, roadmap }: { page: Page; workspace: Wor
   </div>;
   if (workspace.mode === 'local') {
     if (page === 'operations') return <LocalOperations workspace={workspace} />;
-    if (page === 'test-data') return <LocalEvaluationSetup workspace={workspace} />;
-    if (page === 'inference') return <LocalInference workspace={workspace} />;
-    if (page === 'clinical-utility') return <LocalClinicalUtility workspace={workspace} />;
+    if (page === 'apply') return <LocalApplyModels workspace={workspace} />;
     if (page === 'interpretation') return <LocalInterpretation workspace={workspace} />;
-    if (page === 'source-cv') return <LocalExperiments workspace={workspace} mode="execution" initialTab="results" />;
+    if (page === 'source-cv') return <LocalExperiments workspace={workspace} initialTab="results" />;
     if (['post-development', 'selection', 'predictor'].includes(page)) return <LegacyPredictorRoute workspace={workspace} />;
     if (page === 'dataset') return <LocalDataset workspace={workspace} />;
     if (page === 'cohort') return <LocalTargetSplit workspace={workspace} />;
     if (page === 'legacy-protocol') return <HistoricalProtocols workspace={workspace} />;
-    if (page === 'experimental-setup') return <LocalExperiments mode="setup" workspace={workspace} />;
     if (page === 'features') return <LocalFeatures workspace={workspace} />;
-    if (page === 'experiments') return <LocalExperiments mode="execution" workspace={workspace} />;
-    if (moduleId === 'evaluation') return <LocalModelEvaluation workspace={workspace} />;
+    if (page === 'experiments') return <LocalExperiments workspace={workspace} />;
   }
   return page === 'system' ? <System /> : <ProjectRoadmap roadmap={roadmap} />;
 }
@@ -232,7 +235,7 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
             const locked = !roadmap.checksById[item.id].hasData || !item.unlocked;
             const contents = <><Icon name={moduleIcons[item.id]} size={16} /><span>{item.shortTitle}</span>{showState ? locked ? <Icon name="lock" size={12} /> : <span className={`nav-status status-${item.status}`} aria-label={blcaDemo ? 'Illustrative example' : item.status === 'complete' ? completedModuleLabel(item.id) : item.status === 'draft' ? 'Saved work' : 'Not started'} /> : null}</>;
             return locked ? <div key={item.id} className="nav-link nav-locked" aria-disabled="true" title={showState ? `Requires ${item.blockers.map((id) => roadmap.modules.find((m) => m.id === id)?.shortTitle).join(' + ') || 'compatible frozen inputs'}` : 'Checking prerequisites'}>{contents}</div>
-              : <a key={item.id} className={`nav-link ${module?.id === item.id ? 'active' : ''}`} href={`#${item.id}`} onClick={(event) => { if ((w.mode === 'local' || blcaDemo) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && module?.id === item.id && ['dataset', 'cohort', 'features', 'experimental-setup', 'experiments', 'source-cv', 'test-data', 'evaluation', 'inference', 'clinical-utility'].includes(page)) { event.preventDefault(); window.dispatchEvent(new Event('histopilot:stage-library')); } }} aria-current={module?.id === item.id ? 'page' : undefined}>{contents}</a>;
+              : <a key={item.id} className={`nav-link ${module?.id === item.id ? 'active' : ''}`} href={`#${item.id}`} onClick={(event) => { if ((w.mode === 'local' || blcaDemo) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && module?.id === item.id && ['dataset', 'cohort', 'features', 'experiments', 'source-cv', 'apply'].includes(page)) { event.preventDefault(); window.dispatchEvent(new Event('histopilot:stage-library')); } }} aria-current={module?.id === item.id ? 'page' : undefined}>{contents}</a>;
           })}
           {!blcaDemo ? <div className="nav-label nav-system">PROJECT TOOLS</div> : null}
           {w.mode === 'local' ? <a className={`nav-link ${page === 'cleanup' ? 'active' : ''}`} href="#cleanup" aria-current={page === 'cleanup' ? 'page' : undefined}><Icon name="folder" size={16} /><span>Workspace cleanup</span></a> : null}
@@ -242,8 +245,8 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
       </aside>
       {mobile && menu ? <button className="nav-backdrop" aria-label="Close navigation overlay" onClick={() => setMenu(false)} /> : null}
       <div className="main-shell">
-        <header className="topbar"><div className="breadcrumbs"><button ref={menuButton} className="icon-button mobile-menu" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="menu" /></button><button type="button" className="breadcrumb-home" onClick={onExit}>Projects</button><Icon name="chevron" size={12} /><a href="#overview" className="breadcrumb-project">{w.project.name}</a><Icon name="chevron" size={12} /><strong>{page === 'overview' ? 'Roadmap' : module?.shortTitle ?? pages[page]}</strong></div><div className="topbar-actions"><span className="demo-indicator"><span />{w.mode === 'synthetic-demo' ? 'Synthetic demo' : 'Saved locally'}</span><button className="btn btn-secondary btn-small" aria-label="Export workspace" onClick={() => { if (w.mode === 'local') window.location.hash = 'operations'; else downloadJSON('histopilot-workspace.json', { schema_version: '0.1.0', executable: false, ...w }); }}><Icon name="download" size={15} /><span>Export</span></button></div></header>
-        <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}${['dataset', 'cohort', 'features', 'experimental-setup', 'experiments', 'source-cv', 'test-data', 'evaluation', 'inference', 'clinical-utility'].includes(page) ? ' stage-workspace' : ''}`} id="main-content" tabIndex={-1} ref={main}>
+        <header className="topbar"><div className="breadcrumbs"><button ref={menuButton} className="icon-button mobile-menu" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="menu" /></button><button type="button" className="breadcrumb-home" onClick={onExit}>Projects</button><Icon name="chevron" size={12} /><a href="#overview" className="breadcrumb-project">{w.project.name}</a><Icon name="chevron" size={12} /><strong>{page === 'overview' ? 'Roadmap' : module?.shortTitle ?? pages[page]}</strong></div><div className="topbar-actions">{w.project.aiExposure ? <a href="#operations" className="ai-exposure-indicator" title="What AI agents may see of this project">AI: {w.project.aiExposure}</a> : null}<span className="demo-indicator"><span />{w.mode === 'synthetic-demo' ? 'Synthetic demo' : 'Saved locally'}</span><button className="btn btn-secondary btn-small" aria-label="Export workspace" onClick={() => { if (w.mode === 'local') window.location.hash = 'operations'; else downloadJSON('histopilot-workspace.json', { schema_version: '0.1.0', executable: false, ...w }); }}><Icon name="download" size={15} /><span>Export</span></button></div></header>
+        <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}${['dataset', 'cohort', 'features', 'experiments', 'source-cv', 'apply'].includes(page) ? ' stage-workspace' : ''}`} id="main-content" tabIndex={-1} ref={main}>
           {/* Module progress now belongs to the roadmap, and each library states its
               own records' status. A module-level chip beside a record editor described
               the wrong thing, so this strip is only the way back and the demo label. */}

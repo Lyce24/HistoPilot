@@ -29,6 +29,28 @@ class PredictorSelection(RequestModel):
         return value
 
 
+class SeedEnsembleSelection(RequestModel):
+    """One configuration's fold models from every training and split seed, as one predictor."""
+
+    experimentId: str = Field(min_length=1, max_length=160)
+    batchId: ConfigurationId
+    candidateId: str = Field(pattern=r"^candidate-[a-f0-9]{64}$")
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def nonempty_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Enter a predictor name.")
+        return value
+
+
+class FreezeSeedEnsemble(SeedEnsembleSelection):
+    previewHash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    operationId: str = Field(min_length=1, max_length=128)
+
+
 class FreezePredictor(PredictorSelection):
     previewHash: str = Field(pattern=r"^[a-f0-9]{64}$")
     operationId: str = Field(min_length=1, max_length=128)

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { DatasetVersion } from '../api/scientific';
 import type { Workspace } from '../api/types';
-import { newTargetSplitSpec, targetSplitPartitionRequest, targetSplitTrainingTarget, targetSplitTestingIssue, targetSplitUnit, targetSplitWithUnit, targetDefinitionReady, targetSplitMethod, targetSplitTestingRemainder, targetSplitSetupLink, TARGET_SPLIT_STEPS, type TargetSplit } from '../api/targetSplits';
+import { newTargetSplitSpec, targetSplitPartitionRequest, targetSplitTrainingTarget, targetSplitTestingIssue, targetSplitUnit, targetSplitWithUnit, targetDefinitionReady, targetSplitMethod, targetSplitTestingRemainder, targetSplitExperimentLink, TARGET_SPLIT_STEPS, type TargetSplit } from '../api/targetSplits';
 import { editorRecoveryKey } from '../lib/editorRecovery';
 import LocalTargetSplit, { randomSplitNote, TargetSplitSummary, TargetSplitTestCohort, TargetSplitTestingRules, targetSplitKey } from './LocalTargetSplit';
 
@@ -52,15 +52,15 @@ describe('dataset target and train/test construction', () => {
     expect(html).toContain('4 slides');
     expect(html).toContain('low, high');
   });
-  it('opens a frozen record with a precise Experimental Setup link and fixed assignments', () => {
+  it('opens a frozen record with a precise Experiments link and fixed assignments', () => {
     const html = render([record], false, true);
-    expect(html).toContain('Continue to Experimental Setup');
-    expect(html).toContain('href="#experimental-setup?dataset=dataset&amp;targetSplit=target-split-a"');
+    expect(html).toContain('Continue to Experiments');
+    expect(html).toContain('href="#experiments?dataset=dataset&amp;targetSplit=target-split-a"');
     expect(html).toContain('Training and testing memberships are fixed in this version.');
     expect(html).toContain('Independent testing');
     expect(html).not.toContain('Training seeds');
   });
-  describe('test cohort made from the testing set', () => {
+  describe('testing cohort made from the testing set', () => {
     const cohort = (value: Partial<TargetSplit>, testTarget: TargetSplit['manifest']['spec']['testTarget'] = undefined) => {
       const client = new QueryClient();
       const item = { ...record, ...value, manifest: { ...record.manifest, spec: { ...spec, testTarget } } } as TargetSplit;
@@ -68,22 +68,24 @@ describe('dataset target and train/test construction', () => {
     };
     it('links the cohort that freezing created', () => {
       const html = cohort({ evaluationCohortId: 'cohort/1', testCohort: { required: true, id: 'cohort/1', state: 'active' } });
-      expect(html).toContain('saved its testing set as an evaluation cohort');
-      expect(html).toContain('href="#evaluation?cohort=cohort%2F1"');
-      expect(html).toContain('href="#test-data"');
-      expect(html).not.toContain('Create test cohort');
-      expect(cohort({ testCohort: { required: true, id: 'c', state: 'active' } }, null)).toContain('href="#inference?cohort=c"');
+      expect(html).toContain('saved its testing set as a labeled cohort');
+      expect(html).toContain('href="#apply?view=new&amp;cohort=cohort%2F1"');
+      expect(html).toContain('href="#apply?view=cohorts"');
+      expect(html).not.toContain('Create testing cohort');
+      const unlabeled = cohort({ testCohort: { required: true, id: 'c', state: 'active' } }, null);
+      expect(unlabeled).toContain('saved its testing set as an unlabeled cohort');
+      expect(unlabeled).toContain('href="#apply?view=new&amp;cohort=c"');
     });
     it('offers creation for an older version, and a retry after a failed cohort step', () => {
-      expect(cohort({ evaluationCohortId: null, testCohort: { required: true, id: null, state: null } })).toContain('Create test cohort');
+      expect(cohort({ evaluationCohortId: null, testCohort: { required: true, id: null, state: null } })).toContain('Create testing cohort');
       const failed = cohort({ testCohort: { required: true, id: null, state: null }, testCohortError: { code: 'TARGET_TESTING_BLOCKED', message: 'Labels are missing.' } });
-      expect(failed).toContain('This version is frozen, but its testing set could not be saved as an evaluation cohort: Labels are missing.');
-      expect(failed).toContain('Retry test cohort');
+      expect(failed).toContain('This version is frozen, but its testing set could not be saved as a labeled cohort: Labels are missing.');
+      expect(failed).toContain('Retry testing cohort');
       // After a reload the freeze response is gone; the saved failure still offers the retry.
       const reloaded = cohort({ testCohort: { required: true, id: null, state: 'failed', error: { code: 'TARGET_TESTING_BLOCKED', message: 'Labels are missing.' } } });
-      expect(reloaded).toContain('This version is frozen, but its testing set could not be saved as an evaluation cohort: Labels are missing.');
-      expect(reloaded).toContain('Retry test cohort');
-      expect(reloaded).not.toContain('Create test cohort');
+      expect(reloaded).toContain('This version is frozen, but its testing set could not be saved as a labeled cohort: Labels are missing.');
+      expect(reloaded).toContain('Retry testing cohort');
+      expect(reloaded).not.toContain('Create testing cohort');
     });
     it('says when the cohort is in Trash, and stays silent without a testing set', () => {
       expect(cohort({ testCohort: { required: true, id: 'c', state: 'trashed' } })).toContain('is in Trash');
@@ -91,9 +93,9 @@ describe('dataset target and train/test construction', () => {
       // Older servers only report the cohort ID.
       expect(cohort({ evaluationCohortId: null })).toBe('');
     });
-    it('shows the test cohort in the detail view', () => {
+    it('shows the testing cohort in the detail view', () => {
       const html = render([record], false, true);
-      expect(html).not.toContain('aria-label="Test cohort"');
+      expect(html).not.toContain('aria-label="Testing cohort"');
       const detail = { ...record, testCohort: { required: true, id: null, state: null } } as TargetSplit;
       vi.stubGlobal('window', { location: { hash: '#cohort?targetSplit=target-split-a' }, sessionStorage: { getItem: () => null } });
       const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
@@ -101,7 +103,7 @@ describe('dataset target and train/test construction', () => {
       client.setQueryData(['scientific', 'project', 'drafts'], { drafts: [] });
       client.setQueryData(targetSplitKey('project'), { configurations: [record] });
       client.setQueryData([...targetSplitKey('project'), record.id], detail);
-      expect(renderToStaticMarkup(<QueryClientProvider client={client}><LocalTargetSplit workspace={workspace} /></QueryClientProvider>)).toContain('Create test cohort');
+      expect(renderToStaticMarkup(<QueryClientProvider client={client}><LocalTargetSplit workspace={workspace} /></QueryClientProvider>)).toContain('Create testing cohort');
     });
     it('creates the cohort through the idempotent test-cohort route', async () => {
       const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ token: 'session' })))
@@ -240,7 +242,7 @@ describe('dataset target and train/test construction', () => {
     expect(initial.split).toEqual({ method: 'random', testFraction: 0.2, seed: 123, stratify: false, trainRules: [], testRules: [], trainValues: [], testValues: [] });
     expect(initial).not.toHaveProperty('featureBundleId');
     expect(initial.split).not.toHaveProperty('folds');
-    expect(targetSplitSetupLink(record)).toBe('#experimental-setup?dataset=dataset&targetSplit=target-split-a');
+    expect(targetSplitExperimentLink(record)).toBe('#experiments?dataset=dataset&targetSplit=target-split-a');
   });
 });
 

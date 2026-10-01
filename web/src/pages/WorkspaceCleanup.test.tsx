@@ -6,7 +6,7 @@ import type { CleanupInventory, CleanupItem, CleanupPreview } from '../api/lifec
 import type { Workspace } from '../api/types';
 
 const items: CleanupItem[] = [
-  { key: 'project:p', type: 'project', id: 'p', kind: 'project', name: 'Colon project', state: 'active', dependsOn: [], usedBy: [] },
+  { key: 'project:p', type: 'project', id: 'p', kind: 'project', name: 'Demo project', state: 'active', dependsOn: [], usedBy: [] },
   { key: 'dataset:d', type: 'dataset', id: 'd', kind: 'dataset', name: 'Development slides', state: 'active', dependsOn: [], usedBy: ['configuration:b'] },
   { key: 'configuration:b', type: 'configuration', id: 'b', kind: 'mil-batch', name: 'Seed comparison', state: 'active', dependsOn: ['dataset:d'], usedBy: [], job: { status: 'running', cancellable: true } },
   { key: 'draft:old', type: 'draft', id: 'old', kind: 'protocol', name: 'Earlier target draft', state: 'trashed', dependsOn: [], usedBy: [] },
@@ -79,7 +79,7 @@ describe('workspace cleanup review', () => {
     expect(html).toMatch(/disabled="">Review selected changes/);
   });
 
-  it('labels inference runs and their batches by purpose, which cleanup rows do not carry', () => {
+  it('labels runs and batches by their cohort’s labels, which cleanup rows do not carry', () => {
     const records: CleanupItem[] = [
       { key: 'configuration:run-i', type: 'configuration', id: 'run-i', kind: 'model-evaluation', name: 'Unlabeled slides', state: 'active', dependsOn: [], usedBy: ['configuration:batch-i'] },
       { key: 'configuration:batch-i', type: 'configuration', id: 'batch-i', kind: 'evaluation-batch', name: 'Nightly inference', state: 'active', dependsOn: ['configuration:run-i'], usedBy: [] },
@@ -94,11 +94,22 @@ describe('workspace cleanup review', () => {
     client.setQueryData(['model-evaluations', 'p'], { executionEnabled: true, items: [{ id: 'run-i', manifest: { purpose: 'inference' } }, { id: 'run-e', manifest: {} }] });
     const workspace = { mode: 'local', project: { id: 'p', lifecycleState: 'active' } } as Workspace;
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><WorkspaceCleanup workspace={workspace} /></QueryClientProvider>);
-    expect(html).toContain('Saved configuration · Inference run');
-    expect(html).toContain('Saved configuration · Inference batch');
-    expect(html).toContain('Saved configuration · Evaluation</small>');
-    expect(html).toContain('Saved configuration · Evaluation batch');
-    expect(html).toContain('<option value="inference-run">Inference run</option>');
+    expect(html).toContain('Saved configuration · Run · unlabeled cohort');
+    expect(html).toContain('Saved configuration · Batch · unlabeled cohort');
+    expect(html).toContain('Saved configuration · Run · labeled cohort</small>');
+    expect(html).toContain('Saved configuration · Batch · labeled cohort');
+    expect(html).toContain('<option value="inference-run">Run · unlabeled cohort</option>');
+  });
+
+  it('names a frozen design by what it is, never by its record kind', () => {
+    const design: CleanupItem = { key: 'configuration:design', type: 'configuration', id: 'design', kind: 'experiment-setup', name: 'study4', state: 'active', dependsOn: [], usedBy: [] };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['cleanup', 'p'], { projectId: 'p', revision: 3, projectState: 'active', items: [...items, design], audit: [], note: '' } satisfies CleanupInventory);
+    const workspace = { mode: 'local', project: { id: 'p', lifecycleState: 'active' } } as Workspace;
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><WorkspaceCleanup workspace={workspace} /></QueryClientProvider>);
+    expect(html).toContain('Saved configuration · Frozen design');
+    expect(html).toContain('<option value="experiment-setup">Frozen design</option>');
+    expect(html).not.toContain('Experiment setup');
   });
 
   it('keeps whole-project changes separate from bulk child record selections', () => {

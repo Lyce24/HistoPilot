@@ -237,6 +237,8 @@ export interface ProtocolExploration {
   } | null;
   findings: Finding[];
 }
+export type LabelPolicy = 'block' | 'exclude' | 'unlabeled';
+
 export interface ProtocolSpec {
   /** Absent on historical artifacts, which retain patient grouping. */
   splitUnit?: 'slide' | 'patient';
@@ -248,8 +250,9 @@ export interface ProtocolSpec {
     classes: string[];
     labels: Record<string, string>;
     positiveClass?: string;
-    missing: 'block' | 'exclude';
-    unmapped: 'block' | 'exclude';
+    /** `unlabeled` keeps the slide unscored; only testing targets accept it. */
+    missing: LabelPolicy;
+    unmapped: LabelPolicy;
   };
   predictors: string[];
   eligibility: Condition[];
@@ -270,7 +273,9 @@ export interface ProtocolSpec {
       | 'monte_carlo'
       | 'leave_one_domain_out'
       | 'nested_kfold'
-      | 'held_out';
+      | 'held_out'
+      /** Development only: each value of `foldField` is one assessment fold, as imported. */
+      | 'predefined_folds';
     validationFraction?: number;
     testFraction?: number;
     repeats?: number;
@@ -280,6 +285,8 @@ export interface ProtocolSpec {
     /** Development slide targets: keep each patient's (case's) slides in one fold and one validation side. */
     groupByPatient?: boolean;
     domainField?: string;
+    /** Predefined folds: the column whose values assign each unit's assessment fold. */
+    foldField?: string;
     domainPolicy?: 'all' | 'selected';
     heldOutDomains?: string[];
     heldOutSource?: 'fractions' | 'rules' | 'imported';
@@ -344,6 +351,8 @@ export interface ProtocolPreview {
     roleDescriptions?: Record<string, string>;
     evaluationPlanCount?: number;
     innerPlanCount?: number;
+    /** Predefined folds: the imported value behind each fold number. */
+    predefinedFolds?: { fold: number; value: string }[];
     oofCoverage?: {
       groups: number;
       testedGroups: number;

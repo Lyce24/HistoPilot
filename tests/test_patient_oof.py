@@ -78,7 +78,9 @@ def test_completed_oof_patients_have_intervals_and_only_verified_analysis_is_reu
     assert read_json_bounded(tmp_path / "results.json")["candidates"][0] == result
     path = tmp_path / result["oofPath"].split("/")[-1]
     damaged = copy.deepcopy(read_json_bounded(path))
-    damaged["summary"]["patientAnalysis"]["uncertainty"]["intervals"]["auroc"]["lower"] = corrupt_value
+    damaged["summary"]["patientAnalysis"]["uncertainty"]["intervals"]["auroc"]["lower"] = (
+        corrupt_value
+    )
     path.write_text(json.dumps(damaged))
     collect_results(plan, state, tmp_path)
     assert len(calls) == 2

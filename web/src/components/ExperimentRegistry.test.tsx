@@ -85,9 +85,9 @@ describe('experiment registry and exact comparison', () => {
     client.setQueryData(['development-batches', 'p'], { items: [owned, batch('UNRELATED-BATCH', 'two')], executions: [], executionImplemented: true });
     client.setQueryData(['model-experiments', 'p', 'summary'], { items: [experiment('one', { batches: [owned] }), experiment('trash', { state: 'trashed' })] });
     try {
-      const registry = renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentRegistry project="p" mode="setup" onOpen={() => {}} /></QueryClientProvider>);
+      const registry = renderToStaticMarkup(<QueryClientProvider client={client}><ExperimentRegistry project="p" onOpen={() => {}} /></QueryClientProvider>);
       expect(registry).toContain('Archived'); expect(registry).toContain('Trash'); expect(registry).toContain('All records');
-      expect(registry).toContain('All statuses'); expect(registry).toContain('Frozen');
+      expect(registry).toContain('All statuses'); expect(registry).toContain('Draft'); expect(registry).toContain('Ready to run');
       expect(registry).toContain('aria-label="Search experiments"');
       expect(registry).toContain('aria-label="Experiment state"');
       expect(registry).toContain('aria-label="Saved experiments"');
@@ -97,7 +97,7 @@ describe('experiment registry and exact comparison', () => {
       expect(registry).not.toContain('Stage 0 · Saved records');
       expect(registry).not.toContain('Compare selected experiments');
       expect(registry).not.toContain('Archive keeps');
-      expect(registry).not.toContain('Predictors'); expect(registry).not.toContain('#post-development'); expect(registry).not.toContain('#evaluation');
+      expect(registry).not.toContain('Predictors'); expect(registry).not.toContain('#post-development'); expect(registry).not.toContain('#apply');
       const detail = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned]} ownedDrafts={[]} tab="runs" onOpenSetup={() => {}} /></QueryClientProvider>);
       expect(detail).toContain('owned-only'); expect(detail).not.toContain('UNRELATED-BATCH');
       const multiple = renderToStaticMarkup(<QueryClientProvider client={client}><DevelopmentBatches project="p" inputs={inputs} experimentName="Same name" experimentId="one" experimentRevision={1} ownedBatches={[owned, batch('second-owned', 'one')]} ownedDrafts={[]} tab="runs" onOpenSetup={() => {}} /></QueryClientProvider>);

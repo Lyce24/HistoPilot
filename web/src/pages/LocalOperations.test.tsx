@@ -31,7 +31,7 @@ describe('project operations workspace', () => {
     const html = render({ ...empty, jobs: [{ key: 'extraction:x', id: 'x', kind: 'extraction', name: 'Slide embeddings', job: { status: 'running', cancellable: true } }] });
     expect(html).toContain('Study backups &amp; sources');
     expect(html).toContain('href="#task-center?project=project"');
-    expect(html).toContain('Training folds and results, refits and predictors, evaluations and inference, attention maps, feature extraction and validation, feature packing, and study archives, including the archive operations on this page, run in the');
+    expect(html).toContain('Training folds and results, refits and predictors, predictor runs on cohorts, attention maps, feature extraction and validation, feature packing, and study archives, including the archive operations on this page, run in the');
     expect(html).toContain('1 project job is still active. An export submitted now waits until it finishes, then starts by itself.');
     // The service queues the export and its worker waits for an idle project, so only the path gates it.
     expect(archiveSubmitDisabled('export', '/backups/study.zip', '', false)).toBe(false);

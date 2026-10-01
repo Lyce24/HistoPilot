@@ -41,11 +41,10 @@ class RefitDataModule(MILDataModule):
                 or row.get("label") not in classes
             ):
                 raise MILDataError("Refit accepts only frozen development training memberships.")
-            if (
-                target["unit"] == "patient"
-                and row.get("patientIdSource") == "slide_fallback"
-            ):
-                raise MILDataError("Patient refitting requires verified patient IDs, not slide fallback.")
+            if target["unit"] == "patient" and row.get("patientIdSource") == "slide_fallback":
+                raise MILDataError(
+                    "Patient refitting requires verified patient IDs, not slide fallback."
+                )
             if (
                 target["unit"] == "patient"
                 and row["patientId"] in patient_labels
@@ -104,7 +103,8 @@ class _RefitHistory(_HistoryWriter):
                 "maxEpochs": trainer.max_epochs,
                 "validation": None,
             },
-            limit=None, sync=False,
+            limit=None,
+            sync=False,
         )
 
 
@@ -203,12 +203,15 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
             "epochBudget": plan["epochBudget"],
             "historyPath": str(output_dir / "history.json"),
             "trainingSlideCount": len(datamodule.memberships["train"]),
-            "trainingPatientCount": 0 if plan.get("splitUnit") == "slide" else len(
-                {row["patientId"] for row in datamodule.memberships["train"]}
-            ),
+            "trainingPatientCount": 0
+            if plan.get("splitUnit") == "slide"
+            else len({row["patientId"] for row in datamodule.memberships["train"]}),
             "trainingObjective": datamodule.trainingObjective,
-            **({"clinicalPreprocessing": model.clinical_preprocessor}
-               if model.clinical_preprocessor else {}),
+            **(
+                {"clinicalPreprocessing": model.clinical_preprocessor}
+                if model.clinical_preprocessor
+                else {}
+            ),
             "resolvedClassWeights": datamodule.training_class_weights(),
             "classWeightingUnit": datamodule.training_class_weight_unit(),
             "patientAggregation": recipe.get("patientAggregation", "mean_probabilities"),
@@ -216,8 +219,11 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
             "resumePolicy": "replay_interrupted_epoch_from_last_completed_epoch",
             "validationUsed": False,
             "testDataUsed": False,
-            **({key: plan[key] for key in ("effectiveRecipe", "nnmilPlanning")}
-               if "nnmilPlanning" in plan else {}),
+            **(
+                {key: plan[key] for key in ("effectiveRecipe", "nnmilPlanning")}
+                if "nnmilPlanning" in plan
+                else {}
+            ),
         }
         write_json_atomic(output_dir / "result.json", result, limit=None, sync=False)
         return result

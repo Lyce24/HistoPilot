@@ -16,7 +16,7 @@ ENDPOINT = "/api/v1/filesystem/directories"
 
 @pytest.fixture
 def folders(tmp_path):
-    roots = (tmp_path / "drive-d", tmp_path / "oceanpath-hot")
+    roots = (tmp_path / "drive-d", tmp_path / "fast-disk")
     for root in roots:
         root.mkdir()
     return LocalFilesystem(roots), roots

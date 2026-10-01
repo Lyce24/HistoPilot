@@ -15,16 +15,16 @@ function summary(extra: Partial<InferenceSummary> = {}): InferenceSummary {
   return {
     evaluationId: 'run', name: 'Ensemble', purpose: 'inference', predictorId: 'predictor', cohortId: 'cohort',
     unit: 'slide', task: 'multiclass_classification', classOrder: classes, positiveClass: null, decisionThreshold: 0.5,
-    patientAggregation: 'mean', patients: 256, source: { predictionsSha256: 'a'.repeat(64) }, count: 383,
+    patientAggregation: 'mean', patients: 80, source: { predictionsSha256: 'a'.repeat(64) }, count: 120,
     predicted: [
-      { label: 'ND', count: 212, fraction: 212 / 383, meanConfidence: 0.8 }, { label: 'IND', count: 11, fraction: 11 / 383, meanConfidence: 0.45 },
-      { label: 'LG', count: 60, fraction: 60 / 383, meanConfidence: 0.6 }, { label: 'HG', count: 100, fraction: 100 / 383, meanConfidence: 0.7 },
+      { label: 'ND', count: 60, fraction: 60 / 120, meanConfidence: 0.8 }, { label: 'IND', count: 5, fraction: 5 / 120, meanConfidence: 0.45 },
+      { label: 'LG', count: 20, fraction: 20 / 120, meanConfidence: 0.6 }, { label: 'HG', count: 35, fraction: 35 / 120, meanConfidence: 0.7 },
     ],
-    confidence: { mean: 0.64, quantiles, edges, counts: { ND: bins({ 16: 200, 9: 12 }), IND: bins({ 8: 11 }), LG: bins({ 11: 60 }), HG: bins({ 14: 100 }) } },
-    margin: { mean: 0.3, quantiles, edges, counts: { ND: bins({ 10: 212 }), IND: bins({ 1: 11 }), LG: bins({ 3: 60 }), HG: bins({ 6: 100 }) } },
-    ensemble: { memberCount: 5, records: 383, unanimous: 300, disagreements: 83, meanSpread: 0.07, agreement: [5, 4, 3, 2, 1, 0].map((agree) => ({ agree, count: agree === 5 ? 300 : agree === 4 ? 50 : agree === 3 ? 33 : 0 })) },
-    development: { comparable: true, patients: 146, records: 220, shared: { ND: 120, IND: 5, LG: 40, HG: 55 }, new: { ND: 92, IND: 6, LG: 20, HG: 45 } },
-    attributes: [{ key: 'consensus_status', label: 'consensus_status' }],
+    confidence: { mean: 0.64, quantiles, edges, counts: { ND: bins({ 16: 55, 9: 5 }), IND: bins({ 8: 5 }), LG: bins({ 11: 20 }), HG: bins({ 14: 35 }) } },
+    margin: { mean: 0.3, quantiles, edges, counts: { ND: bins({ 10: 60 }), IND: bins({ 1: 5 }), LG: bins({ 3: 20 }), HG: bins({ 6: 35 }) } },
+    ensemble: { memberCount: 5, records: 120, unanimous: 90, disagreements: 30, meanSpread: 0.07, agreement: [5, 4, 3, 2, 1, 0].map((agree) => ({ agree, count: agree === 5 ? 90 : agree === 4 ? 20 : agree === 3 ? 10 : 0 })) },
+    development: { comparable: true, patients: 30, records: 50, shared: { ND: 25, IND: 2, LG: 8, HG: 15 }, new: { ND: 35, IND: 3, LG: 12, HG: 20 } },
+    attributes: [{ key: 'site', label: 'site' }],
     ...extra,
   };
 }
@@ -33,15 +33,15 @@ describe('inference results', () => {
   it('describes predictions, confidence, agreement and development patients without metrics', () => {
     const html = renderToStaticMarkup(<InferenceOverview summary={summary()} />);
     expect(html).toContain('Slides predicted');
-    expect(html).toContain('383');
+    expect(html).toContain('120');
     expect(html).toContain('Fold members disagree');
     expect(html).toContain('From development patients');
     expect(html).toContain('New patients');
     expect(html).toContain('Seen in development');
     expect(html).toContain('Confidence by predicted class');
     expect(html).toContain('Decision margin by predicted class');
-    // Margin below 0.2 by default: bins 0-3 hold 11 IND and 60 LG slides.
-    expect(html).toContain('<strong>71</strong>');
+    // Margin below 0.2 by default: bins 0-3 hold 5 IND and 20 LG slides.
+    expect(html).toContain('<strong>25</strong>');
     expect(html).toContain('near a decision boundary');
     for (const metric of ['AUROC', 'AUPRC', 'Accuracy', 'accuracy', 'F1', 'Log loss', 'Actual']) expect(html).not.toContain(metric);
   });
@@ -101,7 +101,7 @@ describe('inference results', () => {
     expect(html).toContain('0.50–0.55');
     expect(html).toContain('aria-label="HG, Confidence 0.90–0.95: 1"');
     const bars = renderToStaticMarkup(<PredictedClassBars predicted={summary().predicted} unit="slide" />);
-    expect(bars).toContain('ND: 212 slides');
+    expect(bars).toContain('ND: 60 slides');
     expect(bars.match(/role="listitem"/g)).toHaveLength(4);
   });
 
@@ -116,7 +116,7 @@ describe('inference results', () => {
   });
 
   it('shows inference cases as predictions with flags, never as unlabeled outcomes', () => {
-    const record = { id: 'GEJ1A', patientId: 'p1', slideIds: ['GEJ1A'], label: null, labelIndex: null, probabilities: [0.7, 0.1, 0.1, 0.1], predictedIndex: 0, predictedLabel: 'ND', confidence: 0.7, margin: 0.6,
+    const record = { id: 'CASE1A', patientId: 'p1', slideIds: ['CASE1A'], label: null, labelIndex: null, probabilities: [0.7, 0.1, 0.1, 0.1], predictedIndex: 0, predictedLabel: 'ND', confidence: 0.7, margin: 0.6,
       memberAgreement: { agree: 4, total: 5, spread: 0.05 }, developmentPatient: true, outcome: 'unlabeled', comparison: null, attributes: {}, slides: [] } as ReviewedCase;
     const page = { purpose: 'inference', unit: 'slide', classOrder: classes, name: 'Ensemble', positiveClass: null, attributes: [] } as unknown as CasePage;
     const html = renderToStaticMarkup(<CaseDetail project="project" record={record} page={page} />);

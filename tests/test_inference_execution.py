@@ -118,7 +118,9 @@ def test_changed_checkpoint_and_feature_sources_block_inference(plan, tmp_path):
         evaluate(plan, tmp_path / "source-changed")
 
 
-def test_external_bag_policy_matches_validation_sampling_and_invalidates_member_cache(plan, tmp_path, monkeypatch):
+def test_external_bag_policy_matches_validation_sampling_and_invalidates_member_cache(
+    plan, tmp_path, monkeypatch
+):
     from histopilot.datasets.mil import SlideDataset, stable_seed
 
     observed = []
@@ -333,7 +335,10 @@ def test_inference_plan_writes_predictions_and_label_free_summary(plan, tmp_path
     folder = tmp_path / "inference"
     assert result["purpose"] == "inference" and "metrics" not in result
     assert set(result["artifacts"]) == {
-        "predictions.json", "summary.json", "slide-predictions.csv", "patient-predictions.csv",
+        "predictions.json",
+        "summary.json",
+        "slide-predictions.csv",
+        "patient-predictions.csv",
     }
     assert not (folder / "metrics.json").exists()
     predictions = json.loads((folder / "predictions.json").read_text())
@@ -347,8 +352,13 @@ def test_inference_plan_writes_predictions_and_label_free_summary(plan, tmp_path
     assert summary["selected"] == summary[plan["target"]["unit"]]
     header = (folder / "slide-predictions.csv").read_text().splitlines()[0].split(",")
     assert header[:7] == [
-        "slideId", "patientId", "predictedLabel", "confidence", "margin",
-        "membersAgreeing", "memberCount",
+        "slideId",
+        "patientId",
+        "predictedLabel",
+        "confidence",
+        "margin",
+        "membersAgreeing",
+        "memberCount",
     ]
     assert "label" not in header
     # Inference and evaluation of the same inputs produce identical probabilities.
@@ -365,14 +375,20 @@ def test_inference_plan_writes_predictions_and_label_free_summary(plan, tmp_path
     assert rows[5:7] == ["", ""]
 
 
-def test_large_inference_ensembles_omit_member_probabilities_explicitly(plan, tmp_path, monkeypatch):
+def test_large_inference_ensembles_omit_member_probabilities_explicitly(
+    plan, tmp_path, monkeypatch
+):
     monkeypatch.setattr("histopilot.training.inference.MAX_MEMBER_VALUES", 1)
     unlabeled = copy.deepcopy(plan)
     for row in unlabeled["data"]["memberships"]:
         row["label"] = None
     result = evaluate(
-        {**unlabeled, "purpose": "inference", "method": "ensemble",
-         "checkpoints": plan["checkpoints"] * 2},
+        {
+            **unlabeled,
+            "purpose": "inference",
+            "method": "ensemble",
+            "checkpoints": plan["checkpoints"] * 2,
+        },
         tmp_path / "large",
     )
     records = json.loads((tmp_path / "large/predictions.json").read_text())["records"]
@@ -410,16 +426,25 @@ def test_pinned_worker_runs_inference_plans_through_record_verification(
         {"target": plan["target"], "method": "ensemble", "checkpoints": checkpoints},
     )
     cohort = publish("evaluation-cohort", {"memberships": memberships})
-    evaluation = publish("model-evaluation", {
-        "purpose": "inference",
-        "predictorId": predictor["id"],
-        "cohortId": cohort["id"],
-        "features": {"feature": {"id": feature["id"]}, "dimensions": plan["data"]["featureDim"]},
-        "target": plan["target"],
-        "inference": plan["inference"],
-    })
+    evaluation = publish(
+        "model-evaluation",
+        {
+            "purpose": "inference",
+            "predictorId": predictor["id"],
+            "cohortId": cohort["id"],
+            "features": {
+                "feature": {"id": feature["id"]},
+                "dimensions": plan["data"]["featureDim"],
+            },
+            "target": plan["target"],
+            "inference": plan["inference"],
+        },
+    )
     inference = {
-        **plan, "purpose": "inference", "method": "ensemble", "checkpoints": checkpoints,
+        **plan,
+        "purpose": "inference",
+        "method": "ensemble",
+        "checkpoints": checkpoints,
         "data": {**plan["data"], "memberships": memberships},
     }
     inference["resources"].update(gpuIds=[], ramGbPerRun=0.01, maxConcurrentRuns=1, runsPerGpu=1)
@@ -432,7 +457,10 @@ def test_pinned_worker_runs_inference_plans_through_record_verification(
     assert outcome["summary"]["slide"]["count"] == len(memberships)
     assert outcome["summary"]["memberCount"] == 2
     assert set(outcome["artifacts"]) == {
-        "predictions.json", "summary.json", "slide-predictions.csv", "patient-predictions.csv",
+        "predictions.json",
+        "summary.json",
+        "slide-predictions.csv",
+        "patient-predictions.csv",
     }
 
 
@@ -441,8 +469,15 @@ def test_mean_logit_inference_records_exact_member_log_evidence(plan, tmp_path):
     unlabeled["inference"]["patientAggregation"] = "mean_logits"
     for row in unlabeled["data"]["memberships"]:
         row["label"] = None
-    evaluate({**unlabeled, "purpose": "inference", "method": "ensemble",
-              "checkpoints": plan["checkpoints"] * 2}, tmp_path / "logit-inference")
+    evaluate(
+        {
+            **unlabeled,
+            "purpose": "inference",
+            "method": "ensemble",
+            "checkpoints": plan["checkpoints"] * 2,
+        },
+        tmp_path / "logit-inference",
+    )
     content = json.loads((tmp_path / "logit-inference/predictions.json").read_text())
     for row in content["records"]:
         assert len(row["memberLogProbabilities"]) == 2

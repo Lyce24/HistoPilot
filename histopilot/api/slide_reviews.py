@@ -13,7 +13,12 @@ def slide_review_router(projects, filesystem):
         return SlideReviewService(projects.scientific_store(identity))
 
     @router.get("")
-    def list_reviews(identity: str, dataset_id: str, offset: int = Query(0, ge=0), limit: int = Query(200, ge=1, le=500)):
+    def list_reviews(
+        identity: str,
+        dataset_id: str,
+        offset: int = Query(0, ge=0),
+        limit: int = Query(200, ge=1, le=500),
+    ):
         return service(identity).list(dataset_id, offset=offset, limit=limit)
 
     @router.get("/{slide_id:path}")

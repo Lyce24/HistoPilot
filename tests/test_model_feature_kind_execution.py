@@ -21,8 +21,9 @@ __all__ = ["registry", "tc_execution"]
 def slide_bundle(service, tmp_path, protocol):
     dataset = service.store.get_dataset(protocol["manifest"]["datasetId"])
     ids = sorted({row["slideId"] for row in protocol["manifest"]["memberships"]})
-    document, _, _ = bundle(service.store, tmp_path, dataset, ids,
-                            name="slide-inventory", feature_kind="slide")
+    document, _, _ = bundle(
+        service.store, tmp_path, dataset, ids, name="slide-inventory", feature_kind="slide"
+    )
     return document
 
 
@@ -59,13 +60,19 @@ def test_launch_rejects_incompatible_older_frozen_batch(
 
 @pytest.mark.parametrize("kind,model", [("slide", "abmil"), ("patch", "slide_mlp")])
 def test_promotion_rejects_matching_receipts_for_incompatible_representation(
-    registry, tmp_path, kind, model,
+    registry,
+    tmp_path,
+    kind,
+    model,
 ):
     service, _ = registry
     selected_bundle = None
     if kind == "slide":
-        protocol = next(item for item in service.store.list_configurations("protocol")
-                        if item["manifest"]["spec"]["split"].get("mode") == "kfold")
+        protocol = next(
+            item
+            for item in service.store.list_configurations("protocol")
+            if item["manifest"]["spec"]["split"].get("mode") == "kfold"
+        )
         selected_bundle = slide_bundle(service, tmp_path, protocol)["id"]
     selection, _, _ = candidate(service, model=model, feature_bundle_id=selected_bundle)
     reviewed = service.preview(selection)

@@ -23,9 +23,7 @@ def evaluation(tmp_path, monkeypatch, task_center):
     service = EvaluationRunService(predictors.store, predictors.filesystem)
 
     monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", runtime)
-    service.jobs = ComputeJobService(
-        service.store, runtime=runtime, task_center=task_center.client
-    )
+    service.jobs = ComputeJobService(service.store, runtime=runtime, task_center=task_center.client)
     selected = EvaluationRunSelection(
         predictorId=predictor["id"], cohortId=cohort["id"], name="External evaluation"
     )
@@ -46,7 +44,12 @@ def test_evaluation_launch_uses_exact_saved_memberships_and_predictor_checkpoint
     identity = document["id"]
     assert service.get(identity)["execution"]["status"] == "not_started"
     plan = service._execution_plan(identity)
-    assert plan["data"]["memberships"] == cohort["manifest"]["memberships"]
+    # The job predicts label-blind: the same rows, without any label.
+    assert plan["labelsWithheld"] is True
+    assert plan["data"]["memberships"] == [
+        {key: value for key, value in row.items() if key != "label"}
+        for row in cohort["manifest"]["memberships"]
+    ]
     assert plan["checkpoints"] == predictor["manifest"]["checkpoints"]
     assert plan["target"] == predictor["manifest"]["target"]
     assert plan["method"] == "ensemble"
@@ -58,11 +61,18 @@ def test_evaluation_launch_uses_exact_saved_memberships_and_predictor_checkpoint
     ]
 
 
-def test_accepted_evaluation_retry_never_rebuilds_expensive_plan(evaluation, task_center, monkeypatch):
+def test_accepted_evaluation_retry_never_rebuilds_expensive_plan(
+    evaluation, task_center, monkeypatch
+):
     service, document, _, _ = evaluation
     first = service.launch(document["id"], "launch")
-    monkeypatch.setattr(service, "_execution_plan", lambda *_: pytest.fail(
-        "Accepted evaluation retry must not hold the project lock while rehashing source inputs"))
+    monkeypatch.setattr(
+        service,
+        "_execution_plan",
+        lambda *_: pytest.fail(
+            "Accepted evaluation retry must not hold the project lock while rehashing source inputs"
+        ),
+    )
     assert service.launch(document["id"], "launch")["planHash"] == first["planHash"]
     assert [task["attempt"] for task in compute_tasks(task_center)] == [1]
     with pytest.raises(StorageError) as caught:
@@ -172,7 +182,12 @@ def test_artifact_exports_require_completed_verified_output(evaluation, task_cen
 
 def test_review_namespace_override_is_a_structured_error(evaluation):
     service, _, predictor, cohort = evaluation
-    selected = EvaluationRunSelection(predictorId=predictor["id"], cohortId=cohort["id"], name="Review", patientIdentifiers="independent")
+    selected = EvaluationRunSelection(
+        predictorId=predictor["id"],
+        cohortId=cohort["id"],
+        name="Review",
+        patientIdentifiers="independent",
+    )
     with pytest.raises(StorageError) as error:
         service._review_cohort(selected, {}, {"spec": {"purpose": "review"}})
     assert error.value.code == "INVALID_REVIEW_COHORT"

@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from histopilot.resolvers import MAX_APPLY_PREDICTORS
 from histopilot.schemas.evaluations import ConfigurationId, InferenceSettings
 from histopilot.schemas.workspace import RequestModel
 
@@ -11,7 +12,9 @@ from histopilot.schemas.workspace import RequestModel
 class BulkEvaluationSelection(RequestModel):
     cohortId: ConfigurationId
     scope: Literal["all", "selected"] = "all"
-    predictorIds: list[ConfigurationId] | None = Field(default=None, max_length=256)
+    predictorIds: list[ConfigurationId] | None = Field(
+        default=None, max_length=MAX_APPLY_PREDICTORS
+    )
     namePrefix: str = Field(default="Evaluation", min_length=1, max_length=60)
     featureBundleId: ConfigurationId | None = None
     inference: InferenceSettings | None = None
@@ -26,6 +29,10 @@ class BulkEvaluationSelection(RequestModel):
 
     @model_validator(mode="after")
     def explicit_scope(self):
+        if self.predictorIds is not None and "scope" not in self.model_fields_set:
+            raise ValueError(
+                "State scope: selected to apply only these predictors; scope: all takes no IDs."
+            )
         if self.scope == "selected" and not self.predictorIds:
             raise ValueError("Select at least one predictor.")
         if self.scope == "all" and self.predictorIds is not None:
@@ -36,7 +43,9 @@ class BulkEvaluationSelection(RequestModel):
 
 
 class RunBulkEvaluation(BulkEvaluationSelection):
-    reviewedPredictorIds: list[ConfigurationId] = Field(min_length=1, max_length=256)
+    reviewedPredictorIds: list[ConfigurationId] = Field(
+        min_length=1, max_length=MAX_APPLY_PREDICTORS
+    )
     previewHash: str = Field(pattern=r"^[a-f0-9]{64}$")
     operationId: str = Field(min_length=1, max_length=128)
 
@@ -46,3 +55,15 @@ class RunBulkEvaluation(BulkEvaluationSelection):
         if len(set(value)) != len(value):
             raise ValueError("Reviewed predictor IDs must be distinct.")
         return sorted(value)
+
+
+def inference_unstated(selection: BulkEvaluationSelection) -> list[str]:
+    """Inference settings a request left out. Their defaults differ from Apply models, which
+    applies each predictor's own patient aggregation and threshold ("predictor")."""
+    if selection.inference is None:
+        return []
+    return [
+        name
+        for name in InferenceSettings.model_fields
+        if name not in selection.inference.model_fields_set
+    ]

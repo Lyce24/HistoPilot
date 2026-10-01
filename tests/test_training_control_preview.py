@@ -105,11 +105,15 @@ def with_recipe(context, **recipe):
 def test_legacy_preview_hash_and_findings_remain_identical(preview_context, monkeypatch):
     context = preview_context
     # Legacy AUROC recipes intentionally retain their original preview behavior.
-    spec = DevelopmentBatchSpec.model_validate({
-        **with_recipe(context, checkpointMetric="validation_auroc").model_dump(),
-        "recipe": {"checkpointMetric": "validation_auroc"},
-        "selectionMetric": None, "candidateSelection": None,
-    }, context={"legacy": True})
+    spec = DevelopmentBatchSpec.model_validate(
+        {
+            **with_recipe(context, checkpointMetric="validation_auroc").model_dump(),
+            "recipe": {"checkpointMetric": "validation_auroc"},
+            "selectionMetric": None,
+            "candidateSelection": None,
+        },
+        context={"legacy": True},
+    )
     for row in context.protocol["memberships"]:
         if row["partition"] == "val":
             row["label"] = "negative"

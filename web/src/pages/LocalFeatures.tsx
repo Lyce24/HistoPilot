@@ -20,7 +20,7 @@ import { extractionActive, trident } from '../api/trident';
 import { useHashParameters } from '../lib/hashRoute';
 import SlideListField from '../components/SlideListField';
 import { slideListReady } from '../api/slideLists';
-import { editFeatureSource } from '../lib/featureSource';
+import { editFeatureSource, extractionFeatureUpdate } from '../lib/featureSource';
 import FeatureFolderExamples from '../components/FeatureFolderExamples';
 import VersionLabelEditor from '../components/VersionLabelEditor';
 import FeatureBundlePreparation from '../components/FeatureBundlePreparation';
@@ -170,7 +170,7 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest, packReque
         actions={activeView === 'bundles' ? <StageCreateButton type="button" disabled={busy || bundleBusy} onClick={() => prepareBundle()}>Create feature bundle</StageCreateButton> : <StageBackButton disabled={busy || bundleBusy} onClick={openLibrary}>Back to feature bundles</StageBackButton>}
       />
       {activeView !== 'bundles' ? <SetupContext input="Slide images or extracted features; a dataset is optional" output="A verified feature bundle for model development">
-        A bundle saves verified features and optional packs for reuse. In Experimental Setup, select targets and splits with a feature bundle to check feature coverage and compatibility before training.
+        A bundle saves verified features and optional packs for reuse. In an experiment's inputs, select targets and splits with a feature bundle to check feature coverage and compatibility before training.
       </SetupContext> : null}
       <PreparationNotice context={context} />
       {context.datasetId ? <p className="muted">All project bundles are available. The selected dataset is an optional slide filter when adding features.</p> : null}
@@ -216,7 +216,7 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest, packReque
           </div>
           <div className="pfm-content" hidden={mode !== 'extract'}>
             {extractionStarted ? <TridentExtraction workspace={w} requestedJob={extractionRequest} initialDatasetId={context.datasetId} datasets={datasets.data?.datasets ?? []} onAttach={(input) => {
-              edit({ ...input, slideList: null, slideListPath: null, layout: 'auto', fileSuffix: '.h5', recursive: false, idSuffix: '', coordinatesPath: undefined });
+              edit(extractionFeatureUpdate(input));
               setMode('attach'); setView('add'); setSourceStep('settings');
             }} /> : null}
           </div>
@@ -407,7 +407,7 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest, packReque
                   setSelectedBundle(bundle.id);
                   setView('detail');
                   setMessage(`Bundle “${bundle.versionLabel?.tag || 'Feature bundle'}” frozen.`);
-                  window.location.hash = preparationLink('experimental-setup', { datasetId: context.datasetId, bundleId: bundle.id, targetSplitId: context.targetSplitId, saved: 'bundle' });
+                  window.location.hash = preparationLink('experiments', { datasetId: context.datasetId, bundleId: bundle.id, targetSplitId: context.targetSplitId, saved: 'bundle' });
                   window.scrollTo({ top: 0 });
                 }} />
             </Panel>

@@ -19,10 +19,30 @@ from histopilot.doctor import system_report
 from histopilot.runner_cli import register_runner_commands
 from histopilot.service_lock import service_lock
 
+# The Task Center starts its runner as `python -m histopilot.cli runner run`, so a fault in
+# the noun-verb commands must never stop this module from loading. Tests import them directly.
+try:
+    from histopilot.commands import register_commands
+    from histopilot.commands.common import HistoPilotGroup
+except Exception as error:  # noqa: BLE001 - any import fault; reported, never fatal
+    register_commands, HistoPilotGroup = None, None
+    _COMMANDS_ERROR = error
+else:
+    _COMMANDS_ERROR = None
+
 app = typer.Typer(
-    no_args_is_help=True, help="Local-first PFM–MIL workflows for computational pathology."
+    no_args_is_help=True,
+    help="Local-first PFM–MIL workflows for computational pathology.",
+    **({"cls": HistoPilotGroup} if HistoPilotGroup else {}),
 )
 
+if register_commands is not None:
+    try:
+        register_commands(app)
+    except Exception as error:  # noqa: BLE001
+        _COMMANDS_ERROR = error
+if _COMMANDS_ERROR is not None:
+    typer.echo(f"histopilot: noun-verb commands unavailable: {_COMMANDS_ERROR!r}", err=True)
 register_archive_commands(app)
 register_runner_commands(app)
 
@@ -123,7 +143,7 @@ def _ensure_task_center_runner() -> None:
         typer.echo(f"Tasks      Task Center runner not started: {outcome.get('reason')}", err=True)
 
 
-@app.command()
+@app.command(rich_help_panel="Local service")
 def serve(
     workspace: Path | None = typer.Option(
         None, help="Directory for local application metadata/artifacts."
@@ -144,10 +164,16 @@ def serve(
     browser: bool = typer.Option(
         True, "--browser/--no-browser", help="Open the local URL in a browser."
     ),
+    login: bool | None = typer.Option(
+        None,
+        "--login/--no-login",
+        help="Require the printed link before handing out the session (default: config).",
+    ),
     runner: bool = typer.Option(
         True,
         "--runner/--no-runner",
-        help="Start the machine-wide Task Center runner in tmux if it is not running.",
+        help="Start the machine-wide Task Center runner in tmux if it is not running, and "
+        "restart it when its code changed. HISTOPILOT_TASK_CENTER_AUTOSTART=0 turns this off.",
     ),
 ) -> None:
     """Start one local control service and serve the packaged browser application."""
@@ -163,6 +189,7 @@ def serve(
             host=host,
             port=port,
             dev=dev,
+            login=login,
         )
         for root in settings.data_roots:
             if not root.is_dir():
@@ -173,8 +200,15 @@ def serve(
             )
         with service_lock(settings.workspace):
             url = f"http://{settings.host}:{settings.port}"
+            if settings.login:
+                from histopilot.api.login import ensure_secret
+
+                # The link signs this browser in; other local users and programs cannot.
+                url = f"{url}/?login={ensure_secret(settings.port)}"
             typer.echo(
-                f"HistoPilot · local control service\nWorkspace  {settings.workspace}\nBrowser    {url}\nCompute    TRIDENT extraction; ABMIL k-fold training in Model development"
+                f"HistoPilot · local control service\nWorkspace  {settings.workspace}\n"
+                f"Browser    {url}\n"
+                "Compute    Task Center: feature extraction, MIL training, predictor runs, attention"
             )
             if not dev:
                 _warn_if_stale_bundle(settings.static_dir)
@@ -222,13 +256,37 @@ def serve(
         raise typer.Exit(1) from exc
 
 
-@app.command()
+@app.command(rich_help_panel="Local service")
 def doctor(
     json_output: bool = typer.Option(
         False, "--json", help="Emit a machine-readable environment report."
     ),
+    agent_isolation: bool = typer.Option(
+        False,
+        "--agent-isolation",
+        help="Check, from where an AI agent works, that nothing private is reachable.",
+    ),
+    private_url: list[str] = typer.Option(
+        [], "--private-url", help="The private service as seen from here; repeatable."
+    ),
+    private_path: list[str] = typer.Option(
+        [], "--private-path", help="A private folder that must not be readable; repeatable."
+    ),
 ) -> None:
     """Inspect control-service dependencies without initializing CUDA or loading weights."""
+    if agent_isolation:
+        from histopilot.doctor import isolation_report
+
+        isolation = isolation_report(private_url, private_path)
+        if json_output:
+            typer.echo(json.dumps(isolation, indent=2))
+        else:
+            for item in isolation["checks"]:
+                typer.echo(f"{item['status'].upper():5} {item['name']}: {item['detail']}")
+            typer.echo(f"\n{isolation['note']}")
+        if not isolation["isolated"]:
+            raise typer.Exit(1)
+        return
     report = system_report()
     if json_output:
         typer.echo(json.dumps(report, indent=2))
@@ -237,6 +295,21 @@ def doctor(
     for name, package in report["packages"].items():
         typer.echo(f"{name:18} {package['version'] or 'not installed'}")
     typer.echo(f"\n{report['note']}")
+
+
+def _deprecated(replacement: str) -> None:
+    """Older flat commands keep their output; a note on stderr names the replacement."""
+    typer.echo(
+        f"Note: this older command still works; its replacement is `{replacement}`.", err=True
+    )
+
+
+# What to do next, for errors the older flat commands meet since experiments own batches.
+_FLAT_COMMAND_HINTS = {
+    "EXPERIMENT_SUBMISSION_REQUIRED": "This batch belongs to an experiment, which launches its "
+    "batches when it starts: `histopilot experiment freeze EXPERIMENT`, then `histopilot "
+    "experiment start EXPERIMENT`; resume one batch later with `histopilot batch resume BATCH`.",
+}
 
 
 def _feature_api(url: str, path: str, payload: dict | None = None) -> dict | None:
@@ -265,18 +338,22 @@ def _feature_api(url: str, path: str, payload: dict | None = None) -> dict | Non
         with urlopen(request, timeout=45) as response:
             return json.load(response)
     except HTTPError as exc:
+        code = None
         try:
-            message = json.loads(exc.read(65536)).get("detail", str(exc))
+            body = json.loads(exc.read(65536))
+            message, code = body.get("detail", str(exc)), body.get("code")
         except (ValueError, AttributeError):
             message = str(exc)
         typer.echo(f"Local operation failed: {message}", err=True)
+        if code in _FLAT_COMMAND_HINTS:
+            typer.echo(_FLAT_COMMAND_HINTS[code], err=True)
         raise typer.Exit(1) from exc
     except (URLError, OSError, KeyError, ValueError) as exc:
         typer.echo(f"Cannot contact the local service: {exc}", err=True)
         raise typer.Exit(1) from exc
 
 
-@app.command("pack-features")
+@app.command("pack-features", rich_help_panel="Older commands")
 def pack_features(
     feature_set_id: str = typer.Argument(..., help="Frozen feature configuration ID."),
     project: str = typer.Option(..., help="Saved project ID."),
@@ -302,6 +379,8 @@ def pack_features(
 ) -> None:
     """Validate, create, or verify an existing pack in a durable CPU worker."""
     from histopilot.schemas.feature_packs import FeaturePackSpec
+
+    _deprecated("histopilot pack create --from FILE")
 
     if existing_pack and (output or validate_only or dtype != "preserve"):
         raise typer.BadParameter(
@@ -336,7 +415,7 @@ def pack_features(
     typer.echo(json.dumps(result, indent=2))
 
 
-@app.command("feature-jobs")
+@app.command("feature-jobs", rich_help_panel="Older commands")
 def feature_jobs(
     project: str = typer.Option(..., help="Saved project ID."),
     job: str | None = typer.Option(
@@ -346,6 +425,7 @@ def feature_jobs(
     url: str = typer.Option("http://127.0.0.1:8787", help="Running local control service URL."),
 ) -> None:
     """List feature jobs or inspect/cancel one through the local API."""
+    _deprecated("histopilot pack list | show | cancel")
     if cancel and not job:
         raise typer.BadParameter("--cancel requires --job.")
     route = f"/projects/{quote(project, safe='')}/feature-packs"
@@ -356,7 +436,7 @@ def feature_jobs(
     typer.echo(json.dumps(_feature_api(url, route, {} if cancel else None), indent=2))
 
 
-@app.command("verify-feature-pack")
+@app.command("verify-feature-pack", rich_help_panel="Local service")
 def verify_feature_pack(
     path: Path = typer.Argument(..., exists=True, file_okay=False),
 ) -> None:
@@ -371,7 +451,7 @@ def verify_feature_pack(
     typer.echo(json.dumps(manifest, indent=2))
 
 
-@app.command("train-batch")
+@app.command("train-batch", rich_help_panel="Older commands")
 def train_batch(
     batch: str = typer.Argument(..., help="Frozen development batch configuration ID."),
     project: str = typer.Option(..., help="Saved project ID."),
@@ -379,7 +459,8 @@ def train_batch(
     operation_id: str | None = typer.Option(None, help="Reuse an ID to retry this action safely."),
     url: str = typer.Option("http://127.0.0.1:8787", help="Running local control service URL."),
 ) -> None:
-    """Launch a frozen ABMIL k-fold batch through the same API as the browser."""
+    """Launch or resume a frozen development batch through the same API as the browser."""
+    _deprecated("histopilot experiment start EXPERIMENT, or histopilot batch resume BATCH")
     route = f"/projects/{quote(project, safe='')}/mil-experiments/batches/{quote(batch, safe='')}"
     result = _feature_api(
         url,
@@ -389,7 +470,7 @@ def train_batch(
     typer.echo(json.dumps(result, indent=2))
 
 
-@app.command("training-status")
+@app.command("training-status", rich_help_panel="Older commands")
 def training_status(
     batch: str = typer.Argument(..., help="Frozen development batch configuration ID."),
     project: str = typer.Option(..., help="Saved project ID."),
@@ -398,8 +479,15 @@ def training_status(
     url: str = typer.Option("http://127.0.0.1:8787", help="Running local control service URL."),
 ) -> None:
     """Inspect a training batch, read OOF results, or request cancellation."""
+    _deprecated("histopilot batch show | results | cancel BATCH")
     if cancel and results:
         raise typer.BadParameter("Choose either --cancel or --results.")
+    if results:
+        typer.echo(
+            "Note: an experiment's results pool all of its batches: "
+            "`histopilot experiment results EXPERIMENT`.",
+            err=True,
+        )
     route = f"/projects/{quote(project, safe='')}/mil-experiments/batches/{quote(batch, safe='')}"
     suffix = "/cancel" if cancel else "/results" if results else "/execution"
     payload = {"operationId": f"cancel:{uuid4()}"} if cancel else None

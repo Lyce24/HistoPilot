@@ -1,3 +1,4 @@
+import { templates } from './templates';
 import type { GallerySlide, Interpretation, InterpretationExecution, InterpretationSlideResult, VisualizeItem, VisualizeSelection } from '../api/interpretation';
 import type { ResourcePolicy } from '../api/development';
 import { computeActive } from '../api/predictors';
@@ -11,7 +12,9 @@ export interface InterpretationWizardDraft {
   version: 1; predictorId: string; datasetId: string | null; bundleId: string | null; packChoice: string | null;
   selected: GallerySlide[]; search: string; offset: number; resources: ResourceDraft; batch: InterpretationBatch | null;
 }
-export const defaultResourceDraft = (): ResourceDraft => ({ device: 'cpu', gpu: '0', threads: '4', ram: '8', width: '', height: '' });
+const interpretation = templates.resources.interpretation;
+export const defaultResourceDraft = (): ResourceDraft => ({ device: interpretation.device as ResourceDraft['device'], gpu: String(interpretation.gpu),
+  threads: String(interpretation.cpuThreadsPerRun), ram: String(interpretation.ramGbPerRun), width: '', height: '' });
 /** Older links used separate compute, results and viewer stages; all now open the review. */
 export function wizardStage(parameters: URLSearchParams): InterpretationStage {
   const value = parameters.get('stage');

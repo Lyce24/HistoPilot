@@ -27,6 +27,7 @@ import RunStatusChip from './RunStatusChip';
 import LegacyRecordNote, { createdBeforeTaskCenter } from './LegacyRecordNote';
 import { StagePage, StageSteps } from './StageWorkflow';
 import { readHashParameters } from '../lib/hashRoute';
+import { extractionFeatureInput, type ExtractionFeatureInput } from '../lib/featureSource';
 import './TridentExtraction.css';
 
 const stages = [
@@ -72,7 +73,7 @@ export default function TridentExtraction({
   datasets: DatasetVersion[];
   initialDatasetId?: string;
   requestedJob?: { id: string };
-  onAttach: (input: { datasetId: string | null; path: string; encoderId?: string; featureKind?: 'patch' | 'slide'; sourceExtractionJobId?: string }) => void;
+  onAttach: (input: ExtractionFeatureInput) => void;
 }) {
   const project = w.project.id;
   const client = useQueryClient();
@@ -587,10 +588,10 @@ function JobDetail({
   dataset?: DatasetVersion;
   busy: boolean;
   onUseSettings: () => void;
-  onAttach: (input: { datasetId: string | null; path: string; encoderId?: string; featureKind?: 'patch' | 'slide'; sourceExtractionJobId?: string }) => void;
+  onAttach: (input: ExtractionFeatureInput) => void;
 }) {
   const layout = job.result?.outputLayout ?? job.outputLayout;
-  const featurePath = job.result?.featurePath ?? job.result?.featureDirectory;
+  const attach = extractionFeatureInput(job);
   // Task Center runs: progress, cancel, attempts and the log are in the Task Center; this page
   // keeps the settings, findings, coverage and the outputs. Runs created before the Task Center
   // are read-only: their saved progress, error and log.
@@ -619,10 +620,10 @@ function JobDetail({
       <div className="inline-actions trident-job-actions">
         <button type="button" className="btn btn-secondary btn-small" disabled={busy} onClick={onUseSettings}><Icon name="reset" size={15} /> {extractionActive(job) || job.state === 'succeeded' ? 'Reuse settings' : 'Review & resume'}</button>
       </div>
-      {job.state === 'succeeded' && featurePath ? (
+      {attach ? (
         <div className="trident-completion">
           <div><strong>Features are ready to review</strong><p>{layout?.featureKind === 'slide' ? 'One embedding per slide. Inspect coverage, then name and freeze the bundle. Slide embeddings train a slide probe; they carry no patch grid, so they have no attention to show and are not packed.' : 'Inspect coverage, choose whether to include an existing or new pack, then name and freeze the bundle.'}</p></div>
-          <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={() => onAttach({ datasetId: job.spec.datasetId ?? null, path: featurePath, encoderId: String((layout?.featureKind === 'slide' ? job.spec.options.slide_encoder : job.spec.options.patch_encoder) || '') || undefined, featureKind: layout?.featureKind ?? 'patch', sourceExtractionJobId: job.id })}>Inspect features for a bundle <Icon name="arrow" size={15} /></button>
+          <button type="button" className="btn btn-primary btn-small" disabled={busy} onClick={() => onAttach(attach)}>Inspect features for a bundle <Icon name="arrow" size={15} /></button>
         </div>
       ) : null}
       {layout ? <details className="trident-run-details"><summary>Output folders</summary><OutputLayout layout={layout} /></details> : null}

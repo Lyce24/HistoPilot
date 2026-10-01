@@ -1,3 +1,4 @@
+import { fromTemplate, templates } from '../lib/templates';
 import { request, requestScientificSave } from './client';
 import type { Condition, DataRecord, Finding, ProtocolCohortStats, ProtocolSpec, ScientificDraft, VersionLabel, VersionLabelInput } from './scientific';
 
@@ -199,7 +200,7 @@ export interface TargetSplit {
   };
 }
 
-/** `required` with no `id`: the testing set has no derived evaluation or inference cohort yet.
+/** `required` with no `id`: the testing set has no derived labeled or unlabeled cohort yet.
  * `failed`: the last attempt to create it (at freeze or a retry) failed with `error`. */
 export interface TargetSplitTestCohort {
   required: boolean;
@@ -211,11 +212,8 @@ export interface TargetSplitTestCohort {
 export type TargetSplitDraft = ScientificDraft<TargetSplitSpec>;
 
 export function newTargetSplitSpec(datasetId = '', seed = 42): TargetSplitSpec {
-  return {
-    datasetId, splitUnit: 'slide', target: { field: '', task: '', unit: 'slide', classes: [], labels: {}, missing: 'block', unmapped: 'block' },
-    predictors: [], eligibility: [],
-    split: { method: 'random', testFraction: 0.2, seed, stratify: false, trainRules: [], testRules: [], trainValues: [], testValues: [] },
-  };
+  const starter = fromTemplate<TargetSplitSpec>(templates.starters.targetSplit);
+  return { ...starter, datasetId, split: { ...starter.split, seed } };
 }
 
 /** Keep each selection method free of settings from a different method. */
@@ -231,8 +229,9 @@ export function targetSplitTestingRemainder(split: TargetSplitSpec['split'], rem
   return remaining ? { ...split, testRemaining: true, testRules: [] } : { ...split, testRemaining: undefined, testRules: restore };
 }
 
-export function targetSplitSetupLink(record: Pick<TargetSplit, 'id' | 'manifest'>): string {
-  return `#experimental-setup?${new URLSearchParams({ dataset: record.manifest.datasetId, targetSplit: record.id })}`;
+/** Experiments, carrying this frozen target/split version into a new experiment's inputs. */
+export function targetSplitExperimentLink(record: Pick<TargetSplit, 'id' | 'manifest'>): string {
+  return `#experiments?${new URLSearchParams({ dataset: record.manifest.datasetId, targetSplit: record.id })}`;
 }
 
 const prefix = (project: string) => `/projects/${encodeURIComponent(project)}`;

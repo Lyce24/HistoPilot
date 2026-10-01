@@ -1,2 +1,8 @@
-recursive-include histopilot/resources *.json
+# Not recursive: resources/docs links to docs/, which holds private, gitignored files.
+include histopilot/resources/*.json
 recursive-include histopilot/static *
+include histopilot/resources/docs/user-guide.md
+include histopilot/resources/docs/methods.md
+include histopilot/resources/docs/cli-contract.md
+include histopilot/resources/docs/error-codes.md
+include histopilot/resources/docs/agents.md

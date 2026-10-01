@@ -638,3 +638,12 @@ def test_clinical_control_service_does_not_import_training_libraries():
         timeout=15,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_an_analysis_without_a_reference_keeps_its_earlier_content():
+    run, standard = "configuration-" + "a" * 64, "configuration-" + "b" * 64
+    # Analyses saved before reference standards never carried the field: their content,
+    # ID and operation replays stay as they were.
+    assert "referenceId" not in ClinicalSelection(evaluationId=run).model_dump()
+    chosen = ClinicalSelection(evaluationId=run, referenceId=standard).model_dump()
+    assert chosen["referenceId"] == standard

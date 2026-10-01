@@ -10,9 +10,9 @@ export default function EvaluationMethodComparison({ records, predictors, cohort
 }) {
   const comparisons = compareEvaluationMethods(records, predictors);
   return <section className="evaluation-comparison" aria-labelledby="method-comparison-title"><h3 id="method-comparison-title">Ensemble vs refit</h3>
-    <p className="muted">Compare the same experiment, batch, configuration, training seed and split seed on the same test cohort and scoring unit. Means use matched pairs only, with the latest completed evaluation for each method. Unmatched results are counted separately.</p>
+    <p className="muted">Compare the same experiment, batch, configuration, training seed and split seed on the same labeled cohort and scoring unit. Means use matched pairs only, with the latest completed run for each method. Unmatched results are counted separately.</p>
     <p className="muted">Freeze the strategy using development evidence before external evaluation. These method means are descriptive; use the paired patient comparison for confidence intervals on model differences.</p>
-    {!comparisons.length ? <p>Completed evaluations with available scores will appear here. Evaluate both methods from selected experiments to form matched comparisons.</p> : comparisons.map((group) => {
+    {!comparisons.length ? <p>Completed scored runs will appear here. Apply both methods from the same experiments to a labeled cohort to form matched comparisons.</p> : comparisons.map((group) => {
       const auroc = pairedEvaluationMean(group.pairs, 'auroc'), accuracy = pairedEvaluationMean(group.pairs, 'accuracy');
       return <div key={group.key} className="evaluation-comparison-context" data-cohort={group.cohortId} data-unit={group.unit}>
         <h4>{cohortName(group.cohortId)} · {group.unit} scoring</h4>

@@ -14,17 +14,24 @@ import './SplitStrategy.css';
 type Split = ProtocolSpec['split'];
 export const strategyNames: Partial<Record<Split['mode'], string>> = {
   kfold: 'K-fold cross-validation',
+  predefined_folds: 'Predefined folds',
+  leave_one_domain_out: 'Leave one site/cohort out (LOSO/LOCO)',
+  held_out: 'Held-out assessment',
   monte_carlo: 'Monte Carlo cross-validation',
-  leave_one_domain_out: 'Leave-one-site/cohort-out CV (LOSO/LOCO)',
   nested_kfold: 'Nested K-fold cross-validation',
-  held_out: 'Development holdout',
 };
 const strategyDescriptions: Partial<Record<Split['mode'], string>> = {
-  kfold: 'Rotate held-out assessment folds.',
-  monte_carlo: 'Repeat independent random splits.',
+  kfold: 'Rotate generated assessment folds.',
+  predefined_folds: 'Use the fold each unit has in a dataset column, such as a published split.',
   leave_one_domain_out: 'Assess one unseen site or cohort at a time.',
+  held_out: 'Assess one held-out share of the training set.',
+  monte_carlo: 'Repeat independent random splits.',
   nested_kfold: 'Separate model tuning from assessment.',
-  held_out: 'Use one development assessment split.',
+};
+/** Why a strategy only plans: training needs each unit assessed at most once per split seed. */
+const planOnlyReasons: Partial<Record<Split['mode'], string>> = {
+  monte_carlo: 'Planning only: a unit can be assessed more than once per seed.',
+  nested_kfold: 'Planning only: needs a search inside each outer fold.',
 };
 const percent = (value: number) => `${Number((value * 100).toFixed(1))}%`;
 
@@ -100,7 +107,7 @@ export function SplitStrategy({
               ))}
             </span>
             <strong>{name}</strong>
-            <small>{supportedModes && !supportedModes.includes(value as Split['mode']) ? 'Training support is not available yet.' : strategyDescriptions[value as Split['mode']]}</small>
+            <small>{supportedModes && !supportedModes.includes(value as Split['mode']) ? planOnlyReasons[value as Split['mode']] ?? 'Planning only.' : strategyDescriptions[value as Split['mode']]}</small>
           </label>
         ))}
       </fieldset>
@@ -137,7 +144,7 @@ export function SplitStrategy({
             aria-describedby={seedsError ? seedsErrorId : undefined}
             onChange={(event) => onSeedsChange(event.target.value)}
           />
-          <small>Up to {MAX_SPLIT_SEEDS} seeds. Each seed gives a different fold assignment.</small>
+          <small>{split.mode === 'held_out' ? 'One seed: a held-out assessment trains with one split. Repeat it over training seeds in the hyperparameters.' : split.mode === 'predefined_folds' || split.mode === 'leave_one_domain_out' ? `Up to ${MAX_SPLIT_SEEDS} seeds. The assessment folds are fixed; each seed draws a different early-stop validation.` : `Up to ${MAX_SPLIT_SEEDS} seeds. Each seed gives a different fold assignment.`}</small>
         </label>
         {split.mode === 'kfold' ? (
           <NumberSetting
@@ -209,7 +216,7 @@ export function SplitStrategy({
         />
         <span>
           Keep all slides of a case in the same fold
-          <small>Uses each slide's case identifier from the dataset (for example Unik#). No case is both trained on and assessed, which matches applying the model to new cases. Labels, targets and scoring stay per slide; a case whose parts have different grades keeps each slide's grade. Every training slide needs a case identifier.</small>
+          <small>Uses each slide's case identifier from the dataset (such as a case or accession number). No case is both trained on and assessed, which matches applying the model to new cases. Labels, targets and scoring stay per slide; a case whose parts have different grades keeps each slide's grade. Every training slide needs a case identifier.</small>
         </span>
       </label> : null}
       {showPercentages && split.pools?.validationSource !== 'fixed' ? (
@@ -252,10 +259,16 @@ export function SplitStrategy({
         <>
           <p className="callout">
             Rotate sites or cohorts within development data. Early-stop validation uses fitting
-            sites only.
+            sites only.{split.domainPolicy === 'selected' ? ' Only the selected sites are assessed; the others always train, so out-of-fold results cover the selected sites only.' : ''}
           </p>
           <DomainSettings split={split} onChange={onChange} fieldContext={fieldContext} />
         </>
+      ) : null}
+      {split.mode === 'predefined_folds' ? <FoldSettings split={split} onChange={onChange} fieldContext={fieldContext} splitUnit={splitUnit} /> : null}
+      {split.mode === 'held_out' ? (
+        <p className="callout">
+          One stratified share of the training set is assessed; early-stop validation is drawn from the rest. Out-of-fold results cover that share only, so k-fold gives a more stable estimate when every {splitUnit === 'slide' ? 'slide' : 'group'} should be assessed.
+        </p>
       ) : null}
       <p className="muted">
         {splitUnit === 'slide' ? 'Preview calculates exact slide assignments, class counts and feasibility. Percentages are rounded to whole slides.' : splitUnit === 'patient' ? 'Preview & validate calculates exact group assignments, class counts and feasibility. Percentages are approximate because a group stays intact.' : 'Preview calculates exact assignments, class counts and feasibility for the saved split unit.'}
@@ -329,6 +342,44 @@ function AllocationPreview({
         {`Assessment ${splitUnit === 'slide' ? 'slides' : splitUnit === 'patient' ? 'groups' : 'records'} stay separate from fitting and early stopping. Percentages are applied within the selected development cohort.`}
       </small>
     </figure>
+  );
+}
+/** Predefined folds: the column that assigns each unit's assessment fold, and its values. */
+function FoldSettings({
+  split,
+  onChange,
+  fieldContext,
+  splitUnit,
+}: {
+  split: Split;
+  onChange: (value: Partial<Split>) => void;
+  fieldContext: ProtocolFieldContext;
+  splitUnit: 'slide' | 'patient' | 'unknown';
+}) {
+  const { project, datasetId, dictionary } = fieldContext;
+  const field = split.foldField ?? '';
+  const values = useQuery({
+    queryKey: [...scienceKey(project), 'fold-values', datasetId, field],
+    queryFn: () => scientific.queryDataset(project, datasetId, { field, search: '', filters: [], offset: 0, limit: 1 }),
+    enabled: Boolean(datasetId && field && dictionary.some((item) => item.key === field)),
+  });
+  return (
+    <div className="stack">
+      <label className="label">
+        Fold column
+        <select className="field" value={field} onChange={(event) => onChange({ foldField: event.target.value || undefined })}>
+          <option value="">Choose a column</option>
+          {dictionary.map((item) => <option key={item.key}>{item.key}</option>)}
+        </select>
+        <small>For example the fold numbers of a published study, imported with the dataset.</small>
+      </label>
+      {field ? <FieldProfile {...fieldContext} field={field} /> : null}
+      <ErrorNotice error={values.error} />
+      {values.data ? <DistributionBars caption={`${field} · slides across the full dataset, before eligibility rules`} values={values.data.valueCounts} /> : null}
+      <p className="callout">
+        Each value is one assessment fold: its {splitUnit === 'slide' && !split.groupByPatient ? 'slides are' : 'groups are'} assessed by the model trained on every other fold, and early-stop validation is drawn from those. Every training {splitUnit === 'slide' && !split.groupByPatient ? 'slide' : 'group'} needs a value, and the slides of a group must share one. The folds are the same for every split seed.
+      </p>
+    </div>
   );
 }
 function DomainSettings({

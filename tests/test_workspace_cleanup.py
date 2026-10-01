@@ -204,6 +204,31 @@ def test_graph_includes_revisions_saved_inputs_test_cohorts_and_validation_recei
     assert set(report["requiredKeys"]) == {key(bundle), key(cohort), key(saved, "draft")}
 
 
+def test_a_frozen_design_is_named_after_its_experiment(context):
+    store, service = context
+    source = dataset(store)
+    design = configuration(
+        store,
+        source,
+        "experiment-setup",
+        experimentId="draft-1",
+        experiment={"id": "draft-1", "revision": 2, "name": "Study baseline"},
+    )
+    predictor = configuration(
+        store,
+        source,
+        "frozen-predictor",
+        name="Fold ensemble",
+        experiment={"name": "Study baseline"},
+    )
+    records = {item["key"]: item for item in service.catalog()["items"]}
+    assert records[key(design)]["name"] == "Study baseline"
+    assert records[key(design)]["kind"] == "experiment-setup"
+    assert records[key(design)]["experimentKey"] == "draft:draft-1"
+    # A record with a name of its own keeps it.
+    assert records[key(predictor)]["name"] == "Fold ensemble"
+
+
 def test_new_consumer_invalidates_review_and_later_restore_does_not_replay_trash(context):
     store, service = context
     source = dataset(store)

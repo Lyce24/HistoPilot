@@ -1398,3 +1398,15 @@ select.field {
     margin-top: 50px;
   }
 }
+
+/* A project shared with AI agents says so on every page. */
+.ai-exposure-indicator {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: none;
+}

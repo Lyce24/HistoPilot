@@ -14,6 +14,7 @@ from histopilot.schemas.model_experiments import (
     UpdateModelExperiment,
 )
 from histopilot.schemas.predictors import PredictorAction
+from histopilot.storage.project_lock import StorageError
 
 
 def model_experiments_router(projects, filesystem):
@@ -32,6 +33,13 @@ def model_experiments_router(projects, filesystem):
 
     @router.post("", status_code=201)
     def create(identity: str, payload: CreateModelExperiment):
+        if "setupVersion" not in payload.model_fields_set:
+            # An omitted version would make a legacy record without an experiment design.
+            raise StorageError(
+                "State setupVersion: 1 for a new experiment; null keeps the legacy record form.",
+                "SETUP_VERSION_REQUIRED",
+                422,
+            )
         return service(identity).create(payload)
 
     @router.get("/headlines")

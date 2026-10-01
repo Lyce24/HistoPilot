@@ -12,7 +12,7 @@ from support.compute import compute_tasks
 from support.predictors import candidate, freeze
 from support.projects import lifecycle
 
-from histopilot.application.bulk_evaluations import BulkEvaluationService
+from histopilot.application.bulk_evaluations import BulkEvaluationService, run_name
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection, RunBulkEvaluation
 from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
@@ -46,9 +46,7 @@ def another(service, name):
     return freeze(service.evaluations.predictors, selected)[0]
 
 
-def test_all_scope_freezes_reviewed_ids_and_does_not_include_later_predictors(
-    bulk, task_center
-):
+def test_all_scope_freezes_reviewed_ids_and_does_not_include_later_predictors(bulk, task_center):
     service, first, cohort = bulk
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     preview = service.preview(choice)
@@ -64,9 +62,7 @@ def test_all_scope_freezes_reviewed_ids_and_does_not_include_later_predictors(
     assert len(compute_tasks(task_center)) == 1
 
 
-def test_mixed_compatibility_review_skips_only_explicitly_blocked_predictors(
-    bulk, task_center
-):
+def test_mixed_compatibility_review_skips_only_explicitly_blocked_predictors(bulk, task_center):
     service, valid, cohort = bulk
     invalid = another(service, "Changed weights")
     Path(invalid["manifest"]["checkpoints"][0]["path"]).write_bytes(b"changed")
@@ -197,9 +193,7 @@ def test_deleted_explicit_selection_requires_removal_before_submission(bulk, tas
     assert not compute_tasks(task_center)
 
 
-def test_group_cancellation_marks_existing_jobs_pending_until_workers_stop(
-    bulk, task_center
-):
+def test_group_cancellation_marks_existing_jobs_pending_until_workers_stop(bulk, task_center):
     service, _, cohort = bulk
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
     result = service.run(run_request(choice, service.preview(choice)))
@@ -214,7 +208,9 @@ def test_group_cancellation_marks_existing_jobs_pending_until_workers_stop(
     # The worker records the cancellation and exits; only then is the group cancelled.
     member = cancelled["items"][0]["evaluationId"]
     folder = service.evaluations.jobs.folder(member)
-    write_json_atomic(folder / "state.json", {**read_json_bounded(folder / "state.json"), "status": "cancelled"})
+    write_json_atomic(
+        folder / "state.json", {**read_json_bounded(folder / "state.json"), "status": "cancelled"}
+    )
     task_center.finish(task["id"], "cancelled")
     assert service.get(result["id"])["status"] == "cancelled"
 
@@ -229,9 +225,7 @@ def test_batch_routes_precede_the_individual_evaluation_getter():
     assert paths.index(base + "/bulk/{batch_id}") < paths.index(base + "/{evaluation_id}")
 
 
-def test_concurrent_cancel_between_members_prevents_the_next_launch(
-    bulk, task_center, monkeypatch
-):
+def test_concurrent_cancel_between_members_prevents_the_next_launch(bulk, task_center, monkeypatch):
     service, _, cohort = bulk
     another(service, "Second")
     choice = BulkEvaluationSelection(cohortId=cohort["id"])
@@ -264,3 +258,13 @@ def test_concurrent_cancel_between_members_prevents_the_next_launch(
     assert len(compute_tasks(task_center)) == 1
     assert finished["counts"]["cancelled"] == 1
     assert finished["items"][0]["execution"]["cancellationRequested"]
+
+
+def test_run_names_carry_their_batch_so_two_models_never_read_alike():
+    model = {"name": "study3 · config 1 · seed 42 / split 42 · ensemble"}
+    assert run_name("Inference", model, "ABMIL baseline") == (
+        "Inference · ABMIL baseline · study3 · config 1 · seed 42 / split 42 · ensemble"
+    )
+    assert run_name("Inference", model, "nnMIL") != run_name("Inference", model, "ABMIL baseline")
+    assert run_name("Inference", model, None) == f"Inference · {model['name']}"
+    assert len(run_name("x" * 100, {"name": "y" * 100}, "z")) == 120

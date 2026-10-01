@@ -1,3 +1,4 @@
+import { fromTemplate, templates } from '../lib/templates';
 import { StageBackButton, StageContinueButton, StageCreateButton } from '../components/StageActions';
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -50,16 +51,10 @@ import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import './dataset-workflow.css';
 import { stageEyebrow } from '../lib/roadmap';
 
-export const newDatasetImportSpec = (workspace: Workspace): ImportSpec => ({
-  source: { path: '' },
-  slideIdColumn: '',
-  slideRoot: workspace.sources.find((source) => source.role === 'slides')?.path,
-  recursive: true,
-  includeMissingSlides: true,
-  missingValues: [''],
-  attributes: [],
-  patientIdFallback: 'unresolved',
-});
+export const newDatasetImportSpec = (workspace: Workspace): ImportSpec => {
+  const { source, slideIdColumn, ...rest } = fromTemplate<ImportSpec>(templates.starters.datasetImport);
+  return { source, slideIdColumn, slideRoot: workspace.sources.find((item) => item.role === 'slides')?.path, ...rest };
+};
 export default function LocalDataset({ workspace: w }: { workspace: Workspace }) {
   const project = w.project.id;
   const client = useQueryClient();
@@ -325,7 +320,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
       />
       <StagePage pageKey={`${view}-${view === 'import' ? step : versionId}`}>
       {view !== 'library' ? <SetupContext input="Slide table and optional slide images" output="A reusable metadata dataset for targets, filters and splits">
-        Build your dataset first, then prepare slide features and Targets & Splits independently. Targets & Splits saves the training and testing populations; Experimental Setup defines training folds and validation.
+        Build your dataset first, then prepare slide features and Targets & Splits independently. Targets & Splits saves the training and testing populations; an experiment's design defines training folds and validation.
       </SetupContext> : null}
       <ErrorNotice error={error ?? versions.error ?? savedDrafts.error} />
       <SavedNotice>{message}</SavedNotice>

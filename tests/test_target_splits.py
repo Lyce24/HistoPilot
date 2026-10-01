@@ -1095,7 +1095,7 @@ def requested_settings(method):
 def test_slide_split_exact_requested_counts_ignore_patient_grouping(
     construction, monkeypatch, method
 ):
-    _store, service, spec, rows = slide_construction(construction, 1111, 728)
+    _store, service, spec, rows = slide_construction(construction, 1000, 650)
     spec["split"] = requested_settings(method)
     monkeypatch.setattr(
         service.protocols,
@@ -1106,8 +1106,8 @@ def test_slide_split_exact_requested_counts_ignore_patient_grouping(
     result = service.preview_spec(spec)
     assert live["valid"], live["findings"]
     assert result["canFreeze"], result["findings"]
-    assert (live["summary"]["trainingSlides"], live["summary"]["testingSlides"]) == (728, 383)
-    assert (result["summary"]["trainingSlides"], result["summary"]["testingSlides"]) == (728, 383)
+    assert (live["summary"]["trainingSlides"], live["summary"]["testingSlides"]) == (650, 350)
+    assert (result["summary"]["trainingSlides"], result["summary"]["testingSlides"]) == (650, 350)
     assert result["summary"]["grouping"] == result["spec"]["splitUnit"] == "slide"
     assert result["algorithm"] == "histopilot-target-training-testing-slide-v1"
     for role in ("train", "test"):
@@ -1261,7 +1261,7 @@ def test_slide_split_freezes_exact_testing_source_and_derives_slide_training(
 
 
 def test_slide_testing_rule_leaves_remaining_slides_for_training(construction):
-    _store, service, spec, rows = slide_construction(construction, 1111, 728)
+    _store, service, spec, rows = slide_construction(construction, 1000, 650)
     spec["split"] = {
         "method": "rules",
         "testRules": [{"field": "Requested_Split", "op": "eq", "value": "test"}],
@@ -1269,18 +1269,18 @@ def test_slide_testing_rule_leaves_remaining_slides_for_training(construction):
     live = service.partition_preview(spec)
     final = service.preview_spec(spec)
     assert live["valid"] and final["canFreeze"], final["findings"]
-    assert (live["summary"]["trainingSlides"], live["summary"]["testingSlides"]) == (728, 383)
+    assert (live["summary"]["trainingSlides"], live["summary"]["testingSlides"]) == (650, 350)
     assert live["partitions"]["train"]["selection"]["mode"] == "remaining"
     assert {row["slideId"] for row in final["memberships"] if row["partition"] == "train"} == {
         row["slideId"] for row in rows if row["attributes"]["Requested_Split"] == "train"
     }
-    assert live["partitions"]["test"]["selection"]["directMatches"]["totalSlides"] == 383
-    assert live["partitions"]["test"]["selection"]["expanded"]["totalSlides"] == 383
+    assert live["partitions"]["test"]["selection"]["directMatches"]["totalSlides"] == 350
+    assert live["partitions"]["test"]["selection"]["expanded"]["totalSlides"] == 350
 
 
 def test_slide_testing_can_take_every_slide_outside_training(construction):
-    store, service, spec, rows = slide_construction(construction, 1111, 728)
-    # 698 training slides leave the other 413 eligible slides for testing.
+    store, service, spec, rows = slide_construction(construction, 1000, 650)
+    # 620 training slides leave the other 380 eligible slides for testing.
     held_back = [f"slide-{index:04}" for index in range(30)]
     settings = {
         "method": "rules",
@@ -1297,8 +1297,8 @@ def test_slide_testing_can_take_every_slide_outside_training(construction):
     }
     live = service.partition_preview({**spec, "split": settings})
     assert live["valid"], live["findings"]
-    assert (live["summary"]["trainingSlides"], live["summary"]["testingSlides"]) == (698, 413)
-    assert live["summary"]["selectedSlides"] == live["summary"]["eligibleSlides"] == 1111
+    assert (live["summary"]["trainingSlides"], live["summary"]["testingSlides"]) == (620, 380)
+    assert live["summary"]["selectedSlides"] == live["summary"]["eligibleSlides"] == 1000
     assert live["partitions"]["train"]["selection"]["mode"] == "rules"
     assert live["partitions"]["test"]["selection"]["mode"] == "remaining"
     artifact, _draft, preview = frozen((store, service, spec, rows), settings)

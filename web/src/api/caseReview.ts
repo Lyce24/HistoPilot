@@ -9,6 +9,8 @@ export interface CaseQuery {
   search: string; attribute: string | null; attributeValue: string | null; minConfidence: number; offset: number; limit: number;
   /** Label-free review queues. */
   maxConfidence?: number; maxMargin?: number | null; sort?: CaseSort; developmentPatients?: 'all' | 'shared' | 'new'; memberDisagreement?: boolean;
+  /** Outcomes against a reference standard of the cohort instead of its own labels. */
+  referenceId?: string | null;
 }
 export type CaseSort = 'confidence_desc' | 'confidence_asc' | 'margin_asc' | 'agreement_asc';
 export interface MemberAgreement { agree: number; total: number; spread: number }
@@ -25,6 +27,8 @@ export interface ReviewedCase {
 export interface CasePage {
   supportsAttention?: boolean;
   purpose?: 'inference' | 'evaluation'; memberCount?: number | null; developmentComparable?: boolean;
+  /** The reference standard that labels these cases, when one was chosen. */
+  reference?: { id: string; name: string } | null;
   evaluationId: string; name: string; predictorId: string; cohortId: string; featureBundleId: string | null; packArtifactId?: string | null; classOrder: string[]; positiveClass: string | null;
   decisionThreshold: number; unit: 'slide' | 'patient'; source: { predictionsSha256: string; comparisonSha256: string | null };
   comparison: { id: string; name: string; predictorId: string; decisionThreshold: number; supportsAttention?: boolean; featureBundleId?: string | null; packArtifactId?: string | null } | null;

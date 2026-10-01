@@ -10,7 +10,7 @@ import { fixtureCapacity, fixtureDetail, fixtureHistoryGroup, fixtureOwner, fixt
 
 const clients: QueryClient[] = [];
 afterEach(() => clients.splice(0).forEach((client) => client.clear()));
-const workspace = { mode: 'local', project: { id: 'project', name: 'KRAS', lifecycleState: 'active' } } as Workspace;
+const workspace = { mode: 'local', project: { id: 'project', name: 'Demo', lifecycleState: 'active' } } as Workspace;
 const inputs = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native' as const, packArtifactId: null };
 const ready = { id: 'ready-exp', key: 'draft:ready-exp', name: 'Frozen baseline', notes: '', tags: [], revision: 3, state: 'active', status: 'ready', legacy: false, createdAt: '', updatedAt: '', inputs, batches: [], drafts: [], predictorId: null, stage: 'planning', frozenSetupId: 'setup', batchPlans: [{ id: 'plan', spec: batchTemplate('baseline', inputs, 'Frozen baseline') }] } as ModelExperimentSummary;
 const idle = actions();
@@ -24,19 +24,19 @@ function seeded(changes: { summary?: ReturnType<typeof fixtureSummary>; capacity
     running: [
       fixtureTask({ progress: { epoch: 23, maxEpochs: 100, trainingLoss: 0.4123, cudaPeakReservedBytes: 1.5 * 1024 ** 3 } }),
       fixtureTask({ id: 'task-2', title: 'Inference study · Fold 3', link: null, progress: null, resources: null, owner: { ...fixtureTask().owner, key: 'owner-2', title: 'Inference study', projectId: 'elsewhere', sameWorkspace: false }, actions: { cancel: false, retry: false } }),
-      fixtureTask({ id: 'task-4', kind: 'compute-job', labels: { computeKind: 'refit', recordId: 'r1' }, title: 'Refit · gej3 · config 1 · seed 42 / split 42 · refit', owner: { ...fixtureTask().owner, key: 'owner-4', title: 'gej3', projectId: 'gej-project', projectName: 'gej' }, stopRequest: 'cancel', link: '?project=gej-project#experiments?experiment=e&tab=runs' }),
+      fixtureTask({ id: 'task-4', kind: 'compute-job', labels: { computeKind: 'refit', recordId: 'r1' }, title: 'Refit · study3 · config 1 · seed 42 / split 42 · refit', owner: { ...fixtureTask().owner, key: 'owner-4', title: 'study3', projectId: 'study-project', projectName: 'study' }, stopRequest: 'cancel', link: '?project=study-project#experiments?experiment=e&tab=runs' }),
     ],
     owners: [
       fixtureOwner({ waitingReason: 'Waiting for a GPU slot (4/4)', counts: { running: 4, queued: 41, succeeded: 20, failed: 1 } }),
       fixtureOwner({ key: 'owner-2', id: 'inference', title: 'Inference study', projectId: 'elsewhere', sameWorkspace: false, held: true, position: 2, link: null, counts: { running: 1, queued: 3 } }),
-      fixtureOwner({ key: 'owner-3', id: 'bulk', kind: 'evaluation-batch', purpose: 'inference', title: 'Unlabeled cohort', projectId: 'gej-project', projectName: 'gej', position: 3, link: '?project=gej-project#inference?batch=bulk', counts: { queued: 3 } }),
+      fixtureOwner({ key: 'owner-3', id: 'bulk', kind: 'evaluation-batch', purpose: 'inference', title: 'Unlabeled cohort', projectId: 'study-project', projectName: 'study', position: 3, link: '?project=study-project#apply?batch=bulk', counts: { queued: 3 } }),
     ],
   }));
   client.setQueryData(['task-center', 'capacity'], changes.capacity ?? fixtureCapacity());
   client.setQueryData(['model-experiments', 'project', 'summary'], { items: [ready, { ...ready, id: 'running-exp', status: 'running', stage: 'running' }] });
   client.setQueryData(['task-center', 'history', '?state=history&limit=15&offset=0'], { total: 2, offset: 0, limit: 15, groups: [
     fixtureHistoryGroup(),
-    fixtureHistoryGroup({ owner: fixtureOwner({ key: 'owner-9', id: 'r1', kind: 'predictor-refit', title: 'Refit · seed 42', projectId: 'other-project', projectName: 'Colon', position: null, link: '?project=other-project#post-development?tab=refits&refit=r1', actions: { hold: false, release: false, stop: false, cancel: false, retry: false, moveUp: false, moveDown: false } }), finished: { total: 1, succeeded: 1, failed: 0, cancelled: 0, interrupted: 0 }, lastFailure: null }),
+    fixtureHistoryGroup({ owner: fixtureOwner({ key: 'owner-9', id: 'r1', kind: 'predictor-refit', title: 'Refit · seed 42', projectId: 'other-project', projectName: 'Study B', position: null, link: '?project=other-project#post-development?tab=refits&refit=r1', actions: { hold: false, release: false, stop: false, cancel: false, retry: false, moveUp: false, moveDown: false } }), finished: { total: 1, succeeded: 1, failed: 0, cancelled: 0, interrupted: 0 }, lastFailure: null }),
   ] });
   return client;
 }
@@ -53,7 +53,7 @@ describe('Task Center page', () => {
     const html = render(seeded());
     expect(html).toContain('<h1>Task Center</h1>');
     // The header names every kind of work the queue runs, not only model jobs.
-    expect(html).toContain('Training folds and results, refits and predictors, evaluations and inference, attention maps, feature extraction and validation, feature packing, and study archives from every project on this machine');
+    expect(html).toContain('Training folds and results, refits and predictors, predictor runs on cohorts, attention maps, feature extraction and validation, feature packing, and study archives from every project on this machine');
     expect(html).toContain('Pause queue');
     expect(html).toContain('Queue active');
     expect(html).toContain('4 running · 41 queued · 2 failed in the last 24 h · about 2 h 10 m left');
@@ -100,8 +100,8 @@ describe('Task Center page', () => {
     expect(running).toContain('Inference study · Another workspace');
     // A refit reads as a refit, not "Compute job", without the repeated suffix, and names its project.
     expect(running).toContain('Refit training');
-    expect(running).toContain('Refit · gej3 · config 1 · seed 42 / split 42<');
-    expect(running).toContain('gej3 · Project gej');
+    expect(running).toContain('Refit · study3 · config 1 · seed 42 / split 42<');
+    expect(running).toContain('study3 · Project study');
     expect(running).toContain('Cancel requested');
     expect(running.match(/>Cancel</g)).toHaveLength(1);
   });
@@ -118,12 +118,12 @@ describe('Task Center page', () => {
     expect(queue).toContain('>Hold<');
     expect(queue).toContain('Stop &amp; hold');
     expect(queue).toContain('Show tasks');
-    expect(queue).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Move KRAS study to the top of the queue"/);
-    expect(queue).toMatch(/<button(?![^>]*disabled)[^>]*aria-label="Move KRAS study down"/);
+    expect(queue).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Move Demo study to the top of the queue"/);
+    expect(queue).toMatch(/<button(?![^>]*disabled)[^>]*aria-label="Move Demo study down"/);
     expect(queue).toContain('>Held<');
     expect(queue).toContain('Managed from its own workspace');
     expect(queue).not.toContain('Move Inference study');
-    expect(queue).toContain('Inference batch · Project gej');
+    expect(queue).toContain('Batch · unlabeled cohort · Project study');
   });
 
   it('lists frozen setups of this project that have not started, linking to Experiments', () => {
@@ -147,7 +147,7 @@ describe('Task Center page', () => {
     expect(history).toContain('safe to retry');
     expect(history).toContain('href="#task-center?task=task-9"');
     expect(history).toContain('>Retry failed<');
-    expect(history).toContain('Refit · Project Colon');
+    expect(history).toContain('Refit · Project Study B');
     expect(history).toContain('href="?project=other-project#post-development?tab=refits&amp;refit=r1"');
   });
 
@@ -168,7 +168,7 @@ describe('Task Center page', () => {
     expect(html).toContain('role="dialog" aria-modal="true" aria-labelledby=');
     expect(html).toMatch(/aria-labelledby="([^"]+)".*<strong id="\1">Baseline · Config 1/);
     expect(html).toContain('histopilot.workers.managed_fold');
-    expect(html).toContain('/projects/kras/training/batch/compute');
+    expect(html).toContain('/projects/demo/training/batch/compute');
     expect(html).toContain('PYTHONUNBUFFERED=1');
     expect(html).toContain('Peak RAM 5.1 GiB');
     expect(html).toContain('Shared the GPU with 3.9 tasks on average');
@@ -253,11 +253,11 @@ describe('Task Center page', () => {
   it('labels a copy of this project in another workspace as foreign and never links its record', () => {
     const task = fixtureTask({ owner: { ...fixtureTask().owner, sameWorkspace: false } });
     const html = renderToStaticMarkup(<TaskName task={task} project="project" />);
-    expect(html).toContain('KRAS study · Another workspace');
+    expect(html).toContain('Demo study · Another workspace');
     expect(html).not.toContain('#experiments');
     expect(html).toContain('href="#task-center?task=task-1"');
-    const other = renderToStaticMarkup(<TaskName task={fixtureTask({ owner: { ...fixtureTask().owner, projectId: 'p2', projectName: 'Colon' } })} project="project" />);
-    expect(other).toContain('KRAS study · Project Colon');
+    const other = renderToStaticMarkup(<TaskName task={fixtureTask({ owner: { ...fixtureTask().owner, projectId: 'p2', projectName: 'Study B' } })} project="project" />);
+    expect(other).toContain('Demo study · Project Study B');
   });
 
   it('keeps the suggestion quiet when it matches and explains hardware defaults', () => {

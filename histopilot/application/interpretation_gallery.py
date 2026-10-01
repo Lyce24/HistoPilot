@@ -274,8 +274,11 @@ class InterpretationGalleryService:
                         "severity": "error",
                     }
                 )
-            if (predictor["manifest"].get("recipe", {}).get("model", "abmil").lower() not in {"abmil", "nnmil"}
-                    or predictor["manifest"].get("recipe", {}).get("inputMode") == "clinical"):
+            if (
+                predictor["manifest"].get("recipe", {}).get("model", "abmil").lower()
+                not in {"abmil", "nnmil"}
+                or predictor["manifest"].get("recipe", {}).get("inputMode") == "clinical"
+            ):
                 findings.append(
                     {
                         "code": "INTERPRETATION_MODEL_UNSUPPORTED",

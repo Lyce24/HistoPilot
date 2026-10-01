@@ -89,6 +89,16 @@ def name_key(value):
     return re.sub(r"[^a-z0-9]", "", value.casefold())
 
 
+# A column that assigns splits, such as "fold", "fold_id" or "partition".
+PARTITION_NAME = re.compile(
+    r"(?:kfold|fold|split|partition)s?(?:id|index|assignment|label|[0-9]+)?"
+)
+
+
+def partition_name(value):
+    return bool(PARTITION_NAME.fullmatch(name_key(value)))
+
+
 def forbidden_name(value, *, target=False):
     name = name_key(value)
     if target and name in {"label", "labels", "target", "outcome", "y", "ytrue", "groundtruth"}:
@@ -119,9 +129,7 @@ def forbidden_name(value, *, target=False):
         "groundtruth",
     }:
         return True
-    return bool(
-        re.fullmatch(r"(?:kfold|fold|split|partition)s?(?:id|index|assignment|label|[0-9]+)?", name)
-    )
+    return partition_name(value)
 
 
 class FilterFailure(ValueError):
@@ -669,6 +677,8 @@ class ProtocolService:
         split_fields = set(assignment_fields)
         if split.domainField:
             split_fields.add(split.domainField)
+        if split.foldField:
+            split_fields.add(split.foldField)
         selected_fields = {
             spec.target.field,
             *spec.predictors,
@@ -727,6 +737,28 @@ class ProtocolService:
                 finding(
                     "INVALID_DOMAIN_FIELD",
                     "The site or cohort column cannot be an identity mapping source.",
+                )
+        if split.foldField:
+            fold_source = source(split.foldField)
+            # A fold column is partition-like by design; it must not identify or label.
+            if (
+                split.foldField in CANONICAL
+                or name_key(fold_source) in source_identifiers
+                or any(
+                    forbidden_name(name) and not partition_name(name)
+                    for name in (split.foldField, fold_source)
+                )
+            ):
+                finding(
+                    "INVALID_FOLD_FIELD",
+                    "Choose a column of fold assignments, rather than an identifier or label column.",
+                )
+            if spec.target.field == split.foldField or name_key(target_source) == name_key(
+                fold_source
+            ):
+                finding(
+                    "FOLD_TARGET_LEAKAGE",
+                    "The fold column cannot also be the prediction target.",
                 )
         split_sources = {name_key(source(field)) for field in split_fields}
         if spec.target.field in assignment_fields or name_key(target_source) in {
@@ -1054,9 +1086,10 @@ class ProtocolService:
                 "STALE_PREVIEW",
             )
         if not preview["canFreeze"]:
-            raise _failure(
+            raise StorageError(
                 "Resolve all blocking protocol preflight findings before freezing.",
                 "PROTOCOL_PREFLIGHT_BLOCKED",
+                findings=preview["findings"],
             )
         manifest = {
             "kind": "protocol",

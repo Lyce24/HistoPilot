@@ -22,9 +22,7 @@ extraction = job_support["extraction"]
 
 @pytest.fixture
 def batch_cleanup(tmp_path, monkeypatch, task_center):
-    bulk, predictor, cohort = bulk_support["bulk"].__wrapped__(
-        tmp_path, monkeypatch, task_center
-    )
+    bulk, predictor, cohort = bulk_support["bulk"].__wrapped__(tmp_path, monkeypatch, task_center)
     cleanup = CleanupService(
         bulk.store,
         bulk.filesystem,

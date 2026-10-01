@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { InferenceUnitSummary } from '../api/inference';
 import type { ModelEvaluation } from '../api/predictors';
-import { cohortKind, cohortKindLabel, comparableRuns, countBelow, isInferenceBatch, isInferenceCohort, isInferenceRun, percent, predictedMix, unanimousShare } from './inference';
+import { cohortKind, cohortKindLabel, comparableRuns, countBelow, isInferenceCohort, isInferenceRun, percent, predictedMix, unanimousShare } from './inference';
 
 const run = (purpose?: 'inference' | 'review') => ({ manifest: { purpose } }) as unknown as ModelEvaluation;
 const distribution = (counts: Record<string, number[]>): InferenceUnitSummary['confidence'] => ({
@@ -19,15 +19,10 @@ describe('inference helpers', () => {
     expect(cohortKind({ purpose: 'inference', target: null })).toBe('inference');
     expect(cohortKind({ target: null })).toBe('unlabeled-evaluation');
     expect(cohortKind({ target: { field: 'grade' } as never })).toBe('evaluation');
-    expect(cohortKindLabel.inference).toBe('Inference · unlabeled');
+    expect(cohortKindLabel.inference).toBe('Unlabeled');
   });
 
-  it('classifies batches by their runs and pairs only runs with the same scoring context', () => {
-    const runs = new Set(['inference-run']), cohorts = new Set(['active-inference-cohort']);
-    // An archived inference cohort is absent from the cohort list; its runs still decide.
-    expect(isInferenceBatch({ cohortId: 'archived', items: [{ evaluationId: 'inference-run' }] }, runs, cohorts)).toBe(true);
-    expect(isInferenceBatch({ cohortId: 'active-inference-cohort', items: [{ evaluationId: 'labeled-run' }] }, runs, cohorts)).toBe(false);
-    expect(isInferenceBatch({ cohortId: 'active-inference-cohort', items: [{ evaluationId: null }] }, runs, cohorts)).toBe(true);
+  it('pairs only runs with the same scoring context', () => {
     const target = { classes: ['ND', 'HG'], field: 'grade' };
     const record = (id: string, extra: Record<string, unknown> = {}) => ({ id, lifecycleState: 'active', execution: { status: 'completed' }, manifest: { cohortId: 'cohort', target, inference: { patientAggregation: 'mean' }, ...extra } }) as unknown as ModelEvaluation;
     const self = record('self');
@@ -37,11 +32,11 @@ describe('inference helpers', () => {
 
   it('summarizes predicted classes and low-confidence counts from frozen bins', () => {
     const summary = { predicted: [
-      { label: 'ND', count: 212, fraction: 0.55, meanConfidence: 0.8 }, { label: 'IND', count: 0, fraction: 0, meanConfidence: null },
-      { label: 'LG', count: 60, fraction: 0.16, meanConfidence: 0.6 }, { label: 'HG', count: 111, fraction: 0.29, meanConfidence: 0.7 },
+      { label: 'ND', count: 60, fraction: 0.5, meanConfidence: 0.8 }, { label: 'IND', count: 0, fraction: 0, meanConfidence: null },
+      { label: 'LG', count: 20, fraction: 0.17, meanConfidence: 0.6 }, { label: 'HG', count: 40, fraction: 0.33, meanConfidence: 0.7 },
     ] };
-    expect(predictedMix(summary)).toBe('ND 212 · HG 111 · LG 60');
-    expect(predictedMix(summary, 2)).toBe('ND 212 · HG 111 · +1');
+    expect(predictedMix(summary)).toBe('ND 60 · HG 40 · LG 20');
+    expect(predictedMix(summary, 2)).toBe('ND 60 · HG 40 · +1');
     expect(predictedMix(null)).toBe('—');
     const counts = Array(20).fill(0);
     counts[9] = 3; counts[11] = 2; counts[12] = 5;

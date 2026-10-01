@@ -468,8 +468,11 @@ class InterpretationService:
         predictor = self.predictors.get(selection.predictorId)
         model = predictor["manifest"]
         if model.get("recipe", {}).get("inputMode") == "clinical":
-            raise StorageError("Clinical-only predictors have no image attention.",
-                               "INTERPRETATION_MODEL_UNSUPPORTED", 422)
+            raise StorageError(
+                "Clinical-only predictors have no image attention.",
+                "INTERPRETATION_MODEL_UNSUPPORTED",
+                422,
+            )
         if model.get("recipe", {}).get("model", "abmil").lower() not in {"abmil", "nnmil"}:
             raise StorageError(
                 "Select a native ABMIL or nnMIL predictor for attention overlay.",
@@ -479,7 +482,7 @@ class InterpretationService:
         checkpoints = model.get("checkpoints", [])
         method = model.get("method", "ensemble")
         if (
-            method not in {"ensemble", "refit"}
+            method not in {"ensemble", "refit", "seed_ensemble"}
             or not checkpoints
             or (method == "refit" and len(checkpoints) != 1)
         ):
@@ -514,17 +517,30 @@ class InterpretationService:
             if selection.featureBundleId:
                 bundle = self.store.get_configuration(selection.featureBundleId)
                 feature = self.store.get_configuration(bundle["manifest"]["spec"]["featureSetId"])
-                dataset_id = feature["manifest"].get("datasetId") or bundle["manifest"].get("datasetId")
+                dataset_id = feature["manifest"].get("datasetId") or bundle["manifest"].get(
+                    "datasetId"
+                )
             if not dataset_id:
-                raise StorageError("Combined attention needs a frozen dataset with clinical covariates.",
-                                   "INTERPRETATION_CLINICAL_DATA_REQUIRED", 422)
-            dataset, _fields, records = ProtocolService(self.store, self.filesystem)._load_dataset(dataset_id)
+                raise StorageError(
+                    "Combined attention needs a frozen dataset with clinical covariates.",
+                    "INTERPRETATION_CLINICAL_DATA_REQUIRED",
+                    422,
+                )
+            dataset, _fields, records = ProtocolService(self.store, self.filesystem)._load_dataset(
+                dataset_id
+            )
             selected = {row["slideId"] for row in requests}
             memberships = [row for row in records if row["slideId"] in selected]
             if {row["slideId"] for row in memberships} != selected:
-                raise StorageError("Selected slides lack frozen clinical records.", "CLINICAL_COVERAGE_MISSING", 422)
+                raise StorageError(
+                    "Selected slides lack frozen clinical records.",
+                    "CLINICAL_COVERAGE_MISSING",
+                    422,
+                )
             fields = clinical_fields(model["recipe"])
-            values = frozen_clinical_values(self.store, self.filesystem, [dataset_id], memberships, fields)
+            values = frozen_clinical_values(
+                self.store, self.filesystem, [dataset_id], memberships, fields
+            )
             try:
                 # Attention reads each selected slide's own values; no patient grouping applies.
                 clinical_rows(memberships, values, fields, unit="slide")
@@ -711,7 +727,11 @@ class InterpretationService:
             "kind": "interpretation",
             "runId": identity,
             "method": manifest["method"],
-            **({"aggregation": "mean_logit"} if predictor["manifest"].get("aggregation") == "mean_logit" else {}),
+            **(
+                {"aggregation": "mean_logit"}
+                if predictor["manifest"].get("aggregation") == "mean_logit"
+                else {}
+            ),
             "target": manifest["target"],
             "resources": manifest["resources"],
             "checkpoints": predictor["manifest"]["checkpoints"],
@@ -737,7 +757,9 @@ class InterpretationService:
         task_owner=None,
         task_title=None,
     ):
-        replay = self.jobs.replay_launch(identity, operation_id, resume=resume, record_kind="model-interpretation")
+        replay = self.jobs.replay_launch(
+            identity, operation_id, resume=resume, record_kind="model-interpretation"
+        )
         if replay is not None:
             return replay
         plan = self._execution_plan(identity, gallery_context=gallery_context)

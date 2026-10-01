@@ -8,7 +8,7 @@ const inputs = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolic
 
 describe('editable nnMIL template', () => {
   it('preserves the patient protocol and requested optimizer defaults while configuring the nnMIL method', () => {
-    const spec = batchTemplate('nnmil', inputs, 'KRAS study');
+    const spec = batchTemplate('nnmil', inputs, 'Demo study');
     expect(batchTemplates.some((template) => template.id === 'nnmil')).toBe(true);
     expect(spec).toMatchObject({ selectionMetric: 'validation_auroc', candidateSelection: 'best_validation', trainingSeeds: [42] });
     expect(spec.recipe).toMatchObject({ model: 'nnmil', learningRate: 3e-4, weightDecay: 1e-4, attentionDim: 256,

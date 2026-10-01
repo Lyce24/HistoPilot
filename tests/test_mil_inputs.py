@@ -199,7 +199,11 @@ def test_declared_clinical_fields_are_explicit_recipe_choices_without_mutating_p
     result = inputs.service.preview(specification())
     assert result["canPlan"]
     assert "CLINICAL_INPUTS_AVAILABLE" in {item["code"] for item in result["findings"]}
-    assert "each training recipe" in next(item["message"] for item in result["findings"] if item["code"] == "CLINICAL_INPUTS_AVAILABLE")
+    assert "each training recipe" in next(
+        item["message"]
+        for item in result["findings"]
+        if item["code"] == "CLINICAL_INPUTS_AVAILABLE"
+    )
     assert inputs.protocol == before
 
 
@@ -300,9 +304,7 @@ def test_mil_request_rejects_contradictory_or_unimplemented_intent(changes):
         )
 
 
-def test_mil_api_uses_immutable_bundles_and_does_not_change_old_preferences(
-    tmp_path, task_center
-):
+def test_mil_api_uses_immutable_bundles_and_does_not_change_old_preferences(tmp_path, task_center):
     settings = Settings(workspace=tmp_path / "registry", data_roots=(tmp_path,))
     app = create_app(settings)
     with TestClient(app, base_url="http://127.0.0.1:8787") as client:
@@ -466,9 +468,9 @@ def test_protocol_bundle_content_identity_is_checked(inputs):
 
 
 def test_current_bundle_with_error_findings_cannot_authorize_experiment(inputs):
-    inputs.bundle["findings"] = [{
-        "severity": "error", "code": "FEATURE_VERIFICATION_CHANGED", "message": "Changed proof."
-    }]
+    inputs.bundle["findings"] = [
+        {"severity": "error", "code": "FEATURE_VERIFICATION_CHANGED", "message": "Changed proof."}
+    ]
     result = inputs.service.preview(specification())
     assert not result["canPlan"]
     assert "FEATURE_VERIFICATION_CHANGED" in codes(result)
@@ -482,7 +484,9 @@ def test_experiment_checks_feature_inventory_identity(inputs, invalid):
         inputs.feature["manifest"]["files"].append({"slideId": "slide-a"})
     result = inputs.service.preview(specification())
     assert not result["canPlan"]
-    assert ("INVALID_FEATURE_SET" if invalid == "wrong_kind" else "DUPLICATE_FEATURE_ID") in codes(result)
+    assert ("INVALID_FEATURE_SET" if invalid == "wrong_kind" else "DUPLICATE_FEATURE_ID") in codes(
+        result
+    )
 
 
 def test_dataset_only_protocol_freezes_before_features_and_experiment_preserves_its_cohort(
@@ -491,31 +495,64 @@ def test_dataset_only_protocol_freezes_before_features_and_experiment_preserves_
     store = ScientificStore(tmp_path, "project-test")
     store.initialize()
     imported = store.create_draft("import", "Source", {})
-    rows = [{
-        "slideId": f"slide-{index}", "patientId": f"patient-{index}", "slidePath": None,
-        "attributes": {"label": str(index % 2), "partition": "development" if index < 32 else "external"},
-    } for index in range(40)]
+    rows = [
+        {
+            "slideId": f"slide-{index}",
+            "patientId": f"patient-{index}",
+            "slidePath": None,
+            "attributes": {
+                "label": str(index % 2),
+                "partition": "development" if index < 32 else "external",
+            },
+        }
+        for index in range(40)
+    ]
     dataset = store.publish_dataset(
-        imported["id"], expected_revision=1,
-        manifest={"kind": "dataset", "dictionary": [
-            {"key": key, "sourceColumn": key, "owner": "slide", "type": "text"}
-            for key in ("label", "partition")
-        ]},
-        artifacts={"records.json": json.dumps(rows).encode()}, operation_id="dataset",
-    )
-    draft = store.create_draft("experiment", "Dataset-only protocol", {
-        "type": "analysis-protocol", "spec": {
-            "datasetId": dataset["id"],
-            "target": {"field": "label", "task": "binary_classification", "unit": "patient",
-                       "classes": ["negative", "positive"], "labels": {"0": "negative", "1": "positive"},
-                       "positiveClass": "positive"},
-            "split": {"version": 4, "mode": "kfold", "folds": 2, "seeds": [42],
-                      "validationFraction": 0.25, "pools": {
-                          "source": "rules", "trainSelection": "rules", "validationSource": "training_fraction",
-                          "rules": {"train": [{"field": "partition", "op": "eq", "value": "development"}]},
-                      }},
+        imported["id"],
+        expected_revision=1,
+        manifest={
+            "kind": "dataset",
+            "dictionary": [
+                {"key": key, "sourceColumn": key, "owner": "slide", "type": "text"}
+                for key in ("label", "partition")
+            ],
         },
-    })
+        artifacts={"records.json": json.dumps(rows).encode()},
+        operation_id="dataset",
+    )
+    draft = store.create_draft(
+        "experiment",
+        "Dataset-only protocol",
+        {
+            "type": "analysis-protocol",
+            "spec": {
+                "datasetId": dataset["id"],
+                "target": {
+                    "field": "label",
+                    "task": "binary_classification",
+                    "unit": "patient",
+                    "classes": ["negative", "positive"],
+                    "labels": {"0": "negative", "1": "positive"},
+                    "positiveClass": "positive",
+                },
+                "split": {
+                    "version": 4,
+                    "mode": "kfold",
+                    "folds": 2,
+                    "seeds": [42],
+                    "validationFraction": 0.25,
+                    "pools": {
+                        "source": "rules",
+                        "trainSelection": "rules",
+                        "validationSource": "training_fraction",
+                        "rules": {
+                            "train": [{"field": "partition", "op": "eq", "value": "development"}]
+                        },
+                    },
+                },
+            },
+        },
+    )
     protocols = ProtocolService(store)
     preview = protocols.preview(draft["id"], 1)
     assert preview["canFreeze"], preview["findings"]
@@ -526,21 +563,38 @@ def test_dataset_only_protocol_freezes_before_features_and_experiment_preserves_
     assert not store.list_configurations("feature")
     assert not store.list_configurations("feature-bundle")
 
-    bundle = {"id": BUNDLE_ID, "current": True, "findings": [], "manifest": {
-        "kind": "feature-bundle", "datasetId": "another-dataset",
-        "spec": {"featureSetId": ""}, "summary": {"dtype": "float32"}, "packs": [],
-    }}
-    monkeypatch.setattr("histopilot.application.mil_inputs.FeatureBundleService", lambda *_: SimpleNamespace(get=lambda _: bundle))
+    bundle = {
+        "id": BUNDLE_ID,
+        "current": True,
+        "findings": [],
+        "manifest": {
+            "kind": "feature-bundle",
+            "datasetId": "another-dataset",
+            "spec": {"featureSetId": ""},
+            "summary": {"dtype": "float32"},
+            "packs": [],
+        },
+    }
+    monkeypatch.setattr(
+        "histopilot.application.mil_inputs.FeatureBundleService",
+        lambda *_: SimpleNamespace(get=lambda _: bundle),
+    )
     service = MILInputService(store, object())
     for size in (31, 32):
-        feature = store.publish_configuration(manifest={
-            "kind": "feature", "datasetId": None,
-            "files": [{"slideId": f"slide-{index}"} for index in range(size)],
-        }, operation_id=f"feature-{size}")
+        feature = store.publish_configuration(
+            manifest={
+                "kind": "feature",
+                "datasetId": None,
+                "files": [{"slideId": f"slide-{index}"} for index in range(size)],
+            },
+            operation_id=f"feature-{size}",
+        )
         bundle["manifest"]["spec"]["featureSetId"] = feature["id"]
         result = service.preview(MILInputSpec(protocolId=protocol["id"], featureBundleId=BUNDLE_ID))
         assert result["canPlan"] is (size == 32), result["findings"]
         if size == 31:
             assert "MISSING_FEATURES" in codes(result)
-            assert "1 eligible protocol slides" in next(item["message"] for item in result["findings"] if item["code"] == "MISSING_FEATURES")
+            assert "1 eligible protocol slides" in next(
+                item["message"] for item in result["findings"] if item["code"] == "MISSING_FEATURES"
+            )
         assert store.get_configuration(protocol["id"]) == original

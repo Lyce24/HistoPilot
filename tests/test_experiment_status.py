@@ -121,7 +121,7 @@ def status(service, *, batches=("completed", "completed"), predictors=None, subm
 
 
 def test_completed_folds_with_a_coordinator_needing_attention_are_not_failed(service, monkeypatch):
-    """gej3/gej4: 30/30 folds completed, the coordinator died of PROJECT_BUSY."""
+    """Two experiments: 30/30 folds completed, the coordinator died of PROJECT_BUSY."""
     busy = {
         "status": "attention",
         "error": {
@@ -226,7 +226,7 @@ def test_task_center_status_is_read_from_the_owner_without_the_project_lock(tmp_
         "id": "draft-1",
         "projectId": "project-1",
         "projectFolder": str(folder),
-        "title": "gej3",
+        "title": "study3",
     }
     store.enqueue(
         owner,

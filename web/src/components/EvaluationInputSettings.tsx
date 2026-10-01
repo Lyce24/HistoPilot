@@ -7,6 +7,9 @@ import { versionLabelText } from '../lib/versionLabels';
 import { isInferenceCohort } from '../lib/inference';
 import NumericField from './NumericField';
 import { ErrorNotice } from './ui';
+import { templates } from '../lib/templates';
+
+const applyInference = templates.apply.inference as EvaluationInference;
 
 export interface EvaluationExecutionInputs {
   featureBundleId: string;
@@ -18,9 +21,9 @@ export function initialEvaluationInputs(cohort?: EvaluationCohort): EvaluationEx
   return {
     featureBundleId: cohort?.manifest.spec.featureBundleId ?? '',
     patientIdentifiers: cohort?.manifest.spec.patientIdentifiers ?? 'shared',
-    inference: { loadingPolicy: 'per_slide', packArtifactId: null, batchSize: 1, numWorkers: 0,
-      device: 'auto', precision: 'float32',
-      ...cohort?.manifest.spec.inference, patientAggregation: 'predictor', decisionThreshold: 'predictor' },
+    // The cohort's settings over the apply defaults; a predictor applies its own aggregation and threshold.
+    inference: { ...applyInference, ...cohort?.manifest.spec.inference,
+      patientAggregation: applyInference.patientAggregation, decisionThreshold: applyInference.decisionThreshold },
   };
 }
 
@@ -57,7 +60,7 @@ export function EvaluationInferenceFields({ value, target, onChange }: {
   </div></details>;
 }
 
-/** Model-dependent feature and loading choices belong to each evaluation plan. */
+/** Model-dependent feature and loading choices belong to each run. */
 export default function EvaluationInputSettings({ project, cohort, value, onChange, disabled = false }: {
   project: string; cohort?: EvaluationCohort; value: EvaluationExecutionInputs;
   onChange: (value: EvaluationExecutionInputs) => void; disabled?: boolean;
@@ -70,25 +73,24 @@ export default function EvaluationInputSettings({ project, cohort, value, onChan
   const packs = [...new Map(packBundles.flatMap((bundle) => bundle.manifest.packs.map((pack) => [pack.id, { pack, bundle }] as const))).values()];
   const inference = (update: Partial<EvaluationInference>) => onChange({ ...value, inference: { ...value.inference, ...update } });
   return <fieldset className="evaluation-input-settings" disabled={disabled}>
-    <legend>Test features and inference</legend>
-    {isInferenceCohort(cohort) ? <p className="callout">Inference cohort: slides receive predictions only; no labels are read and no metrics are computed. Development slides are never predicted. Patients seen in development are allowed for slide-level predictors and flagged in every result.</p> : null}
+    <legend>Features and inference settings</legend>
     <ErrorNotice error={query.error} />
     <p className="muted">{isInferenceCohort(cohort) ? 'Review checks each predictor\u2019s extracted features, encoder dimensions, packed-slide coverage and development overlap.' : 'Review matches the prediction task and class encoding to each development model, then checks extracted features, encoder dimensions, packed-slide coverage and development overlap.'}</p>
     <div className="chain-fields">
-      <label className="label">Test feature bundle<select className="field" value={value.featureBundleId} onChange={(event) => onChange({ ...value, featureBundleId: event.target.value, inference: { ...value.inference, packArtifactId: null } })}>
+      <label className="label">Feature bundle<select className="field" value={value.featureBundleId} onChange={(event) => onChange({ ...value, featureBundleId: event.target.value, inference: { ...value.inference, packArtifactId: null } })}>
         <option value="">Find compatible features automatically</option>
         {value.featureBundleId && !selected ? <option value={value.featureBundleId}>Saved feature bundle unavailable</option> : null}
         {items.map((item) => <option key={item.id} value={item.id}>{versionLabelText(item, 'Feature bundle')} · {item.manifest.summary.slideCount} slides · {item.manifest.summary.dimensions ?? '?'} dimensions{!item.current ? ' · needs verification' : ''}</option>)}
       </select><small>Automatic selection requires one compatible feature inventory. Review explains missing or ambiguous features.</small></label>
-      <label className="label">Load test features<select className="field" value={value.inference.loadingPolicy} onChange={(event) => inference({ loadingPolicy: event.target.value as EvaluationInference['loadingPolicy'], packArtifactId: null })}><option value="per_slide">Original feature files</option><option value="packed">Packed features</option></select></label>
+      <label className="label">Load features<select className="field" value={value.inference.loadingPolicy} onChange={(event) => inference({ loadingPolicy: event.target.value as EvaluationInference['loadingPolicy'], packArtifactId: null })}><option value="per_slide">Original feature files</option><option value="packed">Packed features</option></select></label>
       <label className="label">Patient identifiers across datasets<select className="field" disabled={cohort.manifest.spec.purpose === 'review'} value={value.patientIdentifiers} onChange={(event) => onChange({ ...value, patientIdentifiers: event.target.value as EvaluationExecutionInputs['patientIdentifiers'] })}><option value="shared">Shared IDs identify the same patients</option><option value="independent">IDs belong to separate naming systems</option></select><small>Separate naming systems apply when the same ID can mean different people. This choice does not establish whether patients overlap.</small></label>
-      {value.inference.loadingPolicy === 'packed' ? <label className="label">Test feature pack<select className="field" value={value.inference.packArtifactId ?? ''} onChange={(event) => inference({ packArtifactId: event.target.value || null })}>
+      {value.inference.loadingPolicy === 'packed' ? <label className="label">Feature pack<select className="field" value={value.inference.packArtifactId ?? ''} onChange={(event) => inference({ packArtifactId: event.target.value || null })}>
         <option value="">Choose a feature pack</option>
         {value.inference.packArtifactId && !packs.some(({ pack }) => pack.id === value.inference.packArtifactId) ? <option value={value.inference.packArtifactId}>Saved feature pack unavailable</option> : null}
         {packs.map(({ pack, bundle }) => <option key={pack.id} value={pack.id}>{versionLabelText(bundle, 'Feature bundle')} · {pack.outputDtype} · {pack.id}</option>)}
       </select></label> : null}
     </div>
-    {!query.isPending && !query.isError && items.length === 0 ? <p className="callout">No frozen feature bundles are available. Prepare extracted features in <a href="#features">Slide features</a>, then review this evaluation again. The test cohort is already saved.</p> : null}
+    {!query.isPending && !query.isError && items.length === 0 ? <p className="callout">No frozen feature bundles are available. Prepare extracted features in <a href="#features">Slide features</a>, then review again. The cohort is already saved.</p> : null}
     <EvaluationInferenceFields value={value.inference} target={cohort.manifest.target} onChange={inference} />
   </fieldset>;
 }

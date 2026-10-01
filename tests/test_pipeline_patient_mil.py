@@ -34,28 +34,47 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
     store = ScientificStore(folder, "project-pipeline-audit")
     filesystem = LocalFilesystem((tmp_path,))
     rows = [
-        {"slideId": f"p{i:02}-s{j}", "patientId": f"p{i:02}",
-         "attributes": {"label": str(i % 2), "cohort": "TCGA" if (i // 2) % 2 else "SurGen"}}
-        for i in range(30) for j in range(1 + i % 3)
+        {
+            "slideId": f"p{i:02}-s{j}",
+            "patientId": f"p{i:02}",
+            "attributes": {"label": str(i % 2), "cohort": "Site A" if (i // 2) % 2 else "Site B"},
+        }
+        for i in range(30)
+        for j in range(1 + i % 3)
     ]
     eligible_ids = {row["slideId"] for row in rows}
     # Publish/verify features before any dataset exists. One source slide has no
     # dataset row, and one dataset row is outside the eligible cohorts. Feature
     # coverage is checked by the experiment setup, not by the split.
-    features, _, _ = bundle(store, tmp_path, {"id": None},
-                            sorted(eligible_ids | {"source-only", "rih-slide"}))
-    rows.extend([
-        {"slideId": "rih-slide", "patientId": "p-rih",
-         "attributes": {"label": None, "cohort": "RIH"}},
-    ])
+    features, _, _ = bundle(
+        store, tmp_path, {"id": None}, sorted(eligible_ids | {"source-only", "reg-slide"})
+    )
+    rows.extend(
+        [
+            {
+                "slideId": "reg-slide",
+                "patientId": "p-reg",
+                "attributes": {"label": None, "cohort": "Site C"},
+            },
+        ]
+    )
     data, _ = dataset(store, rows=rows)
     spec = {
-        "datasetId": data["id"], "featureBundleId": features["id"], "target": TARGET,
-        "eligibility": [{"field": "cohort", "op": "in", "value": ["TCGA", "SurGen"]}],
-        "split": {"version": 4, "mode": "kfold", "folds": 5, "seeds": [42],
-                  "pools": {"trainSelection": "remaining"}},
+        "datasetId": data["id"],
+        "featureBundleId": features["id"],
+        "target": TARGET,
+        "eligibility": [{"field": "cohort", "op": "in", "value": ["Site A", "Site B"]}],
+        "split": {
+            "version": 4,
+            "mode": "kfold",
+            "folds": 5,
+            "seeds": [42],
+            "pools": {"trainSelection": "remaining"},
+        },
     }
-    draft = store.create_draft("experiment", "Patient folds", {"type": "analysis-protocol", "spec": spec})
+    draft = store.create_draft(
+        "experiment", "Patient folds", {"type": "analysis-protocol", "spec": spec}
+    )
     protocols = ProtocolService(store, filesystem)
     preview = protocols.preview(draft["id"], 1)
     assert preview["canFreeze"], preview["findings"]
@@ -71,19 +90,33 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
             grouped[row["patientId"]].add(row["partition"])
         assert len(grouped) == 30 and all(len(roles) == 1 for roles in grouped.values())
         for role in ("train", "val", "test"):
-            assert {row["label"] for row in selected if row["partition"] == role} == set(TARGET["classes"])
+            assert {row["label"] for row in selected if row["partition"] == role} == set(
+                TARGET["classes"]
+            )
         assessed.update(patient for patient, roles in grouped.items() if roles == {"test"})
     assert set(assessed.values()) == {1} and len(assessed) == 30
 
-    common = {"maxEpochs": 1, "earlyStopping": False, "batchSize": 5,
-              "accumulateGradBatches": 2, "bagSize": 2, "embedDim": 4,
-              "attentionDim": 2, "dropout": 0, "analysis": {"bootstrapResamples": 200},
-              "decisionThreshold": 0.7}
+    common = {
+        "maxEpochs": 1,
+        "earlyStopping": False,
+        "batchSize": 5,
+        "accumulateGradBatches": 2,
+        "bagSize": 2,
+        "embedDim": 4,
+        "attentionDim": 2,
+        "dropout": 0,
+        "analysis": {"bootstrapResamples": 200},
+        "decisionThreshold": 0.7,
+    }
     batch_spec = DevelopmentBatchSpec(
-        experimentName="Pipeline audit", batchName="Both MIL models",
+        experimentName="Pipeline audit",
+        batchName="Both MIL models",
         inputs={"protocolId": protocol["id"], "featureBundleId": features["id"]},
-        mode="explicit", configurations=[{**common, "model": "abmil"},
-                                         {**common, "model": "nnmil", "bagSizeMode": "training_median"}],
+        mode="explicit",
+        configurations=[
+            {**common, "model": "abmil"},
+            {**common, "model": "nnmil", "bagSizeMode": "training_median"},
+        ],
         resources={"gpuIds": [], "cpuThreadsPerRun": 1, "dataLoaderWorkers": 0},
     )
     development = DevelopmentService(store, filesystem)
@@ -95,7 +128,9 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
     # The Task Center's per-run defaults match the frozen request: one thread, no loaders.
     task_center.store.update_settings({"defaults": {"cpuThreadsPerRun": 1, "dataLoaderWorkers": 0}})
     training = TrainingService(
-        store, filesystem, runtime=runtime,
+        store,
+        filesystem,
+        runtime=runtime,
         task_center=task_center.client,
     )
     plan, _ = training._prepare(frozen)
@@ -110,7 +145,9 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
         assert result["state"] == "succeeded" and result["checkpointUnit"] == "patient"
         assert result["patientAggregation"] == "mean_probabilities"
         for role, partition in (("validation", "val"), ("assessment", "test")):
-            selected = [row for row in worker["data"]["memberships"] if row["partition"] == partition]
+            selected = [
+                row for row in worker["data"]["memberships"] if row["partition"] == partition
+            ]
             metrics = result["metrics"][role]
             assert metrics["slide"]["count"] == len(selected)
             assert metrics["patient"]["count"] == len({row["patientId"] for row in selected})
@@ -118,7 +155,9 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
         predictions = read_json_bounded(Path(result["predictions"]["assessment"]))["records"]
         for patient in aggregate_patients(predictions):
             slides = [row for row in predictions if row["patientId"] == patient["patientId"]]
-            np.testing.assert_allclose(patient["probabilities"], np.mean([row["probabilities"] for row in slides], axis=0))
+            np.testing.assert_allclose(
+                patient["probabilities"], np.mean([row["probabilities"] for row in slides], axis=0)
+            )
         write_json_atomic(run_folder / "plan.json", worker)
         state["runs"].append({**run, "status": "completed", "result": result})
     collect_results(plan, state, output)
@@ -135,8 +174,14 @@ def test_independent_bundle_patient_kfold_slide_training_and_both_result_units(
         records = read_json_bounded(Path(candidate["oofPath"]))["records"]
         assert {row["slideId"] for row in records} == eligible_ids and len(records) == 60
         for unit, count in (("slide", 60), ("patient", 30)):
-            exported = training_oof_csv(store, frozen["id"], candidate["candidateId"],
-                                        candidate["trainingSeed"], candidate["splitSeed"], unit)
+            exported = training_oof_csv(
+                store,
+                frozen["id"],
+                candidate["candidateId"],
+                candidate["trainingSeed"],
+                candidate["splitSeed"],
+                unit,
+            )
             parsed = list(csv.DictReader(io.StringIO(exported.decode())))
             assert len(parsed) == count
             assert {int(row["assessmentFold"]) for row in parsed} == set(range(5))

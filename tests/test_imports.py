@@ -978,9 +978,9 @@ def cohort_tree(service):
     """Canonical cohort folders beside superseded copies that repeat the same file names."""
     slides = service.filesystem.roots[0] / "slides"
     for folder, names in (
-        ("rih", ("SL-1.svs", "SL-2.svs")),
-        ("TCGA", ("TCGA-A6.svs",)),
-        ("rih_quarantine", ("SL-1.svs", "SL-2.svs")),
+        ("site-a", ("A-1.svs", "A-2.svs")),
+        ("site-c", ("C-6.svs",)),
+        ("quarantine", ("A-1.svs", "A-2.svs")),
     ):
         (slides / folder).mkdir(parents=True)
         for name in names:
@@ -988,9 +988,9 @@ def cohort_tree(service):
     source = table(
         service,
         "Slide_ID,Slide_Path,Label\n"
-        "SL-1,rih/SL-1.svs,a\n"
-        "SL-2,rih/SL-2.svs,b\n"
-        "TCGA-A6,TCGA/TCGA-A6.svs,c\n",
+        "A-1,site-a/A-1.svs,a\n"
+        "A-2,site-a/A-2.svs,b\n"
+        "C-6,site-c/C-6.svs,c\n",
     )
     return slides, source
 
@@ -1007,9 +1007,9 @@ def test_a_mapped_slide_path_links_cohort_subfolders_a_stem_scan_cannot(service)
     assert reviewed["summary"]["matchedSlideCount"] == 3
     assert reviewed["summary"]["unmatchedFileCount"] == 0
     assert [record["slidePath"] for record in reviewed["records"]] == [
-        str(slides / "rih" / "SL-1.svs"),
-        str(slides / "rih" / "SL-2.svs"),
-        str(slides / "TCGA" / "TCGA-A6.svs"),
+        str(slides / "site-a" / "A-1.svs"),
+        str(slides / "site-a" / "A-2.svs"),
+        str(slides / "site-c" / "C-6.svs"),
     ]
     # The mapped column is identity, not an attribute to model on.
     assert set(reviewed["records"][0]["attributes"]) == {"Label"}
@@ -1018,15 +1018,15 @@ def test_a_mapped_slide_path_links_cohort_subfolders_a_stem_scan_cannot(service)
 @pytest.mark.parametrize(
     ("path", "code"),
     [
-        ("rih/../../escape.svs", "SLIDE_PATH_INVALID"),
-        ("rih/absent.svs", "SLIDE_FILE_MISSING_PATH"),
-        ("rih", "SLIDE_PATH_UNSUPPORTED"),
-        ("rih/SL-1.txt", "SLIDE_PATH_UNSUPPORTED"),
+        ("site-a/../../escape.svs", "SLIDE_PATH_INVALID"),
+        ("site-a/absent.svs", "SLIDE_FILE_MISSING_PATH"),
+        ("site-a", "SLIDE_PATH_UNSUPPORTED"),
+        ("site-a/A-1.txt", "SLIDE_PATH_UNSUPPORTED"),
     ],
 )
 def test_unusable_mapped_slide_paths_are_reported(service, path, code):
     slides, _ = cohort_tree(service)
-    source = table(service, f"Slide_ID,Slide_Path\nSL-9,{path}\n")
+    source = table(service, f"Slide_ID,Slide_Path\nA-9,{path}\n")
     reviewed = preview(
         service, draft(service, source, slideRoot=str(slides), slidePathColumn="Slide_Path")
     )
@@ -1035,7 +1035,7 @@ def test_unusable_mapped_slide_paths_are_reported(service, path, code):
 
 def test_rows_without_a_mapped_path_are_reported_and_stay_unlinked(service):
     slides, _ = cohort_tree(service)
-    source = table(service, "Slide_ID,Slide_Path\nSL-1,rih/SL-1.svs\nSL-2,\n")
+    source = table(service, "Slide_ID,Slide_Path\nA-1,site-a/A-1.svs\nA-2,\n")
     reviewed = preview(
         service, draft(service, source, slideRoot=str(slides), slidePathColumn="Slide_Path")
     )
@@ -1045,7 +1045,7 @@ def test_rows_without_a_mapped_path_are_reported_and_stay_unlinked(service):
 
 def test_two_rows_naming_one_file_are_reported_as_an_alias(service):
     slides, _ = cohort_tree(service)
-    source = table(service, "Slide_ID,Slide_Path\nSL-1,rih/SL-1.svs\nSL-1b,./rih/SL-1.svs\n")
+    source = table(service, "Slide_ID,Slide_Path\nA-1,site-a/A-1.svs\nA-1b,./site-a/A-1.svs\n")
     reviewed = preview(
         service, draft(service, source, slideRoot=str(slides), slidePathColumn="Slide_Path")
     )
@@ -1054,7 +1054,7 @@ def test_two_rows_naming_one_file_are_reported_as_an_alias(service):
 
 def test_a_mapped_slide_whose_file_name_differs_from_its_slide_id_blocks_freezing(service):
     slides, _ = cohort_tree(service)
-    source = table(service, "Slide_ID,Slide_Path\nSL-1,rih/SL-1.svs\nSL-9,rih/SL-2.svs\n")
+    source = table(service, "Slide_ID,Slide_Path\nA-1,site-a/A-1.svs\nA-9,site-a/A-2.svs\n")
     reviewed = preview(
         service, draft(service, source, slideRoot=str(slides), slidePathColumn="Slide_Path")
     )
@@ -1062,16 +1062,14 @@ def test_a_mapped_slide_whose_file_name_differs_from_its_slide_id_blocks_freezin
         item for item in reviewed["findings"] if item["code"] == "SLIDE_ID_FILENAME_MISMATCH"
     ]
     assert finding["severity"] == "error" and finding["count"] == 1
-    assert finding["examples"] == ["SL-9: SL-2.svs"]
+    assert finding["examples"] == ["A-9: A-2.svs"]
     assert "TRIDENT names its outputs after the file" in finding["message"]
     assert not reviewed["canFreeze"]
 
 
 def test_a_slide_id_repeated_with_mapped_paths_is_not_blamed_on_a_filename_stem(service):
     slides, _ = cohort_tree(service)
-    source = table(
-        service, "Slide_ID,Slide_Path\nSL-1,rih/SL-1.svs\nSL-1,rih_quarantine/SL-1.svs\n"
-    )
+    source = table(service, "Slide_ID,Slide_Path\nA-1,site-a/A-1.svs\nA-1,quarantine/A-1.svs\n")
     reviewed = preview(
         service, draft(service, source, slideRoot=str(slides), slidePathColumn="Slide_Path")
     )
@@ -1084,10 +1082,10 @@ def test_a_slide_id_repeated_with_mapped_paths_is_not_blamed_on_a_filename_stem(
 
 def test_an_absolute_mapped_path_needs_no_slide_folder(service):
     slides, _ = cohort_tree(service)
-    source = table(service, f"Slide_ID,Slide_Path\nSL-1,{slides / 'rih' / 'SL-1.svs'}\n")
+    source = table(service, f"Slide_ID,Slide_Path\nA-1,{slides / 'site-a' / 'A-1.svs'}\n")
     reviewed = preview(service, draft(service, source, slidePathColumn="Slide_Path"))
     assert reviewed["canFreeze"], reviewed["findings"]
-    assert reviewed["records"][0]["slidePath"] == str(slides / "rih" / "SL-1.svs")
+    assert reviewed["records"][0]["slidePath"] == str(slides / "site-a" / "A-1.svs")
 
 
 def test_a_relative_mapped_path_without_a_slide_folder_is_reported(service):

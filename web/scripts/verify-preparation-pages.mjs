@@ -34,7 +34,7 @@ const copy = (value) => structuredClone(value);
 const state = window.workflow = { calls: [], drafts: [], datasets: [], bundles: [], errors: [], revision: 0, confirms: [], confirmNavigation: false, holdFreeze: false, freezeFailures: 0, refreshMode: 'ready', pendingRefresh: [] };
 window.confirm = (message) => { state.confirms.push(message); return state.confirmNavigation; };
 window.fetch = async (...args) => { state.errors.push('Unexpected network request: ' + args[0]); throw new Error(state.errors.at(-1)); };
-const rows = ['low', 'high', 'low', 'high'].map((grade, index) => ({ slideId: 'slide-' + index, patientId: 'patient-' + index, patientIdSource: 'source', slidePath: '/slides/' + index + '.svs', attributes: { grade, cohort: ['TCGA', 'SurGen', 'RIH', 'TCGA'][index] } }));
+const rows = ['low', 'high', 'low', 'high'].map((grade, index) => ({ slideId: 'slide-' + index, patientId: 'patient-' + index, patientIdSource: 'source', slidePath: '/slides/' + index + '.svs', attributes: { grade, cohort: ['Site A', 'Site B', 'Site C', 'Site A'][index] } }));
 const dictionary = [{ key: 'grade', sourceColumn: 'grade', owner: 'patient', type: 'categorical' }, { key: 'cohort', sourceColumn: 'cohort', owner: 'patient', type: 'categorical' }];
 const importSpec = { source: { path: '/metadata.csv' }, slideIdColumn: 'Slide_ID', patientIdColumn: 'Patient_ID', patientIdFallback: 'unresolved', slideRoot: '/slides', recursive: true, includeMissingSlides: false, missingValues: [''], attributes: copy(dictionary) };
 const importSummary = { sourceRowCount: 4, slideCount: 4, mappedPatientCount: 4, verifiedPatientCount: 4, unlinkedSlideCount: 0, matchedSlideCount: 4, missingSlideCount: 0, unmatchedFileCount: 0, excludedRowCount: 0, scannedFileCount: 4 };

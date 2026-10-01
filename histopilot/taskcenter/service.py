@@ -700,7 +700,6 @@ class TaskCenterService:
             "awaiting": awaiting,
             "registry": registry,
             "projectNames": project_names,
-            "purposes": {},
             "retryable": None,
             "positions": positions,
             "ownerPositions": {owner["key"]: index + 1 for index, owner in enumerate(live_owners)},
@@ -759,9 +758,7 @@ class TaskCenterService:
         held = {key for key, owner in owners.items() if owner.get("held")}
         return summary, {key: round(value) for key, value in per_owner.items() if key not in held}
 
-    def _task_link(
-        self, task: dict, owner: dict | None, project_id: str | None, context: dict | None = None
-    ) -> str | None:
+    def _task_link(self, task: dict, owner: dict | None, project_id: str | None) -> str | None:
         if project_id is None:
             return None
         labels = task.get("labels") or {}
@@ -791,20 +788,18 @@ class TaskCenterService:
                 # historical refit list.
                 target = self._experiment_hash(experiment, None)
             else:
-                target = self._compute_hash(kind, record, labels)
+                target = self._compute_hash(kind, record)
         elif task["kind"] == "predictor-coordinator":
             experiment = self._experiment_id(task, owner)
             target = self._experiment_hash(experiment, None) if experiment else None
         elif task["kind"] == "bulk-submit":
-            batch = self._bulk_id(task, owner)
-            purpose = self._owner_purpose(task["ownerKey"], context)
-            target = self._bulk_hash(batch, purpose)
+            target = self._bulk_hash(self._bulk_id(task, owner))
         elif task["kind"] in PREPARATION_KINDS:
             target = self._preparation_hash(
                 PREPARATION_KINDS[task["kind"]], labels.get("recordId") or group.get("id"), labels
             )
         if target is None:
-            return self._owner_link(owner, project_id, None, labels.get("purpose"), context)
+            return self._owner_link(owner, project_id, None)
         return f"?project={_query(project_id)}{target}"
 
     @staticmethod
@@ -813,27 +808,9 @@ class TaskCenterService:
         return value + (f"&batch={_query(batch)}" if batch else "")
 
     @staticmethod
-    def _bulk_hash(batch: str | None, purpose: str | None) -> str:
-        page = "inference" if purpose == "inference" else "evaluation"
-        return f"#{page}?batch={_query(batch)}" if batch else f"#{page}"
-
-    def _owner_purpose(self, key: str | None, context: dict | None) -> str | None:
-        """An evaluation batch's purpose, which only its member tasks carry (inference)."""
-        if not key:
-            return None
-        cache = context["purposes"] if context is not None else {}
-        if key not in cache:
-            aggregate = ((context or {}).get("aggregates") or {}).get(key) or {}
-            purpose = aggregate.get("purpose")
-            if purpose is None:
-                rows = self._rows(
-                    "SELECT json_extract(labels, '$.purpose') AS purpose FROM tasks "
-                    "WHERE owner_key=? AND json_extract(labels, '$.purpose') IS NOT NULL LIMIT 1",
-                    (key,),
-                )
-                purpose = rows[0]["purpose"] if rows else None
-            cache[key] = purpose
-        return cache[key]
+    def _bulk_hash(batch: str | None) -> str:
+        """A batch of runs opens in Apply models, labeled cohort or not."""
+        return f"#apply?batch={_query(batch)}" if batch else "#apply"
 
     @staticmethod
     def _preparation_hash(kind: str, record: str | None, labels: dict) -> str | None:
@@ -849,30 +826,22 @@ class TaskCenterService:
         return f"#features?{prefix}packing={_query(record)}"
 
     @staticmethod
-    def _compute_hash(kind, record, labels: dict) -> str | None:
+    def _compute_hash(kind, record) -> str | None:
         if not record:
             return None
         if kind in REFIT_KINDS:
             return f"#post-development?tab=refits&refit={_query(record)}"
         if kind in EVALUATION_KINDS:
-            page = "inference" if labels.get("purpose") == "inference" else "evaluation"
-            return f"#{page}?evaluation={_query(record)}"
+            return f"#apply?run={_query(record)}"
         if kind in INTERPRETATION_KINDS:
             return f"#interpretation?interpretation={_query(record)}"
         return None
 
-    def _owner_link(
-        self,
-        owner: dict,
-        project_id: str | None,
-        batch: str | None,
-        purpose: str | None = None,
-        context: dict | None = None,
-    ) -> str | None:
+    def _owner_link(self, owner: dict, project_id: str | None, batch: str | None) -> str | None:
         if project_id is None or not owner:
             return None
         kind, identity = owner.get("kind"), owner.get("id")
-        labels = {"purpose": purpose, **(owner.get("labels") or {})}
+        labels = owner.get("labels") or {}
         if kind == "experiment":
             target = self._experiment_hash(identity, batch)
         elif kind == "mil-batch":
@@ -880,11 +849,9 @@ class TaskCenterService:
                 labels.get("experimentId") or f"legacy-{identity}", identity
             )
         elif kind in COMPUTE_KINDS:
-            target = self._compute_hash(kind, identity, labels)
+            target = self._compute_hash(kind, identity)
         elif kind == "evaluation-batch":
-            target = self._bulk_hash(
-                identity, labels.get("purpose") or self._owner_purpose(owner.get("key"), context)
-            )
+            target = self._bulk_hash(identity)
         elif kind in PREPARATION_KINDS:
             target = self._preparation_hash(PREPARATION_KINDS[kind], identity, labels)
         else:
@@ -965,7 +932,7 @@ class TaskCenterService:
             "startedAt": task["startedAt"],
             "finishedAt": task["finishedAt"],
             "updatedAt": task["updatedAt"],
-            "link": self._task_link(task, owner, project_id, context),
+            "link": self._task_link(task, owner, project_id),
             "logPath": (task["command"] or {}).get("log"),
             "awaitingRequeue": awaiting,
             "actions": {"cancel": cancel, "retry": retry},
@@ -1009,9 +976,7 @@ class TaskCenterService:
             "createdAt": owner["createdAt"],
             "updatedAt": owner["updatedAt"],
             "etaSeconds": context.get("ownerEta", {}).get(owner["key"]),
-            "link": self._owner_link(
-                owner, project_id, aggregate.get("batch"), aggregate.get("purpose"), context
-            ),
+            "link": self._owner_link(owner, project_id, aggregate.get("batch")),
             "actions": {
                 "hold": same and pending_work and not owner["held"],
                 "release": same and owner["held"],

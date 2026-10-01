@@ -9,7 +9,7 @@ import './FreezeVersionDialog.css';
 
 const kinds = {
   'target-split': { name: 'target and split', placeholder: 'e.g. grade-train-test-v1', saved: 'dataset selection, prediction target and training/testing assignments' },
-  cohort: { name: 'test cohort', placeholder: 'e.g. external-validation-v1', saved: 'test records, eligibility conditions and prediction target' },
+  cohort: { name: 'cohort', placeholder: 'e.g. external-validation-v1', saved: 'slides, eligibility conditions and labels' },
   dataset: { name: 'dataset', placeholder: 'e.g. reviewed-slides-v1', saved: 'slide records and column mapping' },
   protocol: { name: 'development protocol', placeholder: 'e.g. grade-baseline-v1', saved: 'cohort, prediction target and split assignments' },
   feature: { name: 'feature', placeholder: 'e.g. uni-20x-v1', saved: 'feature configuration and file references' },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProtocolSpec } from '../api/scientific';
-import { changeSplitStrategy, MAX_SPLIT_SEEDS, splitSeedsError } from './split';
+import { assessmentPlanNoun, changeSplitStrategy, MAX_SPLIT_SEEDS, splitSeedsError } from './split';
 
 const spec = (): ProtocolSpec['split'] => ({
   version: 4,
@@ -79,5 +79,15 @@ describe('split seed validation', () => {
     expect(splitSeedsError('0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10')).toBe('Enter at most 10 split seeds; you entered 11.');
     expect(splitSeedsError('42, 42')).toBe('Each split seed must be different.');
     for (const text of ['', '42,', '1.5', '-1', '4294967296', 'x']) expect(splitSeedsError(text)).toContain('whole-number seeds');
+  });
+});
+
+describe('naming assessment plans', () => {
+  it('calls a plan a fold, a held-out site or the held-out assessment', () => {
+    expect(assessmentPlanNoun({ mode: 'kfold' })).toEqual({ one: 'fold', many: 'folds' });
+    expect(assessmentPlanNoun({ mode: 'predefined_folds' }).many).toBe('folds');
+    expect(assessmentPlanNoun({ mode: 'leave_one_domain_out' })).toEqual({ one: 'held-out site', many: 'held-out sites' });
+    expect(assessmentPlanNoun({ mode: 'held_out' }).one).toBe('held-out assessment');
+    expect(assessmentPlanNoun(undefined).one).toBe('fold');
   });
 });

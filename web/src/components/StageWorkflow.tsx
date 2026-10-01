@@ -56,6 +56,38 @@ export function StageSteps({ steps, current, onChange, label = 'Workflow steps',
   </nav>;
 }
 
+export interface StageView<T extends string> { id: T; title: string; hint?: string; disabled?: boolean }
+
+/**
+ * The views of one saved record, unlike numbered steps: any view may be opened in any order.
+ * Arrow keys, Home and End move between views, as in the step navigation.
+ */
+export function StageViews<T extends string>({ views, current, onChange, label, caption, idPrefix, disabled = false }: {
+  views: readonly StageView<T>[];
+  current: T;
+  onChange: (id: T) => void;
+  label: string;
+  caption?: string;
+  /** Gives each view button a stable id, `${idPrefix}${view.id}`. */
+  idPrefix?: string;
+  disabled?: boolean;
+}) {
+  return <nav className="stage-views" aria-label={label} onKeyDown={(event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+    const index = buttons.indexOf(event.target as HTMLButtonElement);
+    if (index < 0) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next]?.focus(); buttons[next]?.click();
+  }}>
+    {caption ? <span className="stage-view-caption">{caption}</span> : null}
+    {views.map((view) => <button type="button" id={idPrefix ? `${idPrefix}${view.id}` : undefined} key={view.id}
+      aria-current={current === view.id ? 'page' : undefined} disabled={disabled || view.disabled}
+      title={view.hint} onClick={() => onChange(view.id)}>{view.title}</button>)}
+  </nav>;
+}
+
 /** Retain child state across steps. Never key/remount a form just to move the viewport. */
 export function StagePage({ pageKey, children, className = '' }: {
   pageKey: string | number;
@@ -94,6 +126,19 @@ export function StageLibrary({ project, title, backLabel, children }: {
     <div className="stage-library-body">{children}</div>
   </section>;
   return managedByStage ? library : <RecordManagementScope project={project} backLabel={backLabel ?? `Back to ${title.toLowerCase()}`}>{library}</RecordManagementScope>;
+}
+
+/** The kinds of record one library lists, each with its count. */
+export function StageLibraryTabs<T extends string>({ tabs, current, onChange, label }: {
+  tabs: readonly { id: T; title: string; count?: number }[];
+  current: T;
+  onChange: (id: T) => void;
+  label: string;
+}) {
+  return <div className="stage-library-tabs" role="group" aria-label={label}>
+    {tabs.map((tab) => <button type="button" key={tab.id} className={current === tab.id ? 'selected' : ''} aria-pressed={current === tab.id} onClick={() => onChange(tab.id)}>
+      {tab.title}{tab.count === undefined ? null : <span>{tab.count.toLocaleString()}</span>}</button>)}
+  </div>;
 }
 
 /** Every library starts with the same compact controls; each phase owns its filters. */

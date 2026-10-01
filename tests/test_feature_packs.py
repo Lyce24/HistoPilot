@@ -184,9 +184,7 @@ def test_validate_without_pack_and_freshness_is_metadata_only(packs, task_center
     assert not service.validation_for(spec.featureSetId)["current"]
 
 
-def test_pack_completion_supports_empty_folder_and_preserves_sources(
-    packs, task_center, tmp_path
-):
+def test_pack_completion_supports_empty_folder_and_preserves_sources(packs, task_center, tmp_path):
     service, spec, source = packs
     output = tmp_path / "empty-output"
     output.mkdir()
@@ -562,9 +560,7 @@ def test_source_modified_after_submission_stops_worker_before_output(packs, task
         "artifactValidation",
     ],
 )
-def test_artifact_and_job_reads_reject_inconsistent_completion_receipts(
-    packs, task_center, field
-):
+def test_artifact_and_job_reads_reject_inconsistent_completion_receipts(packs, task_center, field):
     service, spec, source = packs
     job = submit(service, spec)
     result = run_pack(task_center.store, job)

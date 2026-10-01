@@ -13,3 +13,7 @@
 .local-operations summary { cursor: pointer; padding-block: .5rem; }
 .local-operations details p { overflow-wrap: anywhere; }
 @media (max-width: 680px) { .operations-form { display: grid; } .operations-receipt-heading { align-items: start; flex-wrap: wrap; } }
+
+.agent-access-list { list-style: none; padding: 0; display: grid; gap: 0.5rem; }
+.agent-access-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.agent-access-list pre { max-height: 12rem; overflow: auto; }

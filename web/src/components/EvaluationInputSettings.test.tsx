@@ -27,9 +27,9 @@ describe('evaluation execution inputs', () => {
     expect(evaluationExecutionSelection(inputs)).not.toHaveProperty('featureBundleId');
     expect(inputs.inference).toMatchObject({ loadingPolicy: 'per_slide', numWorkers: 0, decisionThreshold: 'predictor', patientAggregation: 'predictor' });
     const html = render([]);
-    expect(html).toContain('Test features and inference');
+    expect(html).toContain('Features and inference settings');
     expect(html).toContain('No frozen feature bundles are available');
-    expect(html).toContain('The test cohort is already saved');
+    expect(html).toContain('The cohort is already saved');
     expect(html).toContain('prediction task and class encoding');
   });
 

@@ -143,7 +143,7 @@ describe('Task Center state helpers', () => {
     const link = '?project=p1#experiments?experiment=e&tab=runs&batch=b';
     expect(taskCenterLink(link, 'p1')).toBe('#experiments?experiment=e&tab=runs&batch=b');
     expect(taskCenterLink(link, 'p2')).toBe(link);
-    expect(taskCenterLink('#evaluation', 'p1')).toBe('#evaluation');
+    expect(taskCenterLink('#apply?run=r', 'p1')).toBe('#apply?run=r');
     expect(taskCenterLink(null, 'p1')).toBeNull();
   });
 });
@@ -157,22 +157,24 @@ describe('Task Center links, labels and polling', () => {
     expect(rollupScopeKey({ project: 'p', ownerKind: 'experiment', ownerId: 'e' })).toBe(rollupScopeKey({ ownerId: 'e', ownerKind: 'experiment', project: 'p' }));
   });
 
-  it('names compute jobs by what they do and inference by its purpose', () => {
+  it('names compute jobs by what they do, and runs and batches by their cohort’s labels', () => {
     expect(taskKindLabel('compute-job', { computeKind: 'refit' })).toBe('Refit training');
-    expect(taskKindLabel('compute-job', { computeKind: 'evaluation', purpose: 'inference' })).toBe('Inference');
+    expect(taskKindLabel('compute-job', { computeKind: 'evaluation', purpose: 'inference' })).toBe('Predictions');
+    expect(taskKindLabel('compute-job', { computeKind: 'evaluation' })).toBe('Predictions');
     expect(taskKindLabel('compute-job', { computeKind: 'interpretation' })).toBe('Attention maps');
     expect(taskKindLabel('compute-job')).toBe('Compute job');
     expect(taskKindLabel('extraction')).toBe('Feature extraction');
-    expect(ownerKindLabel('evaluation-batch', 'inference')).toBe('Inference batch');
-    expect(ownerKindLabel('model-evaluation', 'inference')).toBe('Inference');
-    expect(ownerKindLabel('model-evaluation')).toBe('Evaluation');
+    expect(ownerKindLabel('evaluation-batch', 'inference')).toBe('Batch · unlabeled cohort');
+    expect(ownerKindLabel('evaluation-batch')).toBe('Batch · labeled cohort');
+    expect(ownerKindLabel('model-evaluation', 'inference')).toBe('Run · unlabeled cohort');
+    expect(ownerKindLabel('model-evaluation')).toBe('Run · labeled cohort');
     expect(ownerKindLabel('feature-pack')).toBe('Feature packing');
   });
 
   it('drops the repeated refit suffix and names the model when recorded', () => {
-    const refit = { kind: 'compute-job', title: 'Refit · gej3 · config 1 · seed 42 / split 42 · refit', labels: { computeKind: 'refit' } };
-    expect(taskDisplayTitle(refit)).toBe('Refit · gej3 · config 1 · seed 42 / split 42');
-    expect(taskDisplayTitle({ ...refit, labels: { computeKind: 'refit', model: 'nnmil' } })).toBe('Refit · gej3 · config 1 · seed 42 / split 42 · nnMIL');
+    const refit = { kind: 'compute-job', title: 'Refit · study3 · config 1 · seed 42 / split 42 · refit', labels: { computeKind: 'refit' } };
+    expect(taskDisplayTitle(refit)).toBe('Refit · study3 · config 1 · seed 42 / split 42');
+    expect(taskDisplayTitle({ ...refit, labels: { computeKind: 'refit', model: 'nnmil' } })).toBe('Refit · study3 · config 1 · seed 42 / split 42 · nnMIL');
     expect(taskDisplayTitle({ kind: 'mil-fold', title: 'Fold · refit', labels: {} })).toBe('Fold · refit');
   });
 

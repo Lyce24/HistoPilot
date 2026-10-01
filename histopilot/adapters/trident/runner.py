@@ -70,7 +70,12 @@ def _worker_environment(python_path, *, cwd=None):
     env = os.environ.copy()
     # DataLoader processes already supply parallelism. Avoid a native thread
     # pool per worker unless the operator explicitly configured one.
-    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    for name in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
         env.setdefault(name, "1")
     if not sys.platform.startswith("linux"):
         return env
@@ -106,9 +111,7 @@ def _worker_environment(python_path, *, cwd=None):
                 libraries.append(str(directory))
     if libraries:
         previous = env.get("LD_LIBRARY_PATH")
-        env["LD_LIBRARY_PATH"] = os.pathsep.join(
-            [*libraries, *([previous] if previous else [])]
-        )
+        env["LD_LIBRARY_PATH"] = os.pathsep.join([*libraries, *([previous] if previous else [])])
     return env
 
 
@@ -121,7 +124,9 @@ def _worker_command(command):
     if script.name != "run_batch_of_slides.py" or not script.is_file():
         return command
     return [
-        command[0], "-u", str(Path(__file__).with_name("bootstrap.py")),
+        command[0],
+        "-u",
+        str(Path(__file__).with_name("bootstrap.py")),
         *command[script_index:],
     ]
 
@@ -182,7 +187,11 @@ def _lock_owner_dead(lock, *, now, host, max_age_seconds):
         if raw:
             data = json.loads(raw)
             if isinstance(data, dict):
-                pid, owner_host, created = data.get("pid"), data.get("hostname"), data.get("created_at")
+                pid, owner_host, created = (
+                    data.get("pid"),
+                    data.get("hostname"),
+                    data.get("created_at"),
+                )
     except (OSError, ValueError, UnicodeError):
         pass
     try:
@@ -334,8 +343,10 @@ class _Progress:
             for key in ("stage", "label", "completed", "total", "currentSlide", "scope")
         }
         grew = mtime is not None and mtime != self.log_mtime
-        if not force and comparable == self.last and not (
-            grew and clock - self.written >= PROGRESS_REFRESH_SECONDS
+        if (
+            not force
+            and comparable == self.last
+            and not (grew and clock - self.written >= PROGRESS_REFRESH_SECONDS)
         ):
             return
         value.update(phase=value.get("label"), message=value.get("detail"))

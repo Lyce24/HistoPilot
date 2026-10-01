@@ -9,7 +9,9 @@ class CaseReviewQuery(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     unit: Literal["selected", "slide", "patient"] = "selected"
-    outcome: Literal["all", "error", "false_positive", "false_negative", "correct", "unlabeled", "disagreement"] = "all"
+    outcome: Literal[
+        "all", "error", "false_positive", "false_negative", "correct", "unlabeled", "disagreement"
+    ] = "all"
     comparisonId: str | None = Field(default=None, pattern=r"^configuration-[a-f0-9]{64}$")
     actualClass: Annotated[StrictInt, Field(ge=0)] | None = None
     predictedClass: Annotated[StrictInt, Field(ge=0)] | None = None
@@ -27,5 +29,7 @@ class CaseReviewQuery(BaseModel):
     )
     developmentPatients: Literal["all", "shared", "new"] = "all"
     memberDisagreement: bool = False
+    # Outcomes against a reference standard of the cohort instead of the cohort's own labels.
+    referenceId: str | None = Field(default=None, pattern=r"^configuration-[a-f0-9]{64}$")
     offset: Annotated[StrictInt, Field(ge=0)] = 0
     limit: Annotated[StrictInt, Field(ge=1, le=100)] = 30

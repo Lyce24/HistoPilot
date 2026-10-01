@@ -232,6 +232,7 @@ def test_seed_average_is_the_mean_of_per_seed_oof_and_folds_keep_their_receipts(
     assert fold["fold"] == 1 and fold["bestEpoch"] == 2 and fold["epochsCompleted"] == 9
     assert fold["testCount"] == 12 and fold["metrics"]["perClass"][0]["label"] == "HG"
     assert summary["design"] == {
+        "strategy": "folds",
         "splitUnit": "slide",
         "groupByPatient": False,
         "folds": 3,

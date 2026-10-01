@@ -4,14 +4,9 @@ import csv
 import io
 from collections import defaultdict
 
-from histopilot.application.case_review import (
-    CaseReviewService,
-    _csv_text,
-    cohort_metadata,
-    development_flag,
-    development_patients,
-)
+from histopilot.application.case_review import CaseReviewService, cohort_metadata
 from histopilot.application.evaluation_runs import run_purpose
+from histopilot.application.run_evidence import csv_text, development_flag, development_patients
 from histopilot.inference_summary import agreement, class_counts, cross_tab, describe, summarize
 from histopilot.schemas.interpretation import VisualizeInterpretation
 from histopilot.storage.io import content_hash
@@ -32,6 +27,16 @@ def _attribute_value(values):
     return next(iter(distinct)) if len(distinct) == 1 else MIXED
 
 
+def attribute_values(records, lookup, field):
+    """Each record's value of a frozen attribute; a patient's differing slides read as Mixed."""
+    return [
+        _attribute_value(
+            [lookup[slide].get("attributes", {}).get(field) for slide in row["slideIds"]]
+        )
+        for row in records
+    ]
+
+
 class InferenceAnalysisService:
     def __init__(self, store, filesystem):
         self.store, self.filesystem = store, filesystem
@@ -45,15 +50,6 @@ class InferenceAnalysisService:
         threshold = manifest["inference"]["decisionThreshold"]
         described = [describe(row, target, threshold) for row in records]
         return evaluation, cohort, records, described, actual_unit, checksum
-
-    @staticmethod
-    def _attributes(records, lookup, field):
-        return [
-            _attribute_value(
-                [lookup[slide].get("attributes", {}).get(field) for slide in row["slideIds"]]
-            )
-            for row in records
-        ]
 
     def summary(self, identity, query):
         evaluation, cohort, records, described, unit, checksum = self._evidence(
@@ -108,7 +104,7 @@ class InferenceAnalysisService:
             result["breakdown"] = {
                 "attribute": query.attribute,
                 "label": dictionary[query.attribute],
-                **cross_tab(described, self._attributes(records, lookup, query.attribute), classes),
+                **cross_tab(described, attribute_values(records, lookup, query.attribute), classes),
             }
         if query.comparisonId:
             result["comparison"] = self._compare(
@@ -121,8 +117,8 @@ class InferenceAnalysisService:
             raise StorageError(
                 "Choose a different run to compare.", "INFERENCE_COMPARISON_INVALID", 422
             )
-        other, other_cohort, other_records, other_described, other_unit, checksum = (
-            self._evidence(other_id, unit)
+        other, other_cohort, other_records, other_described, other_unit, checksum = self._evidence(
+            other_id, unit
         )
         manifest, second = evaluation["manifest"], other["manifest"]
         # Match the case review's pairing rule so disagreements can be opened there.
@@ -130,7 +126,8 @@ class InferenceAnalysisService:
             other_cohort["id"] != cohort["id"]
             or other_unit != unit
             or second["target"] != manifest["target"]
-            or second["inference"]["patientAggregation"] != manifest["inference"]["patientAggregation"]
+            or second["inference"]["patientAggregation"]
+            != manifest["inference"]["patientAggregation"]
         ):
             raise StorageError(
                 "Compare runs on the same frozen cohort, target, prediction unit and patient aggregation.",
@@ -178,39 +175,62 @@ class InferenceAnalysisService:
         output = io.StringIO(newline="")
         writer = csv.writer(output)
         headers = [
-            "Run", "Unit", "Case", "Patient_ID", "Slide_IDs", "Predicted", "Confidence", "Margin",
+            "Run",
+            "Unit",
+            "Case",
+            "Patient_ID",
+            "Slide_IDs",
+            "Predicted",
+            "Confidence",
+            "Margin",
             *[f"P({label})" for label in classes],
-            "Members_agreeing", "Members", "Development_patient",
+            "Members_agreeing",
+            "Members",
+            "Development_patient",
         ]
-        used = {_csv_text(value) for value in [*headers, "Predictions_SHA256"]}
+        used = {csv_text(value) for value in [*headers, "Predictions_SHA256"]}
         for field in fields:
             label = dictionary[field]
-            if _csv_text(label) in used:
+            if csv_text(label) in used:
                 label = f"Attribute: {label} [{field}]"
-            while _csv_text(label) in used:
+            while csv_text(label) in used:
                 label = f"Attribute: {label}"
             headers.append(label)
-            used.add(_csv_text(label))
-        writer.writerow([_csv_text(value) for value in [*headers, "Predictions_SHA256"]])
-        values = {field: self._attributes(records, lookup, field) for field in fields}
+            used.add(csv_text(label))
+        writer.writerow([csv_text(value) for value in [*headers, "Predictions_SHA256"]])
+        values = {field: attribute_values(records, lookup, field) for field in fields}
         for index, (row, item) in enumerate(zip(records, described, strict=True)):
             members = item.get("memberAgreement")
             flag = development_flag(row, shared)
             development = "" if flag is None else "yes" if flag else "no"
-            writer.writerow([_csv_text(value) for value in [
-                identity, unit, row["patientId"] if unit == "patient" else row["slideId"],
-                row.get("patientId"), ";".join(row["slideIds"]), item["predictedLabel"],
-                item["confidence"], item["margin"], *row["probabilities"],
-                members["agree"] if members else "", members["total"] if members else "",
-                development, *[values[field][index] for field in fields], checksum,
-            ]])
+            writer.writerow(
+                [
+                    csv_text(value)
+                    for value in [
+                        identity,
+                        unit,
+                        row["patientId"] if unit == "patient" else row["slideId"],
+                        row.get("patientId"),
+                        ";".join(row["slideIds"]),
+                        item["predictedLabel"],
+                        item["confidence"],
+                        item["margin"],
+                        *row["probabilities"],
+                        members["agree"] if members else "",
+                        members["total"] if members else "",
+                        development,
+                        *[values[field][index] for field in fields],
+                        checksum,
+                    ]
+                ]
+            )
         return output.getvalue().encode("utf-8-sig")
 
     def attention(self, identity, request):
         """Queue attention for run slides through the reusable visualization flow."""
         from histopilot.application.interpretation import InterpretationService
 
-        evaluation = self.evaluations.get(identity)
+        evaluation = self.evaluations.record(identity)
         manifest = evaluation["manifest"]
         cohort = self.store.get_configuration(manifest["cohortId"])
         members = {row["slideId"] for row in cohort["manifest"]["memberships"]}
@@ -253,7 +273,9 @@ class InferenceAnalysisService:
                     patchWidthLevel0=request.patchWidthLevel0,
                     patchHeightLevel0=request.patchHeightLevel0,
                     resources=request.resources,
-                    operationId=f"inference-attention-{content_hash([request.operationId, folder])}"[:128],
+                    operationId=f"inference-attention-{content_hash([request.operationId, folder])}"[
+                        :128
+                    ],
                 )
             )
             items.extend(result["items"])

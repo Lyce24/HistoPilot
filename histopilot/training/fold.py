@@ -156,7 +156,8 @@ class _HistoryWriter(L.Callback):
                         if pl_module.device.type == "cuda"
                         else 0,
                     },
-                    limit=None, sync=False,
+                    limit=None,
+                    sync=False,
                 )
 
     def on_exception(self, trainer, pl_module, exception):
@@ -196,7 +197,12 @@ def _validate_plan(plan):
         raise ValueError(
             "Patient groups overlap between the run's fitting, validation or assessment partitions."
         )
-    validate_training_controls(plan.get("effectiveRecipe", plan["recipe"]), plan["target"], rows, split_unit=plan.get("splitUnit"))
+    validate_training_controls(
+        plan.get("effectiveRecipe", plan["recipe"]),
+        plan["target"],
+        rows,
+        split_unit=plan.get("splitUnit"),
+    )
 
 
 def _predict(model, loader, target, device, precision="32-true"):
@@ -213,7 +219,8 @@ def _predict(model, loader, target, device, precision="32-true"):
                     model.recipe.get("model"), model.recipe.get("inputMode", "image")
                 ):
                     output = model.prediction_output(
-                        batch["features"].to(device), batch["mask"].to(device),
+                        batch["features"].to(device),
+                        batch["mask"].to(device),
                         **({"clinical": batch["clinical"]} if "clinical" in batch else {}),
                     )
                     logits = output["logits"]
@@ -270,7 +277,9 @@ def train_fold(plan: dict, output_dir: Path, *, checkpoint_path=None) -> dict:
     L.seed_everything(plan["trainingSeed"], workers=True)
     if device_name == "cuda":
         torch.cuda.reset_peak_memory_stats()
-    effective, _ = resolve_stopping(recipe, plan["target"], plan["data"]["memberships"], split_unit=plan.get("splitUnit"))
+    effective, _ = resolve_stopping(
+        recipe, plan["target"], plan["data"]["memberships"], split_unit=plan.get("splitUnit")
+    )
     datamodule = MILDataModule({**plan, **plan["data"], "recipe": effective})
     try:
         return _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path)
@@ -431,7 +440,9 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
     if selected.split_unit != plan.get("splitUnit"):
         raise ValueError("Selected checkpoint split unit differs from the frozen plan.")
     if selected.clinical_preprocessor != datamodule.clinical_preprocessor:
-        raise ValueError("Selected checkpoint clinical preprocessing differs from the fitting partition.")
+        raise ValueError(
+            "Selected checkpoint clinical preprocessing differs from the fitting partition."
+        )
     device = torch.device(device_name)
     selected.to(device)
     validation = _predict(
@@ -446,7 +457,10 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
     metrics = {}
     for split, records in (("validation", validation), ("assessment", assessment)):
         metrics[split] = classification_metrics(
-            records, target, aggregation, analysis=recipe.get("analysis"),
+            records,
+            target,
+            aggregation,
+            analysis=recipe.get("analysis"),
             decision_threshold=recipe.get("decisionThreshold", 0.5),
             split_unit=plan.get("splitUnit"),
         )
@@ -465,7 +479,8 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
                 "patientAggregation": aggregation,
                 "patientMetrics": metrics[split]["patient"],
             },
-            limit=None, sync=False,
+            limit=None,
+            sync=False,
         )
         predictions[split] = str(path)
     write_json_atomic(output_dir / "metrics.json", metrics, limit=None, sync=False)
@@ -500,8 +515,11 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
         ),
         "epochsCompleted": len(fit["history"]),
         "trainingObjective": datamodule.trainingObjective,
-        **({"clinicalPreprocessing": selected.clinical_preprocessor}
-           if selected.clinical_preprocessor else {}),
+        **(
+            {"clinicalPreprocessing": selected.clinical_preprocessor}
+            if selected.clinical_preprocessor
+            else {}
+        ),
         # Assessment-only resume must report the selected model's frozen loss
         # settings, even for checkpoints created before weighting was corrected.
         "resolvedClassWeights": selected.hparams.get("class_weights"),

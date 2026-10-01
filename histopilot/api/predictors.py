@@ -7,18 +7,25 @@ from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.predictor_builds import PredictorBuildService
 from histopilot.application.predictors import PredictorService
 from histopilot.application.refits import RefitService
-from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection, RunBulkEvaluation
+from histopilot.schemas.bulk_evaluations import (
+    BulkEvaluationSelection,
+    RunBulkEvaluation,
+    inference_unstated,
+)
 from histopilot.schemas.predictors import (
     ApplyPredictorBuilds,
     CompareEvaluations,
     EvaluationRunSelection,
     FreezePredictor,
+    FreezeSeedEnsemble,
     LaunchRefit,
     PredictorAction,
     PredictorBuildSelection,
     PredictorSelection,
     SaveEvaluationRun,
+    SeedEnsembleSelection,
 )
+from histopilot.storage.project_lock import StorageError
 
 
 def predictor_router(projects, filesystem):
@@ -81,6 +88,18 @@ def predictor_router(projects, filesystem):
     def publish_refit(identity: str, refit_id: str, payload: PredictorAction):
         return refits(identity).publish(refit_id, payload.operationId)
 
+    @router.get("/predictors/seed-ensembles")
+    def seed_ensembles(identity: str, experiment_id: str | None = None):
+        return service(identity).seed_ensemble_choices(experiment_id)
+
+    @router.post("/predictors/seed-ensembles/preview")
+    def preview_seed_ensemble(identity: str, payload: SeedEnsembleSelection):
+        return service(identity).preview_seed_ensemble(payload)
+
+    @router.post("/predictors/seed-ensembles", status_code=201)
+    def freeze_seed_ensemble(identity: str, payload: FreezeSeedEnsemble):
+        return service(identity).freeze_seed_ensemble(payload)
+
     @router.get("/predictors/{predictor_id}")
     def get_predictor(identity: str, predictor_id: str):
         return service(identity).get(predictor_id)
@@ -116,13 +135,24 @@ def evaluation_run_router(projects, filesystem):
     def get_batch(identity: str, batch_id: str):
         return bulk(identity).get(batch_id)
 
+    def stated(payload):
+        # Checked on requests, not on stored records: a default would differ from Apply models.
+        missing = inference_unstated(payload)
+        if missing:
+            raise StorageError(
+                f"Write every inference setting; missing: {', '.join(missing)}.",
+                "INFERENCE_SETTINGS_INCOMPLETE",
+                422,
+            )
+        return payload
+
     @router.post("/evaluation-runs/bulk/preview")
     def preview_batch(identity: str, payload: BulkEvaluationSelection):
-        return bulk(identity).preview(payload)
+        return bulk(identity).preview(stated(payload))
 
     @router.post("/evaluation-runs/bulk", status_code=202)
     def run_batch(identity: str, payload: RunBulkEvaluation):
-        return bulk(identity).run(payload)
+        return bulk(identity).run(stated(payload))
 
     @router.post("/evaluation-runs/bulk/{batch_id}/cancel", status_code=202)
     def cancel_batch(identity: str, batch_id: str, payload: PredictorAction):
@@ -166,7 +196,7 @@ def evaluation_run_router(projects, filesystem):
 
     @router.get("/evaluation-runs/{evaluation_id}/artifacts/{filename}")
     def artifact(identity: str, evaluation_id: str, filename: str):
-        content = service(identity).artifact(evaluation_id, filename)
+        content = service(identity).download(evaluation_id, filename)
         return Response(
             content=content,
             media_type="text/csv" if filename.endswith(".csv") else "application/json",

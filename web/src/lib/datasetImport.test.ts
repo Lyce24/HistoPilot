@@ -115,17 +115,17 @@ describe('metadata reinspection mapping', () => {
 describe('slide file column guidance', () => {
   const inspection = (values: (string | null)[]) => ({ rows: values.map((path) => ({ Slide_ID: 'x', path })), columnSummaries: {} });
   it('tells full paths from paths inside the slide folder, as the service does', () => {
-    expect(slidePathStyle(inspection(['/data/rih/SL-1.svs', '/data/rih/SL-2.svs', null]), 'path')).toBe('absolute');
-    expect(slidePathStyle(inspection(['rih/SL-1.svs', 'SL-2.svs']), 'path')).toBe('relative');
-    expect(slidePathStyle(inspection(['/data/SL-1.svs', 'SL-2.svs']), 'path')).toBe('mixed');
+    expect(slidePathStyle(inspection(['/data/batch-1/slide-1.svs', '/data/batch-1/slide-2.svs', null]), 'path')).toBe('absolute');
+    expect(slidePathStyle(inspection(['batch-1/slide-1.svs', 'slide-2.svs']), 'path')).toBe('relative');
+    expect(slidePathStyle(inspection(['/data/slide-1.svs', 'slide-2.svs']), 'path')).toBe('mixed');
     expect(slidePathStyle(inspection([null, ' ']), 'path')).toBe('unknown');
     expect(slidePathStyle(null, 'path')).toBe('unknown');
-    expect(slidePathStyle(inspection(['/data/SL-1.svs']), undefined)).toBe('unknown');
+    expect(slidePathStyle(inspection(['/data/slide-1.svs']), undefined)).toBe('unknown');
   });
   it('asks for a slide folder only when relative paths need one', () => {
     expect(slideFileColumnNote('path', 'absolute')).toContain('no slide folder is needed');
     expect(slideFileColumnNote('path', 'relative')).toContain('Choose that folder above');
-    expect(slideFileColumnNote(undefined, 'unknown')).toContain('a full path such as /data/rih/SL-145.svs, or a path inside the slide folder');
+    expect(slideFileColumnNote(undefined, 'unknown')).toContain('a full path such as /data/slides/batch-1/slide-145.svs, or a path inside the slide folder');
     expect(slideSourceNextNote({ slidePathColumn: 'path' }, 'absolute')).toBe('Next, review the ID columns and attributes from your metadata.');
     expect(slideSourceNextNote({ slidePathColumn: 'path' }, 'relative')).toContain('Choose the slide folder that the file paths are inside');
     expect(slideSourceNextNote({ slidePathColumn: 'path' }, 'unknown')).toContain('unless the file column holds full paths');

@@ -23,7 +23,12 @@ from histopilot.adapters.trident import (
 )
 
 RUNNER = Path(__file__).parents[1] / "histopilot/adapters/trident/runner.py"
-THREAD_VARIABLES = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+THREAD_VARIABLES = (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
 
 
 def fixture_checkout(tmp_path, extra=""):
@@ -424,16 +429,34 @@ def test_worker_bootstrap_keeps_original_argv_and_paths(tmp_path, unbuffered):
     script = tmp_path / "TRIDENT checkout" / "run_batch_of_slides.py"
     script.parent.mkdir()
     script.write_text("# fixture")
-    command = [sys.executable, *(["-u"] if unbuffered else []), str(script), "--job_dir", "/output path"]
+    command = [
+        sys.executable,
+        *(["-u"] if unbuffered else []),
+        str(script),
+        "--job_dir",
+        "/output path",
+    ]
     original = list(command)
     assert _worker_command(command) == [
-        sys.executable, "-u", str(RUNNER.with_name("bootstrap.py")),
-        str(script), "--job_dir", "/output path",
+        sys.executable,
+        "-u",
+        str(RUNNER.with_name("bootstrap.py")),
+        str(script),
+        "--job_dir",
+        "/output path",
     ]
     assert command == original
 
 
-@pytest.mark.parametrize("arguments", [["-c", "print('fixture')"], ["-m", "fixture"], ["other.py"], ["missing/run_batch_of_slides.py"]])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["-c", "print('fixture')"],
+        ["-m", "fixture"],
+        ["other.py"],
+        ["missing/run_batch_of_slides.py"],
+    ],
+)
 def test_worker_bootstrap_preserves_historical_nontrident_commands(arguments):
     from histopilot.adapters.trident.runner import _worker_command
 
@@ -449,10 +472,14 @@ def test_native_thread_defaults_apply_only_to_trident_child(tmp_path, monkeypatc
     validator_path = tmp_path / "validator.json"
 
     def snapshot(output):
-        return [sys.executable, "-c", (
-            "import json, os, pathlib; "
-            f"pathlib.Path({str(output)!r}).write_text(json.dumps(dict(os.environ)))"
-        )]
+        return [
+            sys.executable,
+            "-c",
+            (
+                "import json, os, pathlib; "
+                f"pathlib.Path({str(output)!r}).write_text(json.dumps(dict(os.environ)))"
+            ),
+        ]
 
     plan_path, plan = make_plan(tmp_path, snapshot(worker_path))
     plan["validationCommand"] = snapshot(validator_path)
@@ -461,8 +488,10 @@ def test_native_thread_defaults_apply_only_to_trident_child(tmp_path, monkeypatc
     worker = json.loads(worker_path.read_text())
     validator = json.loads(validator_path.read_text())
     assert {name: worker[name] for name in THREAD_VARIABLES} == {
-        "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
-        "OPENBLAS_NUM_THREADS": "3", "NUMEXPR_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "OPENBLAS_NUM_THREADS": "3",
+        "NUMEXPR_NUM_THREADS": "1",
     }
     assert validator["OPENBLAS_NUM_THREADS"] == "3"
     for name in set(THREAD_VARIABLES) - {"OPENBLAS_NUM_THREADS"}:

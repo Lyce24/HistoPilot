@@ -26,7 +26,9 @@ class InferenceExportQuery(RequestModel):
     @field_validator("attributes")
     @classmethod
     def distinct_attributes(cls, values):
-        if values is not None and (len(set(values)) != len(values) or any(not value for value in values)):
+        if values is not None and (
+            len(set(values)) != len(values) or any(not value for value in values)
+        ):
             raise ValueError("Select each nonempty attribute once.")
         return values
 

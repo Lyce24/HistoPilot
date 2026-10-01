@@ -428,9 +428,7 @@ def test_completed_bulk_receipt_remains_replayable_after_cancellation(mixed):
     assert len(service.store.list_configurations("frozen-predictor")) == 1
 
 
-def test_valid_but_changed_map_cannot_override_frozen_batch_before_first_launch(
-    mixed, task_center
-):
+def test_valid_but_changed_map_cannot_override_frozen_batch_before_first_launch(mixed, task_center):
     service, identity, _jobs, batches = mixed
     record = service.store.get_draft(identity)
     payload = copy.deepcopy(record["payload"])

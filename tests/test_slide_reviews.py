@@ -15,9 +15,13 @@ def reviews(tmp_path):
     store = ScientificStore(tmp_path, "review-project")
     draft = store.create_draft("import", "Review dataset", {})
     records = [{"slideId": "slide / 01", "patientId": "patient-1", "attributes": {"grade": "high"}}]
-    dataset = store.publish_dataset(draft["id"], expected_revision=1,
-                                    manifest={"kind": "dataset", "name": "Review dataset"},
-                                    artifacts={"records.json": json.dumps(records).encode()}, operation_id="dataset")
+    dataset = store.publish_dataset(
+        draft["id"],
+        expected_revision=1,
+        manifest={"kind": "dataset", "name": "Review dataset"},
+        artifacts={"records.json": json.dumps(records).encode()},
+        operation_id="dataset",
+    )
     return SlideReviewService(store), dataset["id"], records[0]["slideId"]
 
 
@@ -25,14 +29,20 @@ def test_review_history_and_retry_preserve_frozen_labels(reviews):
     service, dataset, slide = reviews
     before = service.store.read_artifact(dataset, "records.json")
     assert service.get(dataset, slide)["revision"] == 0
-    request = SaveSlideReview(expectedRevision=0, status="exclude", notes="Low tissue", reviewer="YL")
+    request = SaveSlideReview(
+        expectedRevision=0, status="exclude", notes="Low tissue", reviewer="YL"
+    )
     first = service.save(dataset, slide, request)
     assert first["revision"] == 1 and first["history"][0]["status"] == "exclude"
     assert service.save(dataset, slide, request) == first
     with pytest.raises(StorageError, match="another tab") as error:
         service.save(dataset, slide, SaveSlideReview(expectedRevision=0, notes="stale"))
     assert error.value.code == "SLIDE_REVIEW_CONFLICT"
-    second = service.save(dataset, slide, SaveSlideReview(expectedRevision=1, status="review", notes="Needs adjudication"))
+    second = service.save(
+        dataset,
+        slide,
+        SaveSlideReview(expectedRevision=1, status="review", notes="Needs adjudication"),
+    )
     assert [entry["revision"] for entry in second["history"]] == [1, 2]
     assert service.store.read_artifact(dataset, "records.json") == before
     assert service.get(dataset, slide) == second
@@ -42,11 +52,15 @@ def test_review_history_and_retry_preserve_frozen_labels(reviews):
 
 def test_concurrent_review_writers_have_one_winner(reviews):
     service, dataset, slide = reviews
+
     def save(note):
         try:
-            return service.save(dataset, slide, SaveSlideReview(expectedRevision=0, notes=note))["revision"]
+            return service.save(dataset, slide, SaveSlideReview(expectedRevision=0, notes=note))[
+                "revision"
+            ]
         except StorageError as error:
             return error.code
+
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(save, ["first", "second"]))
     assert sorted(map(str, results)) == ["1", "SLIDE_REVIEW_CONFLICT"]
@@ -89,11 +103,17 @@ def test_review_storage_rejects_symlink_and_hardlink(reviews, tmp_path):
         service.get(dataset, slide)
 
 
-@pytest.mark.parametrize("values", [
-    {"expectedRevision": True}, {"expectedRevision": -1}, {"status": "pass"},
-    {"regions": [{"id": "roi", "x": float("nan"), "y": 0, "width": 10, "height": 10}]},
-    {"reasons": ["artifact", "artifact"]}, {"notes": "x" * 8001},
-])
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"expectedRevision": True},
+        {"expectedRevision": -1},
+        {"status": "pass"},
+        {"regions": [{"id": "roi", "x": float("nan"), "y": 0, "width": 10, "height": 10}]},
+        {"reasons": ["artifact", "artifact"]},
+        {"notes": "x" * 8001},
+    ],
+)
 def test_review_schema_blocks_ambiguous_or_unbounded_edits(values):
     with pytest.raises(ValidationError):
         SaveSlideReview.model_validate({"expectedRevision": 0, **values})

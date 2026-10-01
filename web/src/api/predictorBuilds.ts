@@ -3,8 +3,10 @@ import type { PredictorSelection, PredictorMethod, PredictorManifest } from './p
 import type { Finding } from './scientific';
 
 export type PredictorSource = Pick<PredictorSelection, 'experimentId' | 'batchId' | 'candidateId' | 'trainingSeed' | 'splitSeed'>;
-export type BuildMethod = PredictorMethod | 'both';
-export const predictorSourceKey = (source: PredictorSource) => JSON.stringify([source.experimentId, source.batchId, source.candidateId, source.trainingSeed, source.splitSeed]);
+/** Builds create one seed group's predictors; seed ensembles are built on their own. */
+export type BuildMethod = Exclude<PredictorMethod, 'seed_ensemble'> | 'both';
+/** A seed ensemble has no single seed: its key keeps null seeds and never matches a seed group. */
+export const predictorSourceKey = (source: Omit<PredictorSource, 'trainingSeed' | 'splitSeed'> & { trainingSeed?: number; splitSeed?: number }) => JSON.stringify([source.experimentId, source.batchId, source.candidateId, source.trainingSeed ?? null, source.splitSeed ?? null]);
 export interface PredictorBuildSelection { selections: PredictorSource[]; method: BuildMethod; refitPercentile: number; namePrefix?: string }
 export interface PredictorBuildPreview {
   canBuild: boolean; previewHash: string | null; findings: Finding[];

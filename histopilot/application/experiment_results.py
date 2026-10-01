@@ -5,9 +5,12 @@ predictions are read as the workers left them; nothing is written. The summary i
 cached in memory per file identity, so a finished experiment is computed once.
 
 Every configuration reports:
-- per fold: the held-out test fold metrics each run recorded, with its checkpoint epoch;
-- per seed: the OOF metrics of one training seed (every slide scored once, by the fold
-  model that did not train on it), plus the spread of its folds;
+- per fold: the held-out test fold metrics each run recorded, with its checkpoint epoch
+  (a leave-one-site-out fold names its site; a held-out design has one plan per seed);
+- per seed: the OOF metrics of one training seed (every assessed slide scored once, by
+  the fold model that did not train on it), plus the spread of its folds. Every slide is
+  assessed in k-fold, predefined-fold and all-site designs; a held-out assessment, or
+  leave-one-site-out over selected sites, assesses only its held-out slides;
 - seed average: the mean ± SD of the per-seed OOF metrics, with a 95% interval that
   resamples the design's independent units and scores all seeds on each draw;
 - seed ensemble: the OOF metrics of the seeds' averaged predictions.
@@ -219,7 +222,16 @@ def _design(loaded: list[dict]) -> dict | None:
     split_seeds = sorted({split.get("seed", 0) for split in splits})
     folds = max(sum(split.get("seed", 0) == seed for split in splits) for seed in split_seeds)
     slide_counts = sorted({split.get("slideCount") for split in splits if split.get("slideCount")})
+    # How units were assessed: one site or cohort per plan, one held-out set per seed, or folds.
+    strategy = (
+        "leave_one_domain_out"
+        if any(split.get("domain") is not None for split in splits)
+        else "held_out"
+        if all(str(split.get("planId", "")).endswith("/held_out") for split in splits)
+        else "folds"
+    )
     return {
+        "strategy": strategy,
         "splitUnit": "slide" if plan.get("splitUnit") == "slide" else "patient",
         "groupByPatient": bool(plan.get("groupByPatient")),
         "folds": folds,
@@ -344,8 +356,12 @@ def _summarize_configuration(
     classes = target["classes"]
     threshold = recipe.get("decisionThreshold", 0.5)
     aggregation = recipe.get("patientAggregation", "mean_probabilities")
-    # Folds are numbered in plan order when an older split plan records no fold number.
-    splits = {row["id"]: {"fold": index, **row} for index, row in enumerate(plan["splitPlans"])}
+    # Folds are numbered in plan order when a plan records no fold number: older split
+    # plans, and the single plan per seed of a held-out assessment.
+    splits = {
+        row["id"]: {**row, "fold": index if row.get("fold") is None else row["fold"]}
+        for index, row in enumerate(plan["splitPlans"])
+    }
     actual = {row["id"]: row for row in (state or {}).get("runs", [])}
     recorded = {
         (row["candidateId"], row["trainingSeed"], row["splitSeed"]): row
@@ -408,6 +424,7 @@ def _summarize_configuration(
                 "folds": [
                     {
                         "fold": row["fold"],
+                        **({"domain": row["domain"]} if "domain" in row else {}),
                         "splitPlanId": row["splitPlanId"],
                         "testCount": row["testCount"],
                     }
@@ -479,6 +496,8 @@ def _fold(split: dict, run: dict, target: dict) -> dict:
         metrics = _recorded(selected, target["classes"])
     return {
         "fold": split.get("fold", 0),
+        # A leave-one-site-out fold assesses one site or cohort.
+        **({"domain": split["domain"]} if split.get("domain") is not None else {}),
         "splitPlanId": split["id"],
         "runId": run.get("id"),
         "status": run.get("status", "planned"),

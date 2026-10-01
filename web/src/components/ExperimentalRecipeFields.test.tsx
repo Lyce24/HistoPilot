@@ -16,7 +16,7 @@ describe('OceanPath recipe controls', () => {
     expect(batchTemplate('blank', inputs, 'Study').grid).toEqual({ learningRates: [0.0003], weightDecays: [0.0001], maxEpochs: [40] });
   });
 
-  it('provides complete standard and KRAS presets without inventing a fallback budget', () => {
+  it('provides complete standard and binary (BCE) presets without inventing a fallback budget', () => {
     expect(oceanPathRecipe('standard')).toMatchObject({ learningRate: 0.0003, weightDecay: 0.0001, maxEpochs: 20, minEpochs: 10, patience: 5, lrScheduler: 'cosine', finalLrFraction: 0.01, gradientClipNorm: 1, checkpointMetric: 'validation_auroc', patientAggregation: 'mean_probabilities', ensembleAggregation: 'mean_probability', bagSize: null });
     const kras = batchTemplate('oceanpath-kras', inputs, 'Study');
     expect(kras.recipe).toMatchObject({ lossType: 'bce', classWeighting: 'none', weightDecay: 0.01, minEpochs: 0, maxEpochs: 40, patience: 8, finalLrFraction: 0.001, bagSize: 4096 });

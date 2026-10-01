@@ -272,7 +272,11 @@ class ComputeJobService:
             if plan.get("purpose") == "inference"
             else KIND_TITLES.get(plan["kind"], "Compute")
         )
-        return f"{kind} · {manifest.get('name') or record['id']}"[:200]
+        name = manifest.get("name") or record["id"]
+        # Apply models names its runs "Inference · …" or "Evaluation · …" already.
+        if name == kind or name.startswith(f"{kind} · "):
+            return name[:200]
+        return f"{kind} · {name}"[:200]
 
     def _task(self, state):
         """The Task Center view of a job (None for pre-Task Center jobs and missing tasks)."""
@@ -305,7 +309,7 @@ class ComputeJobService:
             "model-interpretation",
         }:
             raise StorageError(
-                "Select a predictor refit, model evaluation, or interpretation.",
+                "Select a predictor refit, run, or interpretation.",
                 "COMPUTE_NOT_FOUND",
                 404,
             )

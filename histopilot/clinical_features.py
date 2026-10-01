@@ -195,7 +195,9 @@ def label_separation(memberships, values, item, positive=None, *, unit="patient"
         covered = sum(len(labels) for labels in groups.values())
         if len(groups) < 2 or covered < len(units) / 2:
             return None
-        majority = sum(max(labels.count(label) for label in set(labels)) for labels in groups.values())
+        majority = sum(
+            max(labels.count(label) for label in set(labels)) for labels in groups.values()
+        )
         return majority / covered
     if positive is None:
         return None

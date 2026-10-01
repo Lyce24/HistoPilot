@@ -97,7 +97,11 @@ def distribution(values, groups, labels, bins=BINS):
         "quantiles": {
             name: quantile(ordered, fraction)
             for name, fraction in (
-                ("p10", 0.1), ("p25", 0.25), ("median", 0.5), ("p75", 0.75), ("p90", 0.9),
+                ("p10", 0.1),
+                ("p25", 0.25),
+                ("median", 0.5),
+                ("p75", 0.75),
+                ("p90", 0.9),
             )
         },
         "edges": [round(step / bins, 4) for step in range(bins + 1)],
@@ -121,7 +125,9 @@ def summarize(rows, target, threshold, *, described=None):
                 "count": counts[label],
                 "fraction": counts[label] / total if total else None,
                 "meanConfidence": (
-                    math.fsum(item["confidence"] for item in described if item["predictedLabel"] == label)
+                    math.fsum(
+                        item["confidence"] for item in described if item["predictedLabel"] == label
+                    )
                     / counts[label]
                     if counts[label]
                     else None
@@ -196,13 +202,43 @@ def cross_tab(described, keys, classes, *, limit=50):
     return {
         "rows": rows,
         "otherValues": max(0, len(ordered) - limit),
-        **({"other": {"count": len(remainder), "counts": class_counts(remainder, classes)}}
-           if remainder else {}),
+        **(
+            {"other": {"count": len(remainder), "counts": class_counts(remainder, classes)}}
+            if remainder
+            else {}
+        ),
     }
 
 
+def weighted_kappa(matrix):
+    """Cohen's linearly weighted kappa, reading the class order as an ordered scale.
+
+    Disagreement weights grow with the distance between classes, |i - j| / (k - 1). The
+    value is None for fewer than three classes, where it equals kappa, and when chance
+    disagreement is zero.
+    """
+    size = len(matrix)
+    total = sum(map(sum, matrix))
+    if size < 3 or not total:
+        return None
+    rows = [sum(row) / total for row in matrix]
+    columns = [sum(row[index] for row in matrix) / total for index in range(size)]
+    weight = [[abs(i - j) / (size - 1) for j in range(size)] for i in range(size)]
+    observed = math.fsum(
+        weight[i][j] * matrix[i][j] / total for i in range(size) for j in range(size)
+    )
+    expected = math.fsum(
+        weight[i][j] * rows[i] * columns[j] for i in range(size) for j in range(size)
+    )
+    return 1 - observed / expected if expected > 0 else None
+
+
 def agreement(left, right, classes):
-    """Label-free agreement between two decision lists over the same records."""
+    """Label-free agreement between two decision lists over the same records.
+
+    With three or more classes it adds ``weightedKappa``, which counts near misses on the
+    class order as partial agreement; ignore it for classes without a natural order.
+    """
     size = len(classes)
     matrix = [[0] * size for _ in range(size)]
     for a, b in zip(left, right, strict=True):
@@ -227,6 +263,7 @@ def agreement(left, right, classes):
         "count": total,
         "agreement": observed,
         "kappa": kappa,
+        **({"weightedKappa": weighted_kappa(matrix)} if size > 2 else {}),
         "disagreements": total - same,
         "matrix": matrix,
     }
@@ -243,8 +280,10 @@ def patient_member_probabilities(slides, aggregation):
         return None
     logs = [row.get("memberLogProbabilities") for row in slides]
     has_logs = all(value is not None for value in logs)
-    if aggregation == "mean_logits" and not has_logs and any(
-        value == 0 for slide in members for member in slide for value in member
+    if (
+        aggregation == "mean_logits"
+        and not has_logs
+        and any(value == 0 for slide in members for member in slide for value in member)
     ):
         # Legacy probability-only evidence cannot recover an underflowed logit.
         # Omit agreement rather than inventing patient votes by clipping it.
@@ -254,10 +293,13 @@ def patient_member_probabilities(slides, aggregation):
         vectors = [value[member] for value in members]
         if aggregation == "mean_logits":
             log_vectors = (
-                [value[member] for value in logs] if has_logs
+                [value[member] for value in logs]
+                if has_logs
                 else [[math.log(value) for value in vector] for vector in vectors]
             )
-            average = [math.fsum(column) / len(vectors) for column in zip(*log_vectors, strict=True)]
+            average = [
+                math.fsum(column) / len(vectors) for column in zip(*log_vectors, strict=True)
+            ]
             peak = max(average)
             shift = peak + math.log(math.fsum(math.exp(value - peak) for value in average))
             result.append([math.exp(value - shift) for value in average])

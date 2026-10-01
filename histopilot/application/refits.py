@@ -34,8 +34,9 @@ def _best_epoch(checkpoint, folder, recipe):
     if recipe.get("model", "abmil").lower() == "nnmil":
         epoch = receipt.get("selectedEpoch")
         if epoch is None:
-            raise StorageError("nnMIL refit requires its selected checkpoint epoch.",
-                               "REFIT_EPOCH_INVALID", 409)
+            raise StorageError(
+                "nnMIL refit requires its selected checkpoint epoch.", "REFIT_EPOCH_INVALID", 409
+            )
     if epoch is not None:
         if type(epoch) is not int or not 1 <= epoch <= recipe["maxEpochs"]:
             raise StorageError("The best checkpoint epoch is invalid.", "REFIT_EPOCH_INVALID", 409)
@@ -43,10 +44,19 @@ def _best_epoch(checkpoint, folder, recipe):
             raise StorageError(
                 "The best epoch exceeds completed training.", "REFIT_EPOCH_INVALID", 409
             )
-        return {"runId": checkpoint["runId"], "bestEpoch": epoch, "source": "checkpoint_receipt",
-                **({"checkpointSelection": receipt["checkpointSelection"],
-                    "validationBestEpoch": receipt.get("bestEpoch")}
-                   if recipe.get("model", "abmil").lower() == "nnmil" else {})}
+        return {
+            "runId": checkpoint["runId"],
+            "bestEpoch": epoch,
+            "source": "checkpoint_receipt",
+            **(
+                {
+                    "checkpointSelection": receipt["checkpointSelection"],
+                    "validationBestEpoch": receipt.get("bestEpoch"),
+                }
+                if recipe.get("model", "abmil").lower() == "nnmil"
+                else {}
+            ),
+        }
     path = run_folder / "history.json"
     # Use the same bounded, regular, in-run file policy as all checkpoint evidence.
     from histopilot.application.predictors import _file_path
@@ -172,7 +182,11 @@ def prepare_refit(evidence, plan, folder):
         )
     except ValueError as error:
         raise StorageError(str(error), "REFIT_BAG_PLANNING_INVALID", 422) from error
-    resolution = {"effectiveRecipe": effective_recipe, "nnmilPlanning": nnmil_planning} if nnmil_planning else {}
+    resolution = (
+        {"effectiveRecipe": effective_recipe, "nnmilPlanning": nnmil_planning}
+        if nnmil_planning
+        else {}
+    )
     return {
         **evidence,
         "kind": "predictor-refit",
@@ -185,7 +199,9 @@ def prepare_refit(evidence, plan, folder):
         "epochBudget": budget,
         **({"recipeAdjustments": adjustments} if adjustments else {}),
         "trainingSlideCount": len(rows),
-        "trainingPatientCount": 0 if plan.get("splitUnit") == "slide" else len({row["patientId"] for row in rows}),
+        "trainingPatientCount": 0
+        if plan.get("splitUnit") == "slide"
+        else len({row["patientId"] for row in rows}),
         "resources": ResourcePolicy.model_validate(
             {
                 "dataLoaderWorkers": 0,
@@ -297,7 +313,9 @@ class RefitService:
                 if request.resources is not None
                 else record["manifest"]["resources"]
             )
-            replay = self.jobs.replay_launch(identity, request.operationId, resume=resume, resources=resources)
+            replay = self.jobs.replay_launch(
+                identity, request.operationId, resume=resume, resources=resources
+            )
             if replay is not None:
                 return replay
             self.predictors.require_work_open(record["manifest"]["experimentId"])
@@ -309,7 +327,7 @@ class RefitService:
                 if has_predictor_intent(submission):
                     if resources != record["manifest"]["resources"]:
                         raise StorageError(
-                            "This refit inherits its submitted experiment resources. Copy the experiment to change them.",
+                            "This refit inherits the resources its experiment started with. Copy the experiment to change them.",
                             "EXPERIMENT_CONFIGURATION_LOCKED",
                             409,
                         )
@@ -402,8 +420,11 @@ class RefitService:
                 or plan.get("recordContentHash") != record["contentHash"]
                 or content_hash(plan) != status.get("planHash")
                 or any(plan.get(key) != value for key, value in manifest["planTemplate"].items())
-                or any(receipt.get(key) != manifest[key]
-                       for key in ("effectiveRecipe", "nnmilPlanning") if key in manifest)
+                or any(
+                    receipt.get(key) != manifest[key]
+                    for key in ("effectiveRecipe", "nnmilPlanning")
+                    if key in manifest
+                )
             ):
                 raise StorageError(
                     "Refit output does not match the reviewed plan.",
@@ -422,8 +443,11 @@ class RefitService:
                     unit=plan.get("splitUnit", "patient"),
                 )
                 if receipt.get("clinicalPreprocessing") != clinical_preprocessing:
-                    raise StorageError("Refit clinical preprocessing differs from development patients.",
-                                       "REFIT_CLINICAL_PROVENANCE_CHANGED", 409)
+                    raise StorageError(
+                        "Refit clinical preprocessing differs from development patients.",
+                        "REFIT_CLINICAL_PROVENANCE_CHANGED",
+                        409,
+                    )
             checkpoint = checkpoint_snapshot(receipt["bestCheckpointPath"], folder)
             published = {
                 key: value
@@ -442,7 +466,11 @@ class RefitService:
                         "runPlanHash": content_hash(plan),
                         "bestEpoch": receipt["epochsCompleted"],
                         "epochsCompleted": receipt["epochsCompleted"],
-                        **({"clinicalPreprocessing": clinical_preprocessing} if clinical_preprocessing else {}),
+                        **(
+                            {"clinicalPreprocessing": clinical_preprocessing}
+                            if clinical_preprocessing
+                            else {}
+                        ),
                     }
                 ],
                 executionPlanHash=content_hash(plan),

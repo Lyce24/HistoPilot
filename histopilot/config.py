@@ -12,6 +12,8 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 8787
     dev: bool = False
+    # Require the printed login link before /api/v1/session answers; see api/login.py.
+    login: bool = False
     static_dir: Path = field(default_factory=lambda: Path(__file__).parent / "static")
 
     def __post_init__(self) -> None:
@@ -42,6 +44,7 @@ def load_settings(
     host: str | None = None,
     port: int | None = None,
     dev: bool = False,
+    login: bool | None = None,
 ) -> Settings:
     """Explicit CLI values override TOML; relative TOML paths use its directory."""
     path = (config or Path.home() / ".histopilot" / "config.toml").expanduser().resolve()
@@ -54,7 +57,7 @@ def load_settings(
     server, storage = values.get("server", {}), values.get("storage", {})
     if not isinstance(server, dict) or not isinstance(storage, dict):
         raise ValueError("server and storage must be TOML tables")
-    if set(server) - {"host", "port"} or set(storage) - {"workspace", "data_roots"}:
+    if set(server) - {"host", "port", "login"} or set(storage) - {"workspace", "data_roots"}:
         raise ValueError("Unknown server/storage setting; see examples/config.toml")
 
     def configured_path(value: str) -> Path:
@@ -76,4 +79,11 @@ def load_settings(
         host=host if host is not None else server.get("host", "127.0.0.1"),
         port=port if port is not None else server.get("port", 8787),
         dev=dev,
+        login=login if login is not None else _login(server.get("login", False)),
     )
+
+
+def _login(value) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError("server.login must be true or false")
+    return value

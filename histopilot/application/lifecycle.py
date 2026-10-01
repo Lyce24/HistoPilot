@@ -203,6 +203,12 @@ class CleanupService:
                 or spec.get("batchName")
                 or spec.get("name")
                 or manifest.get("name")
+                # A frozen design is named after its experiment.
+                or (
+                    manifest["experiment"].get("name")
+                    if isinstance(manifest.get("experiment"), dict)
+                    else None
+                )
                 or manifest["kind"].replace("-", " ").title()
             )
             key = add("configuration", record, manifest["kind"], name)

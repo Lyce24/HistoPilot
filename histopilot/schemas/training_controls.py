@@ -23,7 +23,9 @@ def validate_split_unit(recipe, target, split_unit=None):
         raise ValueError("The target unit must match the frozen split unit.")
     if split_unit == "slide":
         if recipe.get("samplingStrategy", "slide_uniform") != "slide_uniform":
-            raise ValueError("Slide-level experiments require slide-uniform sampling; patient sampling is unavailable.")
+            raise ValueError(
+                "Slide-level experiments require slide-uniform sampling; patient sampling is unavailable."
+            )
 
 
 def resolve_stopping(recipe, target, rows, *, split_unit=None):
@@ -37,7 +39,8 @@ def resolve_stopping(recipe, target, rows, *, split_unit=None):
     positive = target.get("positiveClass")
     units = {
         row["slideId" if split_unit == "slide" else "patientId"]
-        for row in rows if row["partition"] == "val" and row["label"] == positive
+        for row in rows
+        if row["partition"] == "val" and row["label"] == positive
     }
     if threshold is not None and len(units) >= threshold:
         return recipe, None
@@ -48,9 +51,11 @@ def resolve_stopping(recipe, target, rows, *, split_unit=None):
         if threshold is None
         else f"insufficient_validation_positive_{'slides' if split_unit == 'slide' else 'patients'}",
         **(
-            ({"positiveSlides": len(units), "minimumPositiveSlides": threshold}
-             if split_unit == "slide" else
-             {"positivePatients": len(units), "minimumPositivePatients": threshold})
+            (
+                {"positiveSlides": len(units), "minimumPositiveSlides": threshold}
+                if split_unit == "slide"
+                else {"positivePatients": len(units), "minimumPositivePatients": threshold}
+            )
             if threshold is not None
             else {}
         ),

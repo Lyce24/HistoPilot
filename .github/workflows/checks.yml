@@ -21,6 +21,10 @@ jobs:
       - run: uv sync --locked --extra imaging
       - run: uv run ruff check .
       - run: uv run pytest -n auto --dist worksteal
+      - name: Agent tools with the agent extra
+        run: |
+          UV_PROJECT_ENVIRONMENT=.venv-agent uv sync --locked --extra agent
+          .venv-agent/bin/python -m pytest tests/test_agent_tools.py tests/test_agent_evals.py
       - run: npm ci && npm test && npm run build
         working-directory: web
       - run: uv run python scripts/bundle_web.py
@@ -33,6 +37,12 @@ jobs:
           with ZipFile(next(Path('dist').glob('*.whl'))) as wheel:
               assert 'histopilot/static/index.html' in wheel.namelist()
               assert 'histopilot/resources/blca_demo_workspace.json' in wheel.namelist()
+              # resources/docs links to docs/: only the MCP server's pages ship.
+              docs = sorted(
+                  name for name in wheel.namelist() if name.startswith('histopilot/resources/docs/')
+              )
+              pages = ['agents', 'cli-contract', 'error-codes', 'methods', 'user-guide']
+              assert docs == [f'histopilot/resources/docs/{page}.md' for page in pages], docs
           PY
       - uses: actions/upload-artifact@v4
         with:

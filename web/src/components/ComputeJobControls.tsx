@@ -12,8 +12,6 @@ type Kind = 'refit' | 'evaluation' | 'interpretation';
 type Props = {
   project: string; id: string; kind: Kind; initial?: ComputeExecution;
   readOnly?: boolean; readOnlyReason?: string; onComplete?: () => void;
-  /** Inference runs share the evaluation job but produce predictions only. */
-  inference?: boolean;
   /** `row` on a record page; `chip` inside a list or a slide panel. */
   variant?: 'chip' | 'row';
 };
@@ -24,7 +22,8 @@ export default function ComputeJobControls(props: Props) {
   return <ComputeJobState key={JSON.stringify([props.project, props.kind, props.id])} {...props} />;
 }
 
-export const computeLaunchLabel = (kind: Kind, inference = false) => kind === 'refit' ? 'Train refit model' : kind === 'interpretation' ? 'Compute slide attention' : inference ? 'Run inference' : 'Run evaluation';
+/** A run's job predicts its cohort, labeled or not; the service scores a labeled one afterwards. */
+export const computeLaunchLabel = (kind: Kind) => kind === 'refit' ? 'Train refit model' : kind === 'interpretation' ? 'Compute slide attention' : 'Run predictions';
 /** Every stage action that requeues stopped work says "Resume" (see the Area C log). */
 export const computeRetryLabel = () => 'Resume';
 const stopped = (job?: ComputeExecution) => Boolean(job && ['failed', 'cancelled', 'interrupted'].includes(job.status));
@@ -56,7 +55,7 @@ export const recordBehindRollup = (rollup: TaskRollup | undefined, record: Compu
  * queue place, log, resources and Cancel; the record is re-read once the task settles.
  * Jobs created before the Task Center are read-only: their saved status and a note.
  */
-function ComputeJobState({ project, id, kind, initial, readOnly = false, readOnlyReason, onComplete, inference = false, variant = 'row' }: Props) {
+function ComputeJobState({ project, id, kind, initial, readOnly = false, readOnlyReason, onComplete, variant = 'row' }: Props) {
   const client = useQueryClient();
   // Cleanup listings include historical status for trashed records. Their
   // ordinary execution endpoint deliberately rejects new direct access.
@@ -117,7 +116,7 @@ function ComputeJobState({ project, id, kind, initial, readOnly = false, readOnl
     {!state ? <p role="status"><Badge>{job.isError ? 'Job status unavailable' : 'Checking job status…'}</Badge></p>
       : state.status === 'not_started' ? <div className="inline-actions">
         <Badge>{computeStatusLabel(state)}</Badge>
-        {!pending && !readOnly ? <button className="btn btn-primary" disabled={busy || job.isError} onClick={() => void run('launch')}>{computeLaunchLabel(kind, inference)}</button> : null}
+        {!pending && !readOnly ? <button className="btn btn-primary" disabled={busy || job.isError} onClick={() => void run('launch')}>{computeLaunchLabel(kind)}</button> : null}
       </div>
         : legacy ? <LegacyJob state={state} />
           : <RunStatusChip scope={{ recordKind: kind, recordId: id, project }} variant={variant} primaryAction={retry} onSettled={settled} notStartedText={computeStatusLabel(state)} />}

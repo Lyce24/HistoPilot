@@ -2,8 +2,6 @@
 
 import json
 
-import h5py
-import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -12,22 +10,16 @@ pytest.importorskip("lightning")
 from support import projects  # noqa: E402
 from support.predictors import FakeJobs  # noqa: E402
 from support.training import runtime  # noqa: E402
-from support.workers import run_pack  # noqa: E402
 
 from histopilot.application.development import DevelopmentService  # noqa: E402
 from histopilot.application.evaluation_runs import EvaluationRunService  # noqa: E402
 from histopilot.application.evaluations import EvaluationService  # noqa: E402
-from histopilot.application.feature_bundles import FeatureBundleService  # noqa: E402
-from histopilot.application.features import FeatureService  # noqa: E402
 from histopilot.application.predictors import PredictorService  # noqa: E402
 from histopilot.application.protocols import ProtocolService  # noqa: E402
 from histopilot.application.refits import RefitService  # noqa: E402
 from histopilot.application.training import TrainingService  # noqa: E402
 from histopilot.schemas.development import DevelopmentBatchSpec, TrainingRecipe  # noqa: E402
 from histopilot.schemas.evaluations import InferenceSettings  # noqa: E402
-from histopilot.schemas.feature_bundles import FeatureBundleSpec  # noqa: E402
-from histopilot.schemas.feature_packs import FeaturePackSpec  # noqa: E402
-from histopilot.schemas.features import FeatureSpec  # noqa: E402
 from histopilot.schemas.predictors import (  # noqa: E402
     EvaluationRunSelection,
     FreezePredictor,
@@ -43,44 +35,6 @@ from histopilot.training.inference import evaluate  # noqa: E402
 from histopilot.training.module import MILTrainModule  # noqa: E402
 from histopilot.training.refit import train_refit  # noqa: E402
 from histopilot.workers.train_batch import execute_plan  # noqa: E402
-
-
-def slide_bundle(store, filesystem, root, dataset, rows, name):
-    """Publish real validation-worker receipts, never synthesize a valid bundle."""
-    source = root / name
-    source.mkdir()
-    random = np.random.default_rng(37)
-    for index, row in enumerate(rows):
-        values = random.standard_normal(8).astype("float32")
-        # A single inventory mixes the two supported on-disk storage shapes.
-        values = values if index % 2 else values.reshape(1, -1)
-        with h5py.File(source / f"{row['slideId']}.h5", "w") as handle:
-            handle.create_dataset("features", data=values)
-    features = FeatureService(store, filesystem)
-    spec = FeatureSpec(
-        datasetId=dataset["id"],
-        path=str(source),
-        featureKind="slide",
-        encoderId="titan",
-        layout="flat",
-    )
-    reviewed = features.preview(spec)
-    assert reviewed["canFreeze"], reviewed["findings"]
-    feature = features.freeze(spec, reviewed["previewHash"], name)
-    packing = projects.packing_service(store, filesystem)
-    request = FeaturePackSpec(featureSetId=feature["id"], action="validate")
-    preview = packing.preview(request)
-    assert preview["canRun"], preview["findings"]
-    job = packing.submit(request, preview["previewHash"], name + "-validation")
-    result = run_pack(packing.tasks.client.store, job)
-    assert result["state"] == "succeeded", result
-    assert result["validation"]["tensorValidationComplete"]
-    assert result["validation"]["featureKind"] == "slide"
-    bundles = FeatureBundleService(store, filesystem)
-    request = FeatureBundleSpec(featureSetId=feature["id"])
-    preview = bundles.preview(request)
-    assert preview["canFreeze"], preview["findings"]
-    return bundles.freeze(request, preview["previewHash"], name + "-bundle")
 
 
 @pytest.mark.slow
@@ -125,8 +79,10 @@ def test_slide_probes_complete_image_clinical_and_combined_studies(
         },
         artifacts={"records.json": json.dumps(rows).encode()},
     )
-    bundle = slide_bundle(store, filesystem, tmp_path, dataset, rows, "development-slide-features")
-    external_bundle = slide_bundle(
+    bundle = projects.slide_bundle(
+        store, filesystem, tmp_path, dataset, rows, "development-slide-features"
+    )
+    external_bundle = projects.slide_bundle(
         store, filesystem, tmp_path, dataset, rows, "external-slide-features"
     )
     protocols = ProtocolService(store, filesystem)

@@ -61,13 +61,28 @@ def mil_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -> APIRo
         return TrainingService(projects.scientific_store(identity), filesystem).results(batch_id)
 
     @router.get("/batches/{batch_id}/oof/{candidate_id}/{training_seed}/{split_seed}/{unit}.csv")
-    def oof_predictions(identity: str, batch_id: str, candidate_id: str,
-                        training_seed: int, split_seed: int, unit: Literal["slide", "patient"]):
-        content = training_oof_csv(projects.scientific_store(identity), batch_id,
-                                   candidate_id, training_seed, split_seed, unit)
+    def oof_predictions(
+        identity: str,
+        batch_id: str,
+        candidate_id: str,
+        training_seed: int,
+        split_seed: int,
+        unit: Literal["slide", "patient"],
+    ):
+        content = training_oof_csv(
+            projects.scientific_store(identity),
+            batch_id,
+            candidate_id,
+            training_seed,
+            split_seed,
+            unit,
+        )
         filename = f"oof-{unit}-training-{training_seed}-split-{split_seed}.csv"
-        return Response(content=content, media_type="text/csv",
-                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @router.get("/batches/{batch_id}/runs/{run_id}/history")
     def run_history(identity: str, batch_id: str, run_id: str):

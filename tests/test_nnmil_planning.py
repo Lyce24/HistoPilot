@@ -14,12 +14,22 @@ __all__ = ["preview_context"]
 
 
 def fixture_plan(**changes):
-    recipe = TrainingRecipe(model="nnmil", attentionDim=256, bagSizeMode="training_median",
-                            batchSize=32, **changes).model_dump()
-    rows = [{"slideId": str(i), "patientId": f"p{i}", "label": str(i % 2),
-             "partition": "train" if i < 3 else "val"} for i in range(4)]
-    files = {str(i): {"patchCount": count, "dimensions": 1024, "path": f"{i}.h5"}
-             for i, count in enumerate([1, 11583, 20000, 999999])}
+    recipe = TrainingRecipe(
+        model="nnmil", attentionDim=256, bagSizeMode="training_median", batchSize=32, **changes
+    ).model_dump()
+    rows = [
+        {
+            "slideId": str(i),
+            "patientId": f"p{i}",
+            "label": str(i % 2),
+            "partition": "train" if i < 3 else "val",
+        }
+        for i in range(4)
+    ]
+    files = {
+        str(i): {"patchCount": count, "dimensions": 1024, "path": f"{i}.h5"}
+        for i, count in enumerate([1, 11583, 20000, 999999])
+    }
     return {"recipe": recipe, "data": {"memberships": rows, "featureFiles": files}}
 
 
@@ -103,22 +113,33 @@ def test_legacy_shapes_and_worker_plan_remain_unchanged():
     assert resolve_nnmil_plan(plan) is plan
 
 
-@pytest.mark.parametrize("changes", [
-    {"bagSizeFraction": 0}, {"bagSizeFraction": float("nan")},
-    {"bagSizeMode": "training_median", "bagCurriculum": True},
-    {"lrScheduleInterval": "step", "lrScheduler": "plateau"},
-    {"nnmilWindowStrideDivisor": 0}, {"nnmilWindowSeed": True},
-    {"nnmilBatchSampler": "class_balanced", "samplingStrategy": "patient_natural"},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"bagSizeFraction": 0},
+        {"bagSizeFraction": float("nan")},
+        {"bagSizeMode": "training_median", "bagCurriculum": True},
+        {"lrScheduleInterval": "step", "lrScheduler": "plateau"},
+        {"nnmilWindowStrideDivisor": 0},
+        {"nnmilWindowSeed": True},
+        {"nnmilBatchSampler": "class_balanced", "samplingStrategy": "patient_natural"},
+    ],
+)
 def test_invalid_parameter_combinations_are_rejected(changes):
     with pytest.raises(ValidationError):
         TrainingRecipe(model="nnmil", **changes)
 
 
 def test_paper_optimizer_rates_are_defaults_and_schedule_remains_configurable():
-    recipe = TrainingRecipe(model="nnmil", learningRate=3e-4, weightDecay=1e-4,
-                            weightDecayPolicy="weights_only", lrScheduler="cosine",
-                            lrScheduleInterval="step", finalLrFraction=0)
+    recipe = TrainingRecipe(
+        model="nnmil",
+        learningRate=3e-4,
+        weightDecay=1e-4,
+        weightDecayPolicy="weights_only",
+        lrScheduler="cosine",
+        lrScheduleInterval="step",
+        finalLrFraction=0,
+    )
     assert recipe.finalLrFraction == 0
     assert TrainingRecipe().learningRate == 3e-4
     assert TrainingRecipe().weightDecay == 1e-4
@@ -134,16 +155,32 @@ def test_balanced_batch_preflight_requires_each_class_and_sufficient_batch():
 
 def test_preview_exposes_one_fitting_summary_per_fold(preview_context, monkeypatch):
     context = preview_context
-    files = [{"slideId": row["slideId"], "patchCount": 101 if row["partition"] == "train"
-              else 999999, "dimensions": 1536} for row in context.protocol["memberships"]
-             if row["fold"] == 0]
-    monkeypatch.setattr(context.service.store, "get_configuration",
-                        lambda key: {"manifest": {"files": files} if key == "features"
-                                     else deepcopy(context.protocol)})
-    monkeypatch.setattr("histopilot.application.development.MILInputService.preview",
-                        lambda *_: {"canPlan": True, "findings": [], "featureSetId": "features"})
-    spec = DevelopmentBatchSpec.model_validate({**context.spec.model_dump(), "recipe": {
-        "model": "nnmil", "attentionDim": 256, "bagSizeMode": "training_median"}})
+    files = [
+        {
+            "slideId": row["slideId"],
+            "patchCount": 101 if row["partition"] == "train" else 999999,
+            "dimensions": 1536,
+        }
+        for row in context.protocol["memberships"]
+        if row["fold"] == 0
+    ]
+    monkeypatch.setattr(
+        context.service.store,
+        "get_configuration",
+        lambda key: {
+            "manifest": {"files": files} if key == "features" else deepcopy(context.protocol)
+        },
+    )
+    monkeypatch.setattr(
+        "histopilot.application.development.MILInputService.preview",
+        lambda *_: {"canPlan": True, "findings": [], "featureSetId": "features"},
+    )
+    spec = DevelopmentBatchSpec.model_validate(
+        {
+            **context.spec.model_dump(),
+            "recipe": {"model": "nnmil", "attentionDim": 256, "bagSizeMode": "training_median"},
+        }
+    )
     preview = context.service.preview(spec)
     assert preview["canFreeze"], preview["findings"]
     assert len(preview["nnmilPlanning"]) == 2
@@ -160,10 +197,12 @@ def test_preview_exposes_one_fitting_summary_per_fold(preview_context, monkeypat
 
 def test_full_development_refit_resolves_its_own_fitting_population():
     plan = fixture_plan()
-    _, fold = resolve_nnmil_recipe(plan["recipe"], plan["data"]["memberships"],
-                                   plan["data"]["featureFiles"])
-    refit_rows = [{**row, "partition": "train", "phase": "refit"}
-                  for row in plan["data"]["memberships"]]
+    _, fold = resolve_nnmil_recipe(
+        plan["recipe"], plan["data"]["memberships"], plan["data"]["featureFiles"]
+    )
+    refit_rows = [
+        {**row, "partition": "train", "phase": "refit"} for row in plan["data"]["memberships"]
+    ]
     _, refit = resolve_nnmil_recipe(plan["recipe"], refit_rows, plan["data"]["featureFiles"])
     assert refit["bagSize"] == 7895 and refit["trainingSlideCount"] == 4
     assert fold["fingerprint"] != refit["fingerprint"]

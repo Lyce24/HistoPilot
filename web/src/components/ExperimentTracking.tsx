@@ -1,7 +1,7 @@
 import PatientAnalysisResults from './PatientAnalysisResults';
 import { useId, useState } from 'react';
 import { queryOptions, useQuery } from '@tanstack/react-query';
-import { development } from '../api/development';
+import { development, splitPlanLabel } from '../api/development';
 import type { FrozenBatch, PlannedRun, TrainingExecution, TrainingHistory, TrainingMetricDetails, TrainingMetrics, TrainingRecipe, TrainingRun } from '../api/development';
 import { finiteNumber } from '../lib/evidenceCharts';
 import { downloadJSON } from '../lib/download';
@@ -48,7 +48,7 @@ function RunDiagnostics({ run, peakRamGb, taskCenterHref }: { run?: TrainingRun;
 export function runLabel(batch: FrozenBatch, run: PlannedRun | TrainingRun) {
   const configuration = batch.manifest.configurations.find((item) => item.id === run.candidateId);
   const split = batch.manifest.splitPlans.find((item) => item.id === run.splitPlanId);
-  return `Config ${configuration?.number ?? '?'} · ${finiteNumber(split?.fold) ? `Fold ${split.fold + 1}` : split?.planId ?? 'Unknown split'} · Train seed ${run.trainingSeed}${split?.seed !== undefined ? ` · Split seed ${split.seed}` : ''}`;
+  return `Config ${configuration?.number ?? '?'} · ${split ? splitPlanLabel(split) : 'Unknown split'} · Train seed ${run.trainingSeed}${split?.seed !== undefined ? ` · Split seed ${split.seed}` : ''}`;
 }
 
 export function EpochProgress({ run }: { run?: TrainingRun }) {
@@ -199,7 +199,7 @@ export function RunMap({ batch, execution, selected, onSelect }: { batch: Frozen
         <caption className="sr-only">Runs by test fold and training seed{configurations.length > 1 ? ` for configuration ${configuration.number}` : ''}</caption>
         <thead><tr><th scope="col">Test fold</th>{seeds.map((seed) => <th scope="col" key={seed}>Seed {seed}</th>)}</tr></thead>
         <tbody>{splits.map((split) => <tr key={split.id}>
-          <th scope="row">{finiteNumber(split.fold) ? `Fold ${split.fold + 1}` : split.planId}{splitSeeds > 1 ? <small>split seed {split.seed}</small> : null}</th>
+          <th scope="row">{splitPlanLabel(split)}{splitSeeds > 1 ? <small>split seed {split.seed}</small> : null}</th>
           {seeds.map((seed) => {
             const plan = planned.get(`${configuration.id}|${split.id}|${seed}`);
             if (!plan) return <td key={seed} className="muted">—</td>;

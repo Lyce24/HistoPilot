@@ -363,7 +363,12 @@ def test_registry_api_project_isolation_auth_and_generic_route_bypass_are_protec
         ).json()
         base = f"/api/v1/projects/{project['id']}"
         prefix = base + "/model-experiments"
-        command = {"name": "First", "operationId": "create"}
+        # The version is stated: null keeps the legacy record form, 1 an experiment design.
+        command = {"name": "First", "operationId": "create", "setupVersion": None}
+        assert (
+            client.post(prefix, json={"name": "First", "operationId": "omitted"}).json()["code"]
+            == "SETUP_VERSION_REQUIRED"
+        )
         token = client.headers.pop("X-HistoPilot-Token")
         assert client.post(prefix, json=command).status_code == 401
         client.headers["X-HistoPilot-Token"] = token

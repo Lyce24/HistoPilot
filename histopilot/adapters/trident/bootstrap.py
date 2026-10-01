@@ -66,9 +66,7 @@ class _Optimize(ast.NodeTransformer):
                 return ast.copy_location(ast.parse("self.img.sdpc", mode="eval").body, node)
             if expression == "super()":
                 # A recompiled top-level method has no implicit __class__ cell.
-                return ast.copy_location(
-                    ast.parse("super(SDPCWSI, self)", mode="eval").body, node
-                )
+                return ast.copy_location(ast.parse("super(SDPCWSI, self)", mode="eval").body, node)
         return self.generic_visit(node)
 
 
@@ -106,7 +104,10 @@ def optimize_sdpc():
     if getattr(reader, "_histopilot_optimized", False):
         return {"status": "already-applied", "applied": list(reader._histopilot_optimized)}
     applied = []
-    for method, label in (("read_region", "no-per-tile-full-gc"), ("__init__", "reuse-metadata-handle")):
+    for method, label in (
+        ("read_region", "no-per-tile-full-gc"),
+        ("__init__", "reuse-metadata-handle"),
+    ):
         replacement = _replacement(getattr(reader, method, None), method)
         if replacement is not None:
             setattr(reader, method, replacement)

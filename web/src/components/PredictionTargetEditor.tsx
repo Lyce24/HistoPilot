@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ProtocolSpec } from '../api/scientific';
+import type { LabelPolicy, ProtocolSpec } from '../api/scientific';
 import { inferTargetSettings, preservePositiveClass } from '../lib/protocol';
 import { DistributionBars, FieldProfile, type ProtocolFieldContext } from './ProtocolExploration';
 import { ErrorNotice, Icon } from './ui';
@@ -23,6 +23,8 @@ export interface PredictionTargetEditorProps {
   };
   rawValues: string[];
   dataLabel: string;
+  /** Testing targets may keep slides without a label: they are predicted but never scored. */
+  allowUnlabeled?: boolean;
   onChooseTarget: (field: string) => void | Promise<void>;
   onChange: (update: Partial<ProtocolSpec['target']>) => void;
 }
@@ -30,7 +32,7 @@ export interface PredictionTargetEditorProps {
 /** Keep development and independent test-cohort targets on the same editing workflow. */
 export default function PredictionTargetEditor({
   target, classDefinitionLocked = false, showFieldProfile = true, splitUnit, fieldContext, unlinkedSlideCount, fallbackSlideCount, labelValues, rawValues, dataLabel,
-  onChooseTarget, onChange,
+  allowUnlabeled = false, onChooseTarget, onChange,
 }: PredictionTargetEditorProps) {
   const columns = fieldContext.dictionary.map((item) => item.key);
   const [mappingError, setMappingError] = useState<{
@@ -318,12 +320,13 @@ export default function PredictionTargetEditor({
             value={target.missing}
             onChange={(event) =>
               updateTarget({
-                missing: event.target.value as 'block' | 'exclude',
+                missing: event.target.value as LabelPolicy,
               })
             }
           >
             <option value="block">Block until resolved</option>
             <option value="exclude">Exclude and record the reason</option>
+            {allowUnlabeled || target.missing === 'unlabeled' ? <option value="unlabeled">Keep as unlabeled: predicted, not scored</option> : null}
           </select>
         </label>
         <label className="label">
@@ -333,12 +336,13 @@ export default function PredictionTargetEditor({
             value={target.unmapped}
             onChange={(event) =>
               updateTarget({
-                unmapped: event.target.value as 'block' | 'exclude',
+                unmapped: event.target.value as LabelPolicy,
               })
             }
           >
             <option value="block">Block until resolved</option>
             <option value="exclude">Exclude and record the reason</option>
+            {allowUnlabeled || target.unmapped === 'unlabeled' ? <option value="unlabeled">Keep as unlabeled: predicted, not scored</option> : null}
           </select>
         </label>
       </div>

@@ -98,12 +98,12 @@ describe('roadmap prerequisite query isolation', () => {
     seed(value);
     value.setQueryData(keys.bundles, { items: [] });
     value.setQueryData(keys.extractions, { jobs: [{ id: 'extraction-live', state: 'running', progress: {
-      label: 'Tissue segmentation', completed: 128, total: 1111, unit: 'slides', scope: 'stage',
+      label: 'Tissue segmentation', completed: 128, total: 1000, unit: 'slides', scope: 'stage',
     } }] });
     const roadmap = probe(value);
     expect(roadmap.byId.features.status).toBe('draft');
-    expect(roadmap.byId.features.evidence).toBe('1 extraction in progress · Tissue segmentation · 128/1111 slides in stage');
-    expect(roadmap.byId['experimental-setup'].blockers).toContain('features');
+    expect(roadmap.byId.features.evidence).toBe('1 extraction in progress · Tissue segmentation · 128/1000 slides in stage');
+    expect(roadmap.byId.experiments.blockers).toContain('features');
     value.setQueryData(keys.extractions, { jobs: [{ id: 'extraction-live', state: 'succeeded' }] });
     const updated = probe(value);
     expect(updated.byId.features.status).toBe('draft');
@@ -130,22 +130,20 @@ describe('roadmap prerequisite query isolation', () => {
     value.removeQueries({ queryKey: keys.batches, exact: true });
     const roadmap = probe(value);
     expect(roadmap.checksById.experiments).toEqual({ isLoading: false, error: null, hasData: true });
-    expect(roadmap.checksById.evaluation.hasData).toBe(true);
-    expect(roadmap.checksById['experimental-setup']).toEqual({ isLoading: false, error: null, hasData: true });
-    expect(roadmap.byId['experimental-setup'].unlocked).toBe(true);
+    expect(roadmap.checksById.apply.hasData).toBe(true);
     expect(roadmap.byId.experiments.unlocked).toBe(true);
     expect(roadmap.byId.experiments.status).toBe('not-started');
   });
 
-  it('keeps experiment readiness separate from the test-cohort listing', () => {
+  it('keeps experiment readiness separate from the cohort listing', () => {
     const value = client();
     seed(value);
     value.removeQueries({ queryKey: keys.evaluation, exact: true });
-    const failure = new Error('Test cohorts unavailable');
+    const failure = new Error('Cohorts unavailable');
     fail(value, keys.evaluation, failure);
     const roadmap = probe(value);
     expect(roadmap.checksById.experiments).toEqual({ isLoading: false, error: null, hasData: true });
-    expect(roadmap.checksById.evaluation).toEqual({ isLoading: false, error: null, hasData: true });
+    expect(roadmap.checksById.apply).toEqual({ isLoading: false, error: null, hasData: true });
     expect(roadmap.error).toBe(failure);
   });
   it('keeps data, later-test, target and feature editors available when an unrelated bundle request fails', () => {
@@ -158,7 +156,7 @@ describe('roadmap prerequisite query isolation', () => {
     const roadmap = probe(value);
     expect(roadmap.error).toBe(failure);
     expect(roadmap.hasData).toBe(false);
-    for (const id of ['dataset', 'experimental-setup', 'cohort', 'features'] as const) {
+    for (const id of ['dataset', 'experiments', 'cohort', 'features'] as const) {
       expect(roadmap.checksById[id]).toEqual({ isLoading: false, error: null, hasData: true });
       expect(roadmap.byId[id].unlocked).toBe(true);
     }
@@ -174,8 +172,6 @@ describe('roadmap prerequisite query isolation', () => {
     expect(roadmap.checksById.experiments).toEqual({ isLoading: false, error: null, hasData: true });
     expect(roadmap.byId.experiments.unlocked).toBe(true);
     expect(roadmap.checksById.dataset.hasData).toBe(true);
-    expect(roadmap.checksById['experimental-setup']).toEqual({ isLoading: false, error: null, hasData: true });
-    expect(roadmap.byId['experimental-setup'].unlocked).toBe(true);
   });
 
   it.each(['datasets', 'targetSplits', 'bundles'] as const)('retains cached prerequisites and unlock state after a %s refresh fails', (failed) => {

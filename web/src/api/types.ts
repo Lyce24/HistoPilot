@@ -6,17 +6,13 @@ export type Page =
   | 'dataset'
   | 'cohort'
   | 'features'
-  | 'experimental-setup'
   | 'legacy-protocol'
   | 'experiments'
   | 'post-development'
   | 'source-cv'
   | 'selection'
   | 'predictor'
-  | 'test-data'
-  | 'evaluation'
-  | 'inference'
-  | 'clinical-utility'
+  | 'apply'
   | 'interpretation'
   | 'cleanup'
   | 'operations'
@@ -48,6 +44,8 @@ export interface ProjectSummary {
   storagePath: string;
   mode: 'local' | 'synthetic-demo';
   lifecycleState?: 'active' | 'archived' | 'trashed';
+  /** What AI agents may see; absent means none. */
+  aiExposure?: 'metadata' | 'full';
   createdAt: string;
   updatedAt: string;
   config: InitialConfig;

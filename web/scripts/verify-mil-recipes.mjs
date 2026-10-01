@@ -1,7 +1,7 @@
 /** Real recipe editing and save payloads in offline Chromium. Starts no server. */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,6 +11,10 @@ import react from '@vitejs/plugin-react';
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = await mkdtemp(join(tmpdir(), 'histopilot-mil-recipes-'));
 const artifacts = resolve(web, '../.local/verify/mil-recipes');
+// A new batch starts from the shared default recipe, and a template overrides some of its values.
+const templates = JSON.parse(await readFile(join(web, 'src/lib/templates.json'), 'utf8')).recipes;
+const defaults = templates.default;
+const oceanpath = { ...defaults, ...templates.presets.oceanpath.values };
 await mkdir(artifacts, { recursive: true });
 const source = (path) => JSON.stringify(join(web, 'src', path));
 const fixture = join(output, 'fixture.tsx');
@@ -26,7 +30,15 @@ import ${source('local-workspace.css')};
 import ${source('scientific.css')};
 import ${source('clinical-workspace.css')};
 const state = window.recipeCheck = { saved: [], previews: [], errors: [] };
-window.fetch = async (...args) => { const error = 'Unexpected network request: ' + args[0]; state.errors.push(error); throw new Error(error); };
+window.fetch = async (...args) => {
+  const url = String(args[0]);
+  const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  if (url.endsWith('/api/v1/session')) return json({ token: 'fixture-token' });
+  // The editor offers models for the bundle's feature kind and clinical inputs from the split.
+  if (url.endsWith('/feature-bundles')) return json({ items: [] });
+  if (url.includes('/mil-experiments/clinical-fields')) return json({ fields: [] });
+  const error = 'Unexpected network request: ' + url; state.errors.push(error); throw new Error(error);
+};
 window.confirm = () => true;
 const copy = value => structuredClone(value);
 const inputs = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolicy: 'native', packArtifactId: null };
@@ -127,8 +139,8 @@ try {
   await cdp('Page.navigate', { url: pathToFileURL(join(dist, 'index.html')).href });
   await waitFor(field('Batch name'));
   await fill('Batch name', 'Experimental recipe'); await openSettings();
-  assert.equal(await evaluate(field('Learning rate') + '.value'), '0.0001');
-  assert.equal(await evaluate(field('Weight decay') + '.value'), '0.005');
+  assert.equal(await evaluate(field('Learning rate') + '.value'), String(defaults.learningRate));
+  assert.equal(await evaluate(field('Weight decay') + '.value'), String(defaults.weightDecay));
   await fill('Training loss', 'bce');
   await fill('Class loss weights', 'inverse_prevalence');
   await fill('Patient prediction aggregation', 'mean_logits');
@@ -138,7 +150,7 @@ try {
   await fill('Fixed epoch budget', '20'); await fill('Minimum validation positives', '5');
   await save(); await waitFor('window.recipeCheck.saved.length === 1');
   const saved = await evaluate('window.recipeCheck.saved[0].batchPlans[0].spec');
-  assert.equal(saved.recipe.learningRate, 0.0001); assert.equal(saved.recipe.weightDecay, 0.005);
+  assert.equal(saved.recipe.learningRate, defaults.learningRate); assert.equal(saved.recipe.weightDecay, defaults.weightDecay);
   for (const [key, value] of Object.entries({ lossType: 'bce', classWeighting: 'inverse_prevalence', patientAggregation: 'mean_logits', ensembleAggregation: 'mean_logit', samplingStrategy: 'patient_natural', minValidationPositives: 5, fixedEpochBudget: 20 })) assert.equal(saved.recipe[key], value, key);
   await click('Edit batch'); await openSettings();
   assert.equal(await evaluate(field('Training loss') + '.value'), 'bce');
@@ -149,17 +161,16 @@ try {
   await writeFile(join(artifacts, 'recipe-mobile.png'), Buffer.from(mobile.data, 'base64'));
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await click('Back'); await fill('Start from a template', 'oceanpath'); await openSettings();
-  assert.equal(await evaluate(field('Learning rate') + '.value'), '0.0001');
-  assert.equal(await evaluate(field('Weight decay') + '.value'), '0.005');
-  assert.equal(await evaluate(field('Maximum epochs') + '.value'), '20');
-  assert.equal(await evaluate(field('Minimum training epochs') + '.value'), '10');
-  assert.equal(await evaluate(field('Patient prediction aggregation') + '.value'), 'mean_logits');
+  assert.equal(await evaluate(field('Learning rate') + '.value'), String(oceanpath.learningRate));
+  assert.equal(await evaluate(field('Weight decay') + '.value'), String(oceanpath.weightDecay));
+  assert.equal(await evaluate(field('Maximum epochs') + '.value'), String(oceanpath.maxEpochs));
+  assert.equal(await evaluate(field('Minimum training epochs') + '.value'), String(oceanpath.minEpochs));
+  assert.equal(await evaluate(field('Patient prediction aggregation') + '.value'), oceanpath.patientAggregation);
   const desktop = await cdp('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
   await writeFile(join(artifacts, 'oceanpath-preset.png'), Buffer.from(desktop.data, 'base64'));
   await save(); await waitFor('window.recipeCheck.saved.length === 2');
   const preset = await evaluate('window.recipeCheck.saved[1].batchPlans.at(-1).spec.recipe');
-  assert.equal(preset.bagSize, null); assert.equal(preset.lrScheduler, 'cosine');
-  assert.equal(preset.finalLrFraction, 0.01); assert.equal(preset.ensembleAggregation, 'mean_logit');
+  for (const key of ['bagSize', 'lrScheduler', 'finalLrFraction', 'patientAggregation', 'ensembleAggregation']) assert.deepEqual(preset[key], oceanpath[key], key);
   assert.deepEqual(await evaluate('window.recipeCheck.errors'), []); assert.deepEqual(exceptions, []);
   await writeFile(join(artifacts, 'verification.json'), JSON.stringify({ passed: true, scope: 'Real React editor and save payloads, offline Chromium; no HistoPilot server or training.', checks: ['new LR/WD defaults', 'BCE', 'automatic class weights', 'patient sampling', 'patient and ensemble logit averaging', 'explicit validation-positive fallback budget', 'save and reopen', 'OceanPath preset', 'mobile viewport'], saved, preset }, null, 2));
   console.log('PASS: offline MIL recipe editing, save/reopen, OceanPath defaults and preset, mobile layout.');

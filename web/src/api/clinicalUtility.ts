@@ -4,6 +4,8 @@ import type { Finding, ProtocolSpec } from './scientific';
 export interface ClinicalSelection {
   evaluationId: string; name: string; unit: 'selected' | 'slide' | 'patient'; positiveClass?: string | null;
   threshold?: number | null; bins: number; thresholdMin: number; thresholdMax: number; thresholdSteps: number;
+  /** Outcomes from a reference standard of the run's cohort instead of the cohort's labels. */
+  referenceId?: string | null;
 }
 export interface OperatingPoint {
   threshold: number; tp: number; fp: number; tn: number; fn: number;

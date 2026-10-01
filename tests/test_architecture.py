@@ -61,9 +61,7 @@ if heavy:
         described = {item["name"]: item for item in catalog.describe()}
         self.assertEqual(set(described), set(catalog.NAMES))
         for name, item in described.items():
-            self.assertEqual(
-                item["supportsAttention"], catalog.supports_attention(name, "image")
-            )
+            self.assertEqual(item["supportsAttention"], catalog.supports_attention(name, "image"))
             self.assertFalse(catalog.supports_attention(name, "clinical"))
             self.assertEqual(item["featureKind"], catalog.feature_kind(name))
 

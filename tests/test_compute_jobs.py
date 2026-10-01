@@ -256,4 +256,19 @@ def test_corrupt_authoritative_state_remains_a_structured_error(job):
     assert error.value.code == "TRAINING_STATE_INVALID"
 
 
+def test_task_titles_name_the_kind_once():
+    def title(name, plan):
+        record = {"id": "configuration-1", "manifest": {"name": name}}
+        return ComputeJobService._task_title(record, plan)
+
+    inference = {"kind": "evaluation", "purpose": "inference"}
+    # Apply models names its runs after their purpose already.
+    assert title("Inference · Baseline · Study · seed ensemble", inference) == (
+        "Inference · Baseline · Study · seed ensemble"
+    )
+    assert title("Evaluation · Study", {"kind": "evaluation"}) == "Evaluation · Study"
+    assert title("Study · fold 1", {"kind": "refit"}) == "Refit · Study · fold 1"
+    assert title(None, {"kind": "interpretation"}) == "Attention · configuration-1"
+
+
 # -- Records launched before the Task Center, on their tmux executor ---------------------------

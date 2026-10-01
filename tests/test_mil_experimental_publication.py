@@ -83,7 +83,7 @@ def test_cohort_enriched_worker_memberships_publish_and_refit(registry, monkeypa
     )
     plan = json.loads((folder / "plan.json").read_text())
     plan["data"]["cohortValues"] = {
-        "site": {identity: "TCGA" for identity in plan["data"]["featureFiles"]}
+        "site": {identity: "Site A" for identity in plan["data"]["featureFiles"]}
     }
     for run in state["runs"]:
         write_json_atomic(folder / "runs" / run["id"] / "plan.json", execute_plan(plan, run, None))
@@ -96,7 +96,8 @@ def test_cohort_enriched_worker_memberships_publish_and_refit(registry, monkeypa
     refit = service.preview(selection.model_copy(update={"method": "refit"}))
     assert refit["canFreeze"], refit
     assert all(
-        row["cohort"] == "TCGA" for row in refit["manifest"]["planTemplate"]["data"]["memberships"]
+        row["cohort"] == "Site A"
+        for row in refit["manifest"]["planTemplate"]["data"]["memberships"]
     )
 
 
@@ -205,22 +206,38 @@ def test_plateau_refit_freezes_constant_schedule_adjustment(registry, monkeypatc
 
 def test_external_evaluation_inherits_frozen_threshold_and_analysis_policy(registry, monkeypatch):
     service, cohort = registry
-    choice, _, _ = candidate(service, monkeypatch, decisionThreshold=0.7, evalBagSize=100,
-                             analysis={"bootstrapResamples": 500, "bootstrapSeed": 11, "oneSlideSeed": 19})
+    choice, _, _ = candidate(
+        service,
+        monkeypatch,
+        decisionThreshold=0.7,
+        evalBagSize=100,
+        analysis={"bootstrapResamples": 500, "bootstrapSeed": 11, "oneSlideSeed": 19},
+    )
     predictor, _ = predictors.freeze(service, choice)
     evaluations = EvaluationRunService(service.store, service.filesystem)
     selection = EvaluationRunSelection(
-        predictorId=predictor["id"], cohortId=cohort["id"], name="Frozen threshold",
-        inference=InferenceSettings(patientAggregation="predictor", decisionThreshold="predictor", device="cpu"),
+        predictorId=predictor["id"],
+        cohortId=cohort["id"],
+        name="Frozen threshold",
+        inference=InferenceSettings(
+            patientAggregation="predictor", decisionThreshold="predictor", device="cpu"
+        ),
     )
     preview = evaluations.preview(selection)
     assert preview["canSave"], preview
     assert preview["manifest"]["inference"]["decisionThreshold"] == 0.7
     assert preview["manifest"]["inference"]["patientAggregation"] == "mean"
     assert preview["manifest"]["analysis"] == predictor["manifest"]["recipe"]["analysis"]
-    saved = evaluations.save(SaveEvaluationRun(**selection.model_dump(),
-        previewHash=preview["previewHash"], operationId="freeze-threshold"))
-    monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", lambda: {"cudaAvailable": False})
+    saved = evaluations.save(
+        SaveEvaluationRun(
+            **selection.model_dump(),
+            previewHash=preview["previewHash"],
+            operationId="freeze-threshold",
+        )
+    )
+    monkeypatch.setattr(
+        "histopilot.application.evaluation_runs.training_runtime", lambda: {"cudaAvailable": False}
+    )
     plan = evaluations._execution_plan(saved["id"])
     assert plan["inference"]["decisionThreshold"] == 0.7
     assert plan["analysis"]["bootstrapResamples"] == 500

@@ -707,7 +707,7 @@ def test_a_coordinator_that_found_the_project_busy_runs_again(tmp_path, center):
 
 
 def test_a_busy_attention_is_requeued_and_reopened_not_failed(tmp_path, center):
-    """gej3/gej4: the coordinator recorded ``attention`` with PROJECT_BUSY and exited 0."""
+    """Two experiments: the coordinator recorded ``attention`` with PROJECT_BUSY and exited 0."""
     adapter, ctx, folder = CoordinatorAdapter(), center.context(), tmp_path / "coordinator"
     folder.mkdir()
     project = tmp_path / "project"

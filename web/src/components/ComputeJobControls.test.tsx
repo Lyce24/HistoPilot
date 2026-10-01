@@ -9,19 +9,18 @@ import { legacyRecordNote } from './LegacyRecordNote';
 
 const clients: QueryClient[] = [];
 afterEach(() => clients.splice(0).forEach((client) => client.clear()));
-function render(initial: ComputeExecution, { kind = 'refit', readOnly = false, rollup, inference = false }: { kind?: 'refit' | 'evaluation' | 'interpretation'; readOnly?: boolean; rollup?: ReturnType<typeof fixtureRollup>; inference?: boolean } = {}) {
+function render(initial: ComputeExecution, { kind = 'refit', readOnly = false, rollup }: { kind?: 'refit' | 'evaluation' | 'interpretation'; readOnly?: boolean; rollup?: ReturnType<typeof fixtureRollup> } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
   clients.push(client);
   if (rollup) client.setQueryData(taskCenterKeys.rollup({ recordKind: kind, recordId: 'job', project: 'p' }), rollup);
-  return renderToStaticMarkup(<QueryClientProvider client={client}><ComputeJobControls project="p" id="job" kind={kind} initial={initial} readOnly={readOnly} inference={inference} /></QueryClientProvider>);
+  return renderToStaticMarkup(<QueryClientProvider client={client}><ComputeJobControls project="p" id="job" kind={kind} initial={initial} readOnly={readOnly} /></QueryClientProvider>);
 }
 const single = (changes: Parameters<typeof fixtureRollup>[0] = {}) => fixtureRollup({ scope: { recordKind: 'refit', recordId: 'job', project: 'p' }, counts: { running: 1 }, live: 1, active: 1, pending: 0, progress: { completed: 0, total: 1 }, byKind: {}, href: '#task-center?owner=o&task=t&project=p', current: { taskId: 't', title: 'Refit', kind: 'compute-job', labels: {}, progress: { epoch: 3, maxEpochs: 8 }, startedAt: null }, eta: null, ...changes });
 
 describe('compute job science action and run status', () => {
   it('offers launch only for a saved, unlaunched active record', () => {
     expect(render({ status: 'not_started' })).toContain('Train refit model');
-    expect(render({ status: 'not_started' }, { kind: 'evaluation' })).toContain('Run evaluation');
-    expect(render({ status: 'not_started' }, { kind: 'evaluation', inference: true })).toContain('Run inference');
+    expect(render({ status: 'not_started' }, { kind: 'evaluation' })).toContain('Run predictions');
     expect(render({ status: 'not_started' }, { kind: 'interpretation' })).toContain('Compute slide attention');
     expect(render({ status: 'not_started' }, { kind: 'interpretation', readOnly: true })).not.toContain('Compute slide attention');
     expect(render({ status: 'completed', executor: 'task-center' })).not.toContain('Train refit model');
@@ -94,7 +93,7 @@ describe('compute job science action and run status', () => {
     clients.push(client);
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><ComputeJobControls project="p" id="new" kind="evaluation" /></QueryClientProvider>);
     expect(html).toContain('Checking job status…');
-    expect(html).not.toContain('Run evaluation');
+    expect(html).not.toContain('Run predictions');
   });
 
   it('offers status recovery and distinguishes cached state after a failed refresh', () => {
@@ -106,7 +105,7 @@ describe('compute job science action and run status', () => {
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><ComputeJobControls project="p" id="new" kind="evaluation" /></QueryClientProvider>);
     expect(html).toContain('Retry job status');
     expect(html).toContain('Showing the last loaded job status');
-    expect(html).toMatch(/disabled="">Run evaluation/);
+    expect(html).toMatch(/disabled="">Run predictions/);
   });
 
   it('shows a job created before the Task Center read-only: saved status and a note, no actions or session', () => {

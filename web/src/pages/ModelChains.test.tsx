@@ -8,7 +8,7 @@ import type { Workspace } from '../api/types';
 import PublicationConfirmation from '../components/PublicationConfirmation';
 import LocalPostDevelopment, { RefitTraining } from './LocalPostDevelopment';
 import { predictorSourceKey } from '../api/predictorBuilds';
-import LocalModelEvaluation from './LocalModelEvaluation';
+import LocalApplyModels from './LocalApplyModels';
 
 const workspace = { mode: 'local', project: { id: 'project', name: 'Test project', lifecycleState: 'active' } } as Workspace;
 const target = { field: 'grade', task: 'binary_classification' as const, unit: 'patient' as const, classes: ['low', 'high'], labels: { low: 'low', high: 'high' }, positiveClass: 'high', missing: 'block' as const, unmapped: 'block' as const };
@@ -44,7 +44,7 @@ function evaluation(id: string, source: FrozenPredictor, test: EvaluationCohort,
 
 const clients: QueryClient[] = [];
 afterEach(() => { clients.splice(0).forEach((client) => client.clear()); vi.unstubAllGlobals(); });
-function render(module: 'freeze' | 'evaluate', options: { predictors?: FrozenPredictor[]; choices?: PredictorChoice[]; cohorts?: EvaluationCohort[]; evaluations?: ModelEvaluation[]; hash?: string } = {}) {
+function render(module: 'freeze' | 'apply', options: { predictors?: FrozenPredictor[]; choices?: PredictorChoice[]; cohorts?: EvaluationCohort[]; evaluations?: ModelEvaluation[]; hash?: string } = {}) {
   vi.stubGlobal('window', { location: { hash: options.hash ?? '' } });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   clients.push(client);
@@ -53,10 +53,13 @@ function render(module: 'freeze' | 'evaluate', options: { predictors?: FrozenPre
   client.setQueryData(['evaluation-cohorts', 'project'], { items: options.cohorts ?? [] });
   client.setQueryData(['feature-bundles', 'project'], { items: [] });
   client.setQueryData(['model-evaluations', 'project'], { items: options.evaluations ?? [], executionEnabled: false });
-  return renderToStaticMarkup(<QueryClientProvider client={client}>{module === 'freeze' ? <LocalPostDevelopment workspace={workspace} /> : <LocalModelEvaluation workspace={workspace} />}</QueryClientProvider>);
+  client.setQueryData(['evaluation-batches', 'project'], { items: [] });
+  client.setQueryData(['model-experiment-summaries', 'project'], { items: [] });
+  client.setQueryData(['scientific', 'project', 'configurations', 'protocol'], { configurations: [] });
+  return renderToStaticMarkup(<QueryClientProvider client={client}>{module === 'freeze' ? <LocalPostDevelopment workspace={workspace} /> : <LocalApplyModels workspace={workspace} />}</QueryClientProvider>);
 }
 
-describe('model development predictor and evaluation chains', () => {
+describe('model development predictor and Apply models chains', () => {
   it('opens the exact linked predictor in its library, including archived evidence', () => {
     const html = render('freeze', {
       predictors: [predictor('linked', 'experiment-linked', 'archived'), predictor('other')],
@@ -68,19 +71,24 @@ describe('model development predictor and evaluation chains', () => {
     expect(html).toContain('#interpretation?experiment=experiment-linked&amp;predictor=linked');
     expect(html).toContain('Interpret slides');
   });
-  it('selects both linked evaluation inputs and reviews cohorts independently of their original development bindings', () => {
+  it('applies a linked predictor to a linked cohort and offers every cohort regardless of its original development bindings', () => {
     const source = predictor('linked');
     const selected = cohort('selected', source);
     const other = cohort('other', predictor('different'));
-    const html = render('evaluate', { predictors: [source], cohorts: [selected, other], hash: '#evaluation?predictor=linked&cohort=selected' });
-    expect(html).toContain('<option value="linked" selected="">');
-    expect(html).toContain('<option value="selected" selected="">');
-    expect(html).toContain('<option value="other"');
-    const otherBinding = render('evaluate', { predictors: [source], cohorts: [selected, other], hash: '#evaluation?predictor=linked&cohort=other' });
+    const html = render('apply', { predictors: [source], cohorts: [selected, other], hash: '#apply?view=new&predictor=linked&cohort=selected' });
+    // A linked predictor opens on its methods and cohort, selected alone with its own method.
+    expect(html).toContain('2. Choose methods and cohort');
+    expect(html).toMatch(/<input(?=[^>]*value="ensemble")(?=[^>]*checked="")[^>]*>/);
+    expect(html).toMatch(/aria-label="Apply predictor Predictor linked \(linked\)"[^>]*checked=""/);
+    expect(html).toContain('1 predictor to apply from 1 selected experiment');
+    expect(html).toContain('<option value="selected" selected="">Cohort selected · Labeled · scored · 20 slides</option>');
+    expect(html).toContain('<option value="other">Cohort other · Labeled · scored · 20 slides</option>');
+    expect(html).toContain('Predicted without reading labels, then scored against the cohort’s labels.');
+    const otherBinding = render('apply', { predictors: [source], cohorts: [selected, other], hash: '#apply?view=new&predictor=linked&cohort=other' });
     expect(otherBinding).toContain('<option value="other" selected="">');
     expect(otherBinding).toContain('Review matches the prediction task and class encoding');
     expect(otherBinding).toContain('No frozen feature bundles are available');
-    expect(otherBinding).toContain('The test cohort is already saved');
+    expect(otherBinding).toContain('The cohort is already saved');
     expect(otherBinding).not.toContain('unavailable or incompatible');
   });
   it('distinguishes another published refit plan and offers recovery for a trashed predictor', () => {
@@ -93,7 +101,7 @@ describe('model development predictor and evaluation chains', () => {
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><RefitTraining project="project" build={build} existing={ready} refresh={async () => {}} /></QueryClientProvider>);
     expect(html).toContain('already have a refit predictor from another plan');
     expect(html).toContain('Restore Predictor published-refit from Trash');
-    expect(html).not.toContain('#evaluation?predictor=published-refit');
+    expect(html).not.toContain('predictor=published-refit');
     expect(html).not.toContain('Train refit model');
     expect(html).not.toContain('Restore this record to run it.');
     expect(html).not.toContain('Publish refit predictor');
@@ -127,8 +135,8 @@ describe('model development predictor and evaluation chains', () => {
     expect(html).toContain('Predictor two');
     expect(html).toContain('#experiments?experiment=experiment-one');
     expect(html).toContain('#experiments?experiment=experiment-two');
-    expect(html).toContain('#evaluation?predictor=one');
-    expect(html).toContain('#evaluation?predictor=two');
+    expect(html).toContain('#apply?view=new&amp;predictor=one');
+    expect(html).toContain('#apply?view=new&amp;predictor=two');
     expect(html).not.toContain('Predictor archived-name');
     expect(html).not.toContain('Predictor deleted-name');
     expect(html).toContain('value="archived"');
@@ -148,69 +156,60 @@ describe('model development predictor and evaluation chains', () => {
     expect(predictorSourceKey(choice(legacyId))).not.toBe(predictorSourceKey(choice(legacyId, { trainingSeed: 12 })));
   });
 
-  it('keeps saved evaluation plans attached to both predictor chains without inventing results', () => {
+  it('lists saved runs by cohort, attached to both predictor chains, without inventing results', () => {
     const first = predictor('one'), second = predictor('two');
     const one = cohort('one', first), two = cohort('two', second);
-    const html = render('evaluate', { predictors: [first, second], cohorts: [one, two], evaluations: [evaluation('first', first, one), evaluation('second', second, two), evaluation('archived-plan', first, one, 'archived'), evaluation('deleted-plan', first, one, 'trashed')] });
+    const html = render('apply', { predictors: [first, second], cohorts: [one, two], evaluations: [evaluation('first', first, one), evaluation('second', second, two), evaluation('archived-plan', first, one, 'archived'), evaluation('deleted-plan', first, one, 'trashed')] });
     expect(html).toContain('Evaluation first');
     expect(html).toContain('Evaluation second');
-    expect(html).toContain('Predictor one');
-    expect(html).toContain('Predictor two');
-    expect(html).toContain('Cohort one');
-    expect(html).toContain('Cohort two');
+    expect(html).toContain('#experiments?experiment=experiment-one&amp;tab=predictors&amp;predictor=one');
+    expect(html).toContain('#experiments?experiment=experiment-two&amp;tab=predictors&amp;predictor=two');
+    expect(html).toContain('Cohort one · Labeled · scored');
+    expect(html).toContain('Cohort two · Labeled · scored');
     expect(html).not.toContain('Evaluation archived-plan');
     expect(html).not.toContain('Evaluation deleted-plan');
     expect(html.match(/>Ready to run<\/span>/g)).toHaveLength(2);
-    expect(html).toContain('Accuracy');
-    expect(html).toContain('AUROC');
-    expect(html).toContain('Create evaluation');
-    expect(html).not.toContain('Stage 0 · Saved records');
-    expect(html).toContain('Search evaluations');
-    expect(html).toContain('Evaluation method');
-    expect(html).toContain('Sort evaluations');
+    expect(html).toContain('Apply predictors');
+    expect(html).toContain('Search runs');
+    expect(html).toContain('Predictor method');
+    expect(html).toContain('Sort runs');
     expect(html).toContain('Manage');
-    expect(html).not.toContain('Individual evaluations');
     expect(html).not.toContain('1. Select experiments');
-    expect(html).not.toContain('Select evaluation inputs');
-    expect(html).not.toContain('>Launch evaluation');
-    expect(html).not.toContain('>Run inference');
-    expect(html).not.toContain('Review experiment evaluation');
+    expect(html).not.toContain('>Run reviewed predictors');
   });
 
-  it('scopes results to the linked predictor while leaving every frozen cohort available for compatibility review', () => {
+  it('scopes the runs to a linked predictor, and offers every frozen cohort when applying it', () => {
     const first = predictor('one'), second = predictor('two');
     const one = cohort('one', first), two = cohort('two', second), stale = cohort('stale', first, false);
-    const html = render('evaluate', { hash: '#evaluation?predictor=one', predictors: [first, second], cohorts: [one, two, stale], evaluations: [evaluation('first', first, one), evaluation('second', second, two)] });
-    expect(html).toContain('Cohort one');
-    expect(html).toContain('Cohort two');
-    expect(html).toMatch(/<option[^>]*value="stale"[^>]*>Cohort stale[^<]*needs verification/);
-    expect(html).not.toMatch(/<option[^>]*value="stale"[^>]*disabled/);
-    expect(html).not.toContain('Evaluation first');
-    expect(html).not.toContain('Evaluation second');
-    expect(html).toContain('Back to evaluations');
-    expect(html).toContain('Select evaluation inputs');
-    expect(html).not.toContain('Saved evaluations');
+    const runs = render('apply', { hash: '#apply?view=runs&predictor=one', predictors: [first, second], cohorts: [one, two, stale], evaluations: [evaluation('first', first, one), evaluation('second', second, two)] });
+    expect(runs).toContain('Evaluation first');
+    expect(runs).not.toContain('Evaluation second');
+    expect(runs).toContain('Show all runs');
+    const setup = render('apply', { hash: '#apply?view=new&predictor=one', predictors: [first, second], cohorts: [one, two, stale] });
+    expect(setup).toContain('Cohort one');
+    expect(setup).toContain('Cohort two');
+    expect(setup).toMatch(/<option[^>]*value="stale"[^>]*>Cohort stale[^<]*needs verification/);
+    expect(setup).not.toMatch(/<option[^>]*value="stale"[^>]*disabled/);
+    expect(setup).toContain('Back to runs');
+    expect(setup).not.toContain('Search runs');
   });
 
-  it('does not substitute an active predictor when a link points to deleted weights', () => {
-    const deleted = predictor('deleted', undefined, 'trashed'), active = predictor('active');
-    const html = render('evaluate', { hash: '#evaluation?predictor=deleted', predictors: [deleted, active], cohorts: [cohort('active', active)] });
-    expect(html).toContain('<option value="deleted" disabled="" selected="">Linked predictor unavailable');
-    expect(html).toContain('Predictors appear automatically');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*><span>Review evaluation/);
-    expect(html).not.toContain('class target grade');
+  it('does not substitute an active predictor when a link points to deleted or archived weights', () => {
+    const deleted = predictor('deleted', undefined, 'trashed'), archived = predictor('archived', undefined, 'archived'), active = predictor('active');
+    for (const id of ['deleted', 'archived']) {
+      const html = render('apply', { hash: `#apply?view=new&predictor=${id}`, predictors: [deleted, archived, active], cohorts: [cohort('active', active)] });
+      expect(html).toContain('The linked predictor is archived, in Trash or unavailable');
+      expect(html).toContain('0 predictors to apply from 0 selected experiments');
+      expect(html).not.toMatch(/aria-label="Apply predictor Predictor active/);
+    }
   });
 
-  it('hides archived predictors from new choices while preserving an explicit retained-chain link', () => {
-    const active = predictor('active'), archived = predictor('archived', undefined, 'archived');
-    const defaultView = render('evaluate', { hash: '#evaluation?experiment=experiment-active', predictors: [active, archived] });
-    expect(defaultView).toContain('1 ensemble / 0 refit ready');
-    expect(defaultView).toContain('1 predictor to evaluate from 1 selected experiment');
-    expect(defaultView).not.toMatch(/<option[^>]*value="archived"[^>]*>Predictor archived/);
-    const linked = render('evaluate', { hash: '#evaluation?predictor=archived', predictors: [active, archived] });
-    expect(linked).toMatch(/<option[^>]*value="archived"[^>]*>Configuration candidate-archived · Train 11 \/ split 42 · Fold ensemble · archived/);
-    expect(linked).toContain('#experiments?experiment=experiment-archived');
-    expect(linked).toContain('class target grade');
+  it('offers only active predictors from a linked experiment', () => {
+    const active = predictor('active'), archived = predictor('archived', 'experiment-active', 'archived');
+    const html = render('apply', { hash: '#apply?view=new&experiment=experiment-active', predictors: [active, archived] });
+    expect(html).toContain('1 ensemble / 0 refit ready');
+    expect(html).toContain('1 predictor to apply from 1 selected experiment');
+    expect(html).not.toContain('Predictor archived');
   });
 
   it('requires acknowledgement and clearly separates uncertain-save retry from a fresh publication', () => {

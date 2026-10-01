@@ -680,7 +680,10 @@ class FeatureService:
             )
         if not preview["canFreeze"]:
             raise StorageError(
-                "Resolve feature inspection errors before freezing.", "FEATURES_INVALID", 422
+                "Resolve feature inspection errors before freezing.",
+                "FEATURES_INVALID",
+                422,
+                findings=preview["findings"],
             )
         manifest = {
             "kind": "feature",

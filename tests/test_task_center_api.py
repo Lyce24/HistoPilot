@@ -335,9 +335,7 @@ def test_tasks_filters_positions_links_and_detail_with_log_tail(api):
     assert by_id["fold-2"]["exit"]["reason"] == "error"
     assert by_id["collect"]["state"] == "blocked" and by_id["collect"]["queuePosition"] == 1
     assert by_id["evaluation"]["queuePosition"] == 2 and fold["queuePosition"] is None
-    assert by_id["evaluation"]["link"] == (
-        f"?project={project[0]}#inference?evaluation=configuration-e"
-    )
+    assert by_id["evaluation"]["link"] == f"?project={project[0]}#apply?run=configuration-e"
     live = api.get(f"{API}/tasks", params={"state": "live"}).json()["tasks"]
     assert {item["id"] for item in live} == {"fold-1", "collect", "evaluation"}
     history = api.get(f"{API}/tasks", params={"state": "history"}).json()["tasks"]
@@ -417,7 +415,7 @@ def test_owners_are_ordered_with_positions_counts_links_and_actions(api):
     assert [item["id"] for item in everything] == ["experiment-1", "batch-b", "bulk-c"]
     bulk = everything[2]
     assert bulk["position"] is None
-    assert bulk["link"] == f"?project={project[0]}#evaluation?batch=bulk-c"
+    assert bulk["link"] == f"?project={project[0]}#apply?batch=bulk-c"
     assert bulk["actions"]["retry"] is True and bulk["actions"]["cancel"] is False
     assert api.get(f"{API}/owners", params={"scope": "some"}).status_code == 422
 
@@ -1500,7 +1498,7 @@ def test_eta_uses_measured_durations_of_the_same_workload(api):
     assert listed["etaSeconds"] == 175  # the last fold starts after 300 s / 4 slots
 
 
-def test_owner_links_follow_the_purpose_of_their_tasks(api):
+def test_owner_links_open_runs_in_apply_models_whatever_their_purpose(api):
     project = register(api)
     record = "configuration-" + "e" * 64
     result = enqueue(
@@ -1518,7 +1516,8 @@ def test_owner_links_follow_the_purpose_of_their_tasks(api):
     )
     [listed] = api.get(f"{API}/owners").json()["owners"]
     assert listed["key"] == result["owner"]["key"]
-    assert listed["link"] == f"?project={project[0]}#inference?evaluation={record}"
+    assert listed["link"] == f"?project={project[0]}#apply?run={record}"
+    assert listed["purpose"] == "inference"
 
 
 def test_summary_survives_an_unreadable_checkout_hash(api, monkeypatch):

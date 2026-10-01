@@ -173,6 +173,13 @@ def test_legacy_protocols_cannot_create_new_development_batches(batch, version):
     )
     preview = service.preview(spec)
     assert "LEGACY_DEVELOPMENT_PROTOCOL" in codes(preview)
+    # The way out is named by its module, not by a stage number.
+    message = next(
+        item["message"]
+        for item in preview["findings"]
+        if item["code"] == "LEGACY_DEVELOPMENT_PROTOCOL"
+    )
+    assert "Targets & splits" in message and "Stage" not in message
     assert not preview["runs"]
     with pytest.raises(StorageError) as error:
         service.freeze(spec, preview["previewHash"], "blocked", {"tag": "Blocked"})
@@ -193,7 +200,8 @@ def test_nested_cv_search_dependency_is_blocked_without_generating_outer_scores(
     assert not preview["canFreeze"]
 
 
-@pytest.mark.parametrize("mode", ["monte_carlo", "leave_one_domain_out", "held_out"])
+# Leave-one-site-out, held-out and predefined-fold designs train (test_training_designs.py).
+@pytest.mark.parametrize("mode", ["monte_carlo"])
 def test_nonexecutable_v4_splits_block_new_batches_without_changing_saved_protocols(batch, mode):
     service, spec, _source = batch
     manifest = service.store.get_configuration(spec.inputs.protocolId)["manifest"]

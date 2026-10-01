@@ -50,6 +50,15 @@ def test_autostart_is_disabled_in_tests(tmux):
     assert tmux.calls == []
 
 
+def test_tests_keep_a_private_state_directory_even_after_monkeypatch_undo(tmp_path, monkeypatch):
+    # A test that calls monkeypatch.undo() once opened the person's real Task Center.
+    private = paths.state_dir()
+    assert private.is_relative_to(tmp_path)
+    monkeypatch.setenv("HISTOPILOT_STATE_DIR", str(tmp_path / "elsewhere"))
+    monkeypatch.undo()
+    assert paths.state_dir() == private
+
+
 def test_ensure_runner_starts_one_tmux_session(tmux, monkeypatch):
     monkeypatch.setenv(paths.AUTOSTART_ENV, "1")
     state = paths.state_dir()

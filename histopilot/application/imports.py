@@ -1148,7 +1148,12 @@ class ImportService:
                 409,
             )
         if any(item["severity"] == "error" for item in result["findings"]):
-            raise _error("Resolve the blocking import findings before freezing.", "IMPORT_BLOCKED")
+            raise StorageError(
+                "Resolve the blocking import findings before freezing.",
+                "IMPORT_BLOCKED",
+                422,
+                findings=result["findings"],
+            )
         return self.store.publish_dataset(
             draft_id,
             expected_revision=expected_revision,

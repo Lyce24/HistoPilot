@@ -99,6 +99,12 @@ Conditions = Annotated[
 ]
 
 
+# How a target treats a slide whose value is missing or has no class mapping. ``unlabeled``
+# keeps the slide as an unlabeled member: it is predicted but never scored. Only testing
+# targets accept it; training needs a label for every slide it fits.
+LabelPolicy = Literal["block", "exclude", "unlabeled"]
+
+
 class TargetSpec(RequestModel):
     field: str = Field(min_length=1, max_length=128)
     task: Literal["binary_classification", "multiclass_classification"]
@@ -106,8 +112,8 @@ class TargetSpec(RequestModel):
     classes: list[str] = Field(min_length=2, max_length=50)
     labels: dict[str, str] = Field(min_length=1, max_length=200)
     positiveClass: str | None = None
-    missing: Literal["block", "exclude"] = "block"
-    unmapped: Literal["block", "exclude"] = "block"
+    missing: LabelPolicy = "block"
+    unmapped: LabelPolicy = "block"
 
     @model_validator(mode="after")
     def label_contract(self):
@@ -129,6 +135,19 @@ class TargetSpec(RequestModel):
         elif self.positiveClass is not None:
             raise ValueError("Multiclass targets do not use positiveClass.")
         return self
+
+    @property
+    def keeps_unlabeled(self):
+        return "unlabeled" in (self.missing, self.unmapped)
+
+
+def require_training_labels(target):
+    """Training fits every member's label, so it cannot keep unlabeled slides."""
+    if target.keeps_unlabeled:
+        raise ValueError(
+            "Training targets need a label for every slide. Exclude or block missing and "
+            "unmapped values; only testing targets can keep slides unlabeled."
+        )
 
 
 class Ratios(RequestModel):
@@ -226,6 +245,8 @@ class SplitSpec(RequestModel):
         "leave_one_domain_out",
         "nested_kfold",
         "held_out",
+        # Version 4 only: each value of `foldField` is one assessment fold, as imported.
+        "predefined_folds",
     ] = "kfold"
     folds: Annotated[StrictInt, Field(ge=2, le=10)] = 5
     seeds: list[Seed] = Field(default_factory=lambda: [42], min_length=1, max_length=10)
@@ -239,6 +260,7 @@ class SplitSpec(RequestModel):
     innerFolds: Annotated[StrictInt, Field(ge=2, le=10)] = 3
     stratify: bool = True
     domainField: str | None = Field(default=None, min_length=1, max_length=128)
+    foldField: str | None = Field(default=None, min_length=1, max_length=128)
     domainPolicy: Literal["all", "selected"] = "all"
     heldOutDomains: list[str] = Field(default_factory=list, max_length=100)
     heldOutSource: Literal["fractions", "rules", "imported"] = "fractions"
@@ -249,10 +271,12 @@ class SplitSpec(RequestModel):
 
     @model_serializer(mode="wrap")
     def omit_default_grouping(self, handler):
-        # Historical designs never carried this field; keep their hashes unchanged.
+        # Historical designs never carried these fields; keep their hashes unchanged.
         serialized = handler(self)
         if not self.groupByPatient:
             serialized.pop("groupByPatient", None)
+        if self.foldField is None:
+            serialized.pop("foldField", None)
         return serialized
 
     @model_validator(mode="before")
@@ -288,12 +312,22 @@ class SplitSpec(RequestModel):
             "leave_one_domain_out",
             "nested_kfold",
             "held_out",
+            "predefined_folds",
         }:
-            raise ValueError("Choose one of the five evaluation strategies.")
+            raise ValueError("Choose one of the evaluation strategies.")
+        if self.mode == "predefined_folds":
+            if self.version != 4:
+                raise ValueError("Predefined folds apply to development training designs.")
+            if not self.foldField:
+                raise ValueError("Choose the column that assigns each unit's fold.")
+        elif self.foldField:
+            raise ValueError("A fold column applies only to predefined folds.")
         if (self.version >= 3) != (self.pools is not None):
             raise ValueError("Versions 3 and 4 require explicit source selection settings.")
         if self.groupByPatient and self.version != 4:
-            raise ValueError("Keeping each patient's slides together applies to development training designs.")
+            raise ValueError(
+                "Keeping each patient's slides together applies to development training designs."
+            )
         if self.version >= 3 and any(
             getattr(self.rules, role) for role in ("train", "val", "test")
         ):
@@ -303,7 +337,7 @@ class SplitSpec(RequestModel):
                 self.pools.imported and "test" in self.pools.imported.partitionLabels.values()
             ):
                 raise ValueError(
-                    "Development protocols cannot reserve test data. Define inference cohorts in Model evaluation."
+                    "Development protocols cannot reserve test data. Prepare cohorts in Apply models."
                 )
             if self.heldOutSource != "fractions" or self.ratios.test:
                 raise ValueError(
@@ -382,6 +416,7 @@ class ProtocolSpec(DatasetConstructionRequest):
     def explicit_unit_matches_target(self):
         if "splitUnit" in self.model_fields_set and self.target.unit != self.splitUnit:
             raise ValueError("The prediction target must use the selected split unit.")
+        require_training_labels(self.target)
         return self
 
     sourceTargetSplitId: str | None = Field(default=None, pattern=r"^configuration-[a-f0-9]{64}$")

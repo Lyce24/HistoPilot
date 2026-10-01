@@ -9,9 +9,10 @@ HistoPilot uses [uv](https://docs.astral.sh/uv/) and the committed `uv.lock`. Bu
 | Environment | Command | Used by |
 | --- | --- | --- |
 | `.venv` (development) | `uv sync --locked --extra training --extra imaging` | Tests, Ruff, and the service during development |
-| `.venv-training` | `UV_PROJECT_ENVIRONMENT=.venv-training uv sync --locked --extra training` | Training, refit, evaluation and attention workers started by the service |
+| `.venv-training` | `UV_PROJECT_ENVIRONMENT=.venv-training uv sync --locked --extra training` | Training, refit, predictor-run and attention workers started by the service |
+| `.venv-agent` | `UV_PROJECT_ENVIRONMENT=.venv-agent uv sync --locked --extra agent` | The MCP server (`histopilot agent serve`) and the tests that need it |
 
-The service itself needs only `uv sync --locked`. The `training` extra adds Torch and Lightning, and the `imaging` extra adds Pillow and OpenSlide for slide viewing. Without them, tests that need Torch or Pillow are skipped. The service looks for its worker interpreter in `HISTOPILOT_TRAINING_PYTHON`, then `.venv-training/bin/python` in the checkout; see [deployment](docs/deployment.md#training-environment). A new git worktree has no `.venv-training`, so create one there before running real training.
+The service itself needs only `uv sync --locked`. The `training` extra adds Torch and Lightning, and the `imaging` extra adds Pillow and OpenSlide for slide viewing. Without them, tests that need Torch or Pillow are skipped. The `agent` extra adds the MCP library; it lives in its own environment so the others keep their extras, and the MCP server's tests skip elsewhere. Run them with `.venv-agent/bin/python -m pytest tests/test_agent_tools.py tests/test_agent_evals.py`. The service looks for its worker interpreter in `HISTOPILOT_TRAINING_PYTHON`, then `.venv-training/bin/python` in the checkout; see [deployment](docs/deployment.md#training-environment). A new git worktree has no `.venv-training`, so create one there before running real training.
 
 Frontend dependencies are installed once with `npm --prefix web ci`.
 
@@ -23,7 +24,7 @@ uv run pytest -n auto --dist worksteal                 # full suite, about 8 min
 uv run ruff check .
 ```
 
-Tests marked `slow` train real models or drive the real Task Center runner. Run the fast tier while you work and the full suite before you hand a change over. CI runs Ruff, the full suite, the frontend tests and build, and a wheel packaging check.
+Tests marked `slow` train real models or drive the real Task Center runner. Run the fast tier while you work and the full suite before you hand a change over. CI runs Ruff, the full suite, the agent tests with the `agent` extra, the frontend tests and build, and a wheel packaging check.
 
 `tests/conftest.py` isolates every test from your machine:
 
@@ -64,7 +65,7 @@ Shared helpers live in `tests/support/`, one module per purpose. Import them fro
 | --- | --- |
 | `task_center.py` | `Center`, `fake_host`, and `begin`/`conclude`, which take a task through the runner's `prepare` and `on_exit` steps, plus the worker environment |
 | `workers.py` | Run a queued task's worker in-process as the runner would (`run_task`, `run_pack`, `run_archive`) or as a subprocess (`run_compute_worker`); write TRIDENT's extraction and validation receipts |
-| `projects.py` | Datasets, feature bundles packed through a real packing task, and evaluation cohorts |
+| `projects.py` | Datasets, feature bundles packed through a real packing task, and cohorts |
 | `predictors.py` | Synthetic completed candidates, frozen predictors, fake refit jobs and the experiment predictor coordinator |
 | `training.py` | The fake training `runtime` probe, development batches, the `tc_execution` fixture, and helpers that finish or lose a batch's fold tasks |
 | `compute.py` | Compute-job services and tasks, and the `managed_study` attention study |
@@ -104,7 +105,7 @@ npx tsc --noEmit       # type check (also: npm run typecheck)
 npm run build          # type check and production build
 ```
 
-`web/scripts/verify-*.mjs` are offline browser checks. Each builds a fixture from the real React components with mocked API responses, drives it in headless Chromium, and starts no HistoPilot server. They need a Playwright Chromium headless shell under `~/.cache/ms-playwright`, or its path in `HISTOPILOT_CHROMIUM`. Run one directly, for example:
+`web/scripts/verify-*.mjs` are offline checks that start no HistoPilot server. Most build a fixture from the real React components with mocked API responses and drive it in headless Chromium. `verify-case-review`, `verify-morphology` and `verify-operations` drive a fixture page (`index.html`) that must already be in their output folder, and `verify-palette` checks the palette's contrast without a browser. The browser checks need a Playwright Chromium headless shell under `~/.cache/ms-playwright`, or its path in `HISTOPILOT_CHROMIUM`. Run one directly, for example:
 
 ```bash
 node web/scripts/verify-task-center.mjs
@@ -128,4 +129,8 @@ Keep the docs in `docs/` current rather than adding new review or verification r
 | [Architecture](docs/architecture.md) | Runtime, persistence, execution and the code map |
 | [Task Center](docs/task-center.md) | Queue, admission, recovery and the runner |
 | [API](docs/api.md) | The local HTTP API |
+| [Command line](docs/cli.md) | The `histopilot` commands, by task |
+| [CLI contract](docs/cli-contract.md) | Output envelopes, exit codes, confirmation and spec files |
+| [AI agents](docs/agents.md) | Exposure levels, scoped tokens, approvals and connecting an agent |
+| [Error codes](docs/error-codes.md) | Every service error code; generated by `scripts/error_codes.py` |
 | [BLCA demo](docs/blca-demo.md) | The synthetic walkthrough |

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
 import { ApiError } from '../api/client';
 import { scientific, type Condition, type VersionLabelInput } from '../api/scientific';
-import { newTargetSplitSpec, targetDefinitionReady, targetSplitMethod, targetSplitPartitionRequest, targetSplitTestingRemainder, targetSplitTrainingTarget, targetSplitTestingIssue, targetSplitUnit, targetSplitWithUnit, TARGET_SPLIT_STEPS, targetSplitSetupLink, targetSplits, testingShareText, type TargetSplit, type TargetSplitDraft, type TargetSplitPreview, type TargetSplitSpec, type TargetSplitUnit } from '../api/targetSplits';
+import { newTargetSplitSpec, targetDefinitionReady, targetSplitMethod, targetSplitPartitionRequest, targetSplitTestingRemainder, targetSplitTrainingTarget, targetSplitTestingIssue, targetSplitUnit, targetSplitWithUnit, TARGET_SPLIT_STEPS, targetSplitExperimentLink, targetSplits, testingShareText, type TargetSplit, type TargetSplitDraft, type TargetSplitPreview, type TargetSplitSpec, type TargetSplitUnit } from '../api/targetSplits';
 import ConditionEditor from '../components/ConditionEditor';
 import PredictionTargetEditor from '../components/PredictionTargetEditor';
 import { CohortStats, useProtocolExploration, type ProtocolFieldContext } from '../components/ProtocolExploration';
@@ -24,6 +24,7 @@ import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import { scientificReviewInvalidated } from '../lib/scientificReview';
 import './LocalTargetSplit.css';
 import { stageEyebrow } from '../lib/roadmap';
+import { applyHref } from '../lib/applyRoutes';
 
 export const targetSplitKey = (project: string) => [...scienceKey(project), 'configurations', 'target-split'];
 const methodNames = { random: 'Random split', rules: 'Metadata conditions', imported: 'Predefined partition values' };
@@ -72,8 +73,8 @@ export function randomSplitNote(unit: 'slide' | 'patient', stratified: boolean) 
     : 'The testing set is rounded to whole slides and keeps at least one slide in each set, so small cohorts can differ from the requested percentage. The counts below show the actual split.';
 }
 
-/** Freezing turns the testing set into a test cohort. Older versions, or a freeze whose
- * cohort step failed, create it here; reading a version never creates it. */
+/** Freezing saves the testing set as a cohort in Apply models. Older versions, or a freeze
+ * whose cohort step failed, create it here; reading a version never creates it. */
 export function TargetSplitTestCohort({ project, record }: { project: string; record: TargetSplit }) {
   const client = useQueryClient();
   const [pending, setPending] = useState(false);
@@ -84,7 +85,8 @@ export function TargetSplitTestCohort({ project, record }: { project: string; re
   const failure = record.testCohortError ?? (status?.state === 'failed' ? status.error ?? null : null);
   if (status ? !status.required : !id) return null;
   const inference = record.manifest.spec.testTarget === null;
-  const kind = inference ? 'inference cohort' : 'evaluation cohort';
+  const kind = inference ? 'unlabeled cohort' : 'labeled cohort';
+  const article = inference ? 'an' : 'a';
   async function create() {
     setPending(true); setError(null);
     try {
@@ -93,16 +95,16 @@ export function TargetSplitTestCohort({ project, record }: { project: string; re
         client.invalidateQueries({ queryKey: [...targetSplitKey(project), record.id] }),
         client.invalidateQueries({ queryKey: ['evaluation-cohorts', project] }),
       ]);
-    } catch (reason) { setError(reason instanceof Error ? reason : new Error('The test cohort could not be created.')); }
+    } catch (reason) { setError(reason instanceof Error ? reason : new Error('The testing cohort could not be created.')); }
     finally { setPending(false); }
   }
-  return <section className="stack" aria-label="Test cohort">
-    <h3>Test cohort</h3>
-    {id && status?.state !== 'trashed' ? <p>Freezing this version saved its testing set as an {kind}. <a href={`#${inference ? 'inference' : 'evaluation'}?${new URLSearchParams({ cohort: id })}`}>{inference ? 'Run inference on it' : 'Evaluate models on it'}</a> · <a href="#test-data">Open test cohorts</a></p>
-      : id ? <p className="callout callout-warning">The {kind} made from this testing set is in Trash. Restore it to evaluate this testing set.</p>
+  return <section className="stack" aria-label="Testing cohort">
+    <h3>Testing cohort</h3>
+    {id && status?.state !== 'trashed' ? <p>Freezing this version saved its testing set as {article} {kind}. <a href={applyHref({ view: 'new', cohort: id })}>Apply predictors to it</a> · <a href={applyHref({ view: 'cohorts' })}>Open cohorts</a></p>
+      : id ? <p className="callout callout-warning">The {kind} made from this testing set is in Trash. Restore it to apply predictors to this testing set.</p>
         : <div className="callout callout-warning" role="status">
-          <p>{failure ? `This version is frozen, but its testing set could not be saved as an ${kind}: ${failure.message}` : `This version's testing set has no ${kind} yet.`}</p>
-          <button className="btn btn-secondary btn-small" disabled={pending} onClick={() => void create()}>{pending ? 'Creating test cohort…' : failure ? 'Retry test cohort' : 'Create test cohort'}</button>
+          <p>{failure ? `This version is frozen, but its testing set could not be saved as ${article} ${kind}: ${failure.message}` : `This version's testing set has no ${kind} yet.`}</p>
+          <button className="btn btn-secondary btn-small" disabled={pending} onClick={() => void create()}>{pending ? 'Creating testing cohort…' : failure ? 'Retry testing cohort' : 'Create testing cohort'}</button>
         </div>}
     <ErrorNotice error={error} />
   </section>;
@@ -267,7 +269,7 @@ export default function LocalTargetSplit({ workspace }: { workspace: Workspace }
         <TargetSplitSummary value={record.manifest} /><Findings findings={record.manifest.findings ?? []} />
         <TargetSplitTestCohort project={project} record={record} />
         {record.versionLabel?.note ? <p>{record.versionLabel.note}</p> : null}
-        <div className="inline-actions"><StageContinueButton href={targetSplitSetupLink(record)}>Continue to Experimental Setup</StageContinueButton><button className="btn btn-secondary" disabled={busy} onClick={() => void run(copyRecord)}>Copy into a new draft</button></div>
+        <div className="inline-actions"><StageContinueButton href={targetSplitExperimentLink(record)}>Continue to Experiments</StageContinueButton><button className="btn btn-secondary" disabled={busy} onClick={() => void run(copyRecord)}>Copy into a new draft</button></div>
         <VersionLabelEditor project={project} resourceType="configuration" resource={record} tagLabel="Target and split tag" />
       </Panel> : <p role="status">Loading target and split version…</p> : <>
         <StageSteps label="Target and split steps" current={String(step)} disabled={busy} onChange={(id) => setStep(Number(id))} steps={[
@@ -295,7 +297,7 @@ export default function LocalTargetSplit({ workspace }: { workspace: Workspace }
           </Panel> : step === 2 ? <Panel title="Training and testing sets" subtitle={unit === 'slide' ? 'Select individual slides for training and testing. Conditions match each slide exactly.' : 'Select records before defining targets. Keep each patient in one set; testing can support evaluation or pure inference.'}>
             <TargetSplitUnitControl value={unit} onChange={editUnit} legacy={spec.splitUnit === undefined} />
             <label className="label">Split method<select className="field" value={spec.split.method} onChange={(event) => edit({ split: targetSplitMethod(spec.split, event.target.value as TargetSplitSpec['split']['method']) })}>{Object.entries(methodNames).map(([id, title]) => <option key={id} value={id}>{title}</option>)}</select></label>
-            {spec.split.method === 'random' ? <div className="stack"><div className="science-grid-two"><label className="label">Testing percentage<input className="field" type="number" min={0} max={99} step={1} value={Math.round(spec.split.testFraction * 100)} onChange={(event) => editSplit({ testFraction: Number(event.target.value) / 100 })} /><small>The remaining {100 - Math.round(spec.split.testFraction * 100)}% forms the training set. {randomSplitNote(unit, spec.split.stratify)}</small></label><label className="label">Split seed<input className="field" type="number" min={0} max={4294967295} step={1} value={spec.split.seed} onChange={(event) => editSplit({ seed: Number(event.target.value) })} /><small>Reproduces this train/test assignment.</small></label></div><label className="science-check"><input type="checkbox" checked={spec.split.stratify} onChange={(event) => editSplit({ stratify: event.target.checked, stratifyField: event.target.checked ? spec.split.stratifyField : undefined })} /><span>Balance a metadata field between training and testing</span></label>{spec.split.stratify ? <label className="label">Stratification field<select className="field" value={spec.split.stratifyField ?? ''} onChange={(event) => editSplit({ stratifyField: event.target.value || undefined })}><option value="">Choose a metadata field</option>{dictionary.map((item) => <option key={item.key}>{item.key}</option>)}</select><small>Choose this field before defining prediction targets. Target mapping never redraws these assignments.</small></label> : null}<p className="muted">Choose 0% testing if an independent test cohort will be supplied later.</p></div> : spec.split.method === 'rules' ? <div className="stack">
+            {spec.split.method === 'random' ? <div className="stack"><div className="science-grid-two"><label className="label">Testing percentage<input className="field" type="number" min={0} max={99} step={1} value={Math.round(spec.split.testFraction * 100)} onChange={(event) => editSplit({ testFraction: Number(event.target.value) / 100 })} /><small>The remaining {100 - Math.round(spec.split.testFraction * 100)}% forms the training set. {randomSplitNote(unit, spec.split.stratify)}</small></label><label className="label">Split seed<input className="field" type="number" min={0} max={4294967295} step={1} value={spec.split.seed} onChange={(event) => editSplit({ seed: Number(event.target.value) })} /><small>Reproduces this train/test assignment.</small></label></div><label className="science-check"><input type="checkbox" checked={spec.split.stratify} onChange={(event) => editSplit({ stratify: event.target.checked, stratifyField: event.target.checked ? spec.split.stratifyField : undefined })} /><span>Balance a metadata field between training and testing</span></label>{spec.split.stratify ? <label className="label">Stratification field<select className="field" value={spec.split.stratifyField ?? ''} onChange={(event) => editSplit({ stratifyField: event.target.value || undefined })}><option value="">Choose a metadata field</option>{dictionary.map((item) => <option key={item.key}>{item.key}</option>)}</select><small>Choose this field before defining prediction targets. Target mapping never redraws these assignments.</small></label> : null}<p className="muted">Choose 0% testing if an independent cohort will be prepared in Apply models later.</p></div> : spec.split.method === 'rules' ? <div className="stack">
               <div className="target-split-rule-block">
                 <ConditionEditor title="Training conditions" conditions={spec.split.trainRules} columns={fields} fieldContext={fieldContext} onChange={(trainRules) => editSplit({ trainRules })} description={unit === 'slide' ? 'Choose the slides used for model development. Leave empty to use the remainder outside testing.' : 'Choose the patients used for model development. Leave empty to use the remainder outside testing.'} emptyMessage={unit === 'slide' ? 'Use all eligible slides outside the testing set.' : 'Use all eligible patient groups outside the testing set.'} />
                 {live.loading ? <p className="protocol-live-status" role="status">Updating training selection…</p> : live.data ? <TargetSplitSelection splitUnit={unit} part={live.data.partitions.train} total={live.data.summary.eligibleSlides} label="Training" /> : null}
@@ -324,7 +326,7 @@ export default function LocalTargetSplit({ workspace }: { workspace: Workspace }
                 <option value="same">Same field and mapping as training</option><option value="separate">Separate testing field and mapping</option><option value="none">None · Pure inference</option>
               </select></label>
               {spec.testTarget === null ? <p className="callout">No testing labels are required or read. Missing labels do not remove testing slides. This set is used for predictions without evaluation metrics.</p>
-                : spec.testTarget ? <PredictionTargetEditor splitUnit={unit} target={spec.testTarget} classDefinitionLocked showFieldProfile={false} fieldContext={fieldContext} unlinkedSlideCount={live.data?.partitions.test.unlinkedSlides} fallbackSlideCount={live.data?.partitions.test.fallbackSlides}
+                : spec.testTarget ? <PredictionTargetEditor splitUnit={unit} target={spec.testTarget} classDefinitionLocked allowUnlabeled showFieldProfile={false} fieldContext={fieldContext} unlinkedSlideCount={live.data?.partitions.test.unlinkedSlides} fallbackSlideCount={live.data?.partitions.test.fallbackSlides}
                   labelValues={{ data: labelData('test'), isPending: live.loading, error: live.error }} rawValues={rawValues('test')} dataLabel="selected testing slides" onChooseTarget={(field) => chooseTarget(field, 'test')} onChange={(update) => edit({ testTarget: { ...spec.testTarget!, ...update } })} />
                   : <p className="muted">Testing uses {spec.target.field || 'the training target'} and the same label mapping. Its source values are counted only within the testing selection.</p>}
               {testingTarget !== null ? live.loading ? <p className="protocol-live-status" role="status">Updating testing target distribution…</p> : live.data ? <TargetSplitDistributions splitUnit={unit} partitions={live.data.partitions} partition="test" mapped={Boolean(liveRequest.target)} /> : null : null}
@@ -347,7 +349,7 @@ export default function LocalTargetSplit({ workspace }: { workspace: Workspace }
         client.setQueryData<{ drafts: TargetSplitDraft[] }>([...scienceKey(project), 'drafts'], (current) => ({ drafts: (current?.drafts ?? []).map((item) => item.id === freezeReview.draft.id ? { ...item, status: 'frozen' as const } : item) }));
         client.setQueryData([...targetSplitKey(project), result.id], result);
         setDraft({ ...freezeReview.draft, status: 'frozen' }); setSaved(result); setOpenedId(result.id); setView('detail'); setPreview(null); setResumeAvailable(false); setError(null);
-        setMessage(`Targets and splits “${result.versionLabel?.tag ?? versionLabel.tag}” frozen. Training and testing memberships are saved.${result.evaluationCohortId ? ' Its testing set is ready as a test cohort.' : ''}`);
+        setMessage(`Targets and splits “${result.versionLabel?.tag ?? versionLabel.tag}” frozen. Training and testing memberships are saved.${result.evaluationCohortId ? ' Its testing set is ready as a cohort in Apply models.' : ''}`);
         void Promise.all([client.invalidateQueries({ queryKey: ['workspace', project] }), client.invalidateQueries({ queryKey: ['evaluation-cohorts', project] })]);
       } catch (reason) {
         if (scientificReviewInvalidated(reason) || reason instanceof ApiError && reason.code === 'TARGET_SPLIT_BLOCKED') { setFreezeReview(null); setPreview(null); setStep(3); setError(reason as Error); }

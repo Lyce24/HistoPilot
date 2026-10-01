@@ -41,14 +41,27 @@ def _write_exports(service, frozen, split_unit=None):
     candidate = plan["configurations"][0]
     training_seed = plan["runs"][0]["trainingSeed"]
     split_seed = plan["splitPlans"][0]["seed"]
-    key = hashlib.sha256(f"{candidate['id']}/{training_seed}/{split_seed}".encode()).hexdigest()[:24]
-    scoring = {"records": records, "target": plan["target"], "recipe": candidate["recipe"],
-               "code": plan["code"], **({"splitUnit": split_unit} if split_unit else {})}
-    document = {"batchId": frozen["id"], "candidateId": candidate["id"],
-                "trainingSeed": training_seed, "splitSeed": split_seed,
-                "protocolId": plan["protocolId"], "classOrder": plan["target"]["classes"],
-                "records": records, "purpose": "development_assessment",
-                "analysisInputHash": content_hash(scoring)}
+    key = hashlib.sha256(f"{candidate['id']}/{training_seed}/{split_seed}".encode()).hexdigest()[
+        :24
+    ]
+    scoring = {
+        "records": records,
+        "target": plan["target"],
+        "recipe": candidate["recipe"],
+        "code": plan["code"],
+        **({"splitUnit": split_unit} if split_unit else {}),
+    }
+    document = {
+        "batchId": frozen["id"],
+        "candidateId": candidate["id"],
+        "trainingSeed": training_seed,
+        "splitSeed": split_seed,
+        "protocolId": plan["protocolId"],
+        "classOrder": plan["target"]["classes"],
+        "records": records,
+        "purpose": "development_assessment",
+        "analysisInputHash": content_hash(scoring),
+    }
     path = folder / f"oof-{key}.json"
     write_json_atomic(path, document)
     arguments = (frozen["id"], candidate["id"], training_seed, split_seed)
@@ -89,7 +102,9 @@ def test_slide_level_design_exports_each_slides_own_fold(tc_execution, monkeypat
 
     monkeypatch.setattr(service.store, "get_configuration", slide_unit)
     _, arguments, _, _ = _write_exports(service, frozen, "slide")
-    rows = list(csv.DictReader(io.StringIO(training_oof_csv(service.store, *arguments, "slide").decode())))
+    rows = list(
+        csv.DictReader(io.StringIO(training_oof_csv(service.store, *arguments, "slide").decode()))
+    )
     assert len(rows) == 30
     assert {row["assessmentFold"] for row in rows} == {str(i) for i in range(5)}
     with pytest.raises(StorageError) as error:
@@ -97,9 +112,24 @@ def test_slide_level_design_exports_each_slides_own_fold(tc_execution, monkeypat
     assert error.value.code == "TRAINING_OOF_UNIT_INVALID"
 
 
-@pytest.mark.parametrize("damage", ["missing_state", "unfinished", "duplicate_state",
-                                    "receipt", "class_order", "probabilities", "label", "path",
-                                    "run_recipe", "run_membership", "checkpoint", "hash", "source"])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_state",
+        "unfinished",
+        "duplicate_state",
+        "receipt",
+        "class_order",
+        "probabilities",
+        "label",
+        "path",
+        "run_recipe",
+        "run_membership",
+        "checkpoint",
+        "hash",
+        "source",
+    ],
+)
 def test_damaged_or_incomplete_oof_evidence_cannot_be_exported(exports, tmp_path, damage):
     service, arguments, folder, path = exports
     state = read_json_bounded(folder / "state.json")
@@ -151,9 +181,11 @@ def test_damaged_or_incomplete_oof_evidence_cannot_be_exported(exports, tmp_path
 
 def test_foreign_candidate_and_seed_are_not_downloadable(exports):
     service, arguments, _, _ = exports
-    for candidate, train, split in (("foreign", arguments[2], arguments[3]),
-                                    (arguments[1], 123, arguments[3]),
-                                    (arguments[1], arguments[2], 123)):
+    for candidate, train, split in (
+        ("foreign", arguments[2], arguments[3]),
+        (arguments[1], 123, arguments[3]),
+        (arguments[1], arguments[2], 123),
+    ):
         with pytest.raises(StorageError) as error:
             training_oof_csv(service.store, arguments[0], candidate, train, split, "slide")
         assert error.value.code == "TRAINING_OOF_NOT_FOUND"
@@ -161,11 +193,15 @@ def test_foreign_candidate_and_seed_are_not_downloadable(exports):
 
 def test_download_route_requires_session_and_valid_unit(exports, tmp_path, monkeypatch):
     service, arguments, _, _ = exports
-    monkeypatch.setattr("histopilot.application.project_workspace.ProjectWorkspace.scientific_store",
-                        lambda *_: service.store)
+    monkeypatch.setattr(
+        "histopilot.application.project_workspace.ProjectWorkspace.scientific_store",
+        lambda *_: service.store,
+    )
     app = create_app(Settings(workspace=tmp_path / "registry", data_roots=(tmp_path,)))
     batch, candidate, train, split = arguments
-    route = f"/api/v1/projects/project/mil-experiments/batches/{batch}/oof/{candidate}/{train}/{split}"
+    route = (
+        f"/api/v1/projects/project/mil-experiments/batches/{batch}/oof/{candidate}/{train}/{split}"
+    )
     with TestClient(app, base_url="http://127.0.0.1:8787") as client:
         assert client.get(route + "/patient.csv").status_code == 401
         client.headers["X-HistoPilot-Token"] = client.get("/api/v1/session").json()["token"]

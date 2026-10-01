@@ -77,10 +77,7 @@ def validate_memberships(plan: dict) -> dict[str, list[dict]]:
             raise MILDataError(
                 f"Duplicate slide membership: {slide}. Supply exactly one frozen fold."
             )
-        if (
-            target["unit"] == "patient"
-            and row.get("patientIdSource") == "slide_fallback"
-        ):
+        if target["unit"] == "patient" and row.get("patientIdSource") == "slide_fallback":
             raise MILDataError(
                 "Patient analysis requires verified patient IDs, not slide fallback."
             )
@@ -455,7 +452,11 @@ class SlideDataset(Dataset):
             "patientId": row["patientId"],
             **({"patientIdSource": row["patientIdSource"]} if "patientIdSource" in row else {}),
             "lossWeight": self.loss_weights[row["slideId"]],
-            **({"clinical": self.clinical_values[row["slideId"]]} if self.input_mode != "image" else {}),
+            **(
+                {"clinical": self.clinical_values[row["slideId"]]}
+                if self.input_mode != "image"
+                else {}
+            ),
         }
 
     def close(self):
@@ -523,6 +524,9 @@ def collate_mil(batch):
         "slideIds": [item["slideId"] for item in batch],
         "patientIds": [item["patientId"] for item in batch],
         **({"clinical": [item["clinical"] for item in batch]} if "clinical" in batch[0] else {}),
-        **({"patientIdSources": [item.get("patientIdSource") for item in batch]}
-           if any("patientIdSource" in item for item in batch) else {}),
+        **(
+            {"patientIdSources": [item.get("patientIdSource") for item in batch]}
+            if any("patientIdSource" in item for item in batch)
+            else {}
+        ),
     }

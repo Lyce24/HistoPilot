@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ExperimentalSetupInputs, FreezeSetupControl, setupDesign } from './ExperimentalSetupInputs';
-import ExperimentRegistry, { stageExperiments, newExperimentLibraryFilters } from './ExperimentRegistry';
+import ExperimentRegistry, { experimentDraft, libraryExperiments, newExperimentLibraryFilters } from './ExperimentRegistry';
 import ExperimentNavigation from './ExperimentNavigation';
 import { type ModelExperiment } from '../api/experiments';
 import { defaultRecipe, defaultResources } from '../api/development';
@@ -20,45 +20,46 @@ const ready = record('Frozen baseline', { frozenSetupId: 'setup-1', status: 'rea
 const items = [record('Draft design'), ready, record('Active experiment', { stage: 'running', status: 'running', frozenSetupId: 'setup-2' }), record('Failed experiment', { stage: 'running', status: 'failed', frozenSetupId: 'setup-3' }), record('Queued experiment', { stage: 'running', status: 'queued', frozenSetupId: 'setup-4' })];
 function client() { return new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); }
 
-describe('independent experiment preparation and execution', () => {
-  it('keeps unfinished designs in setup and frozen designs in the execution registry', () => {
-    expect(stageExperiments(items, 'setup').map((item) => item.id)).toEqual(items.map((item) => item.id));
-    expect(stageExperiments(items, 'execution').map((item) => item.id)).toEqual(items.slice(1).map((item) => item.id));
-    expect(stageExperiments([record('historical', { setupVersion: null, legacy: true, stage: 'finished', status: 'completed' })], 'execution')).toHaveLength(1);
+describe('one experiment from design to results', () => {
+  it('lists drafts, frozen designs and started experiments together', () => {
+    expect(libraryExperiments(items).map((item) => item.id)).toEqual(items.map((item) => item.id));
+    expect(items.map(experimentDraft)).toEqual([true, false, false, false, false]);
+    expect(libraryExperiments([record('historical', { setupVersion: null, legacy: true, stage: 'finished', status: 'completed' })])).toHaveLength(1);
+    // A legacy plan never submitted has no design to edit or run.
+    expect(libraryExperiments([record('legacy plan', { setupVersion: null, legacy: true, status: 'planned' })])).toHaveLength(0);
   });
 
-  it('filters execution by actual status rather than grouping failed and queued records under running', () => {
+  it('filters by draft or actual status rather than grouping failed and queued records under running', () => {
     const cache = client(); cache.setQueryData(['model-experiments', 'p', 'summary'], { items });
     try {
-      const render = (status: string) => renderToStaticMarkup(<QueryClientProvider client={cache}><ExperimentRegistry project="p" mode="execution" onOpen={() => {}} filters={{ ...newExperimentLibraryFilters(), status }} /></QueryClientProvider>);
+      const render = (status: string) => renderToStaticMarkup(<QueryClientProvider client={cache}><ExperimentRegistry project="p" onOpen={() => {}} filters={{ ...newExperimentLibraryFilters(), status }} /></QueryClientProvider>);
       const active = render('running');
       expect(active).toContain('Open Active experiment');
       for (const name of ['Draft design', 'Frozen baseline', 'Failed experiment', 'Queued experiment']) expect(active).not.toContain(`Open ${name}`);
+      expect(render('draft')).toContain('Open Draft design');
+      expect(render('draft')).not.toContain('Open Frozen baseline');
       expect(render('ready')).toContain('Open Frozen baseline');
       // An older service's "failed" is one of the runs needing attention.
       expect(render('needs-attention')).toContain('Open Failed experiment');
       expect(render('queued')).toContain('Open Queued experiment');
-      expect(active).toContain('Prepare a setup');
-      expect(active).not.toContain('Create experiment');
+      expect(active).toContain('Create experiment');
+      expect(active).not.toContain('Prepare a setup');
     } finally { cache.clear(); }
   });
 
-  it('shows one execution status, and a setup badge that never encodes run outcome', () => {
-    const attention = record('gej3', { stage: 'running', status: 'needs-attention', frozenSetupId: 'setup-5', statusReason: 'Another operation is changing this workspace.' });
-    const queued = record('gej4', { stage: 'running', status: 'queued', frozenSetupId: 'setup-6', statusReason: 'Waiting for a free GPU.' });
+  it('shows a draft, a design ready to run, or one execution status', () => {
+    const attention = record('study3', { stage: 'running', status: 'needs-attention', frozenSetupId: 'setup-5', statusReason: 'Another operation is changing this workspace.' });
+    const queued = record('study4', { stage: 'running', status: 'queued', frozenSetupId: 'setup-6', statusReason: 'Waiting for a free GPU.' });
     const cache = client(); cache.setQueryData(['model-experiments', 'p', 'summary'], { items: [...items, attention, queued] });
     try {
-      const render = (mode: 'setup' | 'execution') => renderToStaticMarkup(<QueryClientProvider client={cache}><ExperimentRegistry project="p" mode={mode} onOpen={() => {}} /></QueryClientProvider>);
-      const execution = render('execution');
-      expect(execution).toContain('<span class="badge badge-orange">Needs attention</span>');
-      expect(execution).toContain('Another operation is changing this workspace.');
-      expect(execution).toContain('<small title="Waiting for a free GPU.">Waiting for a free GPU.</small>');
-      expect(execution).toContain('<span class="badge badge-green">Running</span>');
-      expect(execution).not.toContain('>Failed<');
-      const setup = render('setup');
-      expect(setup.match(/badge badge-green">Frozen</g)).toHaveLength(6);
-      expect(setup).not.toContain('Waiting for a free GPU.');
-      expect(setup).not.toContain('badge-orange');
+      const html = renderToStaticMarkup(<QueryClientProvider client={cache}><ExperimentRegistry project="p" onOpen={() => {}} /></QueryClientProvider>);
+      expect(html).toContain('<span class="badge badge-orange">Needs attention</span>');
+      expect(html).toContain('Another operation is changing this workspace.');
+      expect(html).toContain('<small title="Waiting for a free GPU.">Waiting for a free GPU.</small>');
+      expect(html).toContain('<span class="badge badge-green">Running</span>');
+      expect(html).toContain('<span class="badge badge-neutral">Draft</span>');
+      expect(html).toContain('<span class="badge badge-neutral">Ready to run</span>');
+      expect(html).not.toContain('>Failed<');
     } finally { cache.clear(); }
   });
 
@@ -78,8 +79,13 @@ describe('independent experiment preparation and execution', () => {
       expect(editable).toContain('Number of folds');
       expect(editable).toContain('Early-stop validation (% of fitting data)');
       expect(editable).toContain('Check &amp; continue to hyperparameters');
+      expect(editable).toContain('Check inputs');
+      expect(editable).not.toMatch(/setup input/i);
       expect(editable).toContain('Testing slides are excluded from all folds and validation sets');
-      for (const value of ['monte_carlo', 'nested_kfold', 'held_out', 'leave_one_domain_out']) expect(editable).toMatch(new RegExp(`<input(?=[^>]*value="${value}")(?=[^>]*disabled="")[^>]*>`));
+      // Designs that assess each unit at most once per seed train; the others only plan.
+      for (const value of ['monte_carlo', 'nested_kfold']) expect(editable).toMatch(new RegExp(`<input(?=[^>]*value="${value}")(?=[^>]*disabled="")[^>]*>`));
+      for (const value of ['kfold', 'predefined_folds', 'leave_one_domain_out', 'held_out']) expect(editable).not.toMatch(new RegExp(`<input(?=[^>]*value="${value}")(?=[^>]*disabled="")[^>]*>`));
+      expect(editable).toContain('Planning only: a unit can be assessed more than once per seed.');
       const frozen = render(true);
       expect(frozen).toContain('class="science-fieldset" disabled=""');
       expect(frozen).not.toContain('Check &amp; continue');
@@ -125,22 +131,26 @@ describe('independent experiment preparation and execution', () => {
     const spec = { version: 1 as const, experimentName: 'Frozen baseline', batchName: 'Explicit models', inputs: ready.inputs!, recipe: defaultRecipe(), mode: 'explicit' as const,
       grid: { learningRates: [0.001], weightDecays: [0], maxEpochs: [10] }, configurations: [{ ...defaultRecipe(), model: 'nnmil' as const }], trainingSeeds: [42], resources: defaultResources(), notes: '' };
     const html = renderToStaticMarkup(<FreezeSetupControl project="p" record={{ ...ready, frozenSetupId: null, batchPlans: [{ id: 'batch', spec }] }} disabledReason={null} onFrozen={() => {}} />);
-    expect(html).toContain('Freeze experimental setup');
+    expect(html).toContain('Freeze design');
     expect(html).toContain('nnMIL');
-    expect(html).toContain('Training starts separately in Experiments');
+    expect(html).toContain('Training starts when you start the experiment');
     expect(html).not.toContain('Start experiment');
     const frozen = renderToStaticMarkup(<FreezeSetupControl project="p" record={ready} disabledReason={null} onFrozen={() => {}} />);
-    expect(frozen).toContain('href="#experiments?experiment=Frozen+baseline"');
-    expect(frozen).not.toContain('Freeze experimental setup');
+    expect(frozen).toContain('The design is ready to run');
+    expect(frozen).not.toContain('Freeze design');
   });
 
-  it('keeps execution navigation separate from design and hyperparameters', () => {
-    const render = (mode: 'setup' | 'execution', stage: 'planning' | 'running') => renderToStaticMarkup(<ExperimentNavigation mode={mode} stage={stage} current="runs" disabled={false} inputsReady hasBatches onChange={() => {}} />);
-    expect(render('setup', 'planning')).toContain('Hyperparameters');
-    expect(render('setup', 'planning')).toContain('Review &amp; freeze');
-    expect(render('execution', 'planning')).toContain('Ready to run');
-    expect(render('execution', 'running')).toContain('>Runs</button>');
-    expect(render('execution', 'running')).not.toContain('>Inputs</button>');
-    expect(render('execution', 'running')).not.toContain('Hyperparameters');
+  it('steps through the design before starting, then shows the design and results as views', () => {
+    const render = (stage: 'planning' | 'running', frozen = false) => renderToStaticMarkup(<ExperimentNavigation stage={stage} frozen={frozen} current={stage === 'planning' ? 'setup' : 'runs'} disabled={false} inputsReady hasBatches onChange={() => {}} />);
+    expect(render('planning')).toContain('Hyperparameters');
+    expect(render('planning')).toContain('Review &amp; freeze');
+    expect(render('planning')).not.toContain('>Runs</button>');
+    expect(render('planning', true)).toContain('The design is frozen; start training');
+    const started = render('running');
+    expect(started).toContain('>Runs</button>');
+    // A started experiment keeps its read-only design, in the order it was made.
+    expect(started.indexOf('>Inputs</button>')).toBeLessThan(started.indexOf('>Hyperparameters</button>'));
+    expect(started.indexOf('>Hyperparameters</button>')).toBeLessThan(started.indexOf('>Runs</button>'));
+    expect(started).not.toContain('Review &amp; freeze');
   });
 });

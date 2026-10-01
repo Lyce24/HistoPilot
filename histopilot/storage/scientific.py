@@ -1099,6 +1099,7 @@ class ScientificStore:
             "evaluation-batch",
             "clinical-analysis",
             "model-interpretation",
+            "reference-standard",
         }:
             raise _error("Unsupported scientific configuration kind.", "INVALID_CONFIGURATION", 422)
         content = encode_document(manifest, MAX_CONFIGURATION_BYTES)

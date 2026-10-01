@@ -1,4 +1,5 @@
 import { request } from './client';
+import { splitPlanLabel } from './development';
 import type { Finding } from './scientific';
 import type { ConfidenceInterval } from './statistics';
 
@@ -21,6 +22,8 @@ export type PointResult = Partial<Record<ResultMetric, number | null>> & {
 };
 export interface FoldResult {
   fold: number; splitPlanId: string; runId: string | null; status: string; testCount: number | null;
+  /** The site or cohort a leave-one-site-out fold assesses. */
+  domain?: string;
   metrics: PointResult | null; bestEpoch: number | null; epochsCompleted: number | null;
   validationScore: number | null; checkpointMetric: string | null;
 }
@@ -30,7 +33,7 @@ export interface SeedResult {
   oof: PointResult | null; folds: FoldResult[]; foldStats: MetricBlock;
 }
 export interface SplitSeedResult {
-  splitSeed: number; folds: { fold: number; splitPlanId: string; testCount: number | null }[]; seeds: SeedResult[];
+  splitSeed: number; folds: { fold: number; domain?: string; splitPlanId: string; testCount: number | null }[]; seeds: SeedResult[];
 }
 export interface IntervalBlock {
   available: boolean; reason?: string; validResamples?: number; excludedResamples?: number;
@@ -86,10 +89,35 @@ export interface PairedComparison {
 export interface ExperimentResults {
   experimentId: string;
   target: { task: string; unit: 'slide' | 'patient'; classes: string[]; positiveClass: string | null; field?: string } | null;
-  design: { splitUnit: 'slide' | 'patient'; groupByPatient: boolean; folds: number; splitSeeds: number[]; slideCount: number | null; resamplingUnit: 'slide' | 'patient' } | null;
+  design: {
+    /** How units were assessed: folds (k-fold or predefined), one site per plan, or one held-out set per seed. */
+    strategy?: 'folds' | 'leave_one_domain_out' | 'held_out';
+    splitUnit: 'slide' | 'patient'; groupByPatient: boolean; folds: number; splitSeeds: number[]; slideCount: number | null; resamplingUnit: 'slide' | 'patient';
+  } | null;
   policy: { resamples: number; seed: number; confidenceLevel: number; method: string };
   primaryMetric: ResultMetric; batches: BatchResult[]; comparisons: PairedComparison[];
   findings: (Finding & { batchId?: string })[];
+}
+
+type Design = NonNullable<ExperimentResults['design']>;
+
+/** The training design in words, refined by the experiment's own split when it has one. */
+export function designLabel(design: Design, split?: { mode?: string; foldField?: string | null; domainPolicy?: string } | null) {
+  if (design.strategy === 'leave_one_domain_out') return `Leave one site out · ${design.folds} ${design.folds === 1 ? 'site' : 'sites'}${split?.domainPolicy === 'selected' ? ' held out' : ''}`;
+  if (design.strategy === 'held_out') return 'Held-out assessment';
+  if (split?.mode === 'predefined_folds') return `${design.folds} predefined folds${split.foldField ? ` (${split.foldField})` : ''}`;
+  return design.folds > 1 ? `${design.folds}-fold cross-validation` : 'One train/test split';
+}
+
+/** One plan as people read it, as its runs are named: the site it holds out, the held-out
+ * assessment, or its fold. Results number a held-out design's single plan as fold 0. */
+export function foldLabel(fold: { fold: number; domain?: string }, strategy?: Design['strategy']) {
+  return splitPlanLabel(strategy === 'held_out' ? { fold: null } : fold);
+}
+
+/** True when every unit is assessed once per seed: k-fold, predefined folds or every site. */
+export function assessesEveryUnit(design: Design, split?: { domainPolicy?: string } | null) {
+  return design.strategy !== 'held_out' && !(design.strategy === 'leave_one_domain_out' && split?.domainPolicy === 'selected');
 }
 
 export const experimentResults = {

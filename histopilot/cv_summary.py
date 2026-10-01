@@ -1,9 +1,8 @@
 """Cross-validation summaries: per fold, per training seed, seed average and seed ensemble.
 
 Pure numpy, importable by the lightweight API (no torch). The training worker scores its
-predictions with ``point_metrics`` (``histopilot.training.module.validated_metrics``), so
-a number shown here equals the one it recorded; ``tests/test_cv_summary.py`` checks the
-parity.
+predictions with ``point_metrics`` (through ``validated_metrics``), so a number shown here
+equals the one it recorded; ``tests/test_cv_summary.py`` checks the parity.
 
 Seed-average intervals resample the experiment's independent units (slides in a
 slide-level design, patients otherwise) and score every seed on the same draw, so the
@@ -15,6 +14,7 @@ include retraining, configuration selection or threshold uncertainty.
 from __future__ import annotations
 
 import math
+from numbers import Real
 
 import numpy as np
 
@@ -159,6 +159,84 @@ def point_metrics(rows: list[dict], target: dict, decision_threshold=None) -> di
             }
             for index, label in enumerate(classes)
         ],
+    }
+
+
+def validated_metrics(rows, target, *, decision_threshold=None):
+    """Check prediction rows against the frozen classes, then score them with ``point_metrics``."""
+    classes = target["classes"]
+    if (
+        len(classes) < 2
+        or any(not isinstance(label, str) or not label for label in classes)
+        or len(set(classes)) != len(classes)
+    ):
+        raise ValueError("Frozen class order must contain at least two distinct class names.")
+    if not rows:
+        return {"available": False, "count": 0, "reason": "No assessment records."}
+
+    def numeric_vector(value):
+        return (
+            isinstance(value, (list, tuple, np.ndarray))
+            and len(value) == len(classes)
+            and all(isinstance(item, Real) and not isinstance(item, bool) for item in value)
+        )
+
+    for row in rows:
+        index = row.get("labelIndex")
+        if type(index) is not int or not 0 <= index < len(classes):
+            raise ValueError("Prediction labelIndex must be an integer within the frozen classes.")
+        if row.get("label") != classes[index]:
+            raise ValueError("Prediction label does not match its index in the frozen class order.")
+        if not numeric_vector(row.get("probabilities")):
+            raise ValueError("Predictions require one numeric probability per frozen class.")
+        if "logProbabilities" in row and not numeric_vector(row["logProbabilities"]):
+            raise ValueError("Log probabilities require one numeric value per frozen class.")
+    probabilities = np.asarray([row["probabilities"] for row in rows], dtype=np.float64)
+    if (
+        not np.isfinite(probabilities).all()
+        or np.any(probabilities < 0)
+        or np.any(probabilities > 1)
+        or not np.allclose(probabilities.sum(axis=1), 1, atol=1e-5, rtol=0)
+    ):
+        raise ValueError("Predictions must contain finite, normalized probabilities in [0, 1].")
+    # A threshold applies to binary targets only; multiclass decisions are the argmax.
+    threshold = None
+    if target["task"] == "binary_classification" and decision_threshold is not None:
+        if (
+            isinstance(decision_threshold, bool)
+            or not isinstance(decision_threshold, Real)
+            or not math.isfinite(decision_threshold)
+            or not 0 <= decision_threshold <= 1
+        ):
+            raise ValueError(
+                "The binary decision threshold must be finite and between zero and one."
+            )
+        threshold = float(decision_threshold)
+    log_probabilities = np.asarray([row_log_probabilities(row) for row in rows], dtype=np.float64)
+    if (
+        not np.isfinite(log_probabilities).all()
+        or not np.allclose(np.logaddexp.reduce(log_probabilities, axis=1), 0, atol=1e-5, rtol=0)
+        or not np.allclose(np.exp(log_probabilities), probabilities, atol=1e-6, rtol=1e-5)
+    ):
+        raise ValueError("Log probabilities must be finite, normalized and match probabilities.")
+    metrics = point_metrics(rows, target, threshold)
+    # Training records keep their established fields; per-class rows are summary-only.
+    metrics.pop("perClass")
+    return metrics
+
+
+def evaluation_metrics(records, target, threshold):
+    """Metrics use labeled rows only; threshold changes decisions, never ranking scores.
+
+    The inference worker scored labeled evaluations with this function, and the control
+    service now scores label-blind runs with it, so both generations agree exactly.
+    """
+    labeled = [row for row in records if row["labelIndex"] is not None]
+    result = validated_metrics(labeled, target, decision_threshold=threshold)
+    return {
+        **result,
+        "predictionCount": len(records),
+        "unlabeledCount": len(records) - len(labeled),
     }
 
 

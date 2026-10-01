@@ -276,9 +276,7 @@ def test_a_retry_after_a_lost_conclusion_keeps_the_completed_receipt(project, ta
     assert result["error"] is None
 
 
-def test_archive_cancel_retry_and_active_request_coalescing_survive_reconnect(
-    project, task_center
-):
+def test_archive_cancel_retry_and_active_request_coalescing_survive_reconnect(project, task_center):
     store, projects, _, _ = project
     jobs = archive_jobs(projects, task_center)
     request = PortabilityRequest(

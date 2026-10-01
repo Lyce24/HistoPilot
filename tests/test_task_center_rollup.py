@@ -413,6 +413,22 @@ def test_task_detail_has_command_attempts_dependents_failure_and_full_log(api):
     assert missing.status_code == 404
 
 
+def test_a_log_can_be_followed_from_a_byte_offset(api):
+    project = register(api)
+    enqueue(owner(project), [task(project, "fold-1")])
+    log = Path(project[1]) / "logs" / "fold-1.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_bytes(b"line one\nline two\n")
+    first = api.get(f"{API}/tasks/fold-1/log", params={"offset": 0, "limit": 9})
+    assert first.status_code == 200 and first.content == b"line one\n"
+    assert first.headers["x-histopilot-log-next-offset"] == "9"
+    assert first.headers["x-histopilot-log-size"] == "18"
+    rest = api.get(f"{API}/tasks/fold-1/log", params={"offset": 9})
+    assert rest.content == b"line two\n" and rest.headers["x-histopilot-log-next-offset"] == "18"
+    past = api.get(f"{API}/tasks/fold-1/log", params={"offset": 500})
+    assert past.content == b"" and past.headers["x-histopilot-log-next-offset"] == "18"
+
+
 def test_log_download_refuses_symlinks(api, tmp_path):
     project = register(api)
     enqueue(owner(project), [task(project, "fold-1")])
@@ -424,7 +440,7 @@ def test_log_download_refuses_symlinks(api, tmp_path):
     assert api.get(f"{API}/tasks/fold-1/log").status_code == 404
 
 
-def test_back_links_for_experiment_refits_and_inference_batches(api):
+def test_back_links_for_experiment_refits_and_batches_of_runs(api):
     project = register(api)
     refit = task(
         project,
@@ -448,10 +464,13 @@ def test_back_links_for_experiment_refits_and_inference_batches(api):
     enqueue(owner(project, kind="evaluation-batch", identity="bulk-1"), [member, submit])
     tasks = {item["id"]: item for item in api.get(f"{API}/tasks").json()["tasks"]}
     assert tasks["refit-task"]["link"].endswith("#experiments?experiment=experiment-1&tab=runs")
-    assert tasks["submit"]["link"].endswith("#inference?batch=bulk-1")
+    assert tasks["submit"]["link"].endswith("#apply?batch=bulk-1")
+    assert tasks["member"]["link"].endswith("#apply?run=evaluation-1")
     owners = api.get(f"{API}/owners").json()["owners"]
     bulk = next(item for item in owners if item["kind"] == "evaluation-batch")
-    assert bulk["link"].endswith("#inference?batch=bulk-1")
+    assert bulk["link"].endswith("#apply?batch=bulk-1")
+    # Labeled or not, a batch keeps its purpose for the owner label; its link does not need it.
+    assert bulk["purpose"] == "inference"
 
 
 @pytest.mark.parametrize(

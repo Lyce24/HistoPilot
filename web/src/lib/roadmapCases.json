@@ -1,0 +1,1937 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "id": "dataset",
+      "title": "Datasets",
+      "shortTitle": "Datasets",
+      "phase": "prepare",
+      "description": "Import slide and patient information, map annotations, and save a reusable dataset.",
+      "prerequisites": []
+    },
+    {
+      "id": "features",
+      "title": "Slide features",
+      "shortTitle": "Slide features",
+      "phase": "prepare",
+      "description": "Register or extract slide features and save a verified bundle. Prepare this alongside Targets & splits.",
+      "prerequisites": [
+        "dataset"
+      ]
+    },
+    {
+      "id": "cohort",
+      "title": "Targets & splits",
+      "shortTitle": "Targets & splits",
+      "phase": "prepare",
+      "description": "Choose the prediction target and split dataset records into fixed training and testing sets.",
+      "prerequisites": [
+        "dataset"
+      ]
+    },
+    {
+      "id": "experiments",
+      "title": "Experiments",
+      "shortTitle": "Experiments",
+      "phase": "develop",
+      "description": "Design training on frozen targets, splits and features: folds, validation and hyperparameters. Freeze the design, start it, and review its results and predictors.",
+      "prerequisites": [
+        "cohort",
+        "features"
+      ]
+    },
+    {
+      "id": "apply",
+      "title": "Apply models",
+      "shortTitle": "Apply models",
+      "phase": "evaluate",
+      "description": "Apply ready predictors to a cohort. A labeled cohort is scored, by subgroup and for clinical utility; an unlabeled one gets predictions only.",
+      "prerequisites": [
+        "experiments"
+      ]
+    },
+    {
+      "id": "interpretation",
+      "title": "Model interpretation",
+      "shortTitle": "Model interpretation",
+      "phase": "insights",
+      "description": "Load trained model weights with a dataset and its feature bundle, then review attention overlays, top patches and predicted labels. Needs no runs from Apply models.",
+      "prerequisites": [
+        "dataset",
+        "features",
+        "experiments"
+      ],
+      "optional": true
+    }
+  ],
+  "steps": [
+    {
+      "id": "datasets",
+      "step": "01",
+      "title": "Datasets",
+      "modules": [
+        "dataset"
+      ]
+    },
+    {
+      "id": "prepare",
+      "step": "02",
+      "title": "Prepare in parallel",
+      "modules": [
+        "features",
+        "cohort"
+      ]
+    },
+    {
+      "id": "develop",
+      "step": "03",
+      "title": "Experiments",
+      "modules": [
+        "experiments"
+      ]
+    },
+    {
+      "id": "apply",
+      "step": "04",
+      "title": "Apply models",
+      "modules": [
+        "apply"
+      ]
+    },
+    {
+      "id": "interpret",
+      "step": "05",
+      "title": "Interpretation",
+      "modules": [
+        "interpretation"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "empty",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {},
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "No frozen dataset or saved import",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "dataset"
+          ],
+          "evidence": "No saved feature source or frozen bundle",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "cohort",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "dataset"
+          ],
+          "evidence": "No frozen targets and splits",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "experiments",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "cohort",
+            "features"
+          ],
+          "evidence": "No experiment designed yet",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "apply",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No model applied to a cohort",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "dataset",
+            "features",
+            "experiments"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "dataset"
+    },
+    {
+      "name": "import draft only",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "drafts": [
+          {
+            "id": "draft-dataset-import-editable",
+            "status": "editable",
+            "payload": {
+              "type": "dataset-import"
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 saved import draft",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "dataset"
+          ],
+          "evidence": "No saved feature source or frozen bundle",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "cohort",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "dataset"
+          ],
+          "evidence": "No frozen targets and splits",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "experiments",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "cohort",
+            "features"
+          ],
+          "evidence": "No experiment designed yet",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "apply",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No model applied to a cohort",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "dataset",
+            "features",
+            "experiments"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "dataset"
+    },
+    {
+      "name": "preparing",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          }
+        ],
+        "drafts": [
+          {
+            "id": "draft-target-split-editable",
+            "status": "editable",
+            "payload": {
+              "type": "target-split"
+            }
+          },
+          {
+            "id": "draft-model-experiment-editable",
+            "status": "editable",
+            "payload": {
+              "type": "model-experiment"
+            }
+          },
+          {
+            "id": "draft-model-experiment-frozen",
+            "status": "frozen",
+            "payload": {
+              "type": "model-experiment"
+            }
+          }
+        ],
+        "targetSplits": [
+          {
+            "id": "ts-1",
+            "manifest": {
+              "datasetId": "ds-1"
+            }
+          },
+          {
+            "id": "ts-old",
+            "manifest": {
+              "datasetId": "ds-gone"
+            }
+          }
+        ],
+        "features": [
+          {
+            "id": "fs-1"
+          }
+        ],
+        "bundles": [
+          {
+            "id": "bundle-True-False-False-1",
+            "current": false,
+            "findings": [
+              {
+                "severity": "warning"
+              }
+            ],
+            "manifest": {
+              "feature": {
+                "validation": {
+                  "tensorValidationComplete": true
+                }
+              },
+              "packs": [
+                {
+                  "validation": {
+                    "tensorValidationComplete": true
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": "bundle-True-True-False-2",
+            "current": true,
+            "findings": [
+              {
+                "severity": "warning"
+              }
+            ],
+            "manifest": {
+              "feature": {
+                "validation": {
+                  "tensorValidationComplete": true
+                }
+              },
+              "packs": [
+                {
+                  "validation": {
+                    "tensorValidationComplete": true
+                  }
+                },
+                {
+                  "validation": {
+                    "tensorValidationComplete": false
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "extractions": [
+          {
+            "id": "x-1",
+            "state": "running",
+            "progress": {
+              "label": "Extracting features",
+              "completed": 3,
+              "total": 10,
+              "unit": "slides",
+              "scope": "batch"
+            }
+          },
+          {
+            "id": "x-2",
+            "state": "succeeded"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen dataset",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "3 saved feature artifacts · complete bundle verification · 1 extraction in progress · Extracting features · 3/10 slides in latest batch",
+          "artifactCount": 5,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "cohort",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen target and split",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "experiments",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 saved experiment design",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "apply",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No model applied to a cohort",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "features",
+            "experiments"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "features"
+    },
+    {
+      "name": "extraction queued",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          }
+        ],
+        "extractions": [
+          {
+            "id": "x-1",
+            "state": "queued",
+            "progress": {
+              "completed": 0,
+              "total": 4,
+              "unit": "slides",
+              "scope": "stage"
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen dataset",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 extraction in progress · Queued",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "cohort",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "No frozen targets and splits",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "experiments",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "cohort",
+            "features"
+          ],
+          "evidence": "No experiment designed yet",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "apply",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No model applied to a cohort",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "features",
+            "experiments"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "features"
+    },
+    {
+      "name": "extraction stopping",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          }
+        ],
+        "extractions": [
+          {
+            "id": "x-1",
+            "state": "cancelling"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen dataset",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 extraction in progress · Stopping extraction",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "cohort",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "No frozen targets and splits",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "experiments",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "cohort",
+            "features"
+          ],
+          "evidence": "No experiment designed yet",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "apply",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No model applied to a cohort",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "features",
+            "experiments"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "features"
+    },
+    {
+      "name": "extraction finished",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          }
+        ],
+        "bundles": [
+          {
+            "id": "bundle-True-True-False-1",
+            "current": true,
+            "findings": [
+              {
+                "severity": "warning"
+              }
+            ],
+            "manifest": {
+              "feature": {
+                "validation": {
+                  "tensorValidationComplete": true
+                }
+              },
+              "packs": [
+                {
+                  "validation": {
+                    "tensorValidationComplete": true
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "extractions": [
+          {
+            "id": "x-9",
+            "state": "failed"
+          },
+          {
+            "id": "x-1",
+            "state": "succeeded"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen dataset",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 verified frozen bundle · 2 extraction runs · latest failed · review run",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "cohort",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "No frozen targets and splits",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "experiments",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "cohort"
+          ],
+          "evidence": "No experiment designed yet",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "apply",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No model applied to a cohort",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "cohort"
+    },
+    {
+      "name": "ready to design",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          }
+        ],
+        "targetSplits": [
+          {
+            "id": "ts-1",
+            "manifest": {
+              "datasetId": "ds-1"
+            }
+          }
+        ],
+        "bundles": [
+          {
+            "id": "bundle-True-True-False-1",
+            "current": true,
+            "findings": [
+              {
+                "severity": "warning"
+              }
+            ],
+            "manifest": {
+              "feature": {
+                "validation": {
+                  "tensorValidationComplete": true
+                }
+              },
+              "packs": [
+                {
+                  "validation": {
+                    "tensorValidationComplete": true
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": "bundle-True-True-True-1",
+            "current": true,
+            "findings": [
+              {
+                "severity": "error"
+              }
+            ],
+            "manifest": {
+              "feature": {
+                "validation": {
+                  "tensorValidationComplete": true
+                }
+              },
+              "packs": [
+                {
+                  "validation": {
+                    "tensorValidationComplete": true
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "setups": [
+          {
+            "id": "setup-1"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen dataset",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 verified frozen bundle",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "cohort",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen target and split",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "experiments",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 saved experiment design",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "apply",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No model applied to a cohort",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "experiments"
+    },
+    {
+      "name": "inputs incompatible",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          }
+        ],
+        "targetSplits": [
+          {
+            "id": "ts-1",
+            "manifest": {
+              "datasetId": "ds-1"
+            }
+          }
+        ],
+        "features": [
+          {
+            "id": "fs-1"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen dataset",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 saved feature artifact · complete bundle verification",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "cohort",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen target and split",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "experiments",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "features"
+          ],
+          "evidence": "No experiment designed yet",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "apply",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No model applied to a cohort",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "features",
+            "experiments"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "features"
+    },
+    {
+      "name": "training",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          }
+        ],
+        "targetSplits": [
+          {
+            "id": "ts-1",
+            "manifest": {
+              "datasetId": "ds-1"
+            }
+          }
+        ],
+        "bundles": [
+          {
+            "id": "bundle-True-True-False-1",
+            "current": true,
+            "findings": [
+              {
+                "severity": "warning"
+              }
+            ],
+            "manifest": {
+              "feature": {
+                "validation": {
+                  "tensorValidationComplete": true
+                }
+              },
+              "packs": [
+                {
+                  "validation": {
+                    "tensorValidationComplete": true
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "batches": [
+          {
+            "id": "b-1",
+            "manifest": {
+              "runs": [
+                {
+                  "id": "b-1-r0"
+                },
+                {
+                  "id": "b-1-r1"
+                }
+              ],
+              "summary": {
+                "runCount": 2
+              }
+            }
+          },
+          {
+            "id": "b-2",
+            "manifest": {
+              "runs": [
+                {
+                  "id": "b-2-r0"
+                },
+                {
+                  "id": "b-2-r1"
+                }
+              ],
+              "summary": {
+                "runCount": 2
+              }
+            }
+          },
+          {
+            "id": "b-3",
+            "manifest": {
+              "runs": [
+                {
+                  "id": "b-3-r0"
+                }
+              ],
+              "summary": {
+                "runCount": 1
+              }
+            }
+          }
+        ],
+        "executions": [
+          {
+            "batchId": "b-1",
+            "status": "completed",
+            "runCounts": {
+              "total": 2,
+              "completed": 2
+            },
+            "runs": [
+              {
+                "id": "b-1-r0",
+                "status": "completed"
+              },
+              {
+                "id": "b-1-r1",
+                "status": "completed"
+              }
+            ],
+            "findings": []
+          },
+          {
+            "batchId": "b-2",
+            "status": "running",
+            "runCounts": {
+              "total": 2,
+              "completed": 1
+            },
+            "runs": [
+              {
+                "id": "b-2-r0",
+                "status": "completed"
+              },
+              {
+                "id": "b-2-r1",
+                "status": "running"
+              }
+            ],
+            "findings": []
+          },
+          {
+            "batchId": "b-3",
+            "status": "completed",
+            "runCounts": {
+              "total": 1,
+              "completed": 1
+            },
+            "runs": [
+              {
+                "id": "b-3-r0",
+                "status": "completed"
+              }
+            ],
+            "findings": [
+              {
+                "severity": "error"
+              }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen dataset",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 verified frozen bundle",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "cohort",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen target and split",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "experiments",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 completed development batch · 4/5 training runs completed · 1 active batch",
+          "artifactCount": 3,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "apply",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No model applied to a cohort",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": null
+    },
+    {
+      "name": "trained, not applied",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          }
+        ],
+        "targetSplits": [
+          {
+            "id": "ts-1",
+            "manifest": {
+              "datasetId": "ds-1"
+            }
+          }
+        ],
+        "bundles": [
+          {
+            "id": "bundle-True-True-False-1",
+            "current": true,
+            "findings": [
+              {
+                "severity": "warning"
+              }
+            ],
+            "manifest": {
+              "feature": {
+                "validation": {
+                  "tensorValidationComplete": true
+                }
+              },
+              "packs": [
+                {
+                  "validation": {
+                    "tensorValidationComplete": true
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "batches": [
+          {
+            "id": "b-1",
+            "manifest": {
+              "runs": [
+                {
+                  "id": "b-1-r0"
+                },
+                {
+                  "id": "b-1-r1"
+                }
+              ],
+              "summary": {
+                "runCount": 2
+              }
+            }
+          }
+        ],
+        "executions": [
+          {
+            "batchId": "b-1",
+            "status": "running",
+            "runCounts": {
+              "total": 2,
+              "completed": 1
+            },
+            "runs": [
+              {
+                "id": "b-1-r0",
+                "status": "completed"
+              },
+              {
+                "id": "b-1-r1",
+                "status": "running"
+              }
+            ],
+            "findings": []
+          }
+        ],
+        "predictors": [
+          {
+            "id": "pred-mean_pool-active",
+            "lifecycleState": "active",
+            "manifest": {
+              "recipe": {
+                "model": "mean_pool"
+              }
+            }
+          },
+          {
+            "id": "pred-abmil-trashed",
+            "lifecycleState": "trashed",
+            "manifest": {
+              "recipe": {
+                "model": "abmil"
+              }
+            }
+          }
+        ],
+        "evaluationCohorts": [
+          {
+            "id": "c-1"
+          }
+        ],
+        "drafts": [
+          {
+            "id": "draft-evaluation-cohort-editable",
+            "status": "editable",
+            "payload": {
+              "type": "evaluation-cohort"
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen dataset",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 verified frozen bundle",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "cohort",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen target and split",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "experiments",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1/2 training runs completed · 1 active batch · 1 ready predictor",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "apply",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "2 prepared cohorts · no runs yet",
+          "artifactCount": 2,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "experiments"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "apply"
+    },
+    {
+      "name": "applied",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          },
+          {
+            "id": "ds-2"
+          }
+        ],
+        "targetSplits": [
+          {
+            "id": "ts-1",
+            "manifest": {
+              "datasetId": "ds-1"
+            }
+          }
+        ],
+        "bundles": [
+          {
+            "id": "bundle-True-True-False-1",
+            "current": true,
+            "findings": [
+              {
+                "severity": "warning"
+              }
+            ],
+            "manifest": {
+              "feature": {
+                "validation": {
+                  "tensorValidationComplete": true
+                }
+              },
+              "packs": [
+                {
+                  "validation": {
+                    "tensorValidationComplete": true
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "predictors": [
+          {
+            "id": "pred-abmil-active",
+            "lifecycleState": "active",
+            "manifest": {
+              "recipe": {
+                "model": "abmil"
+              }
+            }
+          },
+          {
+            "id": "pred-nnmil-active",
+            "lifecycleState": "active",
+            "manifest": {
+              "recipe": {
+                "model": "nnmil"
+              }
+            }
+          }
+        ],
+        "modelEvaluations": [
+          {
+            "id": "run-completed-evaluation-active",
+            "lifecycleState": "active",
+            "execution": {
+              "status": "completed"
+            },
+            "manifest": {
+              "purpose": "evaluation"
+            }
+          },
+          {
+            "id": "run-completed-inference-active",
+            "lifecycleState": "active",
+            "execution": {
+              "status": "completed"
+            },
+            "manifest": {
+              "purpose": "inference"
+            }
+          },
+          {
+            "id": "run-completed-review-active",
+            "lifecycleState": "active",
+            "execution": {
+              "status": "completed"
+            },
+            "manifest": {
+              "purpose": "review"
+            }
+          },
+          {
+            "id": "run-running-evaluation-active",
+            "lifecycleState": "active",
+            "execution": {
+              "status": "running"
+            },
+            "manifest": {
+              "purpose": "evaluation"
+            }
+          },
+          {
+            "id": "run-completed-evaluation-trashed",
+            "lifecycleState": "trashed",
+            "execution": {
+              "status": "completed"
+            },
+            "manifest": {
+              "purpose": "evaluation"
+            }
+          }
+        ],
+        "clinicalAnalyses": [
+          {
+            "id": "a-1"
+          },
+          {
+            "id": "a-2",
+            "lifecycleState": "trashed"
+          }
+        ],
+        "interpretations": [
+          {
+            "id": "i-1",
+            "execution": {
+              "status": "completed"
+            }
+          },
+          {
+            "id": "i-2",
+            "execution": null
+          },
+          {
+            "id": "i-3",
+            "lifecycleState": "trashed",
+            "execution": {
+              "status": "completed"
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "2 frozen datasets",
+          "artifactCount": 2,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 verified frozen bundle",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "cohort",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen target and split",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "experiments",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "2 ready predictors",
+          "artifactCount": 2,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "apply",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "3 completed runs · 1 scored, 2 predictions only · 1 clinical analysis",
+          "artifactCount": 3,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "interpretation",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 completed attention map",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": null
+    },
+    {
+      "name": "runs not finished",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          }
+        ],
+        "predictors": [
+          {
+            "id": "pred-abmil-active",
+            "lifecycleState": "active",
+            "manifest": {
+              "recipe": {
+                "model": "abmil"
+              }
+            }
+          }
+        ],
+        "modelEvaluations": [
+          {
+            "id": "run-failed-evaluation-active",
+            "lifecycleState": "active",
+            "execution": {
+              "status": "failed"
+            },
+            "manifest": {
+              "purpose": "evaluation"
+            }
+          }
+        ],
+        "clinicalAnalyses": [
+          {
+            "id": "a"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen dataset",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "No saved feature source or frozen bundle",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "cohort",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "No frozen targets and splits",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "experiments",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 ready predictor",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "apply",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 run not completed yet",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "features"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "features"
+    },
+    {
+      "name": "one clinical analysis",
+      "workspace": {
+        "mode": "local"
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ds-1"
+          }
+        ],
+        "predictors": [
+          {
+            "id": "pred-abmil-active",
+            "lifecycleState": "active",
+            "manifest": {
+              "recipe": {
+                "model": "abmil"
+              }
+            }
+          }
+        ],
+        "modelEvaluations": [
+          {
+            "id": "run-completed-evaluation-active",
+            "lifecycleState": "active",
+            "execution": {
+              "status": "completed"
+            },
+            "manifest": {
+              "purpose": "evaluation"
+            }
+          }
+        ],
+        "clinicalAnalyses": [
+          {
+            "id": "a"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 frozen dataset",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "features",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "No saved feature source or frozen bundle",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "cohort",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "No frozen targets and splits",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        },
+        {
+          "id": "experiments",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 ready predictor",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "apply",
+          "status": "complete",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 completed run · 1 scored · 1 clinical analysis",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": true
+        },
+        {
+          "id": "interpretation",
+          "status": "not-started",
+          "unlocked": true,
+          "blockers": [
+            "features"
+          ],
+          "evidence": "No attention overlay generated",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": false
+        }
+      ],
+      "suggested": "features"
+    },
+    {
+      "name": "synthetic demo",
+      "workspace": {
+        "mode": "synthetic-demo",
+        "demoPipeline": {
+          "records": [
+            {
+              "module": "dataset"
+            },
+            {
+              "module": "dataset"
+            },
+            {
+              "module": "apply"
+            }
+          ]
+        }
+      },
+      "evidence": {
+        "datasets": [
+          {
+            "id": "ignored"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "dataset",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "2 illustrative records · synthetic walkthrough",
+          "artifactCount": 2,
+          "compatibilityIssue": null,
+          "retainedWork": null
+        },
+        {
+          "id": "features",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "Illustrative workflow explanation",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": null
+        },
+        {
+          "id": "cohort",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "Illustrative workflow explanation",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": null
+        },
+        {
+          "id": "experiments",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "Illustrative workflow explanation",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": null
+        },
+        {
+          "id": "apply",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "1 illustrative record · synthetic walkthrough",
+          "artifactCount": 1,
+          "compatibilityIssue": null,
+          "retainedWork": null
+        },
+        {
+          "id": "interpretation",
+          "status": "draft",
+          "unlocked": true,
+          "blockers": [],
+          "evidence": "Illustrative workflow explanation",
+          "artifactCount": 0,
+          "compatibilityIssue": null,
+          "retainedWork": null
+        }
+      ],
+      "suggested": "dataset"
+    }
+  ]
+}

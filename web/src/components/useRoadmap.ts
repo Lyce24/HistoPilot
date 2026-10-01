@@ -59,16 +59,12 @@ export function useRoadmap(workspace: Workspace) {
   const inputQueries = [datasets, featureBundles];
   const checksById = Object.fromEntries(modules.map(({ id, retainedWork }) => {
     const result = check(
-    id === 'dataset' || (enabled && ['cohort', 'features', 'experimental-setup', 'experiments', 'test-data', 'evaluation', 'inference', 'clinical-utility', 'interpretation'].includes(id))
+    id === 'dataset' || (enabled && ['cohort', 'features', 'experiments', 'apply', 'interpretation'].includes(id))
       ? []
-      : id === 'evaluation' || id === 'inference'
+      : id === 'apply'
         ? [batches, evaluationCohorts]
-      : id === 'clinical-utility'
-        ? [evaluationRecords]
       : id === 'interpretation'
         ? [frozenPredictors, featureBundles]
-      : id === 'test-data'
-        ? [datasets]
       : id === 'cohort' || id === 'features'
         ? [datasets]
         : inputQueries,

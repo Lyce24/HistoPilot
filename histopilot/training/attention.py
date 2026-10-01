@@ -83,7 +83,14 @@ def _percentiles(weights):
 
 
 def _map(
-    slide, coords, weights, probabilities, plan, *, member, log_probabilities=None,
+    slide,
+    coords,
+    weights,
+    probabilities,
+    plan,
+    *,
+    member,
+    log_probabilities=None,
     window_uncertainty=None,
 ):
     ranks = _percentiles(weights)
@@ -159,7 +166,7 @@ def interpret(plan, output_dir):
     if aggregation not in {"mean_probability", "mean_logit", "single_model"}:
         raise ValueError("The frozen ensemble aggregation is unsupported.")
     if (
-        method not in {"refit", "ensemble"}
+        method not in {"refit", "ensemble", "seed_ensemble"}
         or not checkpoints
         or (method == "refit" and len(checkpoints) != 1)
     ):
@@ -253,7 +260,8 @@ def interpret(plan, output_dir):
                 model.eval().to(device)
                 with torch.inference_mode():
                     output = model.prediction_output(
-                        tensor, return_attention=True,
+                        tensor,
+                        return_attention=True,
                         **({"clinical": [slide["clinical"]]} if "clinical" in slide else {}),
                     )
                     weights = output["attention"][0].double().cpu().numpy()
@@ -282,7 +290,9 @@ def interpret(plan, output_dir):
                         window_uncertainty=window_uncertainty,
                     ),
                 )
-                write_json_atomic(cache_receipt, {"inputHash": input_hash, "artifact": _receipt(path)})
+                write_json_atomic(
+                    cache_receipt, {"inputHash": input_hash, "artifact": _receipt(path)}
+                )
             _validate(weights, probabilities, len(coords), len(total_probabilities))
             artifacts[filename] = _receipt(path)
             array_name = f"slide-{slide_index}-member-{member_index}.npy"
@@ -300,8 +310,11 @@ def interpret(plan, output_dir):
                     "probabilities": probabilities.tolist(),
                     "attentionArtifact": filename,
                     "attentionArray": array_name,
-                    **({"windowUncertainty": window_uncertainty}
-                       if window_uncertainty is not None else {}),
+                    **(
+                        {"windowUncertainty": window_uncertainty}
+                        if window_uncertainty is not None
+                        else {}
+                    ),
                 }
             )
             write_json_atomic(

@@ -5,6 +5,7 @@ Source: pinned OpenSDPC a07579eedde1dffddf8fa712ef236b97ca8cfc55.
 Globals and native calls are supplied by the regression test.
 """
 
+
 class OldSdpc:
     def __init__(self, sdpcPath):
         self.sdpcPath = sdpcPath

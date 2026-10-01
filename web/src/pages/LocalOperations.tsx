@@ -8,6 +8,7 @@ import ServerFolderPicker from '../components/ServerFolderPicker';
 import RunStatusChip from '../components/RunStatusChip';
 import LegacyRecordNote, { createdBeforeTaskCenter } from '../components/LegacyRecordNote';
 import { taskCenterHref, taskCenterWork } from '../api/taskCenter';
+import AgentAccess from '../components/AgentAccess';
 import './LocalOperations.css';
 
 const active = new Set(['starting', 'queued', 'running', 'cancelling']);
@@ -122,5 +123,6 @@ export default function LocalOperations({ workspace }: { workspace: Workspace })
       {sources.isPending ? <p role="status">Checking source references…</p> : null}
       {sources.data ? <><p>{sources.data.referenceCount.toLocaleString()} recorded paths checked · {sources.data.missingReferences.length.toLocaleString()} unavailable external references</p>{sources.data.sources.map((source) => <SourceRow key={`${project}:${source.id}:${source.path}`} project={project} source={source} onSaved={sourceSaved} />)}{!sources.data.sources.length ? <p className="muted">No source folders are registered with this project.</p> : null}{sources.data.missingReferences.length ? <details><summary>Unavailable external references</summary><ul>{sources.data.missingReferences.slice(0, 200).map((item) => <li key={item.path}><code className="operations-path">{item.path}</code><span>{item.reason === 'missing' ? 'Missing from this machine' : 'Outside configured roots'}</span></li>)}</ul>{sources.data.missingReferences.length > 200 ? <p>Showing the first 200 paths. The complete inventory is included in exported archives.</p> : null}</details> : null}</> : null}
     </Panel>
+    {workspace.mode === 'local' ? <AgentAccess project={project} projectName={workspace.project.name} /> : null}
   </div>;
 }

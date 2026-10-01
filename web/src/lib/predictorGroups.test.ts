@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fixturePredictor } from '../testFixtures/predictors';
+import { fixturePredictor, fixtureSeedEnsemble } from '../testFixtures/predictors';
 import { experimentPredictorLink, groupPredictors, predictorConfigurationLabel, predictorMatches } from './predictorGroups';
 
 
@@ -25,5 +25,12 @@ describe('experiment predictor grouping', () => {
     expect(predictorMatches(second, '', 'refit', ' SAME STUDY ')).toBe(true);
     expect(predictorConfigurationLabel({ candidateId: 'candidate-hash', candidateNumber: 7 })).toBe('Configuration 7');
     expect(experimentPredictorLink('legacy/one', 'predictor?two')).toBe('#experiments?experiment=legacy%2Fone&tab=predictors&predictor=predictor%3Ftwo');
+  });
+  it('lists a configuration\'s seed ensemble before its per-seed predictors and finds it by its seeds', () => {
+    const pooled = fixtureSeedEnsemble(1);
+    const perSeed = fixturePredictor(1, 11, 'ensemble');
+    expect(groupPredictors([perSeed, pooled])[0].items.map((item) => item.id)).toEqual([pooled.id, perSeed.id]);
+    expect(predictorMatches(pooled, '', 'seed_ensemble', '3 training')).toBe(true);
+    expect(predictorMatches(pooled, '', 'ensemble', '')).toBe(false);
   });
 });

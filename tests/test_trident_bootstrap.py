@@ -29,8 +29,8 @@ def test_known_decoder_keeps_pixels_after_native_buffer_disposal():
         assert (width, height, x, y, level) == (2, 1, 10, 20, 1)
         buffer = (ctypes.c_uint8 * 6)(*pixels.ravel())
         allocations.append(buffer)
-        ctypes.cast(destination, ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)))[0] = (
-            ctypes.cast(buffer, ctypes.POINTER(ctypes.c_uint8))
+        ctypes.cast(destination, ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)))[0] = ctypes.cast(
+            buffer, ctypes.POINTER(ctypes.c_uint8)
         )
 
     def dispose(pointer):
@@ -65,9 +65,11 @@ def test_metadata_reuses_the_owned_handle():
     module = legacy_reader()
     reader = module.OldSdpc.__new__(module.OldSdpc)
     opened = []
-    handle = SimpleNamespace(contents=SimpleNamespace(picHead=SimpleNamespace(
-        contents=SimpleNamespace(rate=40, scale=0.5)
-    )))
+    handle = SimpleNamespace(
+        contents=SimpleNamespace(
+            picHead=SimpleNamespace(contents=SimpleNamespace(rate=40, scale=0.5))
+        )
+    )
     reader.readSdpc = lambda path: opened.append(path) or handle
     reader.getLevelCount = lambda: 2
     reader.getLevelDownsamples = lambda: (1, 2)
@@ -103,8 +105,10 @@ def test_optional_decoder_absence_does_not_block_other_formats(monkeypatch):
 
 def test_bootstrap_preserves_upstream_argv_and_main_semantics(tmp_path, monkeypatch):
     script = tmp_path / "run_batch_of_slides.py"
-    script.write_text("import sys\nassert __name__ == '__main__'\n"
-                      "assert sys.argv[1:] == ['--wsi_dir', 'a path with spaces']\n")
+    script.write_text(
+        "import sys\nassert __name__ == '__main__'\n"
+        "assert sys.argv[1:] == ['--wsi_dir', 'a path with spaces']\n"
+    )
     monkeypatch.setattr(bootstrap, "optimize_sdpc", lambda: {"status": "fixture"})
     monkeypatch.setattr(sys, "argv", ["bootstrap.py"])
     monkeypatch.setattr(sys, "path", list(sys.path))

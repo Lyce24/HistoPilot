@@ -16,19 +16,19 @@ export function fixtureSummary(counts: TaskCenterSummary['counts'], changes: Par
 export function fixtureTask(changes: Partial<TaskItem> = {}): TaskItem {
   return {
     id: 'task-1', kind: 'mil-fold', title: 'Baseline · Config 1 · Fold 1 · Train seed 42 · Split seed 7', state: 'running', attempt: 1, priority: 'normal', lane: 'gpu', gpu: 0,
-    owner: { key: 'owner-1', kind: 'experiment', id: 'exp', title: 'KRAS study', projectId: 'project', projectFolder: '/projects/kras', sameWorkspace: true, held: false, queueSeq: 1 },
+    owner: { key: 'owner-1', kind: 'experiment', id: 'exp', title: 'Demo study', projectId: 'project', projectFolder: '/projects/demo', sameWorkspace: true, held: false, queueSeq: 1 },
     group: { kind: 'mil-batch', id: 'batch' }, labels: {}, queuePosition: 1, waitingReason: null, progress: { epoch: 23, maxEpochs: 100 },
     resources: { privateRamGb: 4.4, peakPrivateRamGb: 5.1, cpuCores: 2.3, meanConcurrency: 3.9 },
     request: { lane: 'gpu', cpuThreads: 2, dataWorkers: 2, ramGb: 6, vramGb: 2.3 }, exit: null,
     createdAt: '2026-09-27T09:00:00Z', queuedAt: '2026-09-27T09:00:00Z', startedAt: '2026-09-27T09:30:00Z', finishedAt: null, updatedAt: '2026-09-27T10:00:00Z',
-    link: '?project=project#experiments?experiment=exp&tab=runs&batch=batch', logPath: '/projects/kras/training/batch/runs/r1/run.log',
+    link: '?project=project#experiments?experiment=exp&tab=runs&batch=batch', logPath: '/projects/demo/training/batch/runs/r1/run.log',
     actions: { cancel: true, retry: false }, ...changes,
   };
 }
 
 export function fixtureOwner(changes: Partial<TaskOwner> = {}): TaskOwner {
   return {
-    key: 'owner-1', kind: 'experiment', id: 'exp', title: 'KRAS study', projectId: 'project', projectFolder: '/projects/kras', sameWorkspace: true, held: false, queueSeq: 1,
+    key: 'owner-1', kind: 'experiment', id: 'exp', title: 'Demo study', projectId: 'project', projectFolder: '/projects/demo', sameWorkspace: true, held: false, queueSeq: 1,
     position: 1, counts: { running: 4, queued: 41, succeeded: 20 }, lanes: { gpu: 45 }, createdAt: '2026-09-27T09:00:00Z', etaSeconds: 7800,
     link: '?project=project#experiments?experiment=exp&tab=runs', actions: { hold: true, release: false, stop: true, cancel: true, retry: false, moveUp: false, moveDown: true },
     ...changes,
@@ -59,7 +59,7 @@ export function fixtureDetail(changes: Partial<TaskDetail> = {}): TaskDetail {
   return {
     ...fixtureTask(), events: [{ seq: 1, at: '2026-09-27T09:00:00Z', attempt: 1, fromState: null, toState: 'queued', detail: null }, { seq: 2, at: '2026-09-27T09:30:00Z', attempt: 1, fromState: 'queued', toState: 'running', detail: { pid: 42, gpu: 0 } }],
     logTail: 'epoch 23 loss 0.41\n', logTruncated: false, logSize: 19,
-    command: { argv: ['/venv/bin/python', '-u', '-m', 'histopilot.workers.managed_fold', '/projects/kras/training/batch/plan.json'], cwd: '/projects/kras/training/batch/compute', env: { PYTHONUNBUFFERED: '1' }, log: '/projects/kras/training/batch/runs/r1/run.log', progress: '/projects/kras/training/batch/runs/r1/progress.json', result: null },
+    command: { argv: ['/venv/bin/python', '-u', '-m', 'histopilot.workers.managed_fold', '/projects/demo/training/batch/plan.json'], cwd: '/projects/demo/training/batch/compute', env: { PYTHONUNBUFFERED: '1' }, log: '/projects/demo/training/batch/runs/r1/run.log', progress: '/projects/demo/training/batch/runs/r1/progress.json', result: null },
     pid: 42, sessionName: null,
     attempts: [{ attempt: 1, startedAt: '2026-09-27T09:30:00Z', endedAt: null, state: 'running', exitReason: null, gpu: 0 }],
     dependencies: [], dependents: [{ task: 'collect', title: 'Baseline · Final results', state: 'blocked' }], taskTitles: { collect: 'Baseline · Final results' },
@@ -75,7 +75,7 @@ export function fixtureRollup(changes: Partial<TaskRollup> = {}): TaskRollup {
     progress: { completed: 14, total: 30 }, live: 15, active: 3, pending: 12, held: false, position: 1, queuePosition: 4,
     waitingReason: null, eta: { seconds: 2400, basis: 'measured' }, runnerAlive: true, paused: false, stopRequest: null,
     lastFailure: null, recentFailures: null, retryable: true, current: null, startedAt: '2026-09-27T09:00:00Z', finishedAt: null,
-    ownerKey: 'owner-1', ownerKind: 'experiment', ownerId: 'exp', title: 'KRAS study', projectId: 'project', projectName: 'KRAS',
+    ownerKey: 'owner-1', ownerKind: 'experiment', ownerId: 'exp', title: 'Demo study', projectId: 'project', projectName: 'Demo',
     href: '#task-center?owner=owner-1&project=project', updatedAt: '2026-09-27T10:00:00Z', ...changes,
   };
 }
@@ -88,7 +88,7 @@ export function fixtureHistoryGroup(changes: Partial<TaskHistoryGroup> = {}): Ta
   return {
     owner: fixtureOwner({ counts: { succeeded: 60, failed: 1 }, position: null, actions: { hold: false, release: false, stop: false, cancel: false, retry: true, moveUp: false, moveDown: false } }),
     finished: { total: 61, succeeded: 60, failed: 1, cancelled: 0, interrupted: 0 }, lastFinishedAt: '2026-09-27T10:05:00Z', firstStartedAt: '2026-09-27T09:00:00Z',
-    lastFailure: { taskId: 'task-9', title: 'Predictors · KRAS study', state: 'failed', reason: 'error', message: 'The project was busy', cause: 'Another HistoPilot operation was changing this project when the task started, so it stopped without changing anything.', retry: 'safe', at: '2026-09-27T10:05:00Z' },
+    lastFailure: { taskId: 'task-9', title: 'Predictors · Demo study', state: 'failed', reason: 'error', message: 'The project was busy', cause: 'Another HistoPilot operation was changing this project when the task started, so it stopped without changing anything.', retry: 'safe', at: '2026-09-27T10:05:00Z' },
     ...changes,
   };
 }

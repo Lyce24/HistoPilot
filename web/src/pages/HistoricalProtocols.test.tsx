@@ -16,7 +16,7 @@ describe('retired combined protocol workflow', () => {
       expect(html).toContain('Earlier frozen design');
       expect(html).toContain('Earlier draft');
       expect(html).not.toContain('Setup-derived design');
-      expect(html).toContain('href="#experimental-setup"');
+      expect(html).toContain('href="#experiments"');
       expect(html).not.toContain('Create protocol');
       expect(html).not.toContain('<input');
       expect(html).not.toContain('<select');

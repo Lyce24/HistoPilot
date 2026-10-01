@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fixtureEvaluation } from '../testFixtures/evaluations';
-import { fixturePredictor } from '../testFixtures/predictors';
+import { fixturePredictor, fixtureSeedEnsemble } from '../testFixtures/predictors';
 import { compareEvaluationMethods, pairedEvaluationMean } from './evaluationComparison';
 
 const ensemble = fixturePredictor(1, 11, 'ensemble'), refit = fixturePredictor(1, 11, 'refit');
@@ -52,5 +52,12 @@ describe('paired evaluation comparison', () => {
     expect(group.pairs).toHaveLength(2);
     expect(pairedEvaluationMean(group.pairs, 'auroc')).toEqual({ count: 1, ensemble: 0.7, refit: 0.8 });
     expect(pairedEvaluationMean(group.pairs, 'accuracy').count).toBe(2);
+  });
+  it('never pairs a seed ensemble with a seed group\'s ensemble or refit', () => {
+    const pooled = fixtureSeedEnsemble(1);
+    const groups = compareEvaluationMethods([fixtureEvaluation(ensemble, 0.7, 0.6), fixtureEvaluation(refit, 0.8, 0.7), fixtureEvaluation(pooled, 0.9, 0.8)], [ensemble, refit, pooled]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].sources).toHaveLength(1);
+    expect(pairedEvaluationMean(groups[0].pairs, 'auroc')).toEqual({ count: 1, ensemble: 0.7, refit: 0.8 });
   });
 });

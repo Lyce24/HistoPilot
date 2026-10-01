@@ -277,7 +277,7 @@ for name in sys.argv[2:]:
 def extraction(tmp_path, monkeypatch, center):
     folder = tmp_path / "experiment"
     folder.mkdir()
-    roots = [tmp_path / "drive-d", tmp_path / "oceanpath-hot"]
+    roots = [tmp_path / "drive-d", tmp_path / "fast-disk"]
     slides = []
     for number, root in enumerate(roots):
         root.mkdir()
@@ -739,9 +739,7 @@ def packing(tmp_path, center):
     features = FeatureService(store, filesystem)
     feature_spec = FeatureSpec(datasetId=dataset["id"], path=str(source))
     feature = features.freeze(feature_spec, features.preview(feature_spec)["previewHash"], "f")
-    service = FeaturePackService(
-        store, filesystem, task_center=center.client
-    )
+    service = FeaturePackService(store, filesystem, task_center=center.client)
     return service, feature["id"]
 
 
@@ -1023,9 +1021,7 @@ def archives(tmp_path, center):
         assert response.status_code == 201, response.text
         projects = client.app.state.projects
         store = projects.scientific_store(response.json()["id"])
-        jobs = PortabilityJobs(
-            projects, projects.storage, task_center=center.client
-        )
+        jobs = PortabilityJobs(projects, projects.storage, task_center=center.client)
         yield store, projects, jobs
 
 
@@ -1048,9 +1044,7 @@ def _busy_feature_job(store, center):
     features = FeatureService(store, filesystem)
     spec = FeatureSpec(datasetId=dataset["id"], path=str(source))
     feature = features.freeze(spec, features.preview(spec)["previewHash"], "busy-features")
-    service = FeaturePackService(
-        store, filesystem, task_center=center.client
-    )
+    service = FeaturePackService(store, filesystem, task_center=center.client)
     job = submit_pack(service, FeaturePackSpec(featureSetId=feature["id"], action="validate"))
     center.store.hold_owner(job["ownerKey"], True)
     return service, job

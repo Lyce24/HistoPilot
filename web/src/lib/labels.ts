@@ -7,12 +7,13 @@ const UNITS: Record<string, string> = { patient: 'Patient-level', slide: 'Slide-
 const SPLIT_MODES: Record<string, string> = {
   kfold: 'K-fold cross-validation',
   monte_carlo: 'Repeated random splits',
-  held_out: 'Single held-out validation',
+  held_out: 'Held-out assessment',
   holdout: 'Single held-out validation',
+  predefined_folds: 'Predefined folds',
   nested: 'Nested cross-validation',
   nested_kfold: 'Nested cross-validation',
   lodo: 'Leave-one-domain-out',
-  leave_one_domain_out: 'Leave-one-domain-out',
+  leave_one_domain_out: 'Leave one site or cohort out',
   imported: 'Imported split assignments',
   rules: 'Rule-based assignments',
 };

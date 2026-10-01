@@ -26,7 +26,7 @@ flowchart TD
 | React UI (`web/`) | Navigation, unsaved editor state and cached server reads |
 | Control service (`histopilot/api`, `application`, `storage`) | Commands, validation, scientific records, lifecycle and read models. It never imports Torch or initializes CUDA; checks that need ML packages run in a separate interpreter. |
 | Task Center (`histopilot/taskcenter`) | One machine-level queue and runner per OS user: admission, dispatch, cancellation and recovery of all compute |
-| Workers (`histopilot/workers`, `training`, `adapters/trident`) | Extraction, validation and packing, fold training and result collection, refits, evaluation, inference and attention |
+| Workers (`histopilot/workers`, `training`, `adapters/trident`) | Extraction, validation and packing, fold training and result collection, refits, predictor runs and attention |
 | External sources | Original tables, slides and features, referenced in place and never copied |
 
 Slide images are read by short-lived isolated reader processes, never inside the service; SDPC files use the configured OpenSDPC interpreter. Access is limited to loopback, with Host, Origin and fetch-metadata checks and a per-process session token; configured data roots bound what the service can browse. None of this is shared-lab authentication.
@@ -38,20 +38,21 @@ Each stage freezes an immutable record that the next stage consumes. Names, tags
 | Stage | Inputs → frozen output | Boundary |
 | --- | --- | --- |
 | Datasets | CSV/XLSX, identifier mapping, dictionary and slide inventory → dataset | Registering a folder imports nothing. Slide-ID fallback groups stay distinct from verified patients. |
-| Targets & splits | Dataset, eligibility, split unit, method, target → `target-split` and its test cohort | Fixed training/testing membership. No dependency on features or training design. A testing set without a target becomes an inference cohort. |
+| Targets & splits | Dataset, eligibility, split unit, method, target → `target-split` and its testing cohort | Fixed training/testing membership. No dependency on features or training design. A testing set without a target becomes an unlabeled cohort. |
 | Slide features | Attached or extracted features → feature binding and verified bundle | Bundles reference sources and optional verified packs; freshness is rechecked before use. |
-| Experimental Setup | Dataset, target/split, bundle, folds, recipes, predictor choices → `experiment-setup` | Checks feature coverage of every training slide. Derives folds only from training members. Freezing launches nothing. |
-| Experiments | Frozen setup → batches, runs, checkpoints, OOF results and predictors | Current inputs and runtime are rechecked at submission; the setup never changes. |
-| Test cohorts | Datasets, conditions and a target (evaluation) or none (inference) → test membership | Independent of models and features |
-| Evaluate models / Run inference | Predictors and a test cohort → predictions, metrics or label-free summaries | Review checks target encoding, development overlap, feature and pack coverage and checkpoint hashes, and pins them. |
-| Clinical utility | Completed evaluation → report | Descriptive only; no refitting or threshold tuning |
+| Experiments: design | Dataset, target/split, bundle, folds, recipes, predictor choices → `experiment-setup` | Checks feature coverage of every training slide. Derives folds only from training members: generated k-fold, predefined folds from a column, leave one site out, or a held-out assessment (`development_splits.training_split_issue`). Freezing launches nothing. |
+| Experiments: runs | Frozen design → batches, runs, checkpoints, OOF results and predictors | Current inputs and runtime are rechecked at the start; the frozen design never changes. |
+| Apply models: cohorts | Datasets, conditions and labels (a labeled cohort) or none (an unlabeled one) → cohort membership | Independent of models and features. A labeled cohort may keep slides unlabeled; they are predicted, never scored. |
+| Apply models: runs | Predictors and a cohort → a batch of runs: predictions, and with labels metrics, subgroups, agreement and clinical utility | Review checks target encoding, development overlap, feature and pack coverage and checkpoint hashes, and pins them. Jobs never receive labels. The service scores runs on labeled cohorts against their frozen labels (`application/run_evidence.py`, `run_metrics.py`, `run_performance.py`); runs saved before keep their worker's metrics. A clinical utility report reads a completed scored run: descriptive only, with no refitting or threshold tuning. |
+| Apply models: recalibration | A scored run and its predictor's out-of-fold development predictions → calibration as predicted and recalibrated | Platt or temperature maps (`histopilot/calibration.py`) fitted on development predictions verified as for their export (`training_exports.verified_oof`), never on the cohort. Risks only: decisions and rankings keep the original probabilities. Kept beside the run. |
+| Apply models: reference standards | A frozen cohort and dataset columns → labels attached after freezing | A content-addressed `reference-standard` record per cohort (`application/references.py`). Runs are scored against it from their saved predictions by the same functions (`run_evidence.join_reference`); scores are kept beside the run by a key of predictions, reference and analysis settings. |
 | Model interpretation | Predictor, compatible features and slides → attention artifacts | Attention shows model weighting, not causation. |
 
 Records created by earlier versions stay readable and are never migrated in place. The synthetic BLCA demo is a separate, read-only fixture; its values are never used as fallback results.
 
 ## Execution model
 
-Every long-running job is a Task Center task. Producers (experiment submission, extraction, packing, evaluation, interpretation, archives) turn frozen records into tasks with requests, dependencies and commands, and enqueue them in one transaction. The runner admits them in queue order against GPU slots, GPU memory, RAM and CPU threads, and starts each in its own process group through a small wrapper that records its exit.
+Every long-running job is a Task Center task. Producers (experiment submission, extraction, packing, predictor runs, interpretation, archives) turn frozen records into tasks with requests, dependencies and commands, and enqueue them in one transaction. The runner admits them in queue order against GPU slots, GPU memory, RAM and CPU threads, and starts each in its own process group through a small wrapper that records its exit.
 
 1. **Review** resolves inputs and evidence. **Freeze** rechecks the reviewed revision and evidence before publishing.
 2. **Launch** checks lifecycle state, runtime and request identity, writes a job plan, then enqueues tasks.
@@ -73,7 +74,7 @@ Code that produces scientific results runs from a verified, archived copy, never
 - **Execution contract.** Each run plan records its code fingerprint and runtime: interpreter, Python and CUDA versions and package versions. No dependency lock file is archived; the contract detects a changed environment instead.
 - **Submission.** Submitting an experiment prepares every batch, requires all their contracts to match, and stores that contract with the submission. Each batch then launches from its own archive in `training/<batch-id>/compute/`; fold and collection workers import that copy and refuse to run if its fingerprint differs from the plan.
 - **Follow-up work.** A refit launched later, a batch whose launch is retried, and the predictor coordinator run from **the first launched batch's archive** (`application/model_experiments.py:pinned_compute`). They check the submitted contract first and refuse with `EXPERIMENT_RUNTIME_CHANGED` if the code or environment changed; restore the environment or copy the experiment. The coordinator also points its refits at the contract's training interpreter.
-- **Other compute.** Evaluations, inference runs and interpretation archive the current checkout's code when they launch, and a resume reuses that archive.
+- **Other compute.** Predictor runs and interpretation archive the current checkout's code when they launch, and a resume reuses that archive.
 - **Archives from before the Task Center.** A launch checks that the archive can run as a task: the archived compute worker and predictor coordinator declare `TASK_CENTER_PROTOCOL` (read without importing them), and an archived training package has `workers/managed_fold.py`. Archives pinned before the Task Center have neither, so work that would run from one is refused with `CREATED_BEFORE_TASK_CENTER`; copy the experiment to run it again.
 
 Updating HistoPilot therefore never changes the code of work that is already running or submitted. Resuming a batch whose archived code differs from the checkout shows a `TRAINING_PINNED_CODE` notice.
@@ -94,9 +95,9 @@ A project lives entirely in the folder chosen when it was created. Moving the wh
   .staging/                      # Incomplete publications
   datasets/<dataset-id>/         # manifest.json, records, dictionary, inventory, sources
   training/<batch-id>/           # plan.json, state.json, compute/, runs/, OOF, results, logs
-  compute-jobs/<job-id>/         # Refits, evaluations, inference and attention jobs
+  compute-jobs/<job-id>/         # Refits, predictor runs and attention jobs
   experiment-predictors/<id>/    # Predictor coordinator plan and state
-  evaluation-batches/<id>/       # Bulk evaluation and inference receipts
+  evaluation-batches/<id>/       # Batches of predictor runs
   predictor-builds/<id>/         # Bulk predictor-build receipts
   extractions/<run-id>/          # TRIDENT command, slide list, logs, progress, result
   packing/<run-id>/              # Validation and packing evidence
@@ -144,9 +145,9 @@ TanStack Query owns cached server state, scoped by project and record identity. 
 
 | Location | Responsibility |
 | --- | --- |
-| `histopilot/api/` | FastAPI routers and the local security boundary (`security.py`) |
+| `histopilot/api/` | FastAPI routers and the local security boundary (`security.py`, with the optional sign-in in `login.py`); every route's class (`route_classes.py`) and every error code's kind (`error_codes.py`); agent access: scoped tokens and approvals (`access.py`), the scope gate (`scopes.py`), metadata redaction (`redaction.py`) and the audit log (`audit.py`) |
 | `histopilot/schemas/` | Pydantic request and record contracts |
-| `histopilot/application/` | Services: imports, targets and splits, features, setups and experiments, training, predictors, evaluation, inference, clinical utility, interpretation, lifecycle, operations, the BLCA demo |
+| `histopilot/application/` | Services: imports, targets and splits, features, setups and experiments, training, predictors, cohorts and runs (Apply models), clinical utility, interpretation, lifecycle, operations, the BLCA demo |
 | `histopilot/storage/` | Scientific and central stores, locks, lifecycle sidecar, filesystem confinement, packed features, attention packs; `io.py` holds canonical JSON, content hashes, timestamps and bounded, atomic JSON files |
 | `histopilot/taskcenter/` | Task store, runner, wrapper, capacity, estimator, launcher, leases and per-kind adapters |
 | `histopilot/workers/` | Isolated worker entry points and the compute archive |
@@ -157,14 +158,22 @@ TanStack Query owns cached server state, scoped by project and record identity. 
 | `histopilot/viewer/` | Isolated slide readers, image cache and attention arrays |
 | `histopilot/domain/` | Shared feature-representation helpers |
 | `histopilot/resources/` | The synthetic BLCA demo fixture |
-| `histopilot/cli.py`, `runner_cli.py`, `archive_cli.py` | `histopilot` commands: `serve`, `doctor`, feature packing, training status, `runner`, study archive recovery |
+| `histopilot/cli.py`, `runner_cli.py`, `archive_cli.py` | The `histopilot` entry point and its older commands: `serve`, `doctor`, feature packing, training status, `runner`, study archive recovery |
+| `histopilot/commands/` | The noun-verb commands: output and confirmation (`output.py`, `common.py`), then one module per noun group |
+| `histopilot/client/` | The Python client the CLI and the agent tools share: standard-library HTTP, the session and retries, error kinds, the operation journal, run states, paging, record kinds and `@tag` names, spec files, authoring flows and the browser's proposals (`resolve.py`) |
+| `histopilot/agent/` | The agent tools, the MCP server (optional `agent` extra) and the evaluation suite's canary study and scorer (`evals.py`) |
+| `histopilot/templates.py`, `resolvers.py`, `roadmap.py`, `exports.py` | What the browser and the CLI share: starting specs and presets (exported to `web/src/lib/templates.json`), the browser's proposals, the roadmap's stage status and the results CSV, each held equal to the browser by shared cases in `web/src/lib/*Cases.json` |
 | `histopilot/cv_summary.py`, `statistics.py`, `scoring.py`, `candidate_selection.py`, `inference_summary.py` | Metrics, intervals, ranking, configuration selection and label-free summaries, importable without Torch |
-| `histopilot/config.py`, `service_lock.py`, `web_bundle.py`, `doctor.py`, `diagnostics.py` | Settings, the service lock, UI bundle freshness, package report and stack dumps |
+| `histopilot/config.py`, `service_lock.py`, `web_bundle.py`, `doctor.py`, `diagnostics.py`, `version_info.py` | Settings, the service lock, UI bundle freshness, package report and agent-isolation probe, stack dumps, and the version and features a service reports |
 | `web/src/api/` | Typed HTTP clients and response contracts |
-| `web/src/lib/` | Workflow helpers: routing, roadmap, drafts, charts, slide tiles |
+| `web/src/lib/` | Workflow helpers: routing (`applyRoutes.ts` rewrites links of the modules Apply models replaced), roadmap, drafts, charts, slide tiles |
 | `web/src/pages/`, `web/src/components/` | Pages, editors, registries, viewers and shared controls |
 | `web/scripts/` | Offline browser checks in headless Chromium |
 | `tests/` | Backend tests; `tests/support/` holds shared fixtures |
 | `scripts/bundle_web.py`, `serve.sh` | UI bundling and the launcher |
+| `scripts/error_codes.py`, `export_templates.py`, `skill_reference.py` | Generate `docs/error-codes.md`, `web/src/lib/templates.json` and the `histopilot` skill's reference; each has `--check` |
+| `scripts/agent_eval_sandbox.py`, `agent_eval_score.py` | The agent evaluation sandbox and its safety scorer |
+| `plugins/histopilot/`, `.claude-plugin/marketplace.json` | The Claude Code plugin and its marketplace: the MCP server's launcher (`bin/histopilot-mcp`), its settings, and the `histopilot` skill for agents that operate the service |
+| `.claude/skills/` | The `histopilot-dev` skill for agents that develop HistoPilot |
 
 Frontend unit tests sit beside their sources as `*.test.ts(x)`. See [contributing](../CONTRIBUTING.md) for how to run everything.

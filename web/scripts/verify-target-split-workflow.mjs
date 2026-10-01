@@ -224,10 +224,10 @@ try {
  await click('Name & freeze version');await fill('Version tag','Fixed test cohort');await fill('Commit note','Keep testing separate');
  await click('Freeze target and split version');await waitFor('document.body.innerText.includes("Try another version tag.")');
  assert.equal(await evaluate(field('Version tag')+'.value'),'Fixed test cohort');
- await click('Freeze target and split version');await waitFor('document.body.innerText.includes("Continue to Experimental Setup")');
+ await click('Freeze target and split version');await waitFor('document.body.innerText.includes("Continue to Experiments")');
  const freezes=await evaluate('window.workflow.calls.filter(call=>call.method==="freeze")');
  assert.equal(freezes.length,2);assert.equal(freezes[0].operationId,freezes[1].operationId);
- assert.equal(await evaluate('document.querySelector("a[href*=experimental-setup]").getAttribute("href")'),'#experimental-setup?dataset=dataset-a&targetSplit=target-split-fixed');
+ assert.equal(await evaluate('document.querySelector("a[href^=\\"#experiments?\\"]").getAttribute("href")'),'#experiments?dataset=dataset-a&targetSplit=target-split-fixed');
  const frozen=await evaluate('window.workflow.records[0]');assert.equal(frozen.manifest.memberships.filter(row=>row.partition==="test").length,8);assert.equal(frozen.manifest.memberships.filter(row=>row.partition==="test").every(row=>row.label===null),true);
  await screenshot('frozen');
  await click('Back to targets & splits');await waitFor('[...document.querySelectorAll("table")].some(el=>el.getAttribute("aria-label")==="Targets and splits library")');
@@ -244,5 +244,5 @@ try {
  const rules=await evaluate('window.workflow.calls.filter(call=>call.method==="saveDraft").at(-1).input.payload.spec.split');assert.equal(rules.method,'rules');assert.equal(rules.partitionField,undefined);assert.deepEqual(rules.trainValues,[]);assert.deepEqual(rules.testValues,[]);
  assert.deepEqual(await evaluate('window.workflow.errors'),[]);assert.deepEqual(exceptions,[]);
  await writeFile(join(artifacts,'verification.json'),JSON.stringify({passed:true,scope:'file:// React/Chromium fixture; no HistoPilot server',checks:['draft recovery','partition before prediction targets','cohort-only filtering visualization','training-first filter layout','exact train/test role labels','live adjacent filter counts','slide split unit by default with a patient switch','slide-only distributions','separate testing mapping','unlabeled inference testing','random split controls','metadata rules','predefined partition mapping','no features or training configuration','mobile review','freeze retries preserve intent','fixed membership summary','exact Experimental Setup handoff'],calls:await evaluate('window.workflow.calls')},null,2));
- console.log('PASS: partition-first target construction, live filter counts, slide/patient split unit, optional testing targets, draft recovery, immutable freeze and setup handoff.');console.log('Artifacts: '+artifacts);
+ console.log('PASS: partition-first target construction, live filter counts, slide/patient split unit, optional testing targets, draft recovery, immutable freeze and experiment handoff.');console.log('Artifacts: '+artifacts);
 } catch(error){try{await writeFile(join(artifacts,'failure.txt'),await evaluate('document.body.innerText'));await screenshot('failure');}catch{}if(exceptions.length)console.error(JSON.stringify(exceptions));console.error('Artifacts: '+artifacts);throw error;}finally{browser.kill();}

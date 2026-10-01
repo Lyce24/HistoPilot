@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "histopilot": {
+      "type": "stdio",
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/histopilot-mcp",
+      "env": {
+        "HISTOPILOT_PLUGIN_URL": "${user_config.service_url}",
+        "HISTOPILOT_PLUGIN_TOKEN": "${user_config.token}",
+        "HISTOPILOT_PLUGIN_COMMAND": "${user_config.histopilot_command}"
+      }
+    }
+  }
+}

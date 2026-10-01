@@ -12,24 +12,24 @@ function roadmap(overrides: Partial<Roadmap> = {}): Roadmap {
 }
 
 describe('compact project workflow launcher', () => {
-  it('groups the pipeline into seven ordered stages with parallel preparation', () => {
+  it('groups the pipeline into five ordered stages with parallel preparation', () => {
     const html = renderToStaticMarkup(<RoadmapLauncher modules={buildRoadmap(workspace)} />);
-    expect(html.match(/data-module="/g)).toHaveLength(9);
+    expect(html.match(/data-module="/g)).toHaveLength(6);
     const section = (phase: string) => html.match(new RegExp(`data-phase="${phase}"[^>]*>(.*?)</section>`))?.[1] ?? '';
     expect(section('datasets')).toContain('data-module="dataset"');
-    expect([...html.matchAll(/data-phase="([^"]+)"/g)].map((match) => match[1])).toEqual(['datasets', 'prepare', 'setup', 'develop', 'evaluate', 'clinical', 'interpret']);
+    expect([...html.matchAll(/data-phase="([^"]+)"/g)].map((match) => match[1])).toEqual(['datasets', 'prepare', 'develop', 'apply', 'interpret']);
     expect(section('prepare')).toContain('data-module="cohort"');
     expect(section('prepare')).toContain('data-module="features"');
     expect(section('develop')).toContain('data-module="experiments"');
-    expect(section('setup')).toContain('data-module="experimental-setup"');
-    expect(html).not.toContain('data-module="test-data"');
-    expect(section('evaluate')).toContain('data-module="evaluation"');
-    expect(section('evaluate')).toContain('data-module="inference"');
+    // An experiment's design and its runs are one step.
+    expect(html).not.toContain('data-module="experimental-setup"');
+    // Labeled and unlabeled cohorts, their runs and clinical utility are one step.
+    expect(section('apply')).toContain('data-module="apply"');
+    for (const id of ['test-data', 'evaluation', 'inference', 'clinical-utility']) expect(html).not.toContain(`data-module="${id}"`);
     expect(html).toContain('Slide features and Targets &amp; splits are independent.');
-    expect(html).toContain('data-module="clinical-utility"');
-    expect(html).toContain('data-module="interpretation"');
+    expect(section('interpret')).toContain('data-module="interpretation"');
     // A module icon anchors each row; arrows, legends and counts stay off the page.
-    expect(html.match(/class="roadmap-item-icon"/g)).toHaveLength(9);
+    expect(html.match(/class="roadmap-item-icon"/g)).toHaveLength(6);
     expect(html).not.toContain('roadmap-legend');
   });
 
@@ -40,8 +40,9 @@ describe('compact project workflow launcher', () => {
     expect(html).not.toContain('Needs Datasets and Slide features');
     expect(html).toContain('Needs Datasets, Slide features and Experiments');
     expect(html).toContain('Needs Targets &amp; splits and Slide features');
+    expect(html).toContain('>Needs Experiments<');
     // Slide features depend on slide files, so they open with no dataset in the project.
-    for (const id of ['dataset', 'features', 'experimental-setup', 'experiments', 'evaluation', 'clinical-utility', 'interpretation']) expect(html).toContain(`href="#${id}"`);
+    for (const id of ['dataset', 'features', 'experiments', 'apply', 'interpretation']) expect(html).toContain(`href="#${id}"`);
   });
 
   it('uses the same Open action for saved results and drafts without claiming execution readiness', () => {
@@ -50,11 +51,11 @@ describe('compact project workflow launcher', () => {
       ? { ...module, unlocked: true, blockers: [], status: 'draft' as const, evidence: '1 saved development plan' }
       : { ...module, unlocked: true, blockers: [], status: 'complete' as const, evidence: '1 frozen dataset' });
     const html = renderToStaticMarkup(<RoadmapLauncher modules={modules} />);
-    expect(html.match(/class="roadmap-item-action">Open</g)).toHaveLength(9);
+    expect(html.match(/class="roadmap-item-action">Open</g)).toHaveLength(6);
     // Each row states what the project actually holds, in one line.
     expect(html).toContain('1 frozen dataset');
     expect(html).toContain('1 saved development plan');
-    expect(html.match(/roadmap-item-status status-complete/g)).toHaveLength(8);
+    expect(html.match(/roadmap-item-status status-complete/g)).toHaveLength(5);
     expect(html.match(/roadmap-item-status status-draft/g)).toHaveLength(1);
     expect(html).not.toContain('Ready');
     expect(html).not.toContain('Review experiment outputs');
@@ -64,7 +65,7 @@ describe('compact project workflow launcher', () => {
     const modules = buildRoadmap(workspace).map((module) => module.id === 'experiments'
       ? { ...module, status: 'draft' as const, evidence: '1 saved development plan' } : module);
     const html = renderToStaticMarkup(<RoadmapLauncher modules={modules} />);
-    expect(html).toContain('1 saved development plan · needs Experimental Setup');
+    expect(html).toContain('1 saved development plan · needs Targets &amp; splits and Slide features');
     // A row with nothing saved names only what it is waiting for.
     expect(html).toContain('>Needs Datasets<');
     expect(html).toContain('roadmap-item-status is-blocked');
@@ -75,16 +76,16 @@ describe('compact project workflow launcher', () => {
       ? module
       : { ...module, unlocked: true, blockers: [], status: 'complete' as const });
     const html = renderToStaticMarkup(<RoadmapProgress modules={modules} />);
-    expect(html).toContain('<strong>6 of 6</strong> required steps complete');
+    expect(html).toContain('<strong>5 of 5</strong> required steps complete');
     expect(html).toContain('Every required step is complete');
     expect(html).not.toContain('roadmap-state-next');
     // An untouched optional analysis never reads as missing required work.
-    expect(html).not.toContain('Clinical utility');
+    expect(html).not.toContain('Model interpretation');
   });
 
   it('counts progress and suggests a step without claiming execution readiness', () => {
     const html = renderToStaticMarkup(<RoadmapProgress modules={buildRoadmap(workspace)} />);
-    expect(html).toContain('<strong>0 of 6</strong> required steps complete');
+    expect(html).toContain('<strong>0 of 5</strong> required steps complete');
     expect(html).toContain('data-next="dataset"');
     expect(html).toContain('>Next step<');
     expect(html).not.toContain('Ready');
@@ -100,7 +101,7 @@ describe('compact project workflow launcher', () => {
     const html = renderToStaticMarkup(<ProjectRoadmap roadmap={roadmap()} />);
     expect(html).toContain('<h1>Project roadmap</h1>');
     // Progress and one next step; no chart, no legend, no aggregate artifact totals.
-    expect(html).toContain('<strong>0 of 6</strong> required steps complete');
+    expect(html).toContain('<strong>0 of 5</strong> required steps complete');
     expect(html).toContain('data-next="dataset"');
     expect(html).not.toContain('role="progressbar"');
     expect(html).not.toContain('roadmap-legend');
@@ -128,7 +129,6 @@ describe('compact project workflow launcher', () => {
 
   it('preserves the scientific status labels shared with module pages', () => {
     expect(completedModuleLabel('experiments')).toBe('Experiment outputs available');
-    expect(completedModuleLabel('evaluation')).toBe('Evaluation results available');
-    expect(completedModuleLabel('inference')).toBe('Predictions available');
+    expect(completedModuleLabel('apply')).toBe('Run results available');
   });
 });

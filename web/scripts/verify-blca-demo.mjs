@@ -130,9 +130,9 @@ try {
   await cdp('Page.navigate',{url:pathToFileURL(join(dist,'index.html')).href});
   await click('Open BLCA demo');
   await waitFor('document.querySelector(".blca-demo-hero h1")?.textContent==="BLCA demo"');
-  assert.equal(await evaluate('document.querySelectorAll(".blca-demo-stage").length'),9);
-  assert.deepEqual(await evaluate('[...document.querySelectorAll(".blca-demo-stage")].map(link=>link.getAttribute("href"))'), ['#dataset','#features','#cohort','#experimental-setup','#experiments','#evaluation','#inference','#clinical-utility','#interpretation']);
-  assert.deepEqual(await evaluate('Object.fromEntries([...document.querySelectorAll(".blca-demo-summary > div")].map(item=>[item.querySelector("dt").textContent,item.querySelector("dd").textContent]))'), {'Synthetic slide records':'138','Pipeline stages':'7','Illustrative training runs':'10'});
+  assert.equal(await evaluate('document.querySelectorAll(".blca-demo-stage").length'),6);
+  assert.deepEqual(await evaluate('[...document.querySelectorAll(".blca-demo-stage")].map(link=>link.getAttribute("href"))'), ['#dataset','#features','#cohort','#experiments','#apply','#interpretation']);
+  assert.deepEqual(await evaluate('Object.fromEntries([...document.querySelectorAll(".blca-demo-summary > div")].map(item=>[item.querySelector("dt").textContent,item.querySelector("dd").textContent]))'), {'Synthetic slide records':'138','Pipeline stages':'5','Illustrative training runs':'10'});
   assert.equal(await evaluate('document.body.innerText.includes("138")'),true);
   assert.equal(await evaluate('document.querySelector(".job-tray")===null'),true,'Demo must not expose active compute controls');
   await screenshot('01-blca-overview');
@@ -151,13 +151,13 @@ try {
         assert.equal(facts['Folds'],undefined,'Targets and splits only fixes training/testing membership');
         await screenshot('targets-training-testing');
       }
-      if(record.module==='experimental-setup') {
-        assert.equal(current.runs,undefined,'Setup illustrates design without executing runs');
+      if(record.module==='experiments' && ['inputs','compatibility','splits','batches','frozen'].includes(current.id)) {
+        assert.equal(current.runs,undefined,'The design illustrates training without executing runs');
         if(current.id==='compatibility') assert.equal(await evaluate('document.querySelector(".blca-demo-step").innerText.includes("All 62 frozen training slides; never shrink membership")'),true);
         if(current.id==='frozen') assert.equal(await evaluate('[...document.querySelectorAll(".blca-demo-facts > div")].find(item=>item.querySelector("dt").textContent==="Runs started by freezing")?.querySelector("dd").textContent'), '0');
         if(['compatibility','splits','frozen'].includes(current.id)) await screenshot(record.id+'-'+current.id);
       }
-      if(record.module==='inference' && current.id==='predictions') {
+      if(record.id==='blca-inference' && current.id==='predictions') {
         assert.deepEqual(await evaluate('[...document.querySelectorAll(".blca-demo-step table thead th")].map(item=>item.textContent)'),['Synthetic slide','P(high)','Predicted at 0.5']);
         assert.equal(await evaluate('document.querySelectorAll(".blca-demo-step table tbody tr").length'),76);
         await screenshot('inference-predictions');
@@ -184,8 +184,8 @@ try {
         assert.equal(await evaluate('document.querySelector(".experiment-run-detail h3").innerText.includes("Fold 2")'),true);
         await fill('.experiment-run-search input','');
       }
-      if(record.module==='evaluation' && current.chart)await screenshot('evaluation-'+current.id);
-      if(record.module==='clinical-utility' && current.chart)await screenshot('clinical-'+current.id);
+      if(record.id==='blca-evaluation' && current.chart)await screenshot('evaluation-'+current.id);
+      if(record.id==='blca-clinical-utility' && current.chart)await screenshot('clinical-'+current.id);
       visited.push(record.id+':'+current.id);
     }
     await cdp('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
@@ -261,8 +261,8 @@ try {
       ['features', 'blca-features', 'Validation', 'features', '.blca-demo-record-view'],
       ['experiments', 'blca-baseline-v2', 'Runs', 'training', '.experiment-run-detail'],
       ['experiments', 'blca-baseline-v2', 'Runs', 'predictors', '.blca-demo-resources, .blca-demo-table-section'],
-      ['evaluation', 'blca-evaluation', 'Metrics', 'evaluation', '.blca-demo-record-view'],
-      ['clinical-utility', 'blca-clinical-utility', 'Thresholds', 'clinical-utility', '.blca-demo-record-view'],
+      ['apply', 'blca-evaluation', 'Metrics', 'evaluation', '.blca-demo-record-view'],
+      ['apply', 'blca-clinical-utility', 'Thresholds', 'clinical-utility', '.blca-demo-record-view'],
     ];
     for (const [module, recordId, title, name, selector] of tour) {
       await navigate(module);

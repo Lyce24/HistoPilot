@@ -32,11 +32,17 @@ def test_preview_freeze_and_launch_share_the_same_fold_fingerprint(tc_execution,
     assert plan["nnmilPlanning"] == preview["nnmilPlanning"]
     for run in plan["runs"]:
         worker = execute_plan(plan, run, None)
-        summary = next(item for item in plan["nnmilPlanning"]
-                       if item["candidateId"] == run["candidateId"]
-                       and item["splitPlanId"] == run["splitPlanId"])
-        assert worker["nnmilPlanning"] == {key: value for key, value in summary.items()
-                                          if key not in {"candidateId", "splitPlanId"}}
+        summary = next(
+            item
+            for item in plan["nnmilPlanning"]
+            if item["candidateId"] == run["candidateId"]
+            and item["splitPlanId"] == run["splitPlanId"]
+        )
+        assert worker["nnmilPlanning"] == {
+            key: value
+            for key, value in summary.items()
+            if key not in {"candidateId", "splitPlanId"}
+        }
         assert worker["effectiveRecipe"]["bagSize"] == summary["bagSize"]
         assert worker["recipe"] == frozen["manifest"]["configurations"][0]["recipe"]
     assert not task_center.tasks(kind="mil-fold")

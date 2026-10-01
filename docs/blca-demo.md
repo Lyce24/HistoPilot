@@ -23,7 +23,7 @@ These captures come from the current interface. The module order is described [b
 | Project overview | Dataset review |
 | :---: | :---: |
 | [![HistoPilot project overview with the synthetic BLCA cohort and workflow navigation](assets/blca/overview.png)](assets/blca/overview.png) | [![BLCA dataset review showing synthetic development and test cohort counts](assets/blca/dataset.png)](assets/blca/dataset.png) |
-| Follow the project from preparation through evaluation. | Review source records, grade fields and cohort structure. |
+| Follow the project from preparation to applied models. | Review source records, grade fields and cohort structure. |
 
 | Targets and development membership | Feature validation |
 | :---: | :---: |
@@ -35,7 +35,7 @@ These captures come from the current interface. The module order is described [b
 | [![Selected BLCA fold run with synthetic training and validation loss curves](assets/blca/training.png)](assets/blca/training.png) | [![Synthetic BLCA resource history and fold ensemble and P75 refit outputs](assets/blca/predictors.png)](assets/blca/predictors.png) |
 | Inspect epochs, losses and checkpoint evidence. | Follow resource history and ensemble/refit creation. |
 
-| Test-cohort evaluation | Clinical utility |
+| A scored run | Its clinical utility |
 | :---: | :---: |
 | [![Synthetic BLCA ROC curve, classification metrics and confusion matrix](assets/blca/evaluation.png)](assets/blca/evaluation.png) | [![Synthetic BLCA decision curve showing net benefit across operating thresholds](assets/blca/clinical-utility.png)](assets/blca/clinical-utility.png) |
 | Review discrimination and false-positive/false-negative counts. | Explore threshold-dependent net benefit. |
@@ -49,16 +49,13 @@ The demo has one page per module, in pipeline order. Each opens a library of exa
 | Datasets | Synthetic slide records, grade fields and identity notes | Importing a source table, reviewing the mapping and freezing a dataset |
 | Slide features | UNI v1 metadata with 1,024 feature dimensions and bundle evidence | Attaching or extracting features, validating coverage and freezing a bundle |
 | Targets & splits | Binary target, 62 Grade 1/3 training slides and 76 Grade 2 testing slides | Fixing the target and the training/testing membership from dataset records only |
-| Experimental Setup | Input compatibility, five training folds, ABMIL recipes and predictor choices | Checking feature coverage, designing training and freezing the setup without starting runs |
-| Experiments | Setup submission, run histories and predictor outputs | Starting a frozen design, then following execution and results |
-| Evaluate models | The reserved 76-slide cohort with synthetic predictions and metrics for a P75 refit | Checking test inputs and applying a ready predictor |
-| Run inference | Probabilities and predicted classes with the labels omitted | Applying a predictor without targets or metrics |
-| Clinical utility | Synthetic calibration, operating-point and net-benefit summaries | Looking past discrimination to calibration and threshold trade-offs |
+| Experiments | Input compatibility, five training folds, ABMIL recipes and predictor choices; then the start, run histories and predictor outputs | Checking feature coverage and freezing the design without starting runs; then starting it and following execution and results |
+| Apply models | The reserved 76-slide labeled cohort; a scored run of a P75 refit with synthetic predictions and metrics; the same predictions as a label-free run; and a clinical utility review | Applying a ready predictor to a labeled or unlabeled cohort, and looking past discrimination to calibration and threshold trade-offs |
 | Model interpretation | An explanatory schematic | Where slide attention fits and what inputs it needs |
 
 ### Development and predictors
 
-Targets & splits fixes the training and testing sets before any features are bound. Experimental Setup checks every training slide against the feature bundle and designs folds only within the 62 training slides; the 76 testing slides stay reserved. Freezing a setup starts no runs. Experiments shows the separate submission and execution steps.
+Targets & splits fixes the training and testing sets before any features are bound. Each experiment's design checks every training slide against the feature bundle and draws folds only within the 62 training slides; the 76 testing slides stay reserved. Freezing the design starts no runs; starting the experiment is a separate step, followed by its runs and results.
 
 The illustrative recipe uses UNI patch features, gated ABMIL, five folds, training and split seed 42, AdamW with learning rate 3e-4, at most 40 epochs, and a training bag of up to 4,096 patches. The demo contains no feature tensors and runs no training.
 
@@ -68,9 +65,9 @@ Baseline v2 shows a fold ensemble and a P75 refit, and baseline v3 a P50 refit. 
 
 ### Reading the results
 
-The Run inference example reuses the same invented test scores with the labels removed; it adds no slides or model runs.
+The label-free run reuses the same invented test scores with the labels removed; it adds no slides or model runs.
 
-Out-of-fold development predictions come from held-out folds. They support comparing configurations, but a configuration chosen from them has no independent performance estimate until it is scored on the test cohort. Calibration and clinical-utility plots show how to examine predictions; they do not establish a clinically validated decision rule. See [methods](methods.md).
+Out-of-fold development predictions come from held-out folds. They support comparing configurations, but a configuration chosen from them has no independent performance estimate until it is applied to the reserved testing cohort. Calibration and clinical-utility plots show how to examine predictions; they do not establish a clinically validated decision rule. See [methods](methods.md).
 
 ## Reproduce the fixture
 

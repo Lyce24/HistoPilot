@@ -1,7 +1,9 @@
+import { fromTemplate, templates } from '../lib/templates';
+
 export interface PatientAnalysisSettings {
   version: 1; confidenceLevel: 0.95; bootstrapResamples: number; bootstrapSeed: number; oneSlideSeed: number;
 }
-export const defaultPatientAnalysis = (): PatientAnalysisSettings => ({ version: 1, confidenceLevel: 0.95, bootstrapResamples: 2000, bootstrapSeed: 42, oneSlideSeed: 42 });
+export const defaultPatientAnalysis = (): PatientAnalysisSettings => fromTemplate(templates.analysis);
 export interface ConfidenceInterval { lower: number; upper: number }
 export type RankingMetric = 'auroc' | 'auprc';
 export interface BootstrapResult {

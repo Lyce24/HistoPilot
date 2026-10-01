@@ -52,20 +52,29 @@ def resolve_nnmil_recipe(recipe, rows, feature_files):
             raise ValueError(f"Fitting slide {row['slideId']} needs valid feature dimensions.")
         counts.append(count)
         dimensions.add(dimension)
-        evidence.append({"slideId": row["slideId"], "patientId": row.get("patientId"),
-                         "label": row.get("label"), "features": entry})
+        evidence.append(
+            {
+                "slideId": row["slideId"],
+                "patientId": row.get("patientId"),
+                "label": row.get("label"),
+                "features": entry,
+            }
+        )
     if len(dimensions) != 1:
         raise ValueError("Fitting features must have one compatible feature dimension.")
     counts.sort()
     center = median(counts)
     fraction = recipe.get("bagSizeFraction", 0.5)
-    if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) or not (
-        math.isfinite(fraction) and 0 < fraction <= 1
+    if (
+        isinstance(fraction, bool)
+        or not isinstance(fraction, (int, float))
+        or not (math.isfinite(fraction) and 0 < fraction <= 1)
     ):
         raise ValueError("Automatic bag fraction must be greater than zero and at most one.")
     defaults = TrainingRecipe.model_fields
     cap = (
-        max(1, math.floor(center * fraction)) if automatic
+        max(1, math.floor(center * fraction))
+        if automatic
         else recipe.get("bagSize", defaults["bagSize"].default)
     )
     if cap is not None and (type(cap) is not int or not 1 <= cap <= 1000000):
@@ -87,17 +96,27 @@ def resolve_nnmil_recipe(recipe, rows, feature_files):
         "version": 1,
         "mode": "training_median" if automatic else "fixed",
         "fraction": fraction if automatic else None,
-        "rounding": "floor", "minimumPatches": 1,
+        "rounding": "floor",
+        "minimumPatches": 1,
         "trainingSlideCount": len(training),
         "trainingPatientCount": len({row["patientId"] for row in training}),
-        "medianPatchCount": center, "minPatchCount": counts[0], "maxPatchCount": counts[-1],
-        "patchCountP05": _quantile(counts, 0.05), "patchCountP25": _quantile(counts, 0.25),
-        "patchCountP75": _quantile(counts, 0.75), "patchCountP95": _quantile(counts, 0.95),
-        "bagSize": cap, "featureDimension": dimension, "windowCount": windows,
+        "medianPatchCount": center,
+        "minPatchCount": counts[0],
+        "maxPatchCount": counts[-1],
+        "patchCountP05": _quantile(counts, 0.05),
+        "patchCountP25": _quantile(counts, 0.25),
+        "patchCountP75": _quantile(counts, 0.75),
+        "patchCountP95": _quantile(counts, 0.95),
+        "bagSize": cap,
+        "featureDimension": dimension,
+        "windowCount": windows,
         "paddedSlides": sum(count < cap for count in counts) if cap is not None else 0,
         "truncatedSlides": sum(count > cap for count in counts) if cap is not None else 0,
         "inputMemoryMiB": recipe.get("batchSize", defaults["batchSize"].default)
-        * (cap or counts[-1]) * dimension * 4 / 1024**2,
+        * (cap or counts[-1])
+        * dimension
+        * 4
+        / 1024**2,
         "fingerprint": content_hash({"version": 1, "fittingSlides": evidence}),
     }
     return {**recipe, "bagSize": cap}, summary

@@ -44,6 +44,11 @@ training = [
     "torchmetrics==1.8.2",
     "scikit-learn>=1.5,<2",
 ]
+agent = [
+    # 1.10 added tool titles and unstructured tool output, which the server uses.
+    "mcp>=1.10,<2",
+    "anyio>=4,<5",
+]
 
 [tool.uv.sources]
 opensdpc = { git = "https://github.com/WonderLandxD/opensdpc", rev = "a07579eedde1dffddf8fa712ef236b97ca8cfc55" }
@@ -58,9 +63,22 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["histopilot*"]
+# resources/docs links to docs/, whose private, gitignored folders would otherwise be found
+# as packages; package-data names the pages that ship.
+exclude = ["histopilot.resources.docs", "histopilot.resources.docs.*"]
 
 [tool.setuptools.package-data]
-histopilot = ["py.typed", "resources/*.json", "static/**/*", "static/*"]
+histopilot = [
+    "py.typed",
+    "resources/*.json",
+    "resources/docs/user-guide.md",
+    "resources/docs/methods.md",
+    "resources/docs/cli-contract.md",
+    "resources/docs/error-codes.md",
+    "resources/docs/agents.md",
+    "static/**/*",
+    "static/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_serializer, model_validator
 
-from histopilot.schemas.protocols import Conditions, TargetSpec
+from histopilot.schemas.protocols import Conditions, TargetSpec, require_training_labels
 from histopilot.schemas.workspace import RequestModel, Seed
 
 
@@ -109,6 +109,7 @@ class TargetSplitSpec(TargetPartitionSpec):
     def testing_target_contract(self):
         if "splitUnit" in self.model_fields_set and self.target.unit != self.splitUnit:
             raise ValueError("The target prediction unit must match the selected split unit.")
+        require_training_labels(self.target)
         if self.testTarget:
             for key in ("task", "unit", "classes", "positiveClass"):
                 if getattr(self.testTarget, key) != getattr(self.target, key):

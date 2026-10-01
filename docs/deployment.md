@@ -66,7 +66,7 @@ Start and restart the service yourself, in a normal terminal; it is never hosted
 | Address | `127.0.0.1:8787` |
 | Data roots | None |
 
-The [example configuration](../examples/config.toml) shows the two accepted sections, `[server]` (`host`, `port`) and `[storage]` (`workspace`, `data_roots`). Unknown keys are rejected. Relative paths resolve from the configuration file's folder, and `~` expands to the service user's home. Command-line options override the file.
+The [example configuration](../examples/config.toml) shows the two accepted sections, `[server]` (`host`, `port`, `login`) and `[storage]` (`workspace`, `data_roots`). Unknown keys are rejected. Relative paths resolve from the configuration file's folder, and `~` expands to the service user's home. Command-line options override the file.
 
 ```toml
 [storage]
@@ -216,5 +216,7 @@ If the service or runner seems stuck, `kill -USR1 <pid>` writes every thread's s
 - A random per-process session token from `/api/v1/session` is required on every other API route, in the `X-HistoPilot-Token` header. The UI handles this.
 - Folder browsing resolves symlinks before checking the configured roots, and listings are bounded.
 - Downloads and slide images come only from validated project artifacts and frozen slide references. There is no general file download or slide upload route.
+- Optional sign-in: with `histopilot serve --login`, or `login = true` under `[server]`, the service hands out its session only to a browser that opened the link it printed. That keeps other OS accounts, Windows programs under WSL2 and the far end of an SSH forward from fetching the session. `histopilot login url` prints the link again.
+- AI agents get scoped tokens for one project, never the session, and only for projects whose AI-exposure level allows it. Their changes wait for a person's approval, and every request they make is audited. See [AI agents](agents.md).
 
 These controls protect a single-user local service. Shared-lab authentication, per-user permissions, HTTPS reverse proxies and remote job executors are not implemented.

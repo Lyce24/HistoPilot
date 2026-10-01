@@ -25,10 +25,17 @@ def state_dir() -> Path:
     path = path.expanduser().resolve()
     ensure_managed_directory(path)
     info = path.stat()
-    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+    if info.st_uid != os.getuid():
         raise StorageError(
-            f"The Task Center state directory {path} must be owned by this user and not writable "
-            "by other users.",
+            f"The Task Center state directory {path} belongs to another user; set "
+            f"{STATE_ENV} to a directory of your own.",
+            "TASK_CENTER_STATE_UNSAFE",
+            403,
+        )
+    if info.st_mode & 0o022:
+        raise StorageError(
+            f"The Task Center state directory {path} is writable by other users; "
+            f"`chmod go-w {path}` makes it private.",
             "TASK_CENTER_STATE_UNSAFE",
             403,
         )

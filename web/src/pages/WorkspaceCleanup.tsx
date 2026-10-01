@@ -15,11 +15,11 @@ const recordLabel: Record<CleanupItem['type'], string> = { project: 'Whole proje
 const kindLabels: Record<string, string> = {
   project: 'Whole project', dataset: 'Dataset', protocol: 'Targets & splits', 'analysis-protocol': 'Targets & splits',
   feature: 'Feature inventory', 'feature-bundle': 'Feature bundle', 'mil-batch': 'Training batch',
-  'development-batch': 'Training batch draft', 'mil-experiment': 'Saved experiment inputs',
-  'model-experiment': 'Experiment', 'frozen-predictor': 'Predictor', 'predictor-refit': 'Refit training plan', 'model-evaluation': 'Evaluation', 'evaluation-batch': 'Evaluation batch',
-  'inference-run': 'Inference run', 'inference-batch': 'Inference batch',
-  'clinical-analysis': 'Clinical utility report', 'model-interpretation': 'Model interpretation',
-  'evaluation-cohort': 'Test cohort', 'dataset-import': 'Import draft', extraction: 'Feature extraction',
+  'development-batch': 'Training batch draft', 'mil-experiment': 'Saved experiment inputs', 'experiment-setup': 'Frozen design',
+  'model-experiment': 'Experiment', 'frozen-predictor': 'Predictor', 'predictor-refit': 'Refit training plan', 'model-evaluation': 'Run · labeled cohort', 'evaluation-batch': 'Batch · labeled cohort',
+  'inference-run': 'Run · unlabeled cohort', 'inference-batch': 'Batch · unlabeled cohort',
+  'clinical-analysis': 'Clinical utility analysis', 'reference-standard': 'Reference standard', 'model-interpretation': 'Model interpretation',
+  'evaluation-cohort': 'Cohort', 'dataset-import': 'Import draft', extraction: 'Feature extraction',
   'feature-validate': 'Feature validation', 'feature-validation': 'Feature validation',
   'feature-pack': 'Feature packing', 'feature-packing': 'Feature packing', packing: 'Feature packing',
 };
@@ -30,9 +30,9 @@ const readableError = (reason: unknown) => reason instanceof Error ? reason : ne
 const operation = () => `cleanup:${crypto.randomUUID()}`;
 
 /**
- * Inference runs are stored as evaluations (`model-evaluation`, grouped by `evaluation-batch`)
- * whose inference purpose the cleanup rows do not carry. Relabel the runs the evaluation list
- * confirms as inference, and the batches that created them; others keep their stored kind.
+ * Runs on unlabeled cohorts are stored like scored ones (`model-evaluation`, grouped by
+ * `evaluation-batch`), and cleanup rows do not say which is which. Relabel the runs the run list
+ * confirms as unlabeled, and the batches that created them; others keep their stored kind.
  */
 export function withInferenceKinds(items: CleanupItem[], inferenceRunIds: ReadonlySet<string>): CleanupItem[] {
   if (!inferenceRunIds.size) return items;

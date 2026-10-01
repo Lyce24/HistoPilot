@@ -240,6 +240,7 @@ class FeatureBundleService:
                 "Resolve all verification findings before freezing this bundle.",
                 "FEATURE_BUNDLE_INVALID",
                 422,
+                findings=preview["findings"],
             )
         document = self.store.publish_configuration(
             manifest={

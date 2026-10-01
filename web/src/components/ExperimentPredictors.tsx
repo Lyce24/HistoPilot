@@ -2,12 +2,14 @@ import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
 import { experimentStage, experiments, type ExperimentPredictorExecution, type ModelExperiment } from '../api/experiments';
-import { predictors, predictorMethodLabel, type FrozenPredictor } from '../api/predictors';
+import { modelEvaluations, predictors, predictorMethodLabel, type FrozenPredictor } from '../api/predictors';
 import { taskCenterHref } from '../api/taskCenter';
 import { predictorConfigurationLabel, predictorMatches } from '../lib/predictorGroups';
 import { batchPredictorPolicy } from '../lib/experimentPredictors';
+import { applyHref } from '../lib/applyRoutes';
 import { Badge, ErrorNotice, Panel } from './ui';
 import LegacyRecordNote, { createdBeforeTaskCenter } from './LegacyRecordNote';
+import { seedEnsembleKey, useSeedEnsembleBuild } from './useSeedEnsembleBuild';
 import './ExperimentPredictors.css';
 
 const statusLabel: Record<ExperimentPredictorExecution['status'], string> = {
@@ -30,6 +32,9 @@ export default function ExperimentPredictors({ project, record, view = 'all' }: 
   const managed = record.predictorExecution?.executor === 'task-center';
   const showLibrary = view !== 'progress';
   const query = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), enabled: showLibrary || !managed, refetchInterval: stage === 'running' && showLibrary ? 30000 : false });
+  // Runs share the list Apply models reads, so each predictor links to the runs it made.
+  const runs = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), enabled: showLibrary });
+  const runCounts = (runs.data?.items ?? []).filter((item) => item.lifecycleState === 'active').reduce((counts, item) => counts.set(item.manifest.predictorId, (counts.get(item.manifest.predictorId) ?? 0) + 1), new Map<string, number>());
   const [method, setMethod] = useState('all');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState<number | null>(null);
@@ -49,7 +54,6 @@ export default function ExperimentPredictors({ project, record, view = 'all' }: 
   const currentWorkPage = Math.min(workPage, Math.max(0, Math.ceil(workItems.length / pageSize) - 1));
   const batchNames = new Map(record.batches.map((batch) => [batch.id, batch.manifest.spec.batchName]));
   const configurations = new Map(record.batches.flatMap((batch) => batch.manifest.configurations.map((candidate) => [JSON.stringify([batch.id, candidate.id]), candidate.number] as const)));
-  const evaluationLink = `#evaluate-models?${new URLSearchParams({ experiment: record.id })}`;
 
   const creation = view !== 'library';
   if (view === 'progress' && managed && execution) {
@@ -85,26 +89,52 @@ export default function ExperimentPredictors({ project, record, view = 'all' }: 
     </div> : execution ? null : !creation ? null : skipped ? <p className="muted">Predictor creation was skipped in every batch. This experiment contains cross-validation results only.</p> : record.submission?.status !== 'submitted' && stage === 'running' ? <p className="callout">Predictor creation waits until experiment submission is complete. Resolve the submission notice above to continue.</p> : !hasPredictorPlan ? <p className="muted">Predictors from this historical experiment are retained here. <a href={`#post-development?${new URLSearchParams({ tab: 'refits', experiment: record.id })}`}>Open historical refit jobs</a></p> : view === 'progress' ? <p className="muted">Predictors are created after each batch’s folds finish. Ready predictors are listed under Predictors.</p> : null}
     {showLibrary ? <>
     <ErrorNotice error={query.error} />
-    <div className="experiment-predictor-tools"><strong>{ready.length.toLocaleString()} ready to evaluate</strong>{ready.length ? <a className="btn btn-primary btn-small" href={evaluationLink}>Evaluate predictors →</a> : null}</div>
+    <div className="experiment-predictor-tools"><strong>{ready.length.toLocaleString()} ready to apply</strong>{ready.length ? <a className="btn btn-primary btn-small" href={applyHref({ view: 'new', experiment: record.id })}>Apply predictors →</a> : null}</div>
+    <SeedEnsembles project={project} record={record} refresh={stage === 'running'} />
     {items.length ? <>
-      <div className="experiment-predictor-tools"><label className="label">Predictor method<select className="field" value={method} onChange={(event) => { setMethod(event.target.value); setPage(0); }}><option value="all">All methods</option><option value="ensemble">Ensemble</option><option value="refit">Refit</option></select></label><label className="label">Find a predictor<input className="field" type="search" placeholder="Name, configuration or seed" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></label></div>
-      <div className="experiment-predictor-table"><table><thead><tr><th>Predictor</th><th>Source</th><th>Seeds</th><th>Method</th><th>Evaluation</th></tr></thead><tbody>{filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map((item) => <tr key={item.id}>
+      <div className="experiment-predictor-tools"><label className="label">Predictor method<select className="field" value={method} onChange={(event) => { setMethod(event.target.value); setPage(0); }}><option value="all">All methods</option><option value="ensemble">Ensemble</option><option value="refit">Refit</option><option value="seed_ensemble">Seed ensemble</option></select></label><label className="label">Find a predictor<input className="field" type="search" placeholder="Name, configuration or seed" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></label></div>
+      <div className="experiment-predictor-table"><table><thead><tr><th>Predictor</th><th>Source</th><th>Seeds</th><th>Method</th><th>Apply models</th></tr></thead><tbody>{filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map((item) => <tr key={item.id}>
         <td><details open={selectedPredictor === item.id || undefined}><summary>{item.manifest.name}</summary><PredictorDetails item={item} /></details></td>
         <td>{batchNames.get(item.manifest.batchId) ?? item.manifest.batchId}<small>{predictorConfigurationLabel({ ...item.manifest, candidateNumber: configurations.get(JSON.stringify([item.manifest.batchId, item.manifest.candidateId])) ?? item.manifest.candidateNumber })}</small></td>
-        <td>Training {item.manifest.trainingSeed}<small>Split {item.manifest.splitSeed}</small></td>
+        <td>{item.manifest.trainingSeeds ? <>{item.manifest.trainingSeeds.length} training seeds<small>{item.manifest.splitSeeds?.length ?? 1} split · {item.manifest.checkpoints.length} models</small></> : <>Training {item.manifest.trainingSeed}<small>Split {item.manifest.splitSeed}</small></>}</td>
         <td>{predictorMethodLabel(item.manifest.method)}<small>{item.manifest.method === 'refit' ? `${item.manifest.epochBudget?.epochs ?? '—'} epochs · P${item.manifest.epochBudget?.percentile ?? '—'}` : `${item.manifest.checkpoints.length} fold checkpoints`}</small></td>
-        <td>{item.lifecycleState === 'active' ? <a href={`#evaluate-models?${new URLSearchParams({ experiment: record.id, predictor: item.id })}`}>Evaluate</a> : <Badge>Archived</Badge>}</td>
+        <td>{item.lifecycleState === 'active' ? <a href={applyHref({ view: 'new', experiment: record.id, predictor: item.id })}>Apply</a> : <Badge>Archived</Badge>}{runCounts.get(item.id) ? <small><a href={applyHref({ view: 'runs', predictor: item.id })}>{runCounts.get(item.id)} {runCounts.get(item.id) === 1 ? 'run' : 'runs'}</a></small> : null}</td>
       </tr>)}</tbody></table></div>
       {!filtered.length ? <p className="muted">No predictors match these filters.</p> : null}
       <Pagination count={filtered.length} page={currentPage} setPage={setPage} label="Predictor library" />
-    </> : query.isPending ? <p role="status">Loading predictors…</p> : !query.isError ? <p className="muted">{skipped ? 'To create predictors, use this experiment as a template and change the predictor choices in its batches before submission.' : 'Ready predictors appear here after their fold evidence and checkpoints are verified.'}</p> : null}
+    </> : query.isPending ? <p role="status">Loading predictors…</p> : !query.isError ? <p className="muted">{skipped ? 'To create predictors, use this experiment as a template and change the predictor choices in its batches before it starts.' : 'Ready predictors appear here after their fold evidence and checkpoints are verified.'}</p> : null}
     </> : null}
   </Panel>;
 }
 
 function PredictorDetails({ item }: { item: FrozenPredictor }) {
   const budget = item.manifest.epochBudget;
-  return <div><p className="muted">{item.id}</p><p>{item.manifest.method === 'refit' ? 'One model trained on the complete development cohort.' : item.manifest.aggregation === 'mean_logit' ? 'Mean logits from the frozen fold checkpoints.' : 'Mean probabilities from the frozen fold checkpoints.'}</p>{budget ? <p>Selected fold checkpoint epochs: {budget.foldBestEpochs.map((fold) => fold.bestEpoch).join(', ')}. P{budget.percentile}, rounded up: {budget.epochs} epochs.</p> : null}<details><summary>Exact predictor snapshot</summary><pre className="experiment-snapshot">{JSON.stringify(item.manifest, null, 2)}</pre></details></div>;
+  return <div><p className="muted">{item.id}</p><p>{item.manifest.method === 'refit' ? 'One model trained on the complete development cohort.' : `${item.manifest.aggregation === 'mean_logit' ? 'Mean logits' : 'Mean probabilities'} from the frozen fold checkpoints${item.manifest.method === 'seed_ensemble' ? ' of every training and split seed' : ''}.`}</p>{budget ? <p>Selected fold checkpoint epochs: {budget.foldBestEpochs.map((fold) => fold.bestEpoch).join(', ')}. P{budget.percentile}, rounded up: {budget.epochs} epochs.</p> : null}<details><summary>Exact predictor snapshot</summary><pre className="experiment-snapshot">{JSON.stringify(item.manifest, null, 2)}</pre></details></div>;
+}
+
+/**
+ * One predictor per configuration that averages its fold models from every training and split
+ * seed: the deployable form of the seed ensemble in Results. It reuses verified checkpoints, so
+ * it is available after predictor creation closes and nothing trains.
+ */
+function SeedEnsembles({ project, record, refresh }: { project: string; record: ModelExperiment; refresh: boolean }) {
+  const query = useQuery({ queryKey: ['seed-ensembles', project, record.id], queryFn: () => predictors.seedEnsembles(project, record.id), refetchInterval: refresh ? 30000 : false });
+  const { busy, error, pending, build } = useSeedEnsembleBuild(project, record);
+  const choices = (query.data?.items ?? []).filter((item) => item.seedGroups > 1);
+  if (!choices.length) return null;
+  return <section className="experiment-seed-ensembles" aria-label="Seed ensembles">
+    <h3>Seed ensembles</h3>
+    <p className="muted">One predictor per configuration that averages its fold models from every training and split seed: the deployable form of the seed ensemble in Results. It reuses the verified checkpoints; nothing trains.</p>
+    <ErrorNotice error={error} />
+    {pending && !busy ? <p className="callout">The last build response was lost. Building again reuses the same request identity.</p> : null}
+    <div className="experiment-predictor-table"><table><thead><tr><th>Configuration</th><th>Seeds</th><th>Seed ensemble</th></tr></thead><tbody>{choices.map((choice) => <tr key={seedEnsembleKey(choice)}>
+      <td>{choice.batchName}<small>{predictorConfigurationLabel(choice)}</small></td>
+      <td>{choice.trainingSeeds.length} training × {choice.splitSeeds.length} split {choice.splitSeeds.length === 1 ? 'seed' : 'seeds'}<small>{choice.members} fold models</small></td>
+      <td>{choice.existingPredictorId ? <a href={applyHref({ view: 'new', experiment: record.id, predictor: choice.existingPredictorId })}>Built · apply</a>
+        : choice.eligible ? <button type="button" className="btn btn-secondary btn-small" disabled={Boolean(busy)} onClick={() => void build(choice)}>{busy === seedEnsembleKey(choice) ? 'Building…' : 'Build seed ensemble'}</button>
+          : <small>{choice.reason}</small>}</td>
+    </tr>)}</tbody></table></div>
+  </section>;
 }
 
 function Pagination({ count, page, setPage, label }: { count: number; page: number; setPage: (page: number) => void; label: string }) {

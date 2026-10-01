@@ -173,14 +173,14 @@ describe('focused interpretation screens', () => {
   it('takes slides from a chosen frozen dataset when the feature bundle is scoped to a slide store', () => {
     storage('#interpretation?predictor=predictor&stage=select');
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }); clients.push(client);
-    client.setQueryData(['predictors', 'p'], { items: [{ id: 'predictor', lifecycleState: 'active', manifest: { name: 'GEJ refit', method: 'refit', experimentId: 'experiment', recipe: { model: 'abmil' }, target: { classes: ['HG', 'IND', 'LG', 'ND'] }, checkpoints: [{}], inputs: { features: { bundle: { id: 'bundle' }, encoderId: 'uni', dimensions: 1024, dtype: 'float32' }, loading: {} } } }] });
+    client.setQueryData(['predictors', 'p'], { items: [{ id: 'predictor', lifecycleState: 'active', manifest: { name: 'Study A refit', method: 'refit', experimentId: 'experiment', recipe: { model: 'abmil' }, target: { classes: ['HG', 'IND', 'LG', 'ND'] }, checkpoints: [{}], inputs: { features: { bundle: { id: 'bundle' }, encoderId: 'uni', dimensions: 1024, dtype: 'float32' }, loading: {} } } }] });
     const warning = { severity: 'warning', code: 'DATASET_SLIDE_FOLDER_UNAVAILABLE', message: 'These features are scoped to a slide store, not a frozen dataset.' };
-    client.setQueryData(['interpretation-sources', 'p'], { items: [{ id: 'bundle', name: 'Store features', current: true, findings: [warning], encoderId: 'uni', dimensions: 1024, dtype: 'float32', slideCount: 1111, featureSetId: 'features', packs: [], datasetId: null, datasetName: 'No dataset', slideFolder: null, slideFolderFinding: warning }] });
-    client.setQueryData(['interpretation-datasets', 'p'], { items: [{ datasetId: 'gej', datasetName: 'gej dataset', slideFolder: '/data/slides/gej', slideFolderSource: 'dataset_import', slideFolderFinding: null, slideCount: 1111 }] });
+    client.setQueryData(['interpretation-sources', 'p'], { items: [{ id: 'bundle', name: 'Store features', current: true, findings: [warning], encoderId: 'uni', dimensions: 1024, dtype: 'float32', slideCount: 1120, featureSetId: 'features', packs: [], datasetId: null, datasetName: 'No dataset', slideFolder: null, slideFolderFinding: warning }] });
+    client.setQueryData(['interpretation-datasets', 'p'], { items: [{ datasetId: 'study', datasetName: 'study dataset', slideFolder: '/data/slides/study', slideFolderSource: 'dataset_import', slideFolderFinding: null, slideCount: 1120 }] });
     client.setQueryData(['interpretations', 'p'], { items: [] });
     const html = renderToStaticMarkup(<QueryClientProvider client={client}><LocalInterpretation workspace={workspace} /></QueryClientProvider>);
-    expect(html).toContain('<option value="gej" selected="">gej dataset · 1,111 slides</option>');
-    expect(html).toContain('gej dataset · 1,111 slides · /data/slides/gej');
+    expect(html).toContain('<option value="study" selected="">study dataset · 1,120 slides</option>');
+    expect(html).toContain('study dataset · 1,120 slides · /data/slides/study');
     expect(html).not.toContain('scoped to a slide store'); expect(html).toContain('Search slides');
   });
   it('locks context mutations and saved-study entry points while preserving an uncertain request', () => {

@@ -28,7 +28,8 @@ export interface InferenceUnitSummary {
 }
 /** Frozen by the worker in `summary.json` and the job result. */
 export interface InferenceResultSummary {
-  purpose: 'inference'; unit: 'slide' | 'patient'; classOrder: string[]; positiveClass?: string | null;
+  /** Label-blind evaluations write the same summary; their purpose says so. */
+  purpose: 'inference' | 'evaluation'; unit: 'slide' | 'patient'; classOrder: string[]; positiveClass?: string | null;
   decisionThreshold: number; patientAggregation: string; memberCount: number;
   /** Per-record member probabilities are omitted when predictions.json would grow too large. */
   memberProbabilities?: 'recorded' | 'omitted_for_size' | 'single_model';

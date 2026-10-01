@@ -218,7 +218,11 @@ def test_automatic_feature_choice_is_pinned_for_saved_evaluation(evaluation, tmp
     monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", lambda: {})
     plan = service._execution_plan(saved["id"])
     assert set(plan["data"]["featureFiles"]) == {"s2", "s3"}
-    assert plan["data"]["memberships"] == cohort["manifest"]["memberships"]
+    assert plan["labelsWithheld"] is True
+    assert plan["data"]["memberships"] == [
+        {key: value for key, value in row.items() if key != "label"}
+        for row in cohort["manifest"]["memberships"]
+    ]
 
 
 def test_bulk_review_applies_selected_features_and_inference(evaluation, tmp_path):

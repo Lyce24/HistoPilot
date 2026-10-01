@@ -31,15 +31,21 @@ def dataset_rows(store, dataset_id):
             raise ValueError
         index = {}
         for row in rows:
-            if (not isinstance(row, dict) or not isinstance(row.get("slideId"), str)
-                    or not row["slideId"] or row["slideId"] in index
-                    or not isinstance(row.get("attributes", {}), dict)):
+            if (
+                not isinstance(row, dict)
+                or not isinstance(row.get("slideId"), str)
+                or not row["slideId"]
+                or row["slideId"] in index
+                or not isinstance(row.get("attributes", {}), dict)
+            ):
                 raise ValueError
             index[row["slideId"]] = row
     except (ValueError, UnicodeError, TypeError, RecursionError) as error:
         if isinstance(error, StorageError):
             raise
-        raise StorageError("Frozen dataset records are invalid.", "REVIEW_DATASET_INVALID") from error
+        raise StorageError(
+            "Frozen dataset records are invalid.", "REVIEW_DATASET_INVALID"
+        ) from error
     return dataset, index
 
 
@@ -72,12 +78,16 @@ class SlideReviewService:
         except (ValueError, ValidationError, UnicodeError) as error:
             if isinstance(error, StorageError):
                 raise
-            raise StorageError("Saved slide review failed validation.", "SLIDE_REVIEW_CORRUPT") from error
+            raise StorageError(
+                "Saved slide review failed validation.", "SLIDE_REVIEW_CORRUPT"
+            ) from error
 
     def get(self, dataset_id, slide_id):
         _, rows = dataset_rows(self.store, dataset_id)
         if slide_id not in rows:
-            raise StorageError("This slide is not in the frozen dataset.", "REVIEW_SLIDE_NOT_FOUND", 404)
+            raise StorageError(
+                "This slide is not in the frozen dataset.", "REVIEW_SLIDE_NOT_FOUND", 404
+            )
         return self._read(dataset_id, slide_id)
 
     def list(self, dataset_id, *, offset=0, limit=200):
@@ -89,24 +99,35 @@ class SlideReviewService:
             return {"items": [], "total": 0, "offset": offset, "hasMore": False}
         paths = sorted(folder.glob("*.json"))
         if len(paths) > len(rows):
-            raise StorageError("Review inventory exceeds the frozen dataset.", "SLIDE_REVIEW_CORRUPT")
+            raise StorageError(
+                "Review inventory exceeds the frozen dataset.", "SLIDE_REVIEW_CORRUPT"
+            )
         items = []
-        for path in paths[offset:offset + limit]:
+        for path in paths[offset : offset + limit]:
             try:
                 saved = SlideReviewDocument.model_validate_json(
                     read_file_bounded(path, MAX_REVIEW_BYTES)
                 ).model_dump()
-                if (saved["datasetId"] != dataset_id or saved["slideId"] not in rows
-                        or path != self._path(dataset_id, saved["slideId"])):
+                if (
+                    saved["datasetId"] != dataset_id
+                    or saved["slideId"] not in rows
+                    or path != self._path(dataset_id, saved["slideId"])
+                ):
                     raise ValueError
             except (ValueError, ValidationError) as error:
                 if isinstance(error, StorageError):
                     raise
-                raise StorageError("Saved slide review failed validation.", "SLIDE_REVIEW_CORRUPT") from error
+                raise StorageError(
+                    "Saved slide review failed validation.", "SLIDE_REVIEW_CORRUPT"
+                ) from error
             saved.pop("history")
             items.append(saved)
-        return {"items": items, "total": len(paths), "offset": offset,
-                "hasMore": offset + limit < len(paths)}
+        return {
+            "items": items,
+            "total": len(paths),
+            "offset": offset,
+            "hasMore": offset + limit < len(paths),
+        }
 
     def save(self, dataset_id, slide_id, request):
         request = SaveSlideReview.model_validate(request)
@@ -114,17 +135,25 @@ class SlideReviewService:
         with lifecycle_guard(self.store.folder):
             _, rows = dataset_rows(self.store, dataset_id)
             if slide_id not in rows:
-                raise StorageError("This slide is not in the frozen dataset.", "REVIEW_SLIDE_NOT_FOUND", 404)
+                raise StorageError(
+                    "This slide is not in the frozen dataset.", "REVIEW_SLIDE_NOT_FOUND", 404
+                )
             if request.evaluationId:
                 evaluation = self.store.get_configuration(request.evaluationId)["manifest"]
                 if evaluation.get("kind") != "model-evaluation":
-                    raise StorageError("Choose a saved model evaluation.", "REVIEW_CONTEXT_INVALID", 422)
+                    raise StorageError(
+                        "Choose a saved model evaluation.", "REVIEW_CONTEXT_INVALID", 422
+                    )
                 cohort = self.store.get_configuration(evaluation["cohortId"])["manifest"]
                 dataset_ids = cohort.get("spec", {}).get("datasetIds") or [cohort["datasetId"]]
                 if dataset_id not in dataset_ids or not any(
                     row.get("slideId") == slide_id for row in cohort["memberships"]
                 ):
-                    raise StorageError("Review context must include this dataset and slide.", "REVIEW_CONTEXT_INVALID", 422)
+                    raise StorageError(
+                        "Review context must include this dataset and slide.",
+                        "REVIEW_CONTEXT_INVALID",
+                        422,
+                    )
             self.store.lifecycle.assert_usable([f"dataset:{dataset_id}"])
             with writer_lock(self.store.folder):
                 current = self._read(dataset_id, slide_id)
@@ -133,16 +162,22 @@ class SlideReviewService:
                     # A lost-response retry is safe only for the immediately preceding save.
                     if request.expectedRevision + 1 == current["revision"] and existing == values:
                         return current
-                    raise StorageError("This review changed in another tab. Your edits are preserved; reload the saved review before merging.",
-                                       "SLIDE_REVIEW_CONFLICT", 409)
+                    raise StorageError(
+                        "This review changed in another tab. Your edits are preserved; reload the saved review before merging.",
+                        "SLIDE_REVIEW_CONFLICT",
+                        409,
+                    )
                 if current["revision"] and existing == values:
                     return current
-                event = {**values, "revision": current["revision"] + 1,
-                         "updatedAt": utc_now()}
+                event = {**values, "revision": current["revision"] + 1, "updatedAt": utc_now()}
                 document = {**current, **event, "history": [*current["history"], event]}
                 encoded = json.dumps(document, indent=2, allow_nan=False).encode() + b"\n"
                 if len(encoded) > MAX_REVIEW_BYTES:
-                    raise StorageError("This review has reached its history storage limit.", "SLIDE_REVIEW_LIMIT", 413)
+                    raise StorageError(
+                        "This review has reached its history storage limit.",
+                        "SLIDE_REVIEW_LIMIT",
+                        413,
+                    )
                 ensure_managed_directory(self._folder(dataset_id))
                 write_json_atomic(self._path(dataset_id, slide_id), document)
                 return document

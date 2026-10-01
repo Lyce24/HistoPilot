@@ -24,7 +24,7 @@ def extraction_setup(tmp_path, monkeypatch):
     """A dataset of two slides on two data roots, with TRIDENT's runtime faked."""
     folder = tmp_path / "experiment"
     folder.mkdir()
-    roots = [tmp_path / "drive-d", tmp_path / "oceanpath-hot"]
+    roots = [tmp_path / "drive-d", tmp_path / "fast-disk"]
     slides = []
     for number, root in enumerate(roots):
         root.mkdir()
@@ -145,7 +145,7 @@ def test_exact_multiple_roots_manifest_idempotency_logs_and_reopen(extractions, 
     assert (folder / "slides.csv").read_text().splitlines() == [
         "wsi",
         "drive-d/slide.0.svs",
-        "oceanpath-hot/slide.1.svs",
+        "fast-disk/slide.1.svs",
     ]
     (folder / "worker.log").write_text("segmenting slide 1\n")
     reopened = ExtractionService(
@@ -384,14 +384,14 @@ def cohort_extraction(tmp_path, monkeypatch, task_center):
     """One slide root with per-cohort subfolders, as a multi-cohort study is imported."""
     folder = tmp_path / "experiment"
     folder.mkdir()
-    root = tmp_path / "drive-d" / "slides" / "colon"
+    root = tmp_path / "drive-d" / "slides" / "study"
     slides = []
-    for cohort, name in (("rih", "SL-1.svs"), ("rih", "SL-2.svs"), ("TCGA", "TCGA-A6.svs")):
+    for cohort, name in (("site-a", "A-1.svs"), ("site-a", "A-2.svs"), ("site-c", "C-6.svs")):
         slide = root / cohort / name
         slide.parent.mkdir(parents=True, exist_ok=True)
         slide.write_bytes(b"fixture slide")
         slides.append({"slideId": slide.stem, "patientId": slide.stem, "slidePath": str(slide)})
-    excluded = root / "SURGEN" / "SR386.tiff"
+    excluded = root / "site-b" / "B-386.tiff"
     excluded.parent.mkdir(parents=True, exist_ok=True)
     excluded.write_bytes(b"fixture slide")
     store = ScientificStore(folder, "project-cohort")
@@ -429,13 +429,10 @@ def cohort_extraction(tmp_path, monkeypatch, task_center):
 
 def test_cohort_manifest_selects_nested_slides_and_pins_each_source_mpp(cohort_extraction):
     service, spec, root = cohort_extraction
-    manifest = service.store.folder / "colon_ready_wsi_mpp.csv"
+    manifest = service.store.folder / "ready_wsi_mpp.csv"
     # A study-wide manifest: extra columns, and rows for cohorts this version excludes.
     manifest.write_text(
-        "wsi,mpp,cohort\n"
-        "rih/SL-1.svs,0.5016,RIH\n"
-        "TCGA/TCGA-A6.svs,0.252,TCGA\n"
-        "SURGEN/SR386.tiff,0.25,SurGen\n"
+        "wsi,mpp,cohort\nsite-a/A-1.svs,0.5,A\nsite-c/C-6.svs,0.252,C\nsite-b/B-386.tiff,0.25,B\n"
     )
     selected = spec.model_copy(
         update={"options": {"task": "seg", "custom_list_of_wsis": str(manifest)}}
@@ -452,19 +449,19 @@ def test_cohort_manifest_selects_nested_slides_and_pins_each_source_mpp(cohort_e
         "selectedCount": 2,
         "declaresMpp": True,
         "datasetFiltered": True,
-        "outside": ["SURGEN/SR386.tiff"],
+        "outside": ["site-b/B-386.tiff"],
         "outsideCount": 1,
-        "outsideExamples": ["SURGEN/SR386.tiff"],
-        "unlisted": ["SL-2"],
+        "outsideExamples": ["site-b/B-386.tiff"],
+        "unlisted": ["A-2"],
         "unlistedCount": 1,
-        "unlistedExamples": ["SL-2"],
+        "unlistedExamples": ["A-2"],
     }
     job = submit(service, selected)
     # TRIDENT names outputs from the file stem and reads wsi paths relative to --wsi_dir.
     assert (service.folder / job["id"] / "slides.csv").read_text().splitlines() == [
         "wsi,mpp",
-        "rih/SL-1.svs,0.5016",
-        "TCGA/TCGA-A6.svs,0.252",
+        "site-a/A-1.svs,0.5",
+        "site-c/C-6.svs,0.252",
     ]
     assert job["command"][0] == str(root)
 
@@ -494,10 +491,10 @@ def test_a_slide_folder_extracts_without_any_dataset(cohort_extraction):
     job = submit(service, folder)
     assert (service.folder / job["id"] / "slides.csv").read_text().splitlines() == [
         "wsi",
-        "rih/SL-1.svs",
-        "rih/SL-2.svs",
-        "SURGEN/SR386.tiff",
-        "TCGA/TCGA-A6.svs",
+        "site-a/A-1.svs",
+        "site-a/A-2.svs",
+        "site-b/B-386.tiff",
+        "site-c/C-6.svs",
     ]
 
 
@@ -508,13 +505,13 @@ def test_the_same_folder_narrowed_by_a_dataset_selects_only_its_slides(cohort_ex
     assert preview["slideCount"] == 3
     assert preview["slideList"]["initialCount"] == 4
     assert preview["slideList"]["datasetFiltered"] is True
-    assert preview["slideList"]["outsideExamples"] == ["SURGEN/SR386.tiff"]
+    assert preview["slideList"]["outsideExamples"] == ["site-b/B-386.tiff"]
 
 
 def test_extraction_rejects_selected_physical_slide_aliases(cohort_extraction, task_center):
     service, spec, root = cohort_extraction
     alias = root / "copied-identity.svs"
-    alias.hardlink_to(root / "rih" / "SL-1.svs")
+    alias.hardlink_to(root / "site-a" / "A-1.svs")
     independent = spec.model_copy(update={"datasetId": None, "slideRoot": str(root)})
     reviewed = service.preview(independent)
     assert not reviewed["canRun"]
@@ -531,7 +528,7 @@ def test_extraction_rejects_selected_physical_slide_aliases(cohort_extraction, t
 def test_a_slide_list_needs_the_folder_its_paths_are_relative_to(cohort_extraction):
     service, spec, _root = cohort_extraction
     listing = service.store.folder / "list.csv"
-    listing.write_text("wsi\nrih/SL-1.svs\n")
+    listing.write_text("wsi\nsite-a/A-1.svs\n")
     with pytest.raises(StorageError) as error:
         service.preview(
             spec.model_copy(
@@ -547,12 +544,12 @@ def test_a_slide_list_needs_the_folder_its_paths_are_relative_to(cohort_extracti
 def test_changing_a_declared_mpp_cannot_reuse_an_existing_output(cohort_extraction):
     service, spec, _root = cohort_extraction
     manifest = service.store.folder / "list.csv"
-    manifest.write_text("wsi,mpp\nrih/SL-1.svs,0.5016\n")
+    manifest.write_text("wsi,mpp\nsite-a/A-1.svs,0.5\n")
     selected = spec.model_copy(
         update={"options": {"task": "seg", "custom_list_of_wsis": str(manifest)}}
     )
     submit(service, selected)
-    manifest.write_text("wsi,mpp\nrih/SL-1.svs,0.25\n")
+    manifest.write_text("wsi,mpp\nsite-a/A-1.svs,0.25\n")
     preview = service.preview(selected)
     assert not preview["canRun"]
     assert any(item["code"] == "OUTPUT_CONFIG_CHANGED" for item in preview["findings"])
@@ -561,7 +558,7 @@ def test_changing_a_declared_mpp_cannot_reuse_an_existing_output(cohort_extracti
 def test_a_partly_declared_mpp_column_never_reaches_trident(cohort_extraction):
     service, spec, _root = cohort_extraction
     manifest = service.store.folder / "list.csv"
-    manifest.write_text("wsi,mpp\nrih/SL-1.svs,0.5016\nTCGA/TCGA-A6.svs,\n")
+    manifest.write_text("wsi,mpp\nsite-a/A-1.svs,0.5\nsite-c/C-6.svs,\n")
     selected = spec.model_copy(
         update={"options": {"task": "seg", "custom_list_of_wsis": str(manifest)}}
     )
@@ -784,7 +781,7 @@ def test_uploaded_slide_list_extracts_without_dataset_and_preserves_mpp(cohort_e
     import base64
 
     service, original, root = cohort_extraction
-    content = b"wsi,mpp\nrih/SL-1.svs,0.5016\nSURGEN/SR386.tiff,0.25\n"
+    content = b"wsi,mpp\nsite-a/A-1.svs,0.5\nsite-b/B-386.tiff,0.25\n"
     spec = ExtractionSpec(
         slideRoot=str(root),
         slideList={
@@ -818,7 +815,7 @@ def test_uploaded_slide_list_can_be_narrowed_by_a_dataset(cohort_extraction):
         slideRoot=str(root),
         slideList={
             "filename": "selection.csv",
-            "contentBase64": base64.b64encode(b"wsi\nrih/SL-1.svs\nSURGEN/SR386.tiff\n").decode(),
+            "contentBase64": base64.b64encode(b"wsi\nsite-a/A-1.svs\nsite-b/B-386.tiff\n").decode(),
         },
         outputPath=original.outputPath,
         options={"task": "seg"},
@@ -890,12 +887,15 @@ def test_legacy_extraction_preview_and_retry_keep_their_hashes(extractions, task
 
 
 # The Task Center runs an extraction on one GPU; only CPU devices fan out in one task.
-@pytest.mark.parametrize("options, expected_workers, lane, devices", [
-    ({}, 8, "gpu", 1),
-    ({"gpus": [0, 1]}, 4, "gpu", 1),
-    ({"gpus": [0, 1], "max_workers": 3}, 3, "gpu", 1),
-    ({"gpus": [-1, -1]}, 4, "cpu", 2),
-])
+@pytest.mark.parametrize(
+    "options, expected_workers, lane, devices",
+    [
+        ({}, 8, "gpu", 1),
+        ({"gpus": [0, 1]}, 4, "gpu", 1),
+        ({"gpus": [0, 1], "max_workers": 3}, 3, "gpu", 1),
+        ({"gpus": [-1, -1]}, 4, "cpu", 2),
+    ],
+)
 def test_preview_command_and_task_request_share_frozen_worker_count(
     extractions, task_center, monkeypatch, options, expected_workers, lane, devices
 ):
@@ -905,7 +905,12 @@ def test_preview_command_and_task_request_share_frozen_worker_count(
 
     def command(normalized, **kwargs):
         seen.append(normalized.max_workers)
-        return [kwargs["python_path"], "run_batch_of_slides.py", "--max_workers", str(normalized.max_workers)]
+        return [
+            kwargs["python_path"],
+            "run_batch_of_slides.py",
+            "--max_workers",
+            str(normalized.max_workers),
+        ]
 
     monkeypatch.setattr("histopilot.adapters.trident.build_command", command)
     spec = spec.model_copy(update={"options": {"task": "seg", **options}})

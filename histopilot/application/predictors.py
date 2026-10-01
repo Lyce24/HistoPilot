@@ -15,14 +15,40 @@ from collections import defaultdict
 from pathlib import Path
 
 from histopilot.application.development import development_plans
+from histopilot.application.development_splits import training_split_issue
 from histopilot.application.experiment_policy import has_predictor_intent, policy_for_batch
 from histopilot.application.training import membership_plan_id
 from histopilot.domain.features import representation_kind
 from histopilot.models import catalog
-from histopilot.schemas.predictors import PredictorSelection
+from histopilot.schemas.predictors import PredictorSelection, SeedEnsembleSelection
 from histopilot.storage.io import content_hash, read_file_bounded
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError, reject_symlink_components
+
+SEED_ENSEMBLE = "seed_ensemble"
+# Each member adds about a kilobyte to the 16 MiB manifest and one model pass to every
+# evaluation and attention job.
+MAX_SEED_ENSEMBLE_MEMBERS = 256
+SINGLE_GROUP = (
+    "A seed ensemble pools two or more seed groups; this configuration has one. "
+    "Use its fold ensemble instead."
+)
+TOO_MANY_MEMBERS = f"A seed ensemble holds at most {MAX_SEED_ENSEMBLE_MEMBERS} fold models."
+# Fields that every seed group of one configuration shares, being read from one batch plan.
+SHARED_GROUP_KEYS = (
+    "datasetId",
+    "experiment",
+    "batch",
+    "candidateId",
+    "target",
+    "recipe",
+    "inputs",
+    "trainingPlanHash",
+    "compute",
+    "runtime",
+    "aggregation",
+    "patientAggregation",
+)
 
 
 def reference(document):
@@ -144,7 +170,9 @@ def evidence_current(manifest, stored):
     # content. Old plans include both the historical experiment name and the
     # provenance hash derived from that name; keep those values for this legacy
     # comparison only. Every other field must still match the live evidence.
-    if stored_hash != content_hash({key: value for key, value in stored.items() if key != "previewHash"}):
+    if stored_hash != content_hash(
+        {key: value for key, value in stored.items() if key != "previewHash"}
+    ):
         return False
     legacy = {key: value for key, value in manifest.items() if key != "previewHash"}
     experiment, saved_experiment = legacy.get("experiment"), stored.get("experiment")
@@ -301,7 +329,9 @@ class PredictorService:
                 if select_best and (folder / "plan.json").exists():
                     from histopilot.candidate_selection import validation_selection
 
-                    selection_report = validation_selection(read_evidence(folder / "plan.json", folder), state)
+                    selection_report = validation_selection(
+                        read_evidence(folder / "plan.json", folder), state
+                    )
                     selected_candidate = (selection_report or {}).get("selectedCandidateId")
                 error = None
             except StorageError as problem:
@@ -321,24 +351,27 @@ class PredictorService:
                 completed = sum(
                     states.get(row["id"], {}).get("status") == "completed" for row in runs
                 )
+                selection_reason = (
+                    "Waiting for validation scores from every configuration."
+                    if select_best and selected_candidate is None
+                    else "Another configuration was selected by validation performance."
+                    if select_best and selected_candidate != candidate
+                    else None
+                )
+                incomplete_reason = (
+                    "Every fold in this candidate must finish before building a predictor."
+                    if completed != len(runs)
+                    else None
+                )
                 reason = (
                     error
-                    or (
-                        "Waiting for validation scores from every configuration."
-                        if select_best and selected_candidate is None
-                        else "Another configuration was selected by validation performance."
-                        if select_best and selected_candidate != candidate else None
-                    )
+                    or selection_reason
                     or (
                         "This configuration and seed group already has both predictor methods. Restore existing predictors to reuse their identities."
                         if len(existing) == 2
                         else None
                     )
-                    or (
-                        "Every fold in this candidate must finish before building a predictor."
-                        if completed != len(runs)
-                        else None
-                    )
+                    or incomplete_reason
                 )
                 items.append(
                     {
@@ -352,6 +385,9 @@ class PredictorService:
                         "splitSeed": split_seed,
                         "completedRuns": completed,
                         "totalRuns": len(runs),
+                        "complete": completed == len(runs),
+                        # What stops any predictor from this group, whichever methods exist.
+                        "blocker": error or selection_reason or incomplete_reason,
                         "eligible": reason is None,
                         "reason": reason,
                         "existingPredictorId": existing.get("ensemble"),
@@ -367,9 +403,196 @@ class PredictorService:
                 )
         return {"items": items, "executionEnabled": True}
 
-    def _prepare(self, selection, *, allow_existing=False):
+    def seed_ensemble_choices(self, experiment_id=None):
+        """Configurations whose seed groups can pool into one seed-ensemble predictor."""
+        grouped = defaultdict(list)
+        for item in self.choices()["items"]:
+            if experiment_id is None or item["experimentId"] == experiment_id:
+                grouped[(item["experimentId"], item["batchId"], item["candidateId"])].append(item)
+        existing = {
+            self.source_key(row["manifest"]): row["id"]
+            for row in self.store.list_configurations("frozen-predictor", include_inactive=True)
+            if row["manifest"].get("method") == SEED_ENSEMBLE
+        }
+        items = []
+        for (experiment, batch, candidate), rows in grouped.items():
+            rows.sort(key=lambda row: (row["trainingSeed"], row["splitSeed"]))
+            members = sum(row["totalRuns"] for row in rows)
+            identity = existing.get((experiment, batch, candidate, None, None, SEED_ENSEMBLE))
+            reason = (
+                next((row["blocker"] for row in rows if row["blocker"]), None)
+                or (SINGLE_GROUP if len(rows) < 2 else None)
+                or (TOO_MANY_MEMBERS if members > MAX_SEED_ENSEMBLE_MEMBERS else None)
+                or ("This configuration already has a seed ensemble." if identity else None)
+            )
+            first = rows[0]
+            items.append(
+                {
+                    "experimentId": experiment,
+                    "experimentName": first["experimentName"],
+                    "batchId": batch,
+                    "batchName": first["batchName"],
+                    "candidateId": candidate,
+                    "candidateNumber": first["candidateNumber"],
+                    "trainingSeeds": sorted({row["trainingSeed"] for row in rows}),
+                    "splitSeeds": sorted({row["splitSeed"] for row in rows}),
+                    "seedGroups": len(rows),
+                    "members": members,
+                    "completedRuns": sum(row["completedRuns"] for row in rows),
+                    "eligible": reason is None,
+                    "reason": reason,
+                    "existingPredictorId": identity,
+                }
+            )
+        return {"items": items}
+
+    def _prepare_seed_ensemble(self, selection, *, allow_existing=False):
+        """Every seed group's verified fold checkpoints of one configuration, as one predictor.
+
+        Each group is verified exactly as its own fold ensemble would be. Members average
+        with equal weight under the recipe's ensemble rule; with equal fold counts, that
+        equals averaging the per-seed fold ensembles, and it is the deployable form of the
+        seed ensemble that cross-validated results report.
+        """
+        batch = self.store.get_configuration(selection.batchId)
+        if batch["manifest"].get("kind") != "mil-batch":
+            raise StorageError("Select a development batch.", "INVALID_BATCH", 422)
+        seeds = sorted(
+            (training_seed, split_seed)
+            for candidate, training_seed, split_seed in self._groups(batch["manifest"])
+            if candidate == selection.candidateId
+        )
+        if not seeds:
+            raise StorageError(
+                "Select a candidate and its frozen seeds.", "PREDICTOR_CANDIDATE_MISSING", 422
+            )
+        if len(seeds) < 2:
+            raise StorageError(SINGLE_GROUP, "SEED_ENSEMBLE_SINGLE_GROUP", 422)
+        if self._existing(selection, SEED_ENSEMBLE) and not allow_existing:
+            raise StorageError(
+                "This configuration already has a seed ensemble. Restore it to reuse its identity.",
+                "EXPERIMENT_ALREADY_FROZEN",
+                409,
+            )
+        groups = [
+            self._prepare(
+                PredictorSelection(
+                    experimentId=selection.experimentId,
+                    batchId=selection.batchId,
+                    candidateId=selection.candidateId,
+                    trainingSeed=training_seed,
+                    splitSeed=split_seed,
+                    name=selection.name,
+                ),
+                allow_existing=True,
+                derived=True,
+            )
+            for training_seed, split_seed in seeds
+        ]
+        first = groups[0]
+        if any(group.get(key) != first.get(key) for group in groups for key in SHARED_GROUP_KEYS):
+            raise StorageError(
+                "Seed groups of one configuration differ in their frozen training provenance.",
+                "PREDICTOR_PROVENANCE_CHANGED",
+                409,
+            )
+        checkpoints = [
+            {**checkpoint, "trainingSeed": group["trainingSeed"], "splitSeed": group["splitSeed"]}
+            for group in groups
+            for checkpoint in group["checkpoints"]
+        ]
+        if len(checkpoints) > MAX_SEED_ENSEMBLE_MEMBERS:
+            raise StorageError(TOO_MANY_MEMBERS, "SEED_ENSEMBLE_TOO_LARGE", 422)
+        return {
+            "kind": "frozen-predictor",
+            "schemaVersion": 2,
+            "method": SEED_ENSEMBLE,
+            "datasetId": first["datasetId"],
+            "name": selection.name,
+            "selection": {**selection.model_dump(), "method": SEED_ENSEMBLE},
+            "experimentId": selection.experimentId,
+            "experiment": first["experiment"],
+            "batchId": first["batchId"],
+            "batch": first["batch"],
+            "candidateId": selection.candidateId,
+            **({"candidateNumber": first["candidateNumber"]} if "candidateNumber" in first else {}),
+            "trainingSeeds": sorted({training_seed for training_seed, _ in seeds}),
+            "splitSeeds": sorted({split_seed for _, split_seed in seeds}),
+            "seedGroups": [
+                {
+                    "trainingSeed": group["trainingSeed"],
+                    "splitSeed": group["splitSeed"],
+                    "runIds": group["runIds"],
+                }
+                for group in groups
+            ],
+            "runIds": [checkpoint["runId"] for checkpoint in checkpoints],
+            "checkpoints": checkpoints,
+            "target": first["target"],
+            "recipe": first["recipe"],
+            "inputs": first["inputs"],
+            "trainingPlanHash": first["trainingPlanHash"],
+            **(
+                {"selectionEvidence": first["selectionEvidence"]}
+                if "selectionEvidence" in first
+                else {}
+            ),
+            "compute": first["compute"],
+            "runtime": first["runtime"],
+            "aggregation": first["aggregation"],
+            "patientAggregation": first["patientAggregation"],
+            "executionEnabled": True,
+        }
+
+    def preview_seed_ensemble(self, selection):
         try:
-            return self._prepare_evidence(selection, allow_existing=allow_existing)
+            manifest = self._prepare_seed_ensemble(selection)
+            return {
+                "canFreeze": True,
+                "previewHash": evidence_hash(manifest),
+                "manifest": manifest,
+                "findings": [],
+            }
+        except StorageError as error:
+            return {
+                "canFreeze": False,
+                "previewHash": None,
+                "manifest": None,
+                "findings": [finding(error.code, str(error))],
+            }
+
+    def freeze_seed_ensemble(self, request):
+        selection = SeedEnsembleSelection.model_validate(
+            request.model_dump(include=set(SeedEnsembleSelection.model_fields))
+        )
+        with lifecycle_guard(self.store.folder):
+            prior = self.store.configuration_publication(request.operationId)
+            if prior:
+                manifest = prior["manifest"]
+                expected = {**selection.model_dump(), "method": SEED_ENSEMBLE}
+                if (
+                    manifest.get("kind") != "frozen-predictor"
+                    or manifest.get("selection") != expected
+                    or manifest.get("previewHash") != request.previewHash
+                ):
+                    raise StorageError(
+                        "This operation belongs to another predictor.", "OPERATION_CONFLICT", 409
+                    )
+                return lifecycle_document(self.store, prior)
+            manifest = self._prepare_seed_ensemble(selection)
+            if evidence_hash(manifest) != request.previewHash:
+                raise StorageError(
+                    "Checkpoint or training evidence changed. Review again.", "PREVIEW_STALE", 409
+                )
+            published = self.store.publish_configuration(
+                manifest={**manifest, "previewHash": request.previewHash},
+                operation_id=request.operationId,
+            )
+            return lifecycle_document(self.store, published)
+
+    def _prepare(self, selection, *, allow_existing=False, derived=False):
+        try:
+            return self._prepare_evidence(selection, allow_existing=allow_existing, derived=derived)
         except StorageError:
             raise
         except (KeyError, TypeError, ValueError, StopIteration) as error:
@@ -379,7 +602,13 @@ class PredictorService:
                 409,
             ) from error
 
-    def _prepare_evidence(self, selection, *, allow_existing=False):
+    def _prepare_evidence(self, selection, *, allow_existing=False, derived=False):
+        """One seed group's verified fold evidence as a predictor manifest.
+
+        ``derived`` verifies the same evidence for a predictor composed from finished
+        groups (a seed ensemble). It trains nothing and changes no submitted artifact, so
+        the submitted per-seed method policy does not govern it.
+        """
         batch = self.store.get_configuration(selection.batchId)
         manifest = batch["manifest"]
         if manifest.get("kind") != "mil-batch":
@@ -389,14 +618,18 @@ class PredictorService:
         if not experiment.get("legacy"):
             submission = self.store.get_draft(selection.experimentId)["payload"].get("submission")
             policy = policy_for_batch(submission or {}, selection.batchId, spec=manifest["spec"])
-            if policy and (
-                selection.batchId not in submission["batchIds"]
-                or policy["method"] not in {selection.method, "both"}
-                or selection.method == "refit"
-                and policy["refitPercentile"] != selection.refitPercentile
+            if (
+                not derived
+                and policy
+                and (
+                    selection.batchId not in submission["batchIds"]
+                    or policy["method"] not in {selection.method, "both"}
+                    or selection.method == "refit"
+                    and policy["refitPercentile"] != selection.refitPercentile
+                )
             ):
                 raise StorageError(
-                    "Predictor creation must preserve this experiment's submitted method and refit epoch policy. Copy the experiment to change them.",
+                    "Predictor creation must preserve this experiment's frozen method and refit epoch policy. Copy the experiment to change them.",
                     "EXPERIMENT_PREDICTOR_POLICY_LOCKED",
                     409,
                 )
@@ -438,8 +671,11 @@ class PredictorService:
 
         for key in ("selectionMetric", "candidateSelection"):
             if plan.get(key) != manifest["spec"].get(key):
-                raise StorageError("Configuration selection differs from the frozen batch.",
-                                   "PREDICTOR_SELECTION_CHANGED", 409)
+                raise StorageError(
+                    "Configuration selection differs from the frozen batch.",
+                    "PREDICTOR_SELECTION_CHANGED",
+                    409,
+                )
         selection_evidence = validation_selection(plan, state)
         if selection_evidence and selection_evidence["ready"]:
             # Every competing configuration influences promotion. Verify all
@@ -448,18 +684,25 @@ class PredictorService:
             for selection_run in plan["runs"]:
                 evidence_folder = folder / "runs" / selection_run["id"]
                 receipt = read_evidence(evidence_folder / "result.json", evidence_folder)
-                if (receipt != selection_states[selection_run["id"]].get("result")
-                        or receipt.get("runId") != selection_run["id"]
-                        or receipt.get("state") != "succeeded"):
-                    raise StorageError("A configuration-selection receipt changed.",
-                                       "PREDICTOR_SELECTION_CHANGED", 409)
+                if (
+                    receipt != selection_states[selection_run["id"]].get("result")
+                    or receipt.get("runId") != selection_run["id"]
+                    or receipt.get("state") != "succeeded"
+                ):
+                    raise StorageError(
+                        "A configuration-selection receipt changed.",
+                        "PREDICTOR_SELECTION_CHANGED",
+                        409,
+                    )
         if plan.get("candidateSelection") == "best_validation" and (
-            not selection_evidence or not selection_evidence["ready"]
+            not selection_evidence
+            or not selection_evidence["ready"]
             or selection_evidence["selectedCandidateId"] != selection.candidateId
         ):
             raise StorageError(
                 "This batch promotes the configuration selected by its frozen validation metric after all configurations finish.",
-                "PREDICTOR_VALIDATION_SELECTION_REQUIRED", 409,
+                "PREDICTOR_VALIDATION_SELECTION_REQUIRED",
+                409,
             )
         memberships = defaultdict(list)
         for row in protocol["manifest"]["memberships"]:
@@ -468,7 +711,9 @@ class PredictorService:
         from histopilot.application.clinical_inputs import development_clinical_values
 
         expected_clinical = development_clinical_values(
-            self.store, self.filesystem, protocol["manifest"],
+            self.store,
+            self.filesystem,
+            protocol["manifest"],
             [item["recipe"] for item in manifest["configurations"]],
         )
         files = {
@@ -500,12 +745,13 @@ class PredictorService:
                 409,
             )
         if (
-            protocol["manifest"]["spec"]["split"].get("mode") != "kfold"
+            training_split_issue(protocol["manifest"]["spec"]["split"])
             or protocol["manifest"]["spec"]["split"].get("version") != 4
             or not catalog.is_supported(candidate["recipe"]["model"])
         ):
             raise StorageError(
-                f"Predictor promotion supports k-fold models from: {catalog.choices()}.",
+                "Predictors are built from models of a trainable development design, "
+                f"from: {catalog.choices()}.",
                 "PREDICTOR_MODEL_UNSUPPORTED",
                 422,
             )
@@ -571,25 +817,40 @@ class PredictorService:
                 or receipt.get("effectiveRecipe") != effective_recipe
                 or receipt.get("nnmilPlanning") != nnmil_planning
             ):
-                raise StorageError("Resolved MIL settings differ from the fitting evidence.",
-                                   "PREDICTOR_PROVENANCE_CHANGED", 409)
+                raise StorageError(
+                    "Resolved MIL settings differ from the fitting evidence.",
+                    "PREDICTOR_PROVENANCE_CHANGED",
+                    409,
+                )
             is_nnmil = candidate["recipe"].get("model", "abmil").lower() == "nnmil"
             if is_nnmil:
-                checkpoint_policy = "final_epoch" if stopping_decision else candidate["recipe"].get(
-                    "nnmilCheckpointSelection", "best_validation"
+                checkpoint_policy = (
+                    "final_epoch"
+                    if stopping_decision
+                    else candidate["recipe"].get("nnmilCheckpointSelection", "best_validation")
                 )
                 epoch, completed = receipt.get("selectedEpoch"), receipt.get("epochsCompleted")
-                expected_epoch = completed if checkpoint_policy != "best_validation" else receipt.get("bestEpoch")
+                expected_epoch = (
+                    completed
+                    if checkpoint_policy != "best_validation"
+                    else receipt.get("bestEpoch")
+                )
                 if (
                     receipt.get("checkpointSelection") != checkpoint_policy
-                    or type(epoch) is not int or type(completed) is not int
+                    or type(epoch) is not int
+                    or type(completed) is not int
                     or not 1 <= epoch <= completed <= resolved_recipe["maxEpochs"]
                     or epoch != expected_epoch
-                    or (checkpoint_policy != "best_validation" and receipt.get("bestCheckpointPath")
-                        != receipt.get("lastCheckpointPath"))
+                    or (
+                        checkpoint_policy != "best_validation"
+                        and receipt.get("bestCheckpointPath") != receipt.get("lastCheckpointPath")
+                    )
                 ):
-                    raise StorageError("nnMIL checkpoint selection differs from its frozen policy.",
-                                       "PREDICTOR_PROVENANCE_CHANGED", 409)
+                    raise StorageError(
+                        "nnMIL checkpoint selection differs from its frozen policy.",
+                        "PREDICTOR_PROVENANCE_CHANGED",
+                        409,
+                    )
             if (
                 receipt.get("state") != "succeeded"
                 or receipt.get("runId") != run["id"]
@@ -611,7 +872,8 @@ class PredictorService:
                 or (
                     stopping_decision
                     and (
-                        receipt.get("selectedEpoch" if is_nnmil else "bestEpoch") != stopping_decision["epochs"]
+                        receipt.get("selectedEpoch" if is_nnmil else "bestEpoch")
+                        != stopping_decision["epochs"]
                         or receipt.get("epochsCompleted") != stopping_decision["epochs"]
                         or receipt.get("bestCheckpointPath") != receipt.get("lastCheckpointPath")
                     )
@@ -636,8 +898,11 @@ class PredictorService:
                     unit=run_plan.get("splitUnit", "patient"),
                 )
                 if receipt.get("clinicalPreprocessing") != clinical_preprocessing:
-                    raise StorageError("Clinical preprocessing differs from its training patients.",
-                                       "PREDICTOR_CLINICAL_PROVENANCE_CHANGED", 409)
+                    raise StorageError(
+                        "Clinical preprocessing differs from its training patients.",
+                        "PREDICTOR_CLINICAL_PROVENANCE_CHANGED",
+                        409,
+                    )
             snapshot = checkpoint_snapshot(receipt["bestCheckpointPath"], run_folder)
             checkpoints.append(
                 {
@@ -648,12 +913,25 @@ class PredictorService:
                     "runPlanHash": content_hash(run_plan),
                     "bestValidationScore": receipt["bestValidationScore"],
                     "epochsCompleted": receipt.get("epochsCompleted"),
-                    **({"clinicalPreprocessing": clinical_preprocessing} if clinical_preprocessing else {}),
-                    **({"effectiveRecipe": effective_recipe, "nnmilPlanning": nnmil_planning}
-                       if nnmil_planning else {}),
-                    **({"selectedEpoch": receipt["selectedEpoch"],
-                        "checkpointSelection": receipt["checkpointSelection"],
-                        "bestEpoch": receipt.get("bestEpoch")} if is_nnmil else {}),
+                    **(
+                        {"clinicalPreprocessing": clinical_preprocessing}
+                        if clinical_preprocessing
+                        else {}
+                    ),
+                    **(
+                        {"effectiveRecipe": effective_recipe, "nnmilPlanning": nnmil_planning}
+                        if nnmil_planning
+                        else {}
+                    ),
+                    **(
+                        {
+                            "selectedEpoch": receipt["selectedEpoch"],
+                            "checkpointSelection": receipt["checkpointSelection"],
+                            "bestEpoch": receipt.get("bestEpoch"),
+                        }
+                        if is_nnmil
+                        else {}
+                    ),
                 }
             )
         contract = feature_contract(feature, bundle)

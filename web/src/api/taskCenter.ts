@@ -111,7 +111,7 @@ export interface TaskOwner extends TaskOwnerRef {
   etaSeconds: number | null; link: string | null;
   /** The server's reason the first task in line waits (or that the owner is held). */
   waitingReason?: string | null;
-  /** `inference` when the owner's evaluations only predict. */
+  /** `inference` when the owner's runs are on an unlabeled cohort. */
   purpose?: string | null;
   labels?: Record<string, unknown>;
   actions: { hold: boolean; release: boolean; stop: boolean; cancel: boolean; retry: boolean; moveUp: boolean; moveDown: boolean };
@@ -329,16 +329,16 @@ const exitLabels: Record<string, string> = {
 export const exitReasonLabel = (reason?: string | null) => reason ? exitLabels[reason] ?? reason : null;
 
 const ownerKinds: Record<string, string> = {
-  experiment: 'Experiment', 'mil-batch': 'Training batch', 'evaluation-batch': 'Evaluation batch',
-  'predictor-refit': 'Refit', refit: 'Refit', 'model-evaluation': 'Evaluation', evaluation: 'Evaluation',
+  experiment: 'Experiment', 'mil-batch': 'Training batch', 'evaluation-batch': 'Batch · labeled cohort',
+  'predictor-refit': 'Refit', refit: 'Refit', 'model-evaluation': 'Run · labeled cohort', evaluation: 'Run · labeled cohort',
   interpretation: 'Interpretation', 'attention-interpretation': 'Interpretation', 'model-interpretation': 'Interpretation',
   extraction: 'Feature extraction', 'feature-pack': 'Feature packing', archive: 'Study archive',
 };
 const capitalized = (kind: string) => kind.replaceAll('-', ' ').replace(/^./, (letter) => letter.toUpperCase());
-/** An owner's kind; an evaluation whose tasks only predict reads as inference. */
+/** An owner's kind; a run or batch says whether its cohort is labeled, as in Apply models. */
 export const ownerKindLabel = (kind: string, purpose?: string | null) => {
-  if (purpose === 'inference' && kind === 'evaluation-batch') return 'Inference batch';
-  if (purpose === 'inference' && (kind === 'model-evaluation' || kind === 'evaluation')) return 'Inference';
+  if (purpose === 'inference' && kind === 'evaluation-batch') return 'Batch · unlabeled cohort';
+  if (purpose === 'inference' && (kind === 'model-evaluation' || kind === 'evaluation')) return 'Run · unlabeled cohort';
   return ownerKinds[kind] ?? capitalized(kind);
 };
 const taskKinds: Record<string, string> = {
@@ -347,13 +347,12 @@ const taskKinds: Record<string, string> = {
   extraction: 'Feature extraction', 'extraction-validation': 'Extraction check', packing: 'Feature packing', archive: 'Study archive',
 };
 const computeKinds: Record<string, string> = {
-  refit: 'Refit training', 'predictor-refit': 'Refit training', evaluation: 'Evaluation', 'model-evaluation': 'Evaluation',
+  refit: 'Refit training', 'predictor-refit': 'Refit training', evaluation: 'Predictions', 'model-evaluation': 'Predictions',
   interpretation: 'Attention maps', 'model-interpretation': 'Attention maps', 'attention-interpretation': 'Attention maps',
 };
-/** A task's kind; compute jobs say which job (refit, evaluation, inference, attention). */
+/** A task's kind; compute jobs say which job (refit, a run's predictions, attention). */
 export const taskKindLabel = (kind: string, labels?: Record<string, unknown> | null) => {
   if (kind === 'compute-job' && labels) {
-    if (labels.purpose === 'inference') return 'Inference';
     const compute = typeof labels.computeKind === 'string' ? computeKinds[labels.computeKind] : undefined;
     if (compute) return compute;
   }
@@ -415,7 +414,7 @@ export interface TaskCenterRoute { owner?: string; task?: string; project?: stri
 const routeKeys = ['owner', 'task', 'project', 'kind', 'state'] as const;
 /** `#task-center?owner=…&task=…&project=…&kind=…&state=…`, empty values dropped. */
 /** Everything the Task Center runs, for the places that describe it. Sentence case, no final stop. */
-export const TASK_CENTER_WORK = 'training folds and results, refits and predictors, evaluations and inference, attention maps, feature extraction and validation, feature packing, and study archives';
+export const TASK_CENTER_WORK = 'training folds and results, refits and predictors, predictor runs on cohorts, attention maps, feature extraction and validation, feature packing, and study archives';
 export const taskCenterWork = (capitalized = false) => capitalized ? TASK_CENTER_WORK[0].toUpperCase() + TASK_CENTER_WORK.slice(1) : TASK_CENTER_WORK;
 export function taskCenterHref(route: TaskCenterRoute = {}) {
   const query = new URLSearchParams();

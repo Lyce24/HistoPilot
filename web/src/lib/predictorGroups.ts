@@ -1,4 +1,4 @@
-import type { FrozenPredictor, PredictorManifest } from '../api/predictors';
+import { predictorSeedLabel, type FrozenPredictor, type PredictorManifest } from '../api/predictors';
 import { shortRecordId } from './recordLabels';
 
 export function predictorConfigurationLabel(source: Pick<PredictorManifest, 'candidateId'> & { candidateNumber?: number }) {
@@ -13,7 +13,7 @@ export function predictorMatches(item: FrozenPredictor, experimentId: string, me
   const source = item.manifest;
   return (!experimentId || source.experimentId === experimentId)
     && (method === 'all' || (source.method ?? 'ensemble') === method)
-    && [source.name, predictorExperimentName(item), source.experimentId, source.batchId, source.candidateId, predictorConfigurationLabel(source), source.trainingSeed, source.splitSeed].join(' ').toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
+    && [source.name, predictorExperimentName(item), source.experimentId, source.batchId, source.candidateId, predictorConfigurationLabel(source), predictorSeedLabel(source)].join(' ').toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
 }
 
 /** Group by stable experiment identity; keep every configuration, seed pair and method distinct. */
@@ -27,7 +27,8 @@ export function groupPredictors(items: FrozenPredictor[]) {
   return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).map((group) => ({
     ...group, items: group.items.sort((a, b) => a.manifest.batchId.localeCompare(b.manifest.batchId)
       || a.manifest.candidateId.localeCompare(b.manifest.candidateId, undefined, { numeric: true })
-      || a.manifest.trainingSeed - b.manifest.trainingSeed || a.manifest.splitSeed - b.manifest.splitSeed
+      // A seed ensemble (no single seed) leads its configuration's per-seed predictors.
+      || (a.manifest.trainingSeed ?? -1) - (b.manifest.trainingSeed ?? -1) || (a.manifest.splitSeed ?? -1) - (b.manifest.splitSeed ?? -1)
       || (a.manifest.method ?? 'ensemble').localeCompare(b.manifest.method ?? 'ensemble') || a.id.localeCompare(b.id)),
   }));
 }

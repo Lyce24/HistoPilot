@@ -31,7 +31,7 @@ import ${source('clinical-workspace.css')};
 const copy = value => structuredClone(value);
 const state = window.workflow = { calls: [], errors: [], loseNext: false, slowNext: null, capacity: fixtureCapacity(), owners: [
   fixtureOwner({ waitingReason: 'Waiting for a GPU slot (4/4)' }),
-  fixtureOwner({ key: 'owner-2', id: 'refit-1', kind: 'predictor-refit', title: 'KRAS refit · seed 42', position: 2, counts: { queued: 1 }, etaSeconds: 900, link: '?project=project#post-development?tab=refits&refit=refit-1', actions: { hold: true, release: false, stop: false, cancel: true, retry: false, moveUp: true, moveDown: false } }),
+  fixtureOwner({ key: 'owner-2', id: 'refit-1', kind: 'predictor-refit', title: 'Demo refit · seed 42', position: 2, counts: { queued: 1 }, etaSeconds: 900, link: '?project=project#post-development?tab=refits&refit=refit-1', actions: { hold: true, release: false, stop: false, cancel: true, retry: false, moveUp: true, moveDown: false } }),
   fixtureOwner({ key: 'owner-3', id: 'other', title: 'Inference cohort (other workspace)', projectId: 'elsewhere', sameWorkspace: false, position: 3, counts: { queued: 6 }, link: null }),
 ], applied: new Set() };
 window.fetch = async (...args) => { const message = 'Unexpected request: ' + args[0]; state.errors.push(message); throw new Error(message); };
@@ -40,10 +40,10 @@ const inputs = { protocolId: 'protocol', featureBundleId: 'bundle', loadingPolic
 const running = [
   fixtureTask({ progress: { epoch: 23, maxEpochs: 100, trainingLoss: 0.41, cudaPeakReservedBytes: 1.4 * 1024 ** 3 } }),
   fixtureTask({ id: 'task-2', title: 'Baseline · Config 1 · Fold 2 · Train seed 42 · Split seed 7', gpu: 0, progress: { epoch: 61, maxEpochs: 100 }, startedAt: new Date(Date.now() - 45 * 60000).toISOString() }),
-  fixtureTask({ id: 'task-3', title: 'Evaluation · TCGA external cohort', kind: 'compute-job', labels: { computeKind: 'evaluation', recordId: 'e1' }, lane: 'cpu', gpu: null, progress: { completedModels: 3, totalModels: 5 }, owner: { ...fixtureTask().owner, key: 'owner-9', title: 'External validation', projectId: 'second-project', projectName: 'Colon' }, link: '?project=second-project#evaluation?evaluation=e1', startedAt: new Date(Date.now() - 5 * 60000).toISOString() }),
+  fixtureTask({ id: 'task-3', title: 'Evaluation · Site C external cohort', kind: 'compute-job', labels: { computeKind: 'evaluation', recordId: 'e1' }, lane: 'cpu', gpu: null, progress: { completedModels: 3, totalModels: 5 }, owner: { ...fixtureTask().owner, key: 'owner-9', title: 'External validation', projectId: 'second-project', projectName: 'Study B' }, link: '?project=second-project#evaluation?evaluation=e1', startedAt: new Date(Date.now() - 5 * 60000).toISOString() }),
 ].map((task, index) => ({ ...task, startedAt: task.startedAt ?? new Date(Date.now() - (index + 1) * 20 * 60000).toISOString() }));
 const pending = [fixtureTask({ id: 'task-q', state: 'queued', startedAt: null, progress: null, resources: null, waitingReason: 'Waiting for a GPU slot (4/4)' })];
-const failed = fixtureTask({ id: 'done-1', title: 'Predictors · KRAS study', kind: 'predictor-coordinator', state: 'failed', startedAt: '2026-09-27T08:00:00Z', finishedAt: '2026-09-27T08:12:00Z', progress: null, exit: { reason: 'error', returncode: 0, error: 'Traceback (most recent call last):\\nBlockingIOError: [Errno 11] Resource temporarily unavailable' }, failure: { title: 'The project was busy', cause: 'Another HistoPilot operation was changing this project when the task started, so it stopped without changing anything.', advice: 'Retry once the other operation has finished.', detail: 'BlockingIOError: [Errno 11] Resource temporarily unavailable', retry: 'safe' }, actions: { cancel: false, retry: true } });
+const failed = fixtureTask({ id: 'done-1', title: 'Predictors · Demo study', kind: 'predictor-coordinator', state: 'failed', startedAt: '2026-09-27T08:00:00Z', finishedAt: '2026-09-27T08:12:00Z', progress: null, exit: { reason: 'error', returncode: 0, error: 'Traceback (most recent call last):\\nBlockingIOError: [Errno 11] Resource temporarily unavailable' }, failure: { title: 'The project was busy', cause: 'Another HistoPilot operation was changing this project when the task started, so it stopped without changing anything.', advice: 'Retry once the other operation has finished.', detail: 'BlockingIOError: [Errno 11] Resource temporarily unavailable', retry: 'safe' }, actions: { cancel: false, retry: true } });
 const all = [...running, ...pending, failed];
 function track(method, ...args) { state.calls.push({ method, args: copy(args) }); }
 const summary = () => fixtureSummary({ running: 4, queued: 41, succeeded: 20 }, { paused: state.capacity.settings.paused, recentFailures: 1 });
@@ -79,7 +79,7 @@ taskCenter.updateCapacity = async (patch) => {
 experiments.summaries = async () => ({ items: [{ id: 'ready-exp', key: 'draft:ready-exp', name: 'Frozen nnMIL comparison', notes: '', tags: [], revision: 3, state: 'active', status: 'ready', legacy: false, createdAt: '', updatedAt: '', inputs, batches: [], drafts: [], predictorId: null, stage: 'planning', frozenSetupId: 'setup', batchPlans: [{ id: 'plan', spec: batchTemplate('learning-rate', inputs, 'Frozen nnMIL comparison') }] }] });
 trident.jobs = async () => ({ jobs: [] });
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 1000 } } });
-createRoot(document.getElementById('app')).render(<QueryClientProvider client={client}><main className="content module-content"><TaskCenter workspace={{ mode: 'local', project: { id: 'project', name: 'KRAS', lifecycleState: 'active' } }} /></main><JobTray projectId="project" /></QueryClientProvider>);
+createRoot(document.getElementById('app')).render(<QueryClientProvider client={client}><main className="content module-content"><TaskCenter workspace={{ mode: 'local', project: { id: 'project', name: 'Demo', lifecycleState: 'active' } }} /></main><JobTray projectId="project" /></QueryClientProvider>);
 `);
 await build({ configFile: false, root: web, logLevel: 'error', plugins: [react()],
   define: { 'process.env.NODE_ENV': JSON.stringify('production') },
@@ -167,7 +167,7 @@ try {
   await check('One snapshot read feeds the page', "window.workflow.calls.some(c => c.method === 'snapshot') && !window.workflow.calls.some(c => c.method === 'summary' || c.method === 'owners')");
   await check('Capacity meters', 'document.body.innerText.includes("4 of 5 in use") && document.body.innerText.includes("16 of 34 committed")');
   await check('Owner waiting reason from the server', 'document.querySelector(".tc-queue")?.innerText.includes("Waiting for a GPU slot (4/4)")');
-  await check('Evaluation reads as its kind and project', 'document.querySelector(".tc-running")?.innerText.includes("Evaluation") && document.querySelector(".tc-running").innerText.includes("Project Colon")');
+  await check('Evaluation reads as its kind and project', 'document.querySelector(".tc-running")?.innerText.includes("Evaluation") && document.querySelector(".tc-running").innerText.includes("Project Study B")');
   await check('Measured GPU memory', 'document.querySelector(".tc-running")?.innerText.includes("1.4 GiB GPU memory (peak)")');
   await check('History grouped by owner with the failure cause', 'document.querySelector(".tc-history")?.innerText.includes("60 completed · 1 failed") && document.querySelector(".tc-history").innerText.includes("The project was busy")');
   await screenshot('01-task-center');
@@ -215,24 +215,24 @@ try {
   await check('A failure is explained above its traceback', `(() => { const text = document.querySelector(".tc-drawer")?.innerText ?? ''; return text.includes("The project was busy") && text.includes("Safe to retry") && document.querySelector(".tc-failure") && !document.querySelector(".tc-failure details[open]"); })()`);
   await screenshot('03-failure');
   await cdp('Page.navigate', { url: page + '#task-center?owner=owner-2&project=project' });
-  await check('An owner deep link opens that owner with its tasks', 'document.querySelector(".tc-owner-focus")?.innerText.includes("KRAS refit · seed 42") && document.querySelector(".tc-filter-bar")?.innerText.includes("This project")');
-  await check('Owner filter narrows running work', '!document.querySelector(".tc-running") || !document.querySelector(".tc-running").innerText.includes("TCGA external cohort")');
+  await check('An owner deep link opens that owner with its tasks', 'document.querySelector(".tc-owner-focus")?.innerText.includes("Demo refit · seed 42") && document.querySelector(".tc-filter-bar")?.innerText.includes("This project")');
+  await check('Owner filter narrows running work', '!document.querySelector(".tc-running") || !document.querySelector(".tc-running").innerText.includes("Site C external cohort")');
   await screenshot('04-owner');
   await cdp('Page.navigate', { url: page + '#task-center' });
   await check('Queue is back', 'document.querySelector(".tc-queue")');
   await click(`[...document.querySelectorAll('.tc-queue button')].find(el => el.textContent === 'Show tasks')`, 'Show tasks');
   await check('Owner tasks expand', 'document.querySelector(".tc-owner-tasks")?.innerText.includes("Waiting for a GPU slot (4/4)")');
   await evaluate('window.slowOwnerAction()');
-  await click(`document.querySelector('[aria-label="Hold KRAS study"]')`, 'Hold (held open)');
-  await check('Only that owner waits while its request is in flight', `(() => { const other = document.querySelector('[aria-label="Hold KRAS refit · seed 42"]'); const mine = document.querySelector('[aria-label="Hold KRAS study"]'); return other && !other.disabled && mine && mine.disabled; })()`);
+  await click(`document.querySelector('[aria-label="Hold Demo study"]')`, 'Hold (held open)');
+  await check('Only that owner waits while its request is in flight', `(() => { const other = document.querySelector('[aria-label="Hold Demo refit · seed 42"]'); const mine = document.querySelector('[aria-label="Hold Demo study"]'); return other && !other.disabled && mine && mine.disabled; })()`);
   await evaluate('window.releaseOwnerAction()');
-  await check('Held owner offers release', `${ownerCalls('hold')}.length === 1 && document.querySelector('[aria-label="Release KRAS study"]')`);
+  await check('Held owner offers release', `${ownerCalls('hold')}.length === 1 && document.querySelector('[aria-label="Release Demo study"]')`);
   await evaluate('window.workflow.loseNext = true');
-  await click(`document.querySelector('[aria-label="Release KRAS study"]')`, 'Release');
+  await click(`document.querySelector('[aria-label="Release Demo study"]')`, 'Release');
   await check('Lost acknowledgement explained', 'document.body.innerText.includes("Repeating it is safe")');
-  await click(`document.querySelector('[aria-label="Release KRAS study"]')`, 'Release again');
+  await click(`document.querySelector('[aria-label="Release Demo study"]')`, 'Release again');
   await check('Retry reuses the operation ID', `(() => { const calls = ${ownerCalls('release')}; return calls.length === 2 && calls[0].args[2] === calls[1].args[2]; })()`);
-  await click(`document.querySelector('[aria-label="Cancel KRAS refit · seed 42"]')`, 'Cancel owner');
+  await click(`document.querySelector('[aria-label="Cancel Demo refit · seed 42"]')`, 'Cancel owner');
   await check('Cancel asks inside the page', 'document.querySelector(".confirm-action")?.innerText.includes("Cancel every unfinished task")');
   await click(button('Cancel tasks'), 'Confirm cancel');
   await check('Confirmed cancel is sent once', `${ownerCalls('cancel')}.length === 1`);

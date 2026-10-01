@@ -8,10 +8,15 @@ from secrets import token_urlsafe
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from histopilot import __version__
 from histopilot.adapters.trident import discover_runtime
+from histopilot.application import creations
 from histopilot.application.project_workspace import ProjectWorkspace, WorkspaceError
 from histopilot.application.system_compute import ComputeSampler
 from histopilot.config import Settings, load_settings
@@ -29,8 +34,12 @@ from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 
+from . import login
+from .access import access_router, token_project
 from .lifecycle import lifecycle_router
+from .responses import coded_response
 from .scientific import scientific_router
+from .scopes import ScopeGate, audit_session
 from .security import configure_browser_boundary
 
 
@@ -70,17 +79,82 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.projects = projects
-    configure_browser_boundary(app, settings, token)
+    from starlette.concurrency import run_in_threadpool
+
+    from histopilot.application.access_tokens import AccessTokens
+
+    tokens = AccessTokens(database)
+
+    async def audited(request: Request, response) -> None:
+        # Commit and admin requests made with the session token join the agents' audit log.
+        await run_in_threadpool(
+            audit_session,
+            projects,
+            request.method,
+            request.url.path,
+            response.status_code,
+            request.headers.get("x-histopilot-client"),
+            getattr(request.state, "audit_project", None),
+        )
+
+    def work_project(what: str, key: str) -> str | None:
+        # The Task Center is built below; a scoped token's request arrives after both.
+        center = app.state.task_center
+        try:
+            found = center.task(key).get("owner") if what == "task" else center.owner(key)
+        except StorageError:
+            return None
+        return (found or {}).get("projectId")
+
+    configure_browser_boundary(
+        app,
+        settings,
+        token,
+        scoped=ScopeGate(projects, tokens, database, work_project=work_project),
+        after_session=audited,
+        login_secret=login.ensure_secret(settings.port) if settings.login else None,
+    )
 
     @app.exception_handler(WorkspaceError)
     @app.exception_handler(FilesystemError)
-    async def invalid_request(_request: Request, error: WorkspaceError | FilesystemError):
-        return JSONResponse({"detail": str(error)}, status_code=error.status_code)
-
     @app.exception_handler(StorageError)
-    async def invalid_storage(_request: Request, error: StorageError):
+    async def coded_error(
+        _request: Request, error: WorkspaceError | FilesystemError | StorageError
+    ):
+        return coded_response(error)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_schema(_request: Request, error: RequestValidationError):
+        # detail stays FastAPI's list of rejected fields, which the browser formats.
         return JSONResponse(
-            {"detail": str(error), "code": error.code}, status_code=error.status_code
+            {"detail": jsonable_encoder(error.errors()), "code": "REQUEST_INVALID"},
+            status_code=422,
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def unknown_route(request: Request, error: StarletteHTTPException):
+        # Static assets keep FastAPI's plain body; only API routes carry codes.
+        if request.url.path.startswith("/api/") and error.status_code == 404:
+            return JSONResponse(
+                {"detail": error.detail, "code": "API_ENDPOINT_UNKNOWN"}, status_code=404
+            )
+        if request.url.path.startswith("/api/") and error.status_code == 405:
+            return JSONResponse(
+                {"detail": error.detail, "code": "API_METHOD_NOT_ALLOWED"},
+                status_code=405,
+                headers=error.headers,
+            )
+        return await http_exception_handler(request, error)
+
+    @app.exception_handler(Exception)
+    async def unexpected_error(_request: Request, _error: Exception):
+        # Starlette raises the error again after sending this, so the server logs it.
+        return JSONResponse(
+            {
+                "detail": "HistoPilot hit an unexpected error. The server log has the details.",
+                "code": "INTERNAL_ERROR",
+            },
+            status_code=500,
         )
 
     @app.get("/api/v1/health")
@@ -88,6 +162,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Legacy generic/demo job submission remains disabled. Project execution
         # capabilities and runtime readiness are reported by authenticated routes.
         return {"status": "ok", "version": __version__, "executionEnabled": False}
+
+    from histopilot.version_info import FEATURES, git_revision
+
+    # Read at startup: a checkout moved on afterwards must not change what this process reports.
+    revision = git_revision()
+
+    @app.get("/api/v1/version")
+    def version():
+        """Which code serves this API, so clients can notice a mismatched checkout."""
+        from histopilot import templates
+
+        return {
+            "version": __version__,
+            "apiVersion": 1,
+            "contractVersion": 1,
+            "gitRevision": revision,
+            "workspaceSchemaVersion": SCHEMA_VERSION,
+            "templatesVersion": templates.VERSION,
+            "features": list(FEATURES),
+        }
+
+    @app.get("/api/v1/templates")
+    def service_templates():
+        """The server-owned starting specs and presets, as the browser reads them."""
+        from histopilot import templates
+
+        return templates.describe()
 
     @app.get("/api/v1/session")
     def session():
@@ -97,8 +198,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.get("/api/v1/projects")
-    def list_projects():
-        return projects.list_projects()
+    def list_projects(request: Request):
+        listed = projects.list_projects()
+        own = token_project(request)
+        if own is not None:
+            # A scoped token sees its own project and nothing about the workspace.
+            return {"projects": [item for item in listed["projects"] if item["id"] == own]}
+        return listed
 
     @app.post("/api/v1/projects", status_code=201)
     def create_project(payload: ProjectRequest):
@@ -131,9 +237,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/projects/{identity}/drafts", status_code=201)
     def create_project_draft(identity: str, payload: CreateDraftRequest):
         store = projects.scientific_store(identity)
-        with lifecycle_guard(store.folder):
+        values = payload.model_dump(mode="json", exclude={"operationId"})
+
+        def create():
             guard_experiment_draft(store, payload.payload)
             return store.create_draft(kind=payload.kind, name=payload.name, payload=payload.payload)
+
+        with lifecycle_guard(store.folder):
+            return creations.once(
+                database,
+                f"draft:{identity}",
+                payload.operationId,
+                values,
+                create,
+                lambda draft: store.get_draft(draft, include_inactive=True),
+            )
 
     @app.get("/api/v1/projects/{identity}/drafts/{draft_id}")
     def project_draft(identity: str, draft_id: str):
@@ -272,7 +390,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from histopilot.api.model_experiments import model_experiments_router
     from histopilot.api.morphology import morphology_router
     from histopilot.api.operations import operations_router
+    from histopilot.api.performance import performance_router
     from histopilot.api.predictors import evaluation_run_router, predictor_router
+    from histopilot.api.references import references_router
     from histopilot.api.slide_reviews import slide_review_router
     from histopilot.api.task_center import task_center_router
     from histopilot.taskcenter.service import TaskCenterService
@@ -292,7 +412,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(morphology_router(projects, filesystem))
     app.include_router(case_review_router(projects, filesystem))
     app.include_router(inference_router(projects, filesystem))
+    app.include_router(performance_router(projects, filesystem))
+    app.include_router(references_router(projects, filesystem))
     app.include_router(operations_router(projects, filesystem))
+    app.include_router(access_router(projects, tokens, database))
 
     @app.get("/{path:path}")
     def frontend(path: str):

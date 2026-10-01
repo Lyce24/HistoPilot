@@ -1,8 +1,9 @@
+import { fromTemplate, recipePreset, templates } from '../lib/templates';
 import { downloadArtifact, request } from './client';
 import type { MILExperimentSpec, MILExperimentPreview } from './mil';
 import type { Finding, VersionLabel } from './scientific';
 import type { ExperimentPredictorPolicy } from './experiments';
-import { defaultPatientAnalysis, type PatientAnalysisSettings, type PatientAnalysis, type ConfidenceInterval } from './statistics';
+import { type PatientAnalysisSettings, type PatientAnalysis, type ConfidenceInterval } from './statistics';
 
 export interface TrainingRecipe {
   inputMode?: 'image' | 'clinical' | 'multimodal';
@@ -83,7 +84,8 @@ export interface NnMILPlanningRow {
 export interface BatchManifest {
   kind: 'mil-batch'; version: 1; datasetId: string; spec: DevelopmentBatchSpec;
   configurations: { id: string; number: number; recipe: TrainingRecipe }[];
-  splitPlans: { id: string; planId: string; seed?: number; fold?: number; phase?: string; slideCount: number; partitions: Record<string, number> }[];
+  /** `domain`: the site a leave-one-site-out plan holds out; a held-out design's plan has no fold. */
+  splitPlans: { id: string; planId: string; seed?: number; fold?: number | null; domain?: string; phase?: string; slideCount: number; partitions: Record<string, number> }[];
   runs: PlannedRun[];
   summary: { configurationCount: number; trainingSeedCount: number; splitPlanCount: number; runCount: number };
   executionImplemented: boolean; previewHash: string; resolvedInputs: MILExperimentPreview;
@@ -196,43 +198,21 @@ export const development = {
     `/projects/${encodeURIComponent(project)}/mil-experiments/clinical-fields?protocolId=${encodeURIComponent(protocolId)}`),
 };
 
-export const defaultRecipe = (): TrainingRecipe => ({ model: 'abmil', learningRate: 0.0003, weightDecay: 0.0001, maxEpochs: 40, optimizer: 'adamw', batchSize: 1, bagSize: 4096, earlyStopping: true, patience: 8, checkpointMetric: 'validation_auroc', analysis: defaultPatientAnalysis(), decisionThreshold: 0.5, embedDim: 512, attentionDim: 384, numFcLayers: 1, gatedAttention: true, dropout: 0.25, inputDropout: 0, gradientCheckpointing: false, precision: '32-true', gradientClipNorm: 0, accumulateGradBatches: 1, lrScheduler: 'none', warmupEpochs: 0, finalLrFraction: 0.01, earlyStoppingMinDelta: 0, minEpochs: 1 });
-export const experimentalRecipeDefaults = {
-  lossType: 'ce', classWeighting: 'none', classWeights: null, focalGamma: 2, labelSmoothing: 0,
-  patientAggregation: 'mean_probabilities', ensembleAggregation: 'mean_probability', adamBetas: [0.9, 0.999] as [number, number], adamEps: 1e-8,
-  aggregatorLearningRate: null, headLearningRate: null, lrStepSize: 10, lrGamma: 0.5, lrPlateauPatience: 5,
-  samplingStrategy: 'slide_uniform', classWeightedSampling: false, samplingPositivePrevalence: 0.4,
-  cohortColumn: 'cohort', instanceDropout: 0, featureNoiseStd: 0, bagCurriculum: false,
-  bagCurriculumStart: 512, bagCurriculumEnd: 8000, bagCurriculumWarmupEpochs: 5,
-  evalBagSize: null, evalBatchSize: null, minValidationPositives: null, fixedEpochBudget: null,
-  bagSizeMode: 'fixed', bagSizeFraction: 0.5,
-  nnmilFeatureSampling: true, nnmilWindowStrideDivisor: 4, nnmilWindowShuffle: true, nnmilWindowSeed: 42, nnmilWindowSeedFromTraining: false,
-  nnmilWindowAggregation: 'mean_logits', nnmilBatchSampler: 'patient_weighted', nnmilCheckpointSelection: 'best_validation',
-  weightDecayPolicy: 'all', lrScheduleInterval: 'epoch',
-} satisfies Partial<TrainingRecipe>;
+// Starting recipes are server-owned: see lib/templates.ts.
+export const defaultRecipe = (): TrainingRecipe => fromTemplate(templates.recipes.default);
+export const experimentalRecipeDefaults = templates.recipes.experimentalDefaults as Partial<TrainingRecipe>;
 // Older saved recipes can omit values that were defaults when they were created.
 export const withRecipeDefaults = (recipe: TrainingRecipe): TrainingRecipe => ({ ...experimentalRecipeDefaults, ...defaultRecipe(), ...recipe,
   analysis: recipe.analysis ?? null, decisionThreshold: recipe.decisionThreshold ?? null, checkpointMetric: recipe.checkpointMetric ?? 'validation_loss',
   learningRate: recipe.learningRate === undefined ? 0.0003 : recipe.learningRate,
   weightDecay: recipe.weightDecay === undefined ? 0.0001 : recipe.weightDecay,
   maxEpochs: recipe.maxEpochs === undefined ? 100 : recipe.maxEpochs, patience: recipe.patience === undefined ? 15 : recipe.patience });
-export const oceanPathRecipe = (preset: 'standard' | 'kras'): TrainingRecipe => ({
-  ...defaultRecipe(), ...(preset === 'kras' ? { weightDecay: 0.01 } : {}), maxEpochs: preset === 'standard' ? 20 : 40, minEpochs: preset === 'standard' ? 10 : 0,
-  patience: preset === 'standard' ? 5 : 8, lrScheduler: 'cosine', finalLrFraction: preset === 'standard' ? 0.01 : 0.001,
-  gradientClipNorm: 1, checkpointMetric: 'validation_auroc', patientAggregation: 'mean_probabilities', ensembleAggregation: 'mean_probability',
-  bagSize: preset === 'standard' ? null : 4096,
-  ...(preset === 'kras' ? { lossType: 'bce', classWeighting: 'none' } : {}),
-});
+export const oceanPathRecipe = (preset: 'standard' | 'kras'): TrainingRecipe => recipePreset(preset === 'standard' ? 'oceanpath' : 'oceanpath-kras');
 /** Editable nnMIL method template with HistoPilot's patient protocol and optimizer defaults.
  * New recipes give each training seed its own feature-window order, so the seed spread
  * includes that variation; saved recipes keep their own setting. */
-export const nnmilRecipe = (): TrainingRecipe => ({
-  ...defaultRecipe(), ...experimentalRecipeDefaults, model: 'nnmil', attentionDim: 256, nnmilWindowSeedFromTraining: true,
-  dropout: 0.25, batchSize: 32, bagSize: null, bagSizeMode: 'training_median', bagSizeFraction: 0.5,
-  optimizer: 'adamw', lrScheduler: 'cosine', warmupEpochs: 5, maxEpochs: 100, patience: 10, minEpochs: 1,
-  evalBagSize: null, evalBatchSize: 1, checkpointMetric: 'validation_auroc',
-});
-export const defaultResources = (): ResourcePolicy => ({ maxConcurrentRuns: 1, gpuIds: [0], runsPerGpu: 1, cpuThreadsPerRun: 2, dataLoaderWorkers: 2, ramGbPerRun: 8 });
+export const nnmilRecipe = (): TrainingRecipe => recipePreset('nnmil');
+export const defaultResources = (): ResourcePolicy => fromTemplate(templates.resources.training);
 export const managedByTaskCenter = (execution?: Pick<TrainingExecution, 'executor' | 'taskCenter'> | null) => execution?.executor === 'task-center' || Boolean(execution?.taskCenter);
 export const trainingActive = (execution?: TrainingExecution | null) => execution?.status === 'queued' || execution?.status === 'running';
 export const developmentPollInterval = (data?: DevelopmentBatchList) => data?.executionImplemented ? data.executions?.some(trainingActive) ? 3000 : 15000 : false;
@@ -250,4 +230,10 @@ export function parseNumberList(value: string, label: string, integer = false, m
   if (numbers.some((n) => !Number.isFinite(n) || n < minimum || (integer && !Number.isSafeInteger(n)))) throw new Error(`${label}: enter ${integer ? 'whole ' : ''}numbers of at least ${minimum}.`);
   if (new Set(numbers).size !== numbers.length) throw new Error(`${label}: values must be distinct.`);
   return numbers;
+}
+
+/** A split plan as people read it: the site it holds out, its fold, or the held-out assessment. */
+export function splitPlanLabel(split: { fold?: number | null; domain?: string }) {
+  if (split.domain !== undefined) return `Held-out ${split.domain}`;
+  return typeof split.fold === 'number' ? `Fold ${split.fold + 1}` : 'Held-out assessment';
 }

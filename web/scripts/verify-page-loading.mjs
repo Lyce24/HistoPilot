@@ -29,6 +29,9 @@ import { modelEvaluations, predictors } from ${source('api/predictors.ts')};
 import { clinicalAnalyses } from ${source('api/clinicalUtility.ts')};
 import { interpretations } from ${source('api/interpretation.ts')};
 import { experiments } from ${source('api/experiments.ts')};
+import { experimentHeadlines } from ${source('api/experimentResults.ts')};
+import { targetSplits } from ${source('api/targetSplits.ts')};
+import { trident } from ${source('api/trident.ts')};
 import { taskCenter } from ${source('api/taskCenter.ts')};
 import ${source('styles.css')};
 import ${source('local-workspace.css')};
@@ -47,10 +50,13 @@ api.openProject = async () => project;
 scientific.datasets = async () => ({ datasets: [] });
 scientific.drafts = async () => ({ drafts: [] });
 scientific.configurations = async () => ({ configurations: [] });
+targetSplits.list = async () => ({ configurations: [] });
+trident.jobs = async () => ({ jobs: [] });
 for (const api of [bundles, evaluation, predictors, modelEvaluations, clinicalAnalyses, interpretations]) api.list = async () => ({ items: [] });
 development.list = async () => ({ items: [], executions: [] });
 predictors.refits = async () => ({ items: [] });
 experiments.summaries = async () => ({ items: [] });
+experimentHeadlines.list = async () => ({ items: [] });
 taskCenter.rollup = async (scope) => ({ scope: scope ?? {}, state: 'not-started', counts: {}, byKind: {}, progress: null, live: 0, active: 0, pending: 0, held: false, position: null, queuePosition: null, waitingReason: null, eta: null, runnerAlive: true, paused: false, stopRequest: null, lastFailure: null, recentFailures: 0, current: null, startedAt: null, finishedAt: null, ownerKey: null, ownerKind: null, ownerId: null, title: null, projectId: null, projectName: null, href: '#task-center', updatedAt: '2026-09-25T10:05:00Z' });
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
 const root = createRoot(document.getElementById('app'));
@@ -147,8 +153,10 @@ try {
   await waitFor(`document.querySelector('[aria-label="Saved datasets and imports"]') || document.body.innerText.includes("No datasets or import drafts yet")`);
   assert.ok(requestedPage('LocalDataset'), 'Dataset page did not load');
   assert.equal(requestedPage('LocalExperiments'), false, 'Dataset downloaded Experiments');
+  // A module whose inputs are missing opens as its library and names what it is waiting for.
   await evaluate('window.location.hash = "#cohort"');
-  await waitFor('document.body.innerText.includes("Prepare the required inputs")');
+  await waitFor('document.body.innerText.includes("Targets & splits is waiting for Datasets") && document.body.innerText.includes("No targets and splits yet")');
+  assert.ok(requestedPage('LocalTargetSplit'), 'Targets & splits page did not load');
   await evaluate(`document.querySelector('.sidebar a[href="#experiments"]').click()`);
   await waitFor('document.body.innerText.includes("Create your first experiment")');
   assert.ok(requestedPage('LocalExperiments'), 'Experiment page did not load');
@@ -176,7 +184,7 @@ try {
   await waitFor('document.querySelector("#probe h1")?.textContent === "Recovered page"');
   assert.equal(await evaluate('window.workflow.loadAttempts'), 2);
   assert.deepEqual(exceptions, [], 'Unexpected errors after retry');
-  await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'Real App and native ES chunks, local Chromium file://, in-memory APIs; no HistoPilot server.', checks: ['Start defers scientific pages', 'first dataset visit loads dataset chunk', 'prerequisite gate defers locked protocol', 'Experiments loads independently', 'loaded route reuse', 'mobile overflow', 'accessible pending page', 'page-download error boundary', 'explicit retry re-runs importer and recovers'], downloads, expectedErrorCount: expectedErrors.length }, null, 2));
+  await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'Real App and native ES chunks, local Chromium file://, in-memory APIs; no HistoPilot server.', checks: ['Start defers scientific pages', 'first dataset visit loads dataset chunk', 'a module without inputs opens its library and names the missing input', 'Experiments loads independently', 'loaded route reuse', 'mobile overflow', 'accessible pending page', 'page-download error boundary', 'explicit retry re-runs importer and recovers'], downloads, expectedErrorCount: expectedErrors.length }, null, 2));
   console.log('PASS: on-demand pages, direct-link gates, cached revisits, loading, and retry recovery.');
   console.log('Artifacts: ' + output);
 } catch (error) {

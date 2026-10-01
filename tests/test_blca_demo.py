@@ -41,14 +41,11 @@ def test_packaged_demo_is_reproducible_and_has_all_stages():
         "dataset": 1,
         "cohort": 1,
         "features": 1,
-        "experimental-setup": 2,
         "experiments": 2,
-        "evaluation": 2,
-        "inference": 1,
-        "clinical-utility": 1,
+        "apply": 4,
         "interpretation": 1,
     }
-    assert len(records(generated)) == 12
+    assert len(records(generated)) == 10
     for record in records(generated).values():
         assert len({item["id"] for item in record["steps"]}) == len(record["steps"])
         assert len(record["steps"]) >= 2
@@ -83,8 +80,8 @@ def test_synthetic_slide_membership_and_folds_match_aggregate_design():
     assert {row[0] for row in fixed_membership if row[3] == "training"} == development
     assert {row[0] for row in fixed_membership if row[3] == "testing"} == test
     assert {row[0] for row in step(saved["blca-test-cohort"], "labels")["table"]["rows"]} == test
-    membership = step(saved["blca-setup-v2"], "splits")["table"]["rows"]
-    assert step(saved["blca-setup-v3"], "splits")["table"]["rows"] == membership
+    membership = step(saved["blca-baseline-v2"], "splits")["table"]["rows"]
+    assert step(saved["blca-baseline-v3"], "splits")["table"]["rows"] == membership
     assert {row[0] for row in membership} == development
     assert len(membership) == len(development)
     assert {row[2] for row in membership} == {1, 2, 3, 4, 5}
@@ -102,7 +99,7 @@ def test_synthetic_slide_membership_and_folds_match_aggregate_design():
     assert all(slide["patientId"] == slide["specimenId"] == "" for slide in workspace["slides"])
 
 
-def test_demo_separates_dataset_construction_setup_freeze_and_execution():
+def test_demo_separates_dataset_construction_design_freeze_and_execution():
     saved = records(load_demo())
     targets = saved["blca-protocol"]
     assert targets["module"] == "cohort"
@@ -113,37 +110,37 @@ def test_demo_separates_dataset_construction_setup_freeze_and_execution():
         "Fixed set",
     ]
     assert all("runs" not in item for item in targets["steps"])
+    design = ["inputs", "compatibility", "splits", "batches", "frozen"]
     for version in (2, 3):
-        setup = saved[f"blca-setup-v{version}"]
-        execution = saved[f"blca-baseline-v{version}"]
-        assert setup["module"] == "experimental-setup"
-        assert execution["module"] == "experiments"
-        assert {item["id"] for item in setup["steps"]} == {
-            "inputs",
-            "compatibility",
-            "splits",
-            "batches",
-            "frozen",
+        experiment = saved[f"blca-baseline-v{version}"]
+        assert experiment["module"] == "experiments"
+        # One record from design to results: freezing comes before an explicit start.
+        assert [item["id"] for item in experiment["steps"]] == [
+            *design,
+            "submission",
+            "runs",
+            "results",
+        ]
+        assert all("runs" not in step(experiment, identity) for identity in design)
+        freeze_facts = {
+            item["label"]: item["value"] for item in step(experiment, "frozen")["facts"]
         }
-        assert {item["id"] for item in execution["steps"]} == {"submission", "runs", "results"}
-        assert all("runs" not in item for item in setup["steps"])
-        freeze_facts = {item["label"]: item["value"] for item in step(setup, "frozen")["facts"]}
         assert freeze_facts["Runs started by freezing"] == "0"
         assert freeze_facts["Planned runs"] == "5"
         submission = {
-            item["label"]: item["value"] for item in step(execution, "submission")["facts"]
+            item["label"]: item["value"] for item in step(experiment, "submission")["facts"]
         }
-        assert submission["Frozen setup"] == setup["name"]
-        batch = step(execution, "runs")["runs"]["batch"]["manifest"]
+        assert submission["Frozen design"] == experiment["name"]
+        batch = step(experiment, "runs")["runs"]["batch"]["manifest"]
         assert batch["spec"]["inputs"]["protocolId"] == "blca-training-protocol"
-        assert step(setup, "batches")["table"]["rows"] == [
+        assert step(experiment, "batches")["table"]["rows"] == [
             [
                 index + 1,
                 *[plan["partitions"][part] for part in ("train", "validation", "assessment")],
             ]
             for index, plan in enumerate(batch["splitPlans"])
         ]
-    # Setup records must not duplicate telemetry, which would double the overview run count.
+    # Design steps must not duplicate telemetry, which would double the overview run count.
     run_count = sum(
         len(item["runs"]["batch"]["manifest"]["runs"])
         for record in saved.values()
@@ -156,7 +153,7 @@ def test_demo_separates_dataset_construction_setup_freeze_and_execution():
 def test_inference_example_reuses_synthetic_scores_without_labels_or_metrics():
     saved = records(load_demo())
     inference = saved["blca-inference"]
-    assert inference["module"] == "inference"
+    assert inference["module"] == "apply"
     prediction_step = step(inference, "predictions")
     assert prediction_step["table"]["columns"] == ["Synthetic slide", "P(high)", "Predicted at 0.5"]
     assert prediction_step["table"]["rows"] == [

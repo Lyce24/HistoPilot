@@ -1,0 +1,35 @@
+/* One run: the model and cohort it joins, its job, and its views. */
+.apply-run { display: grid; gap: 1.25rem; min-width: 0; }
+.apply-run > * { min-width: 0; }
+.run-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0; border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; background: var(--surface, white); }
+.run-context > div { min-width: 0; }
+.run-context dt { color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+.run-context dd { margin: 0; font-size: 13px; font-weight: 550; line-height: 1.5; overflow-wrap: anywhere; }
+.run-context dd small { display: block; color: var(--muted); font-weight: 400; }
+.run-view, .run-tab-body { display: grid; gap: 1.25rem; min-width: 0; }
+.run-figure { margin: 0; display: grid; gap: .5rem; }
+.run-figure figcaption { font-weight: 600; }
+.run-figure p { margin: 0; }
+/* A titled part of a view, with its own control beside the title. */
+.run-section { display: grid; gap: .75rem; border-top: 1px solid var(--line); padding-top: 1.25rem; min-width: 0; }
+.run-section-heading { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: .75rem 1.5rem; }
+.run-section-heading h3 { margin: 0; }
+.run-section-heading .label { min-width: 14rem; }
+.subgroup-table tr.is-muted > * { color: var(--muted); }
+.subgroup-table tfoot th, .subgroup-table tfoot td { font-weight: 600; border-top: 2px solid var(--line); }
+.run-actions { border-top: 1px solid var(--line); padding-top: 1rem; }
+/* The labels a run is scored against: its cohort's, or a reference standard added later. */
+.run-context .run-labels select { display: block; width: 100%; max-width: 26rem; margin-bottom: 4px; }
+.run-context dd small .text-button { font-size: inherit; }
+/* Agreement between the run and every label source, pair by pair. */
+.agreement-matrix th small, .agreement-matrix td small, .recalibration-table th small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; text-transform: none; letter-spacing: normal; }
+.agreement-matrix td { text-align: center; }
+.agreement-matrix td .text-button { font-weight: 600; }
+.agreement-matrix td .text-button[aria-pressed="true"] { text-decoration: underline; }
+.agreement-matrix .is-self { color: var(--muted); }
+.run-figure td.is-agreement { font-weight: 600; }
+/* A reference standard: the column holding the labels, and each value's class. */
+.reference-editor .reference-datasets { display: grid; gap: .5rem; border: 0; padding: 0; margin: 0; min-width: 0; }
+.reference-editor .reference-datasets legend { font-weight: 600; margin-bottom: .25rem; }
+.reference-editor .reference-datasets > p { margin: 0; }
+@media (max-width: 720px) { .run-context { grid-template-columns: minmax(0, 1fr); padding: 14px; } }

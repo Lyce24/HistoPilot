@@ -616,7 +616,10 @@ class ExtractionService:
             raise StorageError("Extraction inputs changed. Preview again.", "PREVIEW_STALE")
         if not preview["canRun"]:
             raise StorageError(
-                "Resolve extraction preflight findings before starting.", "EXTRACTION_INVALID", 422
+                "Resolve extraction preflight findings before starting.",
+                "EXTRACTION_INVALID",
+                422,
+                findings=preview["findings"],
             )
         with writer_lock(self.store.folder):
             # Serialize claims of an output directory and idempotency keys.

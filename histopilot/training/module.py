@@ -3,7 +3,6 @@
 import math
 import random
 from collections import defaultdict
-from numbers import Real
 
 import lightning as L
 import numpy as np
@@ -11,70 +10,9 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from histopilot.cv_summary import point_metrics, row_log_probabilities
+from histopilot.cv_summary import row_log_probabilities, validated_metrics
 from histopilot.models import catalog, registry
 from histopilot.scoring import patient_predictions
-
-
-def validated_metrics(rows, target, *, decision_threshold=None):
-    """Check prediction rows against the frozen classes, then score them with ``point_metrics``."""
-    classes = target["classes"]
-    if (
-        len(classes) < 2
-        or any(not isinstance(label, str) or not label for label in classes)
-        or len(set(classes)) != len(classes)
-    ):
-        raise ValueError("Frozen class order must contain at least two distinct class names.")
-    if not rows:
-        return {"available": False, "count": 0, "reason": "No assessment records."}
-
-    def numeric_vector(value):
-        return (
-            isinstance(value, (list, tuple, np.ndarray))
-            and len(value) == len(classes)
-            and all(isinstance(item, Real) and not isinstance(item, bool) for item in value)
-        )
-
-    for row in rows:
-        index = row.get("labelIndex")
-        if type(index) is not int or not 0 <= index < len(classes):
-            raise ValueError("Prediction labelIndex must be an integer within the frozen classes.")
-        if row.get("label") != classes[index]:
-            raise ValueError("Prediction label does not match its index in the frozen class order.")
-        if not numeric_vector(row.get("probabilities")):
-            raise ValueError("Predictions require one numeric probability per frozen class.")
-        if "logProbabilities" in row and not numeric_vector(row["logProbabilities"]):
-            raise ValueError("Log probabilities require one numeric value per frozen class.")
-    probabilities = np.asarray([row["probabilities"] for row in rows], dtype=np.float64)
-    if (
-        not np.isfinite(probabilities).all()
-        or np.any(probabilities < 0)
-        or np.any(probabilities > 1)
-        or not np.allclose(probabilities.sum(axis=1), 1, atol=1e-5, rtol=0)
-    ):
-        raise ValueError("Predictions must contain finite, normalized probabilities in [0, 1].")
-    # A threshold applies to binary targets only; multiclass decisions are the argmax.
-    threshold = None
-    if target["task"] == "binary_classification" and decision_threshold is not None:
-        if (
-            isinstance(decision_threshold, bool)
-            or not isinstance(decision_threshold, Real)
-            or not math.isfinite(decision_threshold)
-            or not 0 <= decision_threshold <= 1
-        ):
-            raise ValueError("The binary decision threshold must be finite and between zero and one.")
-        threshold = float(decision_threshold)
-    log_probabilities = np.asarray([row_log_probabilities(row) for row in rows], dtype=np.float64)
-    if (
-        not np.isfinite(log_probabilities).all()
-        or not np.allclose(np.logaddexp.reduce(log_probabilities, axis=1), 0, atol=1e-5, rtol=0)
-        or not np.allclose(np.exp(log_probabilities), probabilities, atol=1e-6, rtol=1e-5)
-    ):
-        raise ValueError("Log probabilities must be finite, normalized and match probabilities.")
-    metrics = point_metrics(rows, target, threshold)
-    # Training records keep their established fields; per-class rows are summary-only.
-    metrics.pop("perClass")
-    return metrics
 
 
 def aggregate_patients(rows, aggregation="mean_probabilities"):
@@ -83,7 +21,9 @@ def aggregate_patients(rows, aggregation="mean_probabilities"):
     grouped = defaultdict(list)
     for row in rows:
         if row.get("patientIdSource") == "slide_fallback":
-            raise ValueError("Patient scoring requires verified patient IDs, not slide-ID fallback.")
+            raise ValueError(
+                "Patient scoring requires verified patient IDs, not slide-ID fallback."
+            )
         grouped[row["patientId"]].append(row)
     verified = []
     for identity, slides in sorted(grouped.items()):
@@ -126,7 +66,12 @@ def aggregate_patients(rows, aggregation="mean_probabilities"):
 
 
 def classification_metrics(
-    rows, target, aggregation="mean_probabilities", *, analysis=None, decision_threshold=None,
+    rows,
+    target,
+    aggregation="mean_probabilities",
+    *,
+    analysis=None,
+    decision_threshold=None,
     split_unit=None,
 ):
     if aggregation not in {"mean_probabilities", "mean_logits"}:
@@ -135,7 +80,11 @@ def classification_metrics(
         raise ValueError("Slide-level experiments require slide-level scoring.")
     slide_metrics = validated_metrics(rows, target, decision_threshold=decision_threshold)
     if split_unit == "slide":
-        patient_metrics = {"available": False, "reason": "Patient analysis is disabled for slide-level experiments.", "count": 0}
+        patient_metrics = {
+            "available": False,
+            "reason": "Patient analysis is disabled for slide-level experiments.",
+            "count": 0,
+        }
     else:
         try:
             patient_metrics = validated_metrics(
@@ -159,8 +108,10 @@ def classification_metrics(
         from histopilot.statistics import patient_analysis
 
         result["patientAnalysis"] = patient_analysis(
-            rows, aggregate_patients(rows, aggregation) if patient_metrics["available"] else [],
-            target, analysis,
+            rows,
+            aggregate_patients(rows, aggregation) if patient_metrics["available"] else [],
+            target,
+            analysis,
         )
         intervals = result["patientAnalysis"]["uncertainty"].get("intervals")
         if intervals:
@@ -193,7 +144,8 @@ def window_uncertainty_rows(uncertainty, target):
         return None
     vectors = {
         name: value.detach().double().cpu().tolist()
-        for name, value in uncertainty.items() if name not in {"windowCount", "binaryLogit"}
+        for name, value in uncertainty.items()
+        if name not in {"windowCount", "binaryLogit"}
     }
     if (
         target["task"] == "binary_classification"
@@ -202,7 +154,10 @@ def window_uncertainty_rows(uncertainty, target):
     ):
         vectors["probabilityVariance"] = [row[::-1] for row in vectors["probabilityVariance"]]
     rows = [
-        {"windowCount": uncertainty["windowCount"], **{name: values[index] for name, values in vectors.items()}}
+        {
+            "windowCount": uncertainty["windowCount"],
+            **{name: values[index] for name, values in vectors.items()},
+        }
         for index in range(len(vectors["meanWindowEntropy"]))
     ]
     # Attention member JSON is canonicalized before caching. Keep insertion
@@ -369,8 +324,11 @@ class MILTrainModule(L.LightningModule):
 
         if clinical is None or len(clinical) != count:
             raise ValueError("Clinical models need one frozen covariate row per prediction.")
-        return torch.tensor(transform_clinical(clinical, self.clinical_preprocessor),
-                            dtype=torch.float32, device=self.device)
+        return torch.tensor(
+            transform_clinical(clinical, self.clinical_preprocessor),
+            dtype=torch.float32,
+            device=self.device,
+        )
 
     def forward(self, features, mask=None, clinical=None):
         if self.input_mode == "clinical":
@@ -428,7 +386,9 @@ class MILTrainModule(L.LightningModule):
             self._resume_rng_state = None
 
     def training_step(self, batch, batch_idx):
-        losses = self.loss(self(batch["features"], batch["mask"], batch.get("clinical")).float(), batch["labels"])
+        losses = self.loss(
+            self(batch["features"], batch["mask"], batch.get("clinical")).float(), batch["labels"]
+        )
         if self.target["unit"] == "patient":
             if "lossWeights" not in batch:
                 raise ValueError("Patient-target fitting requires explicit per-slide loss weights.")
@@ -457,7 +417,8 @@ class MILTrainModule(L.LightningModule):
         if self._optimizer_presentation_count < 1:
             raise RuntimeError("MIL optimizer updates require accumulated training presentations.")
         factor = (
-            self.trainer.accumulate_grad_batches * self._optimizer_normalization_size
+            self.trainer.accumulate_grad_batches
+            * self._optimizer_normalization_size
             / self._optimizer_presentation_count
         )
         for group in optimizer.param_groups:
@@ -482,13 +443,17 @@ class MILTrainModule(L.LightningModule):
         self.validation_rows = []
 
     def validation_step(self, batch, batch_idx):
-        output = self.prediction_output(batch["features"], batch["mask"], clinical=batch.get("clinical"))
+        output = self.prediction_output(
+            batch["features"], batch["mask"], clinical=batch.get("clinical")
+        )
         logits = output["logits"]
         if not bool(torch.isfinite(logits).all()):
             raise FloatingPointError("Nonfinite validation predictions.")
-        self.validation_rows.extend(prediction_rows(
-            batch, logits, self.target, window_uncertainty=output.get("window_uncertainty")
-        ))
+        self.validation_rows.extend(
+            prediction_rows(
+                batch, logits, self.target, window_uncertainty=output.get("window_uncertainty")
+            )
+        )
 
     def on_validation_epoch_end(self):
         if self.trainer.sanity_checking:
@@ -538,9 +503,7 @@ class MILTrainModule(L.LightningModule):
         if self.clinical_head is not None:
             head.extend(self.clinical_head.parameters())
         head_ids = {id(parameter) for parameter in head}
-        aggregator = [
-            parameter for parameter in self.parameters() if id(parameter) not in head_ids
-        ]
+        aggregator = [parameter for parameter in self.parameters() if id(parameter) not in head_ids]
         if self.recipe.get("aggregatorLearningRate") or self.recipe.get("headLearningRate"):
             parameters = [
                 {
@@ -564,10 +527,13 @@ class MILTrainModule(L.LightningModule):
                 for decay in (True, False):
                     selected = [value for value in values if (value.ndim > 1) == decay]
                     if selected:
-                        parameters.append({
-                            **group, "params": selected,
-                            "weight_decay": options["weight_decay"] if decay else 0.0,
-                        })
+                        parameters.append(
+                            {
+                                **group,
+                                "params": selected,
+                                "weight_decay": options["weight_decay"] if decay else 0.0,
+                            }
+                        )
         instance = optimizers[optimizer](parameters, **options)
         schedule = self.recipe.get("lrScheduler", "none")
         interval = self.recipe.get("lrScheduleInterval", "epoch")
@@ -659,8 +625,13 @@ class MILTrainModule(L.LightningModule):
         }
 
     def on_load_checkpoint(self, checkpoint):
-        if checkpoint.get("hyper_parameters", {}).get("clinical_preprocessor") != self.clinical_preprocessor:
-            raise ValueError("Checkpoint clinical preprocessing differs from the current training patients.")
+        if (
+            checkpoint.get("hyper_parameters", {}).get("clinical_preprocessor")
+            != self.clinical_preprocessor
+        ):
+            raise ValueError(
+                "Checkpoint clinical preprocessing differs from the current training patients."
+            )
         # Loading a checkpoint restores loss buffers as well as model weights.
         # Reject an altered training objective instead of silently overwriting
         # freshly resolved class weights (including legacy slide-count weights).

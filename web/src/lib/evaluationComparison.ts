@@ -6,7 +6,6 @@ export function evaluationMetric(item: ModelEvaluation, key: EvaluationMetric): 
   const value = metrics?.[key];
   return item.execution?.status === 'completed' && metrics?.available && typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
-export const evaluationUnit = (item: ModelEvaluation) => item.execution?.result?.metrics?.unit ?? 'unavailable';
 export interface EvaluationPair {
   key: string; source: FrozenPredictor['manifest']; ensemble?: ModelEvaluation; refit?: ModelEvaluation;
 }
@@ -24,13 +23,14 @@ export function compareEvaluationMethods(records: ModelEvaluation[], predictors:
   const completed = records.filter((item) => item.execution?.status === 'completed').sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
   for (const record of completed) {
     const source = predictorById.get(record.manifest.predictorId), metrics = record.execution?.result?.metrics;
-    if (!source || !metrics?.selected?.available || !['slide', 'patient'].includes(metrics.unit)) continue;
+    // Ensembles and refits pair within one seed group; a seed ensemble spans all of them.
+    if (!source || source.method === 'seed_ensemble' || !metrics?.selected?.available || !['slide', 'patient'].includes(metrics.unit)) continue;
     const contextKey = JSON.stringify([record.manifest.cohortId, metrics.unit, metrics.classOrder, metrics.positiveClass, metrics.decisionThreshold ?? null, metrics.patientAggregation, metrics.selected.count ?? null]);
     const entry = contexts.get(contextKey) ?? { context: { key: contextKey, cohortId: record.manifest.cohortId, unit: metrics.unit, classOrder: metrics.classOrder, positiveClass: metrics.positiveClass,
       threshold: metrics.decisionThreshold ?? null, patientAggregation: metrics.patientAggregation, labeledCount: metrics.selected.count ?? null }, sources: new Map<string, EvaluationPair>() };
     const key = JSON.stringify([source.experimentId, source.batchId, source.candidateId, source.trainingSeed, source.splitSeed]);
     const pair = entry.sources.get(key) ?? { key, source };
-    const method = source.method ?? 'ensemble';
+    const method = source.method === 'refit' ? 'refit' : 'ensemble';
     if (!pair[method]) pair[method] = record;
     entry.sources.set(key, pair); contexts.set(contextKey, entry);
   }

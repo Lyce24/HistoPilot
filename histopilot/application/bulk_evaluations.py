@@ -13,6 +13,7 @@ from histopilot.application.compute_jobs import host_gpu_argv
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.predictors import finding, lifecycle_document, reference
 from histopilot.application.task_records import LEGACY_CODE, TaskCenterAccess
+from histopilot.resolvers import MAX_APPLY_PREDICTORS
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
 from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
@@ -28,6 +29,13 @@ from histopilot.taskcenter import ids
 from histopilot.taskcenter.model import LIVE, TERMINAL
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def run_name(prefix, model, batch_name):
+    """A batch member's run name. Predictor names omit their batch, so two models' predictors
+    of the same configuration and seeds would read alike; the batch name tells them apart."""
+    parts = [prefix, batch_name, model["name"]]
+    return " · ".join(part for part in parts if part)[:120]
 
 
 class BulkEvaluationService:
@@ -59,6 +67,17 @@ class BulkEvaluationService:
 
     def _prepare(self, selection, *, reviewed=None):
         cohort = self.evaluations.cohorts.get(selection.cohortId)
+        names = {}
+
+        def batch_names(identity):
+            if identity and identity not in names:
+                try:
+                    batch = self.store.get_configuration(identity, include_inactive=True)
+                    names[identity] = batch["manifest"]["spec"].get("batchName")
+                except StorageError:
+                    names[identity] = None
+            return names.get(identity)
+
         if reviewed is not None:
             identities = sorted(reviewed)
             if selection.scope == "selected" and identities != sorted(selection.predictorIds):
@@ -69,9 +88,9 @@ class BulkEvaluationService:
             )
         else:
             identities = sorted(selection.predictorIds)
-        if len(identities) > 256:
+        if len(identities) > MAX_APPLY_PREDICTORS:
             raise StorageError(
-                "Select at most 256 predictors in one evaluation batch.",
+                f"Select at most {MAX_APPLY_PREDICTORS} predictors in one evaluation batch.",
                 "EVALUATION_BATCH_LIMIT",
                 422,
             )
@@ -118,7 +137,7 @@ class BulkEvaluationService:
                 choice = EvaluationRunSelection(
                     cohortId=cohort["id"],
                     predictorId=identity,
-                    name=f"{selection.namePrefix} · {model['name']}"[:120],
+                    name=run_name(selection.namePrefix, model, batch_names(model.get("batchId"))),
                     featureBundleId=selection.featureBundleId,
                     inference=selection.inference,
                     patientIdentifiers=selection.patientIdentifiers,

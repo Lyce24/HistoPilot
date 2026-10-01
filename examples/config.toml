@@ -4,11 +4,13 @@
 [server]
 host = "127.0.0.1"
 port = 8787
+# Hand the session only to a browser that opened the printed sign-in link (histopilot login url).
+login = false
 
 [storage]
 workspace = "~/.histopilot/workspace"
 data_roots = []
 # Grant only the directories you want the server folder picker to browse:
-# data_roots = ["/mnt/pathology/crc", "/mnt/pathology/external-validation"]
+# data_roots = ["/mnt/pathology/development", "/mnt/pathology/external-validation"]
 # Paths refer to the Python service's machine, not the browser's machine.
 # Original WSIs are referenced in place; no upload or automatic copy occurs.

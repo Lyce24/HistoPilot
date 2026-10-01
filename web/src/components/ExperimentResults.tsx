@@ -1,16 +1,23 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { experimentResults, lowerIsBetter, type ArmContrast, type BatchResult, type ConfigurationResult, type ExperimentResults as Results, type MetricStats, type ResultMetric, type SeedResult } from '../api/experimentResults';
+import { assessesEveryUnit, designLabel, experimentResults, foldLabel, lowerIsBetter, type ArmContrast, type BatchResult, type ConfigurationResult, type ExperimentResults as Results, type MetricStats, type ResultMetric, type SeedResult } from '../api/experimentResults';
 import type { TrainingRecipe } from '../api/development';
 import { experimentStage, type ModelExperiment } from '../api/experiments';
-import type { Finding } from '../api/scientific';
+import type { Finding, ProtocolSpec } from '../api/scientific';
 import { download, downloadJSON } from '../lib/download';
 import { batchModel, csv, fixed, hasResults, interval, leadingBatch, meanSd, metricLabel, metricPhrase, metricShortLabel, niceTicks, orient, orientedPairs, pValue, tickDigits, percent, range, reportedConfiguration, resultRows, shade, signed, signedInterval, verdict, verdictLabel, type OrientedComparison } from '../lib/experimentResults';
 import { inputModeLabel } from './ClinicalInputFields';
 import { modelLabel } from '../lib/modelCapabilities';
 import DevelopmentExecution, { OOFPredictionDownloads } from './DevelopmentExecution';
+import ApplyConfiguration from './ApplyConfiguration';
 import { EmptyState, ErrorNotice, Icon } from './ui';
 import './ExperimentResults.css';
+
+type DesignStrategy = NonNullable<Results['design']>['strategy'];
+/** One assessment run of the design, as its runs and fold tables name it. */
+const planTitle = (strategy?: DesignStrategy) => strategy === 'held_out' ? 'Held-out assessment' : strategy === 'leave_one_domain_out' ? 'Held-out site' : 'Test fold';
+/** The design's assessment runs, in words: test folds, held-out sites, or one held-out run per seed. */
+const planRuns = (strategy?: DesignStrategy) => strategy === 'held_out' ? 'held-out runs' : strategy === 'leave_one_domain_out' ? 'held-out sites' : 'test folds';
 
 /** Batch identity: one validated categorical slot per batch, in experiment order. */
 const seriesVar = (index: number) => `var(--results-series-${(index % 8) + 1})`;
@@ -44,8 +51,8 @@ export default function ExperimentResults({ project, record }: { project: string
   if (!shown.length) {
     return <div className="exp-results">
       <EmptyState icon="evaluation" title="No results yet" description={stage === 'running'
-        ? 'Test-fold results appear as each fold finishes. Out-of-fold results for a training seed appear once all of its folds are done.'
-        : 'This experiment has no completed folds. Runs shows what happened to its training.'} />
+        ? `${planTitle(data.design?.strategy)} results appear as each ${data.design?.strategy === 'held_out' ? 'run' : data.design?.strategy === 'leave_one_domain_out' ? 'site' : 'fold'} finishes. Out-of-fold results for a training seed appear once all of its runs are done.`
+        : 'This experiment has no completed runs. Runs shows what happened to its training.'} />
     </div>;
   }
   const batch = shown.find((item) => item.batchId === selected) ?? shown[0];
@@ -53,21 +60,21 @@ export default function ExperimentResults({ project, record }: { project: string
   const task = data.target?.task;
   return <div className={`exp-results${query.isFetching ? ' is-refreshing' : ''}`}>
     <ErrorNotice error={query.isError ? query.error : null} />
-    <ResultsIntro results={data} shown={shown} running={stage === 'running'} />
+    <ResultsIntro results={data} shown={shown} running={stage === 'running'} split={record.setupDesign?.trainingSplit} />
     <MetricPicker value={metric} onChange={setMetric} task={task} />
     <Notes findings={data.findings} batches={data.batches} />
     <section className="exp-section" aria-labelledby="exp-overview-title">
       <header><h2 id="exp-overview-title">{shown.length > 1 ? 'Model comparison' : 'Headline results'}</h2>
         <p>{shown.length > 1 ? 'The validation-selected configuration of each batch' : 'The validation-selected configuration'}{shown.some((item) => item.comparison) ? ', or the reference of a controlled comparison' : ''}. Out-of-fold (OOF) values are the mean ± SD across training seeds, with the 95% interval of that mean.</p></header>
       <Takeaway results={data} shown={shown} metric={metric} task={task} />
-      <OverviewTable batches={shown} metric={metric} task={task} colors={colors} onSelect={setSelected} />
-      <SpreadChart batches={shown} metric={metric} task={task} colors={colors} unit={data.target?.unit ?? 'slide'} />
+      <OverviewTable batches={shown} metric={metric} task={task} colors={colors} onSelect={setSelected} strategy={data.design?.strategy} />
+      <SpreadChart batches={shown} metric={metric} task={task} colors={colors} unit={data.target?.unit ?? 'slide'} strategy={data.design?.strategy} />
       {shown.length > 1 ? <PairedTable results={data} shown={shown} metric={metric} task={task} /> : null}
     </section>
     {shown.filter((item) => item.comparison).map((item) => <ArmComparison key={item.batchId} results={data} batch={item} task={task} multiple={shown.length > 1} />)}
     <section className="exp-section" aria-labelledby="exp-detail-title">
       <header className="exp-detail-header">
-        <div><h2 id="exp-detail-title">Seeds, folds and classes</h2><p>Every training seed and every test fold of one batch, so you can see how much a single run can move.</p></div>
+        <div><h2 id="exp-detail-title">Seeds, {data.design?.strategy === 'held_out' ? 'runs' : data.design?.strategy === 'leave_one_domain_out' ? 'sites' : 'folds'} and classes</h2><p>Every training seed and every {planTitle(data.design?.strategy).toLowerCase()} of one batch, so you can see how much a single run can move.</p></div>
         {shown.length > 1 ? <BatchPicker batches={shown} value={batch.batchId} colors={colors} onChange={setSelected} /> : null}
       </header>
       <BatchDetail key={batch.batchId} project={project} record={record} results={data} batch={batch} metric={metric} task={task} />
@@ -76,7 +83,7 @@ export default function ExperimentResults({ project, record }: { project: string
   </div>;
 }
 
-function ResultsIntro({ results, shown, running }: { results: Results; shown: BatchResult[]; running: boolean }) {
+function ResultsIntro({ results, shown, running, split }: { results: Results; shown: BatchResult[]; running: boolean; split?: ProtocolSpec['split'] }) {
   const design = results.design;
   const seedCounts = [...new Set(shown.map((batch) => reportedConfiguration(batch)?.plannedSeedCount ?? 0))].sort((a, b) => a - b);
   const seeds = seedCounts.length === 1 ? `${seedCounts[0]} training seed${seedCounts[0] === 1 ? '' : 's'}` : `${seedCounts[0]}–${seedCounts.at(-1)} training seeds`;
@@ -84,13 +91,15 @@ function ResultsIntro({ results, shown, running }: { results: Results; shown: Ba
   const unit = results.target?.unit ?? 'slide';
   const partial = shown.some((batch) => !reportedConfiguration(batch)?.complete);
   return <div className="exp-intro">
-    {design ? <p className="exp-design"><strong>{design.folds > 1 ? `${design.folds}-fold cross-validation` : 'One train/test split'}</strong><span>{design.splitSeeds.length} split seed{design.splitSeeds.length === 1 ? '' : 's'}</span><span>{seeds}</span>{design.slideCount ? <span>{design.slideCount.toLocaleString()} slides</span> : null}<span>{classes.length} classes ({classes.join(', ')})</span><span>{unit === 'patient' ? 'Patient-level scoring' : 'Slide-level scoring'}</span></p> : null}
-    {partial ? <p className="callout exp-partial" role="status"><Icon name="info" size={16} />{running ? 'Partial results. ' : 'Some training seeds are incomplete. '}A training seed joins the averages once all of its folds finish; test folds appear as they finish.</p> : null}
+    {design ? <p className="exp-design"><strong>{designLabel(design, split)}</strong><span>{design.splitSeeds.length} split seed{design.splitSeeds.length === 1 ? '' : 's'}</span><span>{seeds}</span>{design.slideCount ? <span>{design.slideCount.toLocaleString()} slides</span> : null}<span>{classes.length} classes ({classes.join(', ')})</span><span>{unit === 'patient' ? 'Patient-level scoring' : 'Slide-level scoring'}</span></p> : null}
+    {partial ? <p className="callout exp-partial" role="status"><Icon name="info" size={16} />{running ? 'Partial results. ' : 'Some training seeds are incomplete. '}A training seed joins the averages once all of its runs finish; {planRuns(design?.strategy)} appear as they finish.</p> : null}
     <details className="exp-help"><summary>How to read these results</summary>
       <dl>
-        <div><dt>OOF (out-of-fold)</dt><dd>Every {unit} is scored once, by the fold model that never trained on it. The metric is computed over all of them pooled, so it is the most stable single estimate.</dd></div>
-        <div><dt>Test fold</dt><dd>One run’s held-out fold (a fifth of the data with 5 folds). Fold values spread more because each fold is small; a fold far below the rest points to hard cases or a small validation set.</dd></div>
-        <div><dt>Mean ± SD</dt><dd>Across training seeds: the same folds trained again with different initialisation and sampling. A large SD means a single run is not representative.</dd></div>
+        <div><dt>OOF (out-of-fold)</dt><dd>{design && !assessesEveryUnit(design, split) ? `Every assessed ${unit} is scored once, by the model that never trained on it; ${design.strategy === 'held_out' ? 'only the held-out set is assessed' : 'only the held-out sites are assessed'}.` : `Every ${unit} is scored once, by the fold model that never trained on it.`} The metric is computed over all of them pooled, so it is the most stable single estimate.</dd></div>
+        {design?.strategy === 'held_out' ? <div><dt>Held-out assessment</dt><dd>One run on the held-out set, assessed once per training seed. It is one draw of the training set, so its value moves with the units it holds.</dd></div>
+          : design?.strategy === 'leave_one_domain_out' ? <div><dt>Held-out site</dt><dd>One run’s held-out site or cohort. Sites differ in size and case mix, so a site far below the rest points to a shift between sites, not only to hard cases.</dd></div>
+          : <div><dt>Test fold</dt><dd>One run’s held-out fold ({design ? `one of ${design.folds} folds` : 'one of the folds'}). Fold values spread more because each fold is small; a fold far below the rest points to hard cases or a small validation set.</dd></div>}
+        <div><dt>Mean ± SD</dt><dd>Across training seeds: the same {design?.strategy === 'held_out' ? 'split' : planRuns(design?.strategy)} trained again with different initialisation and sampling. A large SD means a single run is not representative.</dd></div>
         <div><dt>95% interval</dt><dd>{results.policy.resamples.toLocaleString()} bootstrap resamples of the {results.design?.resamplingUnit ?? unit}s (seed {results.policy.seed}); each resample scores every seed and takes their mean. It covers sampling of {results.design?.resamplingUnit ?? unit}s, not retraining or configuration choice.</dd></div>
         <div><dt>Seed ensemble</dt><dd>The seeds’ predictions averaged per {unit}, then scored: what combining the seeds would give.</dd></div>
         <div><dt>Paired difference</dt><dd>Two batches share folds and {unit}s, so they are compared on the same resamples (OOF) and on the same folds. “No clear difference” means the 95% interval includes zero.</dd></div>
@@ -106,7 +115,7 @@ function Takeaway({ results, shown, metric, task }: { results: Results; shown: B
     const configuration = reportedConfiguration(shown[0])!;
     const ci = configuration.intervals.seedAverage?.available ? configuration.intervals.seedAverage.intervals?.[metric] : undefined;
     const folds = configuration.foldAverage[metric];
-    return <p className="exp-takeaway"><strong>{shown[0].name}</strong>: {label} {meanSd(configuration.seedAverage[metric])} {configuration.seedCount === 1 ? 'from 1 training seed' : `across ${configuration.seedCount} training seeds`}{ci ? ` (95% interval ${interval(ci)})` : ''}{folds && folds.n > 1 ? `; its test folds ranged ${range(folds)}` : ''}.</p>;
+    return <p className="exp-takeaway"><strong>{shown[0].name}</strong>: {label} {meanSd(configuration.seedAverage[metric])} {configuration.seedCount === 1 ? 'from 1 training seed' : `across ${configuration.seedCount} training seeds`}{ci ? ` (95% interval ${interval(ci)})` : ''}{folds && folds.n > 1 ? `; its ${planRuns(results.design?.strategy)} ranged ${range(folds)}` : ''}.</p>;
   }
   const ranked = shown.map((batch) => ({ batch, stats: reportedConfiguration(batch)?.seedAverage[metric] ?? null }))
     .filter((row): row is { batch: BatchResult; stats: MetricStats } => Boolean(row.stats))
@@ -175,7 +184,7 @@ function StatCell({ stats, ci, leading }: { stats?: MetricStats | null; ci?: { l
   </td>;
 }
 
-function OverviewTable({ batches, metric, task, colors, onSelect }: { batches: BatchResult[]; metric: ResultMetric; task?: string; colors: Map<string, string>; onSelect: (id: string) => void }) {
+function OverviewTable({ batches, metric, task, colors, onSelect, strategy }: { batches: BatchResult[]; metric: ResultMetric; task?: string; colors: Map<string, string>; onSelect: (id: string) => void; strategy?: DesignStrategy }) {
   const leaders = new Map(pickable.map((name) => [name, leadingBatch(batches, name)]));
   return <><div className="exp-table-wrap"><table className="exp-table exp-overview">
     <caption className="sr-only">OOF results by batch: mean ± SD across training seeds and the 95% interval of the mean.</caption>
@@ -186,7 +195,7 @@ function OverviewTable({ batches, metric, task, colors, onSelect }: { batches: B
       return <tr key={batch.batchId}>
         <th scope="row"><button type="button" className="exp-row-link" onClick={() => onSelect(batch.batchId)} title="Show this batch’s seeds and folds"><BatchName batch={batch} color={colors.get(batch.batchId)} /></button></th>
         {pickable.map((name) => <StatCell key={name} stats={configuration.seedAverage[name]} ci={cis?.[name]} leading={batches.length > 1 && leaders.get(name) === batch.batchId} />)}
-        <td className="exp-evidence">{configuration.seedCount} of {configuration.plannedSeedCount} seed{configuration.plannedSeedCount === 1 ? '' : 's'}<small>{configuration.foldCount} of {configuration.plannedFoldCount} test folds</small></td>
+        <td className="exp-evidence">{configuration.seedCount} of {configuration.plannedSeedCount} seed{configuration.plannedSeedCount === 1 ? '' : 's'}<small>{configuration.foldCount} of {configuration.plannedFoldCount} {planRuns(strategy)}</small></td>
       </tr>;
     })}</tbody>
   </table></div>
@@ -220,14 +229,14 @@ function useWidth<T extends HTMLElement>(fallback: number) {
  * the seed mean with its 95% interval (ink tick and bar). Rows are direct-labeled, so
  * colour is never the only identity; the table view carries every value.
  */
-function SpreadChart({ batches, metric, task, colors, unit }: { batches: BatchResult[]; metric: ResultMetric; task?: string; colors: Map<string, string>; unit: string }) {
+function SpreadChart({ batches, metric, task, colors, unit, strategy }: { batches: BatchResult[]; metric: ResultMetric; task?: string; colors: Map<string, string>; unit: string; strategy?: DesignStrategy }) {
   const id = useId();
   const [box, measured] = useWidth<HTMLDivElement>(720);
   const [hover, setHover] = useState<{ x: number; y: number; mark: Mark; batch: string } | null>(null);
   const rows = batches.map((batch) => {
     const configuration = reportedConfiguration(batch)!;
     const seeds = configuration.splitSeeds.flatMap((split) => split.seeds.map((seed) => ({ seed, split: split.splitSeed, splits: configuration.splitSeeds.length })));
-    const folds: Mark[] = seeds.flatMap(({ seed, split, splits }) => seed.folds.filter((fold) => typeof fold.metrics?.[metric] === 'number').map((fold) => ({ kind: 'fold' as const, value: fold.metrics![metric]!, label: `Seed ${seed.trainingSeed}${splits > 1 ? ` · split ${split}` : ''} · fold ${fold.fold + 1}${fold.testCount ? ` · ${fold.testCount} ${unit}s` : ''}` })));
+    const folds: Mark[] = seeds.flatMap(({ seed, split, splits }) => seed.folds.filter((fold) => typeof fold.metrics?.[metric] === 'number').map((fold) => ({ kind: 'fold' as const, value: fold.metrics![metric]!, label: `Seed ${seed.trainingSeed}${splits > 1 ? ` · split ${split}` : ''} · ${foldLabel(fold, strategy)}${fold.testCount ? ` · ${fold.testCount} ${unit}s` : ''}` })));
     const oof: Mark[] = seeds.filter(({ seed }) => typeof seed.oof?.[metric] === 'number').map(({ seed, split, splits }) => ({ kind: 'seed' as const, value: seed.oof![metric]!, label: `Seed ${seed.trainingSeed}${splits > 1 ? ` · split ${split}` : ''} · OOF` }));
     const mean = configuration.seedAverage[metric];
     const ci = configuration.intervals.seedAverage?.available ? configuration.intervals.seedAverage.intervals?.[metric] ?? null : null;
@@ -253,15 +262,15 @@ function SpreadChart({ batches, metric, task, colors, unit }: { batches: BatchRe
     onPointerEnter: () => show(mark, batch, cx, cy), onFocus: () => show(mark, batch, cx, cy), onBlur: () => setHover(null),
   });
   return <figure className="exp-figure" aria-labelledby={`${id}-title`}>
-    <figcaption id={`${id}-title`}>{metricLabel(metric, task)}: every test fold, every seed, and the seed mean</figcaption>
+    <figcaption id={`${id}-title`}>{metricLabel(metric, task)}: every {planTitle(strategy).toLowerCase()}, every seed, and the seed mean</figcaption>
     <ul className="exp-legend" aria-label="Chart marks">
-      <li><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="4" className="exp-legend-fold" /></svg>Test fold (one run)</li>
+      <li><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="4" className="exp-legend-fold" /></svg>{planTitle(strategy)} (one run)</li>
       <li><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="5.5" className="exp-legend-seed" /></svg>Seed OOF</li>
       <li><svg width="22" height="14" aria-hidden="true"><line x1="2" x2="20" y1="7" y2="7" className="exp-legend-ci" /><line x1="11" x2="11" y1="1" y2="13" className="exp-legend-mean" /></svg>Seed mean and 95% interval</li>
     </ul>
     <div className="exp-plot" ref={box} onPointerLeave={() => setHover(null)}>
       <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby={`${id}-title ${id}-desc`}>
-        <desc id={`${id}-desc`}>{`${metricLabel(metric, task)} per batch. ${rows.map((row) => `${row.batch.name}: seed mean ${fixed(row.mean?.mean)}${row.ci ? `, 95% interval ${interval(row.ci)}` : ''}, test folds ${range(reportedConfiguration(row.batch)?.foldAverage[metric])}`).join('. ')}. Exact values are in the table view.`}</desc>
+        <desc id={`${id}-desc`}>{`${metricLabel(metric, task)} per batch. ${rows.map((row) => `${row.batch.name}: seed mean ${fixed(row.mean?.mean)}${row.ci ? `, 95% interval ${interval(row.ci)}` : ''}, ${planRuns(strategy)} ${range(reportedConfiguration(row.batch)?.foldAverage[metric])}`).join('. ')}. Exact values are in the table view.`}</desc>
         {ticks.map((tick) => <g key={tick} className="exp-grid"><line x1={x(tick)} x2={x(tick)} y1={top} y2={height - bottom + 4} /><text x={x(tick)} y={height - bottom + 18} textAnchor="middle">{tick.toFixed(digits)}</text></g>)}
         <text className="exp-axis-title" x={left + (width - left - right) / 2} y={height - 6} textAnchor="middle">{metricLabel(metric, task)}{lowerIsBetter(metric) ? ' (lower is better)' : ''}</text>
         {rows.map((row, index) => {
@@ -290,7 +299,7 @@ function SpreadChart({ batches, metric, task, colors, unit }: { batches: BatchRe
       {hover ? <div className="exp-tooltip" role="status" style={{ left: Math.min(Math.max(hover.x, 90), width - 90), top: hover.y }}><strong>{fixed(hover.mark.value)}</strong><span>{hover.batch}</span><small>{hover.mark.label}</small></div> : null}
     </div>
     <details className="exp-table-view"><summary>Table view</summary>
-      <div className="exp-table-wrap"><table className="exp-table"><thead><tr><th scope="col">Batch</th><th scope="col">Seed mean</th><th scope="col">95% interval</th><th scope="col">Seed OOF values</th><th scope="col">Test folds</th></tr></thead>
+      <div className="exp-table-wrap"><table className="exp-table"><thead><tr><th scope="col">Batch</th><th scope="col">Seed mean</th><th scope="col">95% interval</th><th scope="col">Seed OOF values</th><th scope="col">{planRuns(strategy).replace(/^./, (letter) => letter.toUpperCase())}</th></tr></thead>
         <tbody>{rows.map((row) => <tr key={row.batch.batchId}><th scope="row">{row.batch.name}</th><td>{fixed(row.mean?.mean)}</td><td>{interval(row.ci)}</td><td>{row.oof.map((mark) => fixed(mark.value)).join(', ') || '—'}</td><td>{row.folds.map((mark) => fixed(mark.value)).join(', ') || '—'}</td></tr>)}</tbody></table></div>
     </details>
   </figure>;
@@ -351,7 +360,7 @@ function ArmComparison({ results, batch, task, multiple }: { results: Results; b
             <td>{armModel(row)}</td><td>{armInputs(row)}</td>
             <td><span className="exp-value"><strong>{meanSd(row.seedAverage[metric])}</strong></span></td>
             <td>{ci ? interval(ci) : '—'}</td>
-            <td className="exp-evidence">{row.seedCount} of {row.plannedSeedCount} seed{row.plannedSeedCount === 1 ? '' : 's'}<small>{row.foldCount} of {row.plannedFoldCount} test folds</small></td>
+            <td className="exp-evidence">{row.seedCount} of {row.plannedSeedCount} seed{row.plannedSeedCount === 1 ? '' : 's'}<small>{row.foldCount} of {row.plannedFoldCount} {planRuns(results.design?.strategy)}</small></td>
           </tr>;
         })}</tbody>
       </table></div>
@@ -361,11 +370,11 @@ function ArmComparison({ results, batch, task, multiple }: { results: Results; b
       <p className="muted">Reference − arm: a positive difference means the reference scored higher. The interval and p-values come from the same resamples for both, so they compare the arms directly.</p>
       <div className="exp-table-wrap"><table className="exp-table exp-contrasts">
         <caption className="sr-only">Reference minus each arm on {label}, with paired 95% intervals, p-values, Holm-adjusted p-values and test-fold agreement.</caption>
-        <thead><tr><th scope="col">Arm</th><th scope="col">Reference − arm</th><th scope="col">Paired 95% interval</th><th scope="col">p</th><th scope="col">Holm-adjusted p</th><th scope="col">Test folds<small>reference better</small></th></tr></thead>
+        <thead><tr><th scope="col">Arm</th><th scope="col">Reference − arm</th><th scope="col">Paired 95% interval</th><th scope="col">p</th><th scope="col">Holm-adjusted p</th><th scope="col">{planRuns(results.design?.strategy).replace(/^./, (letter) => letter.toUpperCase())}<small>reference better</small></th></tr></thead>
         <tbody>{comparison.contrasts.map((row) => <ContrastRow key={row.armId} row={row} metric={metric} />)}</tbody>
       </table></div>
       <p className="exp-footnote">Differences use the same resampled {unit}s for every arm; Holm adjusts p for the number of planned contrasts.{noInterval ? ` ${noInterval}` : ''}</p>
-      <p className="exp-footnote">Like every interval here, these hold the trained models fixed. A clear difference is a lead to confirm on an independent test cohort.</p>
+      <p className="exp-footnote">Like every interval here, these hold the trained models fixed. A clear difference is a lead to confirm on an independent labeled cohort.</p>
     </figure> : null}
   </section>;
 }
@@ -418,8 +427,9 @@ function BatchDetail({ project, record, results, batch, metric, task }: { projec
   const classes = results.target?.classes ?? [];
   return <div className="exp-detail">
     {batch.configurations.length > 1 ? <ConfigurationTable batch={batch} record={record} metric={metric} task={task} value={configuration.candidateId} onChange={setCandidate} /> : null}
-    <SeedTable configuration={configuration} metric={metric} task={task} />
-    {configuration.splitSeeds.map((split) => <FoldTable key={split.splitSeed} split={split} configuration={configuration} metric={metric} task={task} unit={results.target?.unit ?? 'slide'} multiple={configuration.splitSeeds.length > 1} />)}
+    <SeedTable configuration={configuration} metric={metric} task={task} strategy={results.design?.strategy} />
+    <ApplyConfiguration project={project} record={record} batchId={batch.batchId} candidateId={configuration.candidateId} number={configuration.number} />
+    {configuration.splitSeeds.map((split) => <FoldTable key={split.splitSeed} split={split} configuration={configuration} metric={metric} task={task} unit={results.target?.unit ?? 'slide'} multiple={configuration.splitSeeds.length > 1} strategy={results.design?.strategy} />)}
     <ClassTable configuration={configuration} unit={results.target?.unit ?? 'slide'} binary={task === 'binary_classification'} />
     <ConfusionTable configuration={configuration} classes={classes} />
     <PredictionFiles project={project} batch={batch} configuration={configuration} splitUnit={results.design?.splitUnit} />
@@ -463,7 +473,7 @@ function epochSummary(seeds: SeedResult[]) {
   return epochs.length === 1 ? String(median) : `${median} (${epochs[0]}–${epochs.at(-1)})`;
 }
 
-function SeedTable({ configuration, metric, task }: { configuration: ConfigurationResult; metric: ResultMetric; task?: string }) {
+function SeedTable({ configuration, metric, task, strategy }: { configuration: ConfigurationResult; metric: ResultMetric; task?: string; strategy?: DesignStrategy }) {
   const multiple = configuration.splitSeeds.length > 1;
   const seeds = configuration.splitSeeds.flatMap((split) => split.seeds);
   const columns: ResultMetric[] = ['auroc', 'auprc', 'balancedAccuracy', 'macroF1', 'accuracy', 'loss'];
@@ -478,7 +488,7 @@ function SeedTable({ configuration, metric, task }: { configuration: Configurati
         {seeds.map((seed) => <tr key={`${seed.splitSeed}-${seed.trainingSeed}`}>
           <th scope="row">{seedLabel(seed, multiple)}</th>
           {seed.oof ? columns.map((name) => <td key={name} className={cell(name)}>{fixed(seed.oof?.[name])}</td>)
-            : <td colSpan={columns.length} className="exp-empty exp-wrap">{seed.completedRuns} of {seed.totalRuns} folds finished; OOF waits for all folds</td>}
+            : <td colSpan={columns.length} className="exp-empty exp-wrap">{seed.completedRuns} of {seed.totalRuns} {planRuns(strategy)} finished; OOF waits for all of them</td>}
         </tr>)}
       </tbody>
       <tbody className="exp-summary-rows">
@@ -491,7 +501,7 @@ function SeedTable({ configuration, metric, task }: { configuration: Configurati
   </figure>;
 }
 
-function FoldTable({ split, configuration, metric, task, unit, multiple }: { split: ConfigurationResult['splitSeeds'][number]; configuration: ConfigurationResult; metric: ResultMetric; task?: string; unit: string; multiple: boolean }) {
+function FoldTable({ split, configuration, metric, task, unit, multiple, strategy }: { split: ConfigurationResult['splitSeeds'][number]; configuration: ConfigurationResult; metric: ResultMetric; task?: string; unit: string; multiple: boolean; strategy?: DesignStrategy }) {
   const values = split.seeds.flatMap((seed) => seed.folds.map((fold) => fold.metrics?.[metric])).filter((value): value is number => typeof value === 'number');
   const low = Math.min(...values), high = Math.max(...values);
   const better = lowerIsBetter(metric);
@@ -503,12 +513,12 @@ function FoldTable({ split, configuration, metric, task, unit, multiple }: { spl
     return { mean, sd, n: scores.length };
   });
   return <figure className="exp-figure">
-    <figcaption>Test folds · {metricLabel(metric, task)}{multiple ? ` · split seed ${split.splitSeed}` : ''}</figcaption>
-    <p className="muted">Each cell is one run: its held-out test fold, scored by the checkpoint that fold’s validation set chose. Rows share test {unit}s across seeds, so a row that is low for every seed points at the data, not the training.</p>
+    <figcaption>{strategy === 'held_out' ? 'Held-out assessment' : strategy === 'leave_one_domain_out' ? 'Held-out sites' : 'Test folds'} · {metricLabel(metric, task)}{multiple ? ` · split seed ${split.splitSeed}` : ''}</figcaption>
+    <p className="muted">{strategy === 'held_out' ? `Each cell is one run on the held-out set, scored by the checkpoint its validation set chose. Every seed assesses the same ${unit}s, so the spread across seeds comes from training alone.` : strategy === 'leave_one_domain_out' ? 'Each cell is one run: its held-out site, scored by the checkpoint that run’s validation set chose. Rows share the site across seeds, so a row that is low for every seed points at that site, not the training.' : `Each cell is one run: its held-out test fold, scored by the checkpoint that fold’s validation set chose. Rows share test ${unit}s across seeds, so a row that is low for every seed points at the data, not the training.`}</p>
     <div className="exp-table-wrap"><table className="exp-table exp-folds">
-      <thead><tr><th scope="col">Test fold</th>{split.seeds.map((seed) => <th scope="col" key={seed.trainingSeed}>Seed {seed.trainingSeed}</th>)}<th scope="col">Across seeds</th></tr></thead>
+      <thead><tr><th scope="col">{planTitle(strategy)}</th>{split.seeds.map((seed) => <th scope="col" key={seed.trainingSeed}>Seed {seed.trainingSeed}</th>)}<th scope="col">Across seeds</th></tr></thead>
       <tbody>{split.folds.map((fold, index) => <tr key={fold.splitPlanId}>
-        <th scope="row">Fold {fold.fold + 1}{fold.testCount ? <small>{fold.testCount.toLocaleString()} {unit}s</small> : null}</th>
+        <th scope="row">{foldLabel(fold, strategy)}{fold.testCount ? <small>{fold.testCount.toLocaleString()} {unit}s</small> : null}</th>
         {split.seeds.map((seed) => {
           const run = seed.folds.find((row) => row.splitPlanId === fold.splitPlanId);
           const value = run?.metrics?.[metric];
@@ -520,12 +530,12 @@ function FoldTable({ split, configuration, metric, task, unit, multiple }: { spl
         <td>{foldMeans[index].mean !== null ? <>{fixed(foldMeans[index].mean)}{foldMeans[index].sd !== null ? <span className="exp-sd"> ± {fixed(foldMeans[index].sd)}</span> : null}</> : '—'}</td>
       </tr>)}</tbody>
       <tbody className="exp-summary-rows">
-        <tr><th scope="row">Fold mean ± SD</th>{split.seeds.map((seed) => <td key={seed.trainingSeed}>{meanSd(seed.foldStats[metric])}</td>)}<td><strong>{meanSd(configuration.foldAverage[metric])}</strong></td></tr>
+        {split.folds.length > 1 ? <tr><th scope="row">{strategy === 'leave_one_domain_out' ? 'Site mean ± SD' : 'Fold mean ± SD'}</th>{split.seeds.map((seed) => <td key={seed.trainingSeed}>{meanSd(seed.foldStats[metric])}</td>)}<td><strong>{meanSd(configuration.foldAverage[metric])}</strong></td></tr> : null}
         <tr><th scope="row">Pooled OOF</th>{split.seeds.map((seed) => <td key={seed.trainingSeed}>{fixed(seed.oof?.[metric])}</td>)}<td><strong>{meanSd(configuration.seedAverage[metric])}</strong></td></tr>
         <tr className="exp-interval-row"><th scope="row">Checkpoint epoch<small>median (range)</small></th>{split.seeds.map((seed) => <td key={seed.trainingSeed}>{epochSummary([seed])}</td>)}<td>{epochSummary(split.seeds)}</td></tr>
       </tbody>
     </table></div>
-    {values.length > 1 ? <p className="exp-footnote"><span className="exp-ramp" aria-hidden="true" />Shading runs from the {better ? 'highest' : 'lowest'} to the {better ? 'lowest' : 'highest'} fold value in this table ({fixed(low)}–{fixed(high)}); darker is better. Pooled OOF can sit below the fold mean: pooling mixes fold models whose scores are on slightly different scales.</p> : null}
+    {values.length > 1 ? <p className="exp-footnote"><span className="exp-ramp" aria-hidden="true" />Shading runs from the {better ? 'highest' : 'lowest'} to the {better ? 'lowest' : 'highest'} {planTitle(strategy).toLowerCase()} value in this table ({fixed(low)}–{fixed(high)}); darker is better.{split.folds.length > 1 ? ` Pooled OOF can sit below the ${strategy === 'leave_one_domain_out' ? 'site' : 'fold'} mean: pooling mixes ${strategy === 'leave_one_domain_out' ? 'site' : 'fold'} models whose scores are on slightly different scales.` : ''}</p> : null}
   </figure>;
 }
 

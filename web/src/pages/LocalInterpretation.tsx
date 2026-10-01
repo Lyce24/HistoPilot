@@ -163,7 +163,7 @@ function LoadedInputs({ predictor, slides, slideFolder, source, pack, sourceMatc
   const featuresReady = Boolean(source && sourceMatches && representationMatches);
   const row = (ok: boolean, title: string, detail: string) => <li className={ok ? 'is-ready' : 'is-missing'}><span aria-hidden="true">{ok ? '✓' : '!'}</span><div><strong>{title}<span className="sr-only">{ok ? ' ready' : ' not ready'}</span></strong><small>{detail}</small></div></li>;
   return <ul className="interpretation-loaded" aria-label="Loaded inputs">
-    {row(true, 'Model weights', `${modelLabel(manifest.recipe.model)} · ${manifest.method === 'refit' ? 'refit model, 1 checkpoint' : `fold ensemble, ${checkpoints} checkpoints`}${classes.length ? ` · predicts ${classes.join(' / ')}` : ''}`)}
+    {row(true, 'Model weights', `${modelLabel(manifest.recipe.model)} · ${manifest.method === 'refit' ? 'refit model, 1 checkpoint' : `${manifest.method === 'seed_ensemble' ? 'seed ensemble' : 'fold ensemble'}, ${checkpoints} checkpoints`}${classes.length ? ` · predicts ${classes.join(' / ')}` : ''}`)}
     {row(Boolean(slideFolder), 'Dataset slides', slides ? `${slides.datasetName}${slides.slideCount != null ? ` · ${slides.slideCount.toLocaleString()} slides` : ''}${slideFolder ? ` · ${slideFolder}` : ''}` : 'Choose the dataset whose slides you want to interpret')}
     {row(featuresReady, 'Features', `${source ? `${source.encoderId ?? 'unknown encoder'} · ${source.dimensions ?? '?'}-d · ${pack ? `pack ${pack.name} (${pack.outputDtype})` : `original feature files (${dtypeLabel(source.dtype)})`} · ` : ''}Predictor requires ${dtypeLabel(manifest.inputs.features?.dtype)}`)}
   </ul>;

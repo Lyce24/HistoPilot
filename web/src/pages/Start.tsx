@@ -423,7 +423,7 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
               </fieldset>
             </details>
 
-            <p className="start-section-description">Define targets and development splits in Stage 2. Configure training recipes and seeds in Experiments; prepare test data separately when ready.</p>
+            <p className="start-section-description">Define the target and the training and testing sets in Targets &amp; splits. Design folds, recipes and seeds in Experiments, then apply the resulting predictors to cohorts in Apply models.</p>
 
             <div className="start-form-footer">
               <p>

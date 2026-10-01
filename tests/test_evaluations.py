@@ -45,7 +45,9 @@ def test_development_bundle_must_match_protocol_binding(evaluation, monkeypatch,
     monkeypatch.setattr(service.store, "get_configuration", protocol_with_binding)
     result = preview(service, spec)
     assert not result["canFreeze"]
-    assert ("PROTOCOL_BUNDLE_MISMATCH" if changed == "identity" else "PROTOCOL_BUNDLE_CHANGED") in codes(result)
+    assert (
+        "PROTOCOL_BUNDLE_MISMATCH" if changed == "identity" else "PROTOCOL_BUNDLE_CHANGED"
+    ) in codes(result)
 
 
 def test_combined_file_filter_freeze_reopen_and_exact_idempotency(evaluation):
@@ -671,18 +673,27 @@ def test_review_mode_is_explicit_unlabeled_and_legacy_shape_is_preserved():
 
 
 @pytest.mark.parametrize("development_unit", ["slide", "patient"])
-def test_review_allows_patient_overlap_only_for_unlabeled_slide_target(evaluation, development_unit):
+def test_patient_overlap_is_allowed_only_for_slide_targets(evaluation, development_unit):
     service, spec, _ = evaluation
     old = service.store.get_configuration(spec["protocolId"])["manifest"]
     manifest = copy.deepcopy(old)
     manifest["spec"]["target"]["unit"] = development_unit
-    protocol = service.store.publish_configuration(manifest=manifest, operation_id="review-protocol")
-    data, _ = dataset(service.store, "review-patient", [
-        {"slideId": "s2", "patientId": "p0", "attributes": {"label": "0", "cohort": "test"}},
-    ])
+    protocol = service.store.publish_configuration(
+        manifest=manifest, operation_id="review-protocol"
+    )
+    data, _ = dataset(
+        service.store,
+        "review-patient",
+        [
+            {"slideId": "s2", "patientId": "p0", "attributes": {"label": "0", "cohort": "test"}},
+        ],
+    )
     spec.update(protocolId=protocol["id"], datasetId=data["id"], target=None)
     strict = preview(service, spec)
-    assert "DEVELOPMENT_PATIENT_OVERLAP" in codes(strict)
+    # Labeled evaluations are scored without development patients, so a slide-level
+    # predictor may predict their new slides; a patient-level one would score them in-sample.
+    assert ("DEVELOPMENT_PATIENT_OVERLAP" in codes(strict)) == (development_unit == "patient")
+    assert "DEVELOPMENT_PATIENT_OVERLAP" in {item["code"] for item in strict["findings"]}
     result = preview(service, {**spec, "purpose": "review"})
     assert result["overlap"]["patientIds"] == ["p0"]
     assert result["summary"]["labeledSlides"] == 0

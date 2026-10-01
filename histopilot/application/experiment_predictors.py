@@ -242,7 +242,7 @@ class ExperimentPredictorService:
             )
         if not predictor_work_expected(submission):
             raise StorageError(
-                "This experiment was submitted without predictors. Copy it to change that choice.",
+                "This experiment started without predictors. Copy it to change that choice.",
                 "EXPERIMENT_PREDICTOR_POLICY_LOCKED",
                 409,
             )
@@ -464,7 +464,7 @@ class ExperimentPredictorService:
                 )
             if submission["status"] != "submitted":
                 raise StorageError(
-                    "Finish submitting the experiment before creating predictors.",
+                    "Finish starting the experiment before creating predictors.",
                     "EXPERIMENT_SUBMISSION_REQUIRED",
                     409,
                 )
@@ -609,7 +609,7 @@ class ExperimentPredictorService:
             _record, submission = self._submission(identity)
             if submission["status"] != "submitted":
                 raise StorageError(
-                    "Finish submission before cancelling predictor creation.",
+                    "Finish starting the experiment before cancelling predictor creation.",
                     "EXPERIMENT_SUBMISSION_REQUIRED",
                     409,
                 )
@@ -733,7 +733,7 @@ class ExperimentPredictorService:
         runtime = self.runtime()
         if not runtime.get("available"):
             raise StorageError(
-                "The submitted training runtime is unavailable.",
+                "The training runtime the experiment started with is unavailable.",
                 "TRAINING_RUNTIME_UNAVAILABLE",
                 409,
             )
@@ -770,6 +770,7 @@ class ExperimentPredictorService:
                     "; ".join(row["message"] for row in findings),
                     findings[0]["code"] if findings else "PREDICTOR_BUILD_BLOCKED",
                     409,
+                    findings=findings,
                 )
             item["buildRequest"] = {
                 **request.model_dump(),

@@ -89,11 +89,11 @@ export function slidePathStyle(inspection: Pick<Inspection, 'rows' | 'columnSumm
 
 /** The note under the slide file column: a slide folder matters only for relative paths. */
 export function slideFileColumnNote(column: string | undefined, style: SlidePathStyle): string {
-  if (!column) return 'Optional. A column naming each slide file: a full path such as /data/rih/SL-145.svs, or a path inside the slide folder such as rih/SL-145.svs.';
+  if (!column) return 'Optional. A column naming each slide file: a full path such as /data/slides/batch-1/slide-145.svs, or a path inside the slide folder such as batch-1/slide-145.svs.';
   if (style === 'absolute') return 'This column holds full file paths, so no slide folder is needed. If you also choose one, every file must be inside it.';
-  if (style === 'relative') return 'This column holds paths inside the slide folder, for example rih/SL-145.svs. Choose that folder above.';
+  if (style === 'relative') return 'This column holds paths inside the slide folder, for example batch-1/slide-145.svs. Choose that folder above.';
   if (style === 'mixed') return 'This column mixes full paths and paths inside the slide folder. Full paths are used as they are; the others need the slide folder above.';
-  return 'Full paths, such as /data/rih/SL-145.svs, are used as they are. Other paths are read inside the slide folder above.';
+  return 'Full paths, such as /data/slides/batch-1/slide-145.svs, are used as they are. Other paths are read inside the slide folder above.';
 }
 
 /** What to do next in the source step, or null when the slide source is complete. */

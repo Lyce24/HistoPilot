@@ -12,18 +12,18 @@ from histopilot.application.slide_lists import (
 @pytest.fixture
 def cohort(tmp_path):
     """Per-cohort subfolders of one slide root, as a multi-cohort study is stored."""
-    root = tmp_path / "slides" / "colon"
+    root = tmp_path / "slides" / "study"
     for folder, name in (
-        ("rih", "SL-1.svs"),
-        ("rih", "SL-2.svs"),
-        ("TCGA", "TCGA-A6.svs"),
-        ("SURGEN", "SR386.tiff"),
+        ("site-a", "A-1.svs"),
+        ("site-a", "A-2.svs"),
+        ("site-c", "C-6.svs"),
+        ("site-b", "B-386.tiff"),
     ):
         path = root / folder / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"fixture slide")
     (root / "notes.txt").write_bytes(b"not a slide")
-    records = [{"slideId": name} for name in ("SL-1", "SL-2", "TCGA-A6", "absent-from-disk")]
+    records = [{"slideId": name} for name in ("A-1", "A-2", "C-6", "absent-from-disk")]
     return root, records
 
 
@@ -32,10 +32,10 @@ def test_the_folder_is_the_default_selection(cohort):
     selection = resolve_slide_selection(root)
     assert selection["source"] == "folder"
     assert [entry.wsi for entry in selection["slides"]] == [
-        "rih/SL-1.svs",
-        "rih/SL-2.svs",
-        "SURGEN/SR386.tiff",
-        "TCGA/TCGA-A6.svs",
+        "site-a/A-1.svs",
+        "site-a/A-2.svs",
+        "site-b/B-386.tiff",
+        "site-c/C-6.svs",
     ]
     # Non-slide files are not slides, and nothing declares an MPP without a list.
     assert selection["initialCount"] == 4
@@ -47,12 +47,12 @@ def test_the_folder_is_the_default_selection(cohort):
 def test_a_list_replaces_the_folder_scan_and_pins_each_source_mpp(cohort):
     root, _records = cohort
     selection = resolve_slide_selection(
-        root, list_content=b"wsi,mpp\nrih/SL-1.svs,0.5016\nTCGA/TCGA-A6.svs,0.252\n"
+        root, list_content=b"wsi,mpp\nsite-a/A-1.svs,0.5\nsite-c/C-6.svs,0.252\n"
     )
     assert selection["source"] == "list"
     assert [(entry.slideId, entry.mpp) for entry in selection["slides"]] == [
-        ("SL-1", 0.5016),
-        ("TCGA-A6", 0.252),
+        ("A-1", 0.5),
+        ("C-6", 0.252),
     ]
     assert selection["declaresMpp"] is True
 
@@ -60,10 +60,10 @@ def test_a_list_replaces_the_folder_scan_and_pins_each_source_mpp(cohort):
 def test_a_dataset_narrows_the_selection_it_never_widens_it(cohort):
     root, records = cohort
     selection = resolve_slide_selection(root, records=records)
-    assert [entry.slideId for entry in selection["slides"]] == ["SL-1", "SL-2", "TCGA-A6"]
+    assert [entry.slideId for entry in selection["slides"]] == ["A-1", "A-2", "C-6"]
     assert selection["datasetFiltered"] is True
     # A slide on disk the cohort does not claim, and a cohort row with no slide on disk.
-    assert selection["outside"] == ["SURGEN/SR386.tiff"]
+    assert selection["outside"] == ["site-b/B-386.tiff"]
     assert selection["unlisted"] == ["absent-from-disk"]
 
 
@@ -71,31 +71,31 @@ def test_a_list_and_a_dataset_compose_in_that_order(cohort):
     root, records = cohort
     selection = resolve_slide_selection(
         root,
-        list_content=b"wsi,mpp,cohort\nrih/SL-1.svs,0.5016,RIH\nSURGEN/SR386.tiff,0.25,SurGen\n",
+        list_content=b"wsi,mpp,cohort\nsite-a/A-1.svs,0.5,A\nsite-b/B-386.tiff,0.25,B\n",
         records=records,
     )
-    assert [entry.slideId for entry in selection["slides"]] == ["SL-1"]
+    assert [entry.slideId for entry in selection["slides"]] == ["A-1"]
     assert selection["initialCount"] == 2 and selection["selectedCount"] == 1
-    assert selection["outside"] == ["SURGEN/SR386.tiff"]
+    assert selection["outside"] == ["site-b/B-386.tiff"]
 
 
 def test_a_folder_whose_slides_would_overwrite_each_other_is_refused(tmp_path):
     root = tmp_path / "slides"
     for folder in ("current", "superseded", "quarantine"):
-        path = root / folder / "SL-1.svs"
+        path = root / folder / "A-1.svs"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"fixture slide")
     with pytest.raises(SlideListError, match="2 pairs of selected slides share a file name"):
         resolve_slide_selection(root)
     # Naming one of each pair is the way out, and it is what a slide list is for.
-    selection = resolve_slide_selection(root, list_content=b"wsi\ncurrent/SL-1.svs\n")
-    assert [entry.wsi for entry in selection["slides"]] == ["current/SL-1.svs"]
+    selection = resolve_slide_selection(root, list_content=b"wsi\ncurrent/A-1.svs\n")
+    assert [entry.wsi for entry in selection["slides"]] == ["current/A-1.svs"]
 
 
 def test_a_narrower_folder_avoids_the_collision_entirely(tmp_path):
     root = tmp_path / "slides"
     for folder in ("current", "superseded"):
-        path = root / folder / "SL-1.svs"
+        path = root / folder / "A-1.svs"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"fixture slide")
     assert resolve_slide_selection(root / "current")["initialCount"] == 1
@@ -107,17 +107,17 @@ def test_a_narrower_folder_avoids_the_collision_entirely(tmp_path):
 @pytest.mark.parametrize(
     ("table", "message"),
     [
-        (b"wsi,mpp\nrih/SL-1.svs,0.5016\nrih/SL-2.svs,\n", "row 3 has no mpp"),
-        (b"wsi,mpp\nrih/SL-1.svs,scanner\n", "non-numeric mpp"),
-        (b"wsi,mpp\nrih/SL-1.svs,0\n", "positive finite mpp"),
-        (b"wsi\nrih/SL-1.svs\nrih/SL-1.svs\n", "selected twice"),
+        (b"wsi,mpp\nsite-a/A-1.svs,0.5\nsite-a/A-2.svs,\n", "row 3 has no mpp"),
+        (b"wsi,mpp\nsite-a/A-1.svs,scanner\n", "non-numeric mpp"),
+        (b"wsi,mpp\nsite-a/A-1.svs,0\n", "positive finite mpp"),
+        (b"wsi\nsite-a/A-1.svs\nsite-a/A-1.svs\n", "selected twice"),
         (b"wsi\n../outside.svs\n", "inside the slide folder"),
-        (b"wsi\n/absolute/SL-1.svs\n", "relative to the slide folder"),
-        (b"wsi\nrih/absent.svs\n", "is not under"),
+        (b"wsi\n/absolute/A-1.svs\n", "relative to the slide folder"),
+        (b"wsi\nreg/absent.svs\n", "is not under"),
         (b"wsi\nnotes.txt\n", "not a supported whole-slide image"),
-        (b"wsi,cohort\n,RIH\n", "row 2 has no wsi"),
-        (b"slide\nrih/SL-1.svs\n", "needs a wsi column"),
-        (b"wsi,wsi\nrih/SL-1.svs,x\n", "repeats a column name"),
+        (b"wsi,cohort\n,A\n", "row 2 has no wsi"),
+        (b"slide\nsite-a/A-1.svs\n", "needs a wsi column"),
+        (b"wsi,wsi\nsite-a/A-1.svs,x\n", "repeats a column name"),
         (b"wsi,mpp\n", "contains no rows"),
     ],
 )
@@ -142,7 +142,7 @@ def test_an_empty_folder_is_refused(tmp_path):
 def test_extensions_narrow_what_counts_as_a_slide(cohort):
     root, _records = cohort
     selection = resolve_slide_selection(root, wsi_ext=[".tiff"])
-    assert [entry.wsi for entry in selection["slides"]] == ["SURGEN/SR386.tiff"]
+    assert [entry.wsi for entry in selection["slides"]] == ["site-b/B-386.tiff"]
     with pytest.raises(SlideListError, match="begin with a dot"):
         resolve_slide_selection(root, wsi_ext=["tiff"])
 
@@ -150,13 +150,13 @@ def test_extensions_narrow_what_counts_as_a_slide(cohort):
 def test_reading_identities_from_a_list_never_touches_slide_storage():
     """Registering features needs the names only; the slides may be offline or elsewhere."""
     identities, has_mpp, digest = list_slide_ids(
-        b"wsi,mpp\nrih/SL-1.svs,0.5016\nTCGA/TCGA-A6.svs,0.252\n"
+        b"wsi,mpp\nsite-a/A-1.svs,0.5\nsite-c/C-6.svs,0.252\n"
     )
-    assert identities == {"SL-1", "TCGA-A6"}
+    assert identities == {"A-1", "C-6"}
     assert has_mpp is True and len(digest) == 64
-    assert list_slide_ids(b"wsi\nrih/SL-1.svs\n")[1] is False
-    with pytest.raises(SlideListError, match="both name slide 'SL-1'"):
-        list_slide_ids(b"wsi\nrih/SL-1.svs\nother/SL-1.svs\n")
+    assert list_slide_ids(b"wsi\nsite-a/A-1.svs\n")[1] is False
+    with pytest.raises(SlideListError, match="both name slide 'A-1'"):
+        list_slide_ids(b"wsi\nsite-a/A-1.svs\nother/A-1.svs\n")
 
 
 def test_dataset_filter_ignores_name_collisions_in_unselected_slides(tmp_path):

@@ -1,4 +1,4 @@
-"""Immutable test cohorts; legacy bound preflight is reused at model evaluation."""
+"""Immutable cohorts that predictors are applied to; legacy bound preflight is reused by runs."""
 
 from __future__ import annotations
 
@@ -124,9 +124,24 @@ def purpose_findings(spec, finding):
         finding("REVIEW_PREDICTIONS_ONLY", REVIEW_COHORT_NOTE, "warning")
 
 
-def patient_overlap_allowed(purpose, unit):
-    """New slides from development patients are new prediction units only for slide targets."""
-    return is_inference_purpose(purpose) and unit == "slide"
+def unlabeled_findings(count, finding):
+    """Report slides kept without a label; they are predicted but never scored."""
+    if count:
+        finding(
+            "UNLABELED_TEST_SLIDES",
+            f"{count} selected slides have no label for this target. They keep their "
+            "place in the cohort and receive predictions, but no metric counts them.",
+            "info",
+        )
+
+
+def patient_overlap_allowed(unit):
+    """New slides from development patients are new prediction units only for slide targets.
+
+    Inference flags them. Labeled evaluations are scored by the control service, which
+    leaves them out of every metric and counts them (``run_metrics``).
+    """
+    return unit == "slide"
 
 
 def _target_field_findings(datasets, fields, target, finding):
@@ -203,7 +218,7 @@ class EvaluationService:
             raise StorageError("The test-cohort draft changed. Reload it.", "REVISION_CONFLICT")
         if draft["status"] != "editable":
             raise StorageError(
-                "This test cohort is frozen. Clone it to make changes.", "DRAFT_FROZEN"
+                "This cohort is frozen. Copy it into a new draft to make changes.", "DRAFT_FROZEN"
             )
         payload = draft["payload"]
         if (
@@ -254,7 +269,7 @@ class EvaluationService:
             rows.extend(records)
         if len(rows) > 50_000:
             raise StorageError(
-                "A test cohort supports at most 50,000 slide records.",
+                "A cohort supports at most 50,000 slide records.",
                 "EVALUATION_RECORD_LIMIT",
                 413,
             )
@@ -280,7 +295,7 @@ class EvaluationService:
         if target:
             _target_field_findings(datasets, fields, target, finding)
         evaluator = FilterEvaluator()
-        included, excluded = [], 0
+        included, excluded, unlabeled = [], 0, 0
         try:
             evaluator.prepare(spec.eligibility)
             for row in rows:
@@ -293,16 +308,21 @@ class EvaluationService:
                     missing = raw is None
                     label = target.labels.get(raw) if not missing else None
                     if label is None:
-                        if (target.missing if missing else target.unmapped) == "exclude":
+                        policy = target.missing if missing else target.unmapped
+                        if policy == "exclude":
                             excluded += 1
                             continue
-                        finding(
-                            "MISSING_TARGET_LABEL" if missing else "UNMAPPED_TARGET_LABEL",
-                            "Selected slides have missing or unmapped target labels. Map them or explicitly exclude them.",
-                        )
+                        if policy == "unlabeled":
+                            unlabeled += 1
+                        else:
+                            finding(
+                                "MISSING_TARGET_LABEL" if missing else "UNMAPPED_TARGET_LABEL",
+                                "Selected slides have missing or unmapped target labels. Map them, explicitly exclude them, or keep them unlabeled.",
+                            )
                 included.append({**row, "label": label})
         except FilterFailure as error:
             finding(error.code, str(error))
+        unlabeled_findings(unlabeled, finding)
         if not included:
             finding("EMPTY_TEST_COHORT", "The test-cohort conditions select no slides.")
         selected = {row["slideId"] for row in included}
@@ -336,7 +356,7 @@ class EvaluationService:
         if target and set(counts) != set(target.classes):
             finding(
                 "TEST_CLASSES_ABSENT",
-                "Some target classes are absent in this test cohort; some metrics will be unavailable.",
+                "Some target classes are absent in this cohort; some metrics will be unavailable.",
                 "warning",
             )
         preview = {
@@ -406,7 +426,7 @@ class EvaluationService:
         if protocol_manifest.get("spec", {}).get("split", {}).get("version", 1) != 4:
             finding(
                 "LEGACY_DEVELOPMENT_PROTOCOL",
-                "Create a development-only protocol revision in Stage 2 before preparing test cohorts. Legacy protocols may include externally reserved data and remain unchanged.",
+                "This targets & splits version predates development-only training designs. Freeze a new version in Targets & splits before preparing cohorts; earlier protocols may include externally reserved data and remain unchanged.",
             )
         try:
             target = TargetSpec.model_validate(protocol_manifest["spec"]["target"])
@@ -417,7 +437,7 @@ class EvaluationService:
         if spec.splitUnit != protocol_manifest.get("spec", {}).get("splitUnit", "patient"):
             finding(
                 "SPLIT_UNIT_MISMATCH",
-                "The test cohort must use the predictor's slide or patient split unit.",
+                "The cohort must use the predictor's slide or patient split unit.",
             )
         if spec.splitUnit == "slide" and target.unit != "slide":
             finding(
@@ -482,7 +502,7 @@ class EvaluationService:
                     )
             _target_field_findings(datasets, fields, spec.target, finding)
         evaluator = FilterEvaluator()
-        included, excluded = [], 0
+        included, excluded, unlabeled = [], 0, 0
         try:
             evaluator.prepare(spec.eligibility)
             for row in rows:
@@ -501,13 +521,17 @@ class EvaluationService:
                         if policy == "exclude":
                             excluded += 1
                             continue
-                        finding(
-                            "MISSING_TARGET_LABEL" if missing else "UNMAPPED_TARGET_LABEL",
-                            "Selected slides have missing or unmapped target labels. Map them, explicitly exclude them, or choose unlabeled inference.",
-                        )
+                        if policy == "unlabeled":
+                            unlabeled += 1
+                        else:
+                            finding(
+                                "MISSING_TARGET_LABEL" if missing else "UNMAPPED_TARGET_LABEL",
+                                "Selected slides have missing or unmapped target labels. Map them, explicitly exclude them, keep them unlabeled, or choose unlabeled inference.",
+                            )
                 included.append({**row, "label": label})
         except FilterFailure as error:
             finding(error.code, str(error))
+        unlabeled_findings(unlabeled, finding)
         if not included:
             finding("EMPTY_TEST_COHORT", "The test-cohort conditions select no slides.")
         slide_ids = [row["slideId"] for row in included]
@@ -550,7 +574,7 @@ class EvaluationService:
         # Inference never predicts a development unit: that prediction is in-sample.
         in_sample = (
             " Their predictions would be in-sample. Use this predictor's development "
-            "out-of-fold predictions for them and exclude them from the inference cohort."
+            "out-of-fold predictions for them and exclude them from the unlabeled cohort."
             if inference
             else ""
         )
@@ -560,18 +584,19 @@ class EvaluationService:
                 f"{len(slide_overlap)} selected slide IDs occur in model development." + in_sample,
             )
         if patient_overlap:
-            allowed = patient_overlap_allowed(spec.purpose, target.unit)
+            allowed = patient_overlap_allowed(target.unit)
             finding(
                 "DEVELOPMENT_PATIENT_OVERLAP",
                 f"{len(patient_overlap)} selected patient IDs occur in model development."
                 + (
                     " Their new slides receive predictions and are flagged as development-patient "
                     "slides in every analysis and export. This is not an independent test."
+                    if allowed and inference
+                    else " Their new slides receive predictions but are left out of every metric, "
+                    "because they are not independent of development."
                     if allowed
                     else " This predictor scores patients, so their predictions would be in-sample. "
                     "Exclude these patients or use a slide-level predictor."
-                    if inference
-                    else ""
                 ),
                 "warning" if allowed else "error",
             )
@@ -721,7 +746,7 @@ class EvaluationService:
         if spec.target and set(counts) != set(target.classes):
             finding(
                 "TEST_CLASSES_ABSENT",
-                "Some development classes are absent in the selected test cohort; some metrics will be unavailable.",
+                "Some development classes are absent in the selected cohort; some metrics will be unavailable.",
                 "warning",
             )
         preview = {
@@ -803,6 +828,7 @@ class EvaluationService:
                 "Resolve the test-cohort findings before freezing.",
                 "EVALUATION_PREFLIGHT_BLOCKED",
                 422,
+                findings=preview["findings"],
             )
 
         def check():

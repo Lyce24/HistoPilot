@@ -106,23 +106,37 @@ def test_accepted_refit_retry_skips_evidence_scan_but_rejects_changed_resources(
 ):
     service, _ = registry
     selection, _, _ = refit_candidate(service)
-    jobs = ComputeJobService(service.store, runtime=lambda: {
-        "available": True, "python": sys.executable, "versions": {},
-        "cudaAvailable": False, "gpuCount": 0,
-        "host": {"cpuCount": 8, "totalRamGb": 16}},
-        task_center=task_center.client)
+    jobs = ComputeJobService(
+        service.store,
+        runtime=lambda: {
+            "available": True,
+            "python": sys.executable,
+            "versions": {},
+            "cudaAvailable": False,
+            "gpuCount": 0,
+            "host": {"cpuCount": 8, "totalRamGb": 16},
+        },
+        task_center=task_center.client,
+    )
     refits, record, _ = create(service, selection, jobs)
     request = LaunchRefit(operationId="launch-refit", resources=ResourcePolicy(gpuIds=[]))
     first = refits.launch(record["id"], request)
-    monkeypatch.setattr(refits, "_verify_sources", lambda *_: pytest.fail(
-        "Accepted refit retry must not scan completed fold evidence"))
+    monkeypatch.setattr(
+        refits,
+        "_verify_sources",
+        lambda *_: pytest.fail("Accepted refit retry must not scan completed fold evidence"),
+    )
     assert refits.launch(record["id"], request)["planHash"] == first["planHash"]
     assert [(task["id"], task["attempt"]) for task in compute_tasks(task_center)] == [
         (first["taskId"], 1)
     ]
     with pytest.raises(StorageError) as caught:
-        refits.launch(record["id"], LaunchRefit(operationId="launch-refit",
-                      resources=ResourcePolicy(gpuIds=[], ramGbPerRun=2)))
+        refits.launch(
+            record["id"],
+            LaunchRefit(
+                operationId="launch-refit", resources=ResourcePolicy(gpuIds=[], ramGbPerRun=2)
+            ),
+        )
     assert caught.value.code == "OPERATION_CONFLICT"
 
 

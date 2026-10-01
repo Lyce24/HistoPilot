@@ -7,10 +7,11 @@ from pathlib import Path
 import pytest
 from support.predictors import candidate, freeze
 from support.predictors import registry as registry
-from support.projects import lifecycle
+from support.projects import TARGET, lifecycle
 
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.lifecycle import CleanupService
+from histopilot.application.run_evidence import development_patients
 from histopilot.schemas.lifecycle import CleanupSelection
 from histopilot.schemas.predictors import (
     EvaluationRunSelection,
@@ -206,6 +207,37 @@ def test_evaluation_rejects_aggregation_drift_and_stale_cohort(registry, monkeyp
     assert evaluations.preview(selection)["findings"][0]["code"] == "EVALUATION_COHORT_STALE"
 
 
+def test_labeled_runs_name_the_development_patients_they_never_score(registry, monkeypatch):
+    service, cohort = registry
+    selected, *_ = candidate(service)
+    predictor, _ = freeze(service, selected)
+    evaluations = EvaluationRunService(service.store, service.filesystem)
+    selection = EvaluationRunSelection(
+        predictorId=predictor["id"], cohortId=cohort["id"], name="Test"
+    )
+    # Without shared patients the manifest stays as it was, and so does the run's ID.
+    assert "overlap" not in evaluations.preview(selection)["manifest"]
+    # A slide-level predictor may predict new slides of development patients on a cohort
+    # tied to its protocol, sent without overrides; the run must name them to leave them
+    # out of every metric.
+    slide_target = {**TARGET, "unit": "slide"}
+    model = copy.deepcopy(predictor)
+    model["manifest"]["target"] = slide_target
+    shared = copy.deepcopy(cohort)
+    shared["current"] = True
+    shared["manifest"]["target"] = slide_target
+    shared["manifest"]["overlap"] = {
+        "slideIds": [],
+        "patientIds": ["p0"],
+        "patientsComparable": True,
+    }
+    monkeypatch.setattr(evaluations.predictors, "get", lambda _: model)
+    monkeypatch.setattr(evaluations.cohorts, "get", lambda _: shared)
+    preview = evaluations.preview(selection)
+    assert preview["canSave"], preview["findings"]
+    assert development_patients(preview["manifest"]) == {"p0"}
+
+
 def test_completed_receipt_with_live_or_unverifiable_process_cannot_be_promoted(
     registry, monkeypatch
 ):
@@ -295,7 +327,9 @@ def test_evaluation_operation_cannot_be_reused_for_other_predictor_or_name(regis
 
 
 @pytest.mark.parametrize("overlap_kind", ["patient", "slide", "source"])
-def test_review_prediction_plan_keeps_slide_exclusion_and_discloses_patient_overlap(registry, monkeypatch, overlap_kind):
+def test_review_prediction_plan_keeps_slide_exclusion_and_discloses_patient_overlap(
+    registry, monkeypatch, overlap_kind
+):
     service, cohort = registry
     selection, *_ = candidate(service)
     predictor, _ = freeze(service, selection)
@@ -315,7 +349,9 @@ def test_review_prediction_plan_keeps_slide_exclusion_and_discloses_patient_over
         row["label"] = None
     monkeypatch.setattr(evaluations.predictors, "get", lambda _: predictor)
     monkeypatch.setattr(evaluations.cohorts, "get", lambda _: altered)
-    selected = EvaluationRunSelection(predictorId=predictor["id"], cohortId=cohort["id"], name="Review")
+    selected = EvaluationRunSelection(
+        predictorId=predictor["id"], cohortId=cohort["id"], name="Review"
+    )
     result = evaluations.preview(selected)
     assert result["canSave"] == (overlap_kind == "patient"), result
     if overlap_kind == "patient":

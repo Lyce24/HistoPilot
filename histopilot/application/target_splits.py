@@ -546,6 +546,13 @@ class TargetSplitService:
                         item["msg"] for item in error.errors(include_input=False)[:3]
                     )
                     finding("INVALID_TARGET_MAPPING", f"{role.title()} target: {details}")
+                    continue
+                if role == "train" and targets[role].keeps_unlabeled:
+                    finding(
+                        "TRAINING_LABELS_REQUIRED",
+                        "Training targets need a label for every slide. Exclude or block "
+                        "missing and unmapped values; only testing can keep slides unlabeled.",
+                    )
         _testing_target_findings(
             dataset, fields, targets.get("train"), targets.get("test"), finding
         )
@@ -639,7 +646,7 @@ class TargetSplitService:
             if partition_source and name_key(source) == name_key(partition_source):
                 finding("SPLIT_TARGET_LEAKAGE", "The partition column cannot also be the target.")
         evaluator = FilterEvaluator()
-        included, role_exclusions = {}, {}
+        included, role_exclusions, unlabeled_testing = {}, {}, 0
         for role, selected in partitions.items():
             target = targets[role]
             included[role], role_exclusions[role] = [], Counter()
@@ -650,8 +657,15 @@ class TargetSplitService:
                     label = target.labels.get(raw) if raw is not None else None
                     if label is None:
                         missing = raw is None
+                        policy = target.missing if missing else target.unmapped
+                        # Testing may keep a slide without a label: it is predicted, never
+                        # scored. The schema refuses this policy on training targets.
+                        if policy == "unlabeled" and role == "test":
+                            unlabeled_testing += 1
+                            included[role].append({**row, "label": None, "partition": role})
+                            continue
                         role_exclusions[role]["missingLabel" if missing else "unmappedLabel"] += 1
-                        if (target.missing if missing else target.unmapped) == "block":
+                        if policy == "block":
                             finding(
                                 "MISSING_LABEL" if missing else "UNMAPPED_LABEL",
                                 f"{role.title()} slides have missing or unmapped target labels. "
@@ -663,7 +677,7 @@ class TargetSplitService:
                 target
                 and target.unit == "patient"
                 and any(
-                    len({row["label"] for row in group}) > 1
+                    len({row["label"] for row in group if row["label"] is not None}) > 1
                     for group in development_selection_groups(included[role]).values()
                 )
             ):
@@ -671,6 +685,13 @@ class TargetSplitService:
                     "MIXED_PATIENT_LABELS",
                     f"A {role} patient has conflicting target labels; no majority label is selected.",
                 )
+        if unlabeled_testing:
+            finding(
+                "UNLABELED_TESTING_SLIDES",
+                f"{unlabeled_testing} testing slides have no label for the testing target. "
+                "They stay in the testing set and receive predictions, but no metric counts them.",
+                "info",
+            )
         training, testing = included["train"], included["test"]
         exclusions = role_exclusions["train"] + role_exclusions["test"]
         if exclusions:
@@ -737,6 +758,9 @@ class TargetSplitService:
             "testingClassCounts": {label: test_counts[label] for label in test_target.classes}
             if test_target
             else {},
+            # Only versions that keep unlabeled testing slides carry this count, so earlier
+            # frozen summaries keep their exact content.
+            **({"testingUnlabeledSlides": unlabeled_testing} if unlabeled_testing else {}),
             "trainingPatientClassCounts": _target_distribution(
                 training, spec.target.field, spec.target, include_patients=spec.splitUnit != "slide"
             )["patientClassCounts"],
@@ -795,7 +819,7 @@ class TargetSplitService:
     def get(self, identity):
         """Side-effect free. Freezing derives the testing cohort; older versions create it
         explicitly through ``create_test_cohort``. ``testCohort.required`` with no ``id``
-        means the testing set has no derived evaluation or inference cohort yet."""
+        means the testing set has no derived labeled or unlabeled cohort yet."""
         document = self._document(identity)
         required = any(row["partition"] == "test" for row in document["manifest"]["memberships"])
         cohort_id = (
@@ -825,7 +849,7 @@ class TargetSplitService:
         return self.store.folder / "target-splits" / target_split_id / TEST_COHORT_FAILURE
 
     def _test_cohort_failure(self, target_split_id):
-        """The error of the last attempt to derive the test cohort, until one succeeds."""
+        """The error of the last attempt to derive the testing cohort, until one succeeds."""
         path = self._test_cohort_failure_path(target_split_id)
         try:
             if not path.exists():
@@ -880,12 +904,13 @@ class TargetSplitService:
         else:
             preview = self.preview(draft_id, expected_revision)
             if preview["previewHash"] != preview_hash:
-                raise StorageError("Targets or partitions changed. Preview again.", "STALE_PREVIEW")
+                raise StorageError("Targets or partitions changed. Preview again.", "PREVIEW_STALE")
             if not preview["canFreeze"]:
                 raise StorageError(
                     "Resolve blocking target/split findings before freezing.",
                     "TARGET_SPLIT_BLOCKED",
                     422,
+                    findings=preview["findings"],
                 )
             manifest = {
                 "kind": "target-split",
@@ -941,7 +966,10 @@ class TargetSplitService:
                 item["message"] for item in preview["findings"] if item["severity"] == "error"
             )
             raise StorageError(
-                f"Training design is not feasible: {messages}", "TRAINING_SPLIT_BLOCKED", 422
+                f"Training design is not feasible: {messages}",
+                "TRAINING_SPLIT_BLOCKED",
+                422,
+                findings=preview["findings"],
             )
         manifest = {
             "kind": "protocol",
@@ -999,7 +1027,10 @@ class TargetSplitService:
                 item["message"] for item in preview["findings"] if item["severity"] == "error"
             )
             raise StorageError(
-                f"The testing cohort cannot be prepared: {messages}", "TARGET_TESTING_BLOCKED", 422
+                f"The testing cohort cannot be prepared: {messages}",
+                "TARGET_TESTING_BLOCKED",
+                422,
+                findings=preview["findings"],
             )
         manifest = {
             "kind": "evaluation-cohort",

@@ -26,10 +26,13 @@ def test_every_model_checks_validation_auroc_before_freezing(preview_context, mo
     assert "cannot select checkpoints" in preview["findings"][0]["message"]
 
 
-@pytest.mark.parametrize("controls", [
-    {"checkpointMetric": "validation_loss"},
-    {"minValidationPositives": 2, "fixedEpochBudget": 3},
-])
+@pytest.mark.parametrize(
+    "controls",
+    [
+        {"checkpointMetric": "validation_loss"},
+        {"minValidationPositives": 2, "fixedEpochBudget": 3},
+    ],
+)
 def test_configuration_auroc_requires_classes_even_when_checkpoint_selection_is_defined(
     preview_context, controls
 ):

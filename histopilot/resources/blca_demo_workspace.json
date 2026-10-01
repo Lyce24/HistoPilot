@@ -2289,7 +2289,7 @@
                 "value": "Slide"
               }
             ],
-            "notice": "This construction needs the dataset and labels only. Features and training-fold choices belong to Experimental Setup."
+            "notice": "This construction needs the dataset and labels only. Features and training-fold choices belong to each experiment's design."
           },
           {
             "id": "splits",
@@ -3193,7 +3193,7 @@
                 ],
                 [
                   "Next stage",
-                  "Experimental Setup adds features, training folds and recipes"
+                  "An experiment's design adds features, training folds and recipes"
                 ],
                 [
                   "Patient independence",
@@ -3298,15 +3298,15 @@
         ]
       },
       {
-        "id": "blca-setup-v2",
-        "module": "experimental-setup",
-        "name": "BLCA baseline v2 setup",
-        "description": "Combine the saved dataset, targets/splits and features, then freeze the training design.",
+        "id": "blca-baseline-v2",
+        "module": "experiments",
+        "name": "BLCA baseline v2",
+        "description": "Design the experiment and freeze it, then follow its explicit start, synthetic runs and results.",
         "tags": [
           "Synthetic",
-          "Frozen setup",
+          "ABMIL",
           "5 folds",
-          "ABMIL"
+          "Ensemble + P75 refit"
         ],
         "steps": [
           {
@@ -3344,7 +3344,7 @@
           {
             "id": "compatibility",
             "title": "Compatibility",
-            "description": "Experimental Setup checks the bound features against every frozen training slide before freezing the design.",
+            "description": "The experiment checks the bound features against every frozen training slide before its design is frozen.",
             "table": {
               "columns": [
                 "Check",
@@ -3733,7 +3733,7 @@
           {
             "id": "batches",
             "title": "Training recipe",
-            "description": "Plan the five-fold ABMIL batch and predictor policy before any run is submitted.",
+            "description": "Plan the five-fold ABMIL batch and predictor policy before the experiment starts.",
             "facts": [
               {
                 "label": "Model",
@@ -3812,16 +3812,16 @@
           },
           {
             "id": "frozen",
-            "title": "Freeze setup",
-            "description": "A frozen setup locks the inputs, training folds, batch recipes and predictor policy. Execution is a separate action in Experiments.",
+            "title": "Freeze design",
+            "description": "A frozen design locks the inputs, training folds, batch recipes and predictor policy. Starting the experiment is a separate action.",
             "facts": [
               {
-                "label": "Setup",
-                "value": "BLCA baseline v2 setup"
+                "label": "Design",
+                "value": "BLCA baseline v2"
               },
               {
                 "label": "Status",
-                "value": "Illustrative frozen setup"
+                "value": "Illustrative frozen design"
               },
               {
                 "label": "Planned runs",
@@ -3832,34 +3832,20 @@
                 "value": "0"
               },
               {
-                "label": "Next stage",
-                "value": "Experiments · submit the frozen setup"
+                "label": "Next step",
+                "value": "Start the experiment"
               }
             ],
             "notice": "The demo is read-only. Its frozen state is an illustration, not a stored scientific configuration or a runnable job."
-          }
-        ]
-      },
-      {
-        "id": "blca-baseline-v2",
-        "module": "experiments",
-        "name": "BLCA baseline v2",
-        "description": "Follow a frozen setup through explicit submission, synthetic run monitoring and results.",
-        "tags": [
-          "Synthetic",
-          "ABMIL",
-          "5 folds",
-          "Ensemble + P75 refit"
-        ],
-        "steps": [
+          },
           {
             "id": "submission",
-            "title": "Submit frozen setup",
-            "description": "Experiments uses the exact saved setup, rechecks current features and runtime availability, then starts work only after explicit submission.",
+            "title": "Start experiment",
+            "description": "Starting uses the exact frozen design, rechecks current features and runtime availability, then queues work only after this explicit action.",
             "facts": [
               {
-                "label": "Frozen setup",
-                "value": "BLCA baseline v2 setup"
+                "label": "Frozen design",
+                "value": "BLCA baseline v2"
               },
               {
                 "label": "Training slides",
@@ -3875,7 +3861,7 @@
               },
               {
                 "label": "Scientific design",
-                "value": "Locked; copy the setup to change it"
+                "value": "Locked; copy the experiment to change it"
               },
               {
                 "label": "Execution",
@@ -10207,15 +10193,15 @@
         ]
       },
       {
-        "id": "blca-setup-v3",
-        "module": "experimental-setup",
-        "name": "BLCA baseline v3 setup",
-        "description": "Combine the saved dataset, targets/splits and features, then freeze the training design.",
+        "id": "blca-baseline-v3",
+        "module": "experiments",
+        "name": "BLCA baseline v3",
+        "description": "Design the experiment and freeze it, then follow its explicit start, synthetic runs and results.",
         "tags": [
           "Synthetic",
-          "Frozen setup",
+          "ABMIL",
           "5 folds",
-          "ABMIL"
+          "P50 refit"
         ],
         "steps": [
           {
@@ -10253,7 +10239,7 @@
           {
             "id": "compatibility",
             "title": "Compatibility",
-            "description": "Experimental Setup checks the bound features against every frozen training slide before freezing the design.",
+            "description": "The experiment checks the bound features against every frozen training slide before its design is frozen.",
             "table": {
               "columns": [
                 "Check",
@@ -10642,7 +10628,7 @@
           {
             "id": "batches",
             "title": "Training recipe",
-            "description": "Plan the five-fold ABMIL batch and predictor policy before any run is submitted.",
+            "description": "Plan the five-fold ABMIL batch and predictor policy before the experiment starts.",
             "facts": [
               {
                 "label": "Model",
@@ -10721,16 +10707,16 @@
           },
           {
             "id": "frozen",
-            "title": "Freeze setup",
-            "description": "A frozen setup locks the inputs, training folds, batch recipes and predictor policy. Execution is a separate action in Experiments.",
+            "title": "Freeze design",
+            "description": "A frozen design locks the inputs, training folds, batch recipes and predictor policy. Starting the experiment is a separate action.",
             "facts": [
               {
-                "label": "Setup",
-                "value": "BLCA baseline v3 setup"
+                "label": "Design",
+                "value": "BLCA baseline v3"
               },
               {
                 "label": "Status",
-                "value": "Illustrative frozen setup"
+                "value": "Illustrative frozen design"
               },
               {
                 "label": "Planned runs",
@@ -10741,34 +10727,20 @@
                 "value": "0"
               },
               {
-                "label": "Next stage",
-                "value": "Experiments · submit the frozen setup"
+                "label": "Next step",
+                "value": "Start the experiment"
               }
             ],
             "notice": "The demo is read-only. Its frozen state is an illustration, not a stored scientific configuration or a runnable job."
-          }
-        ]
-      },
-      {
-        "id": "blca-baseline-v3",
-        "module": "experiments",
-        "name": "BLCA baseline v3",
-        "description": "Follow a frozen setup through explicit submission, synthetic run monitoring and results.",
-        "tags": [
-          "Synthetic",
-          "ABMIL",
-          "5 folds",
-          "P50 refit"
-        ],
-        "steps": [
+          },
           {
             "id": "submission",
-            "title": "Submit frozen setup",
-            "description": "Experiments uses the exact saved setup, rechecks current features and runtime availability, then starts work only after explicit submission.",
+            "title": "Start experiment",
+            "description": "Starting uses the exact frozen design, rechecks current features and runtime availability, then queues work only after this explicit action.",
             "facts": [
               {
-                "label": "Frozen setup",
-                "value": "BLCA baseline v3 setup"
+                "label": "Frozen design",
+                "value": "BLCA baseline v3"
               },
               {
                 "label": "Training slides",
@@ -10784,7 +10756,7 @@
               },
               {
                 "label": "Scientific design",
-                "value": "Locked; copy the setup to change it"
+                "value": "Locked; copy the experiment to change it"
               },
               {
                 "label": "Execution",
@@ -16801,9 +16773,9 @@
       },
       {
         "id": "blca-test-cohort",
-        "module": "evaluation",
-        "name": "Grade 2 test cohort",
-        "description": "Use the 76 testing slides already reserved by Targets & splits for model evaluation.",
+        "module": "apply",
+        "name": "Grade 2 labeled cohort",
+        "description": "The 76 testing slides Targets & splits reserved, ready as a labeled cohort.",
         "tags": [
           "Synthetic",
           "Read only"
@@ -17226,12 +17198,12 @@
                 ]
               ]
             },
-            "notice": "Targets & splits already froze these testing slides without features. Evaluation now checks complete testing coverage and a compatible predictor."
+            "notice": "Targets & splits already froze these testing slides without features. Applying a predictor checks complete testing coverage and a compatible predictor."
           },
           {
             "id": "frozen",
-            "title": "Frozen test cohort",
-            "description": "A prepared test cohort is reusable across predictors without changing its membership.",
+            "title": "Frozen cohort",
+            "description": "A prepared cohort is reusable across predictors without changing its membership.",
             "facts": [
               {
                 "label": "Class order",
@@ -17255,9 +17227,9 @@
       },
       {
         "id": "blca-evaluation",
-        "module": "evaluation",
-        "name": "Grade 2 predictor evaluation",
-        "description": "Inspect synthetic predictions and metrics derived from exactly those predictions.",
+        "module": "apply",
+        "name": "Grade 2 scored run",
+        "description": "A predictor applied to the labeled cohort: synthetic predictions, and metrics derived from exactly those predictions.",
         "tags": [
           "Synthetic",
           "Read only"
@@ -17266,7 +17238,7 @@
           {
             "id": "plan",
             "title": "Plan",
-            "description": "Pair the baseline v2 P75 refit with the frozen Grade 2 testing set, then check target and feature compatibility before scoring.",
+            "description": "Pair the baseline v2 P75 refit with the frozen Grade 2 testing set, then check target and feature compatibility before predicting and scoring.",
             "facts": [
               {
                 "label": "Predictor",
@@ -18092,9 +18064,9 @@
       },
       {
         "id": "blca-inference",
-        "module": "inference",
-        "name": "Label-free predictor application",
-        "description": "Inspect prediction-only outputs without targets or evaluation metrics.",
+        "module": "apply",
+        "name": "Label-free run",
+        "description": "A predictor applied to slides without labels: prediction-only outputs, with no target or metrics.",
         "tags": [
           "Synthetic",
           "Read only"
@@ -18102,7 +18074,7 @@
         "steps": [
           {
             "id": "inputs",
-            "title": "Inference inputs",
+            "title": "Run inputs",
             "description": "Apply a ready predictor to compatible slide features without requiring a target column or a testing split.",
             "facts": [
               {
@@ -18119,7 +18091,7 @@
               },
               {
                 "label": "Labels",
-                "value": "Not supplied to inference"
+                "value": "None: an unlabeled cohort"
               }
             ],
             "notice": "This guide reuses the same 76 invented Grade 2 slide scores with their labels omitted. It introduces no new subjects or model execution."
@@ -18127,7 +18099,7 @@
           {
             "id": "predictions",
             "title": "Predictions",
-            "description": "Export slide probabilities and predicted classes. Without labels, inference does not report accuracy, AUROC or calibration.",
+            "description": "Export slide probabilities and predicted classes. Without labels, a run reports no accuracy, AUROC or calibration.",
             "table": {
               "columns": [
                 "Synthetic slide",
@@ -18523,9 +18495,9 @@
       },
       {
         "id": "blca-clinical-utility",
-        "module": "clinical-utility",
+        "module": "apply",
         "name": "Synthetic threshold review",
-        "description": "Explain calibration and decision curves using the same synthetic test predictions.",
+        "description": "Clinical utility of the scored run: calibration and decision curves from the same synthetic test predictions.",
         "tags": [
           "Synthetic",
           "Read only"

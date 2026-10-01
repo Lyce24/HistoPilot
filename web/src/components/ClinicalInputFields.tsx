@@ -1,3 +1,4 @@
+import { coupling } from '../lib/templates';
 import type { ClinicalFieldChoice, TrainingRecipe } from '../api/development';
 
 export const inputModeLabel = (mode?: TrainingRecipe['inputMode']) => ({
@@ -25,10 +26,7 @@ export function toggleClinicalField(value: TrainingRecipe, choice: ClinicalField
 }
 
 /** A clinical-only arm fits a logistic model on the clinical fields; image settings and nnMIL options do not apply. */
-export const clinicalOnlyRecipe = (value: TrainingRecipe): TrainingRecipe => ({
-  ...value, inputMode: 'clinical', model: 'abmil', bagSizeMode: 'fixed', bagCurriculum: false,
-  nnmilBatchSampler: 'patient_weighted', nnmilCheckpointSelection: 'best_validation', nnmilWindowSeedFromTraining: false,
-});
+export const clinicalOnlyRecipe = (value: TrainingRecipe): TrainingRecipe => ({ ...value, ...coupling.clinicalOnly });
 
 export function ClinicalInputFields({ value, onChange, choices }: {
   value: TrainingRecipe; onChange: (value: TrainingRecipe) => void; choices?: ClinicalChoices;

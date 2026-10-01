@@ -1,0 +1,29 @@
+{
+  "name": "histopilot",
+  "version": "0.1.0",
+  "description": "Operate a HistoPilot service from Claude Code: MCP tools and the histopilot skill read studies, cross-validated results, predictor runs and the Task Center, and prepare experiments and Apply models runs. Every change waits for a person.",
+  "author": {
+    "name": "Yancheng Liu"
+  },
+  "homepage": "https://github.com/Lyce24/HistoPilot",
+  "repository": "https://github.com/Lyce24/HistoPilot",
+  "keywords": ["pathology", "whole-slide images", "multiple-instance learning", "mcp"],
+  "userConfig": {
+    "service_url": {
+      "type": "string",
+      "title": "HistoPilot service URL",
+      "description": "Your running service on loopback, such as http://127.0.0.1:8788. Empty: HISTOPILOT_URL, else http://127.0.0.1:8787."
+    },
+    "token": {
+      "type": "string",
+      "title": "Agent token",
+      "description": "A scoped hpt_ token for one project, from `histopilot token create` or the AI agent access panel. Kept in your OS keychain.",
+      "sensitive": true
+    },
+    "histopilot_command": {
+      "type": "string",
+      "title": "histopilot executable (optional)",
+      "description": "A histopilot with the agent extra, such as /path/to/HistoPilot/.venv-agent/bin/histopilot. Empty: run HistoPilot from GitHub with uvx."
+    }
+  }
+}

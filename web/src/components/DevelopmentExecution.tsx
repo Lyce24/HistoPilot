@@ -68,7 +68,7 @@ export default function DevelopmentExecution({ project, batch, implemented, know
     } catch (reason) { setError(reason instanceof Error ? reason : new Error('Training action failed.')); }
     finally { submitting.current = false; setPending(null); }
   }
-  if (stage === 'planning') return <p className="muted">Inputs and batches remain editable until the experiment is submitted. Runs and results are locked during planning.</p>;
+  if (stage === 'planning') return <p className="muted">Inputs and batches remain editable until the design is frozen. Runs and results unlock once the experiment starts.</p>;
   return <div className="development-execution">
     <ErrorNotice error={error ?? executionQuery.error ?? (canChange && launchable ? runtime.error : null) ?? (resultsEnabled ? results.error : null)} />
     {implemented ? <>
@@ -76,7 +76,7 @@ export default function DevelopmentExecution({ project, batch, implemented, know
         {managed ? <ManagedBatchCancel execution={execution} pending={pending} readOnly={!canChange} onCancel={() => void act('cancel')} /> : <TrainingControls execution={execution} runtime={runtime.data} checking={executionQuery.isPending || executionQuery.isError} pending={pending} onLaunch={() => void act('launch')} allowLaunch={stage === undefined} readOnly={!canChange} />}
         {executionQuery.isError ? <p className="callout callout-warning" role="status">Tracking could not refresh. Any run status and measurements shown are the last known values.</p> : null}
         {executionQuery.isError || (canChange && launchable && runtime.isError) ? <button type="button" className="btn btn-secondary btn-small" onClick={() => { void executionQuery.refetch(); if (canChange && launchable) void runtime.refetch(); }}>Retry training status</button> : null}
-        {execution ? <ExecutionStatus execution={execution} /> : <p className="muted">{stage ? 'This submitted batch has not been queued yet.' : 'This batch is frozen and has not been launched.'}</p>}
+        {execution ? <ExecutionStatus execution={execution} /> : <p className="muted">{stage ? 'This batch has not been queued yet.' : 'This batch is frozen and has not been launched.'}</p>}
       </> : null}
     </> : <p className="muted">Training execution is unavailable from this service. Frozen plans remain available for review and export.</p>}
     {view === 'runs' ? <RunTable project={trackingEnabled ? project : undefined} batch={batch} execution={execution} taskCenterHref={taskCenterLink} /> : null}

@@ -17,8 +17,13 @@ import React from ${JSON.stringify(join(web, 'node_modules/react/index.js'))};
 import { createRoot } from ${JSON.stringify(join(web, 'node_modules/react-dom/client.js'))};
 import { QueryClient, QueryClientProvider } from ${JSON.stringify(join(web, 'node_modules/@tanstack/react-query/build/modern/index.js'))};
 import LocalEvaluationSetup from ${source('pages/LocalEvaluationSetup.tsx')};
+import { PageHeader } from ${source('components/ui.tsx')};
+import { StageLibrary } from ${source('components/StageWorkflow.tsx')};
+import { stageEyebrow } from ${source('lib/roadmap.ts')};
 import { scientific } from ${source('api/scientific.ts')};
 import { evaluation } from ${source('api/evaluation.ts')};
+import { modelEvaluations } from ${source('api/predictors.ts')};
+import { references } from ${source('api/references.ts')};
 import ${source('styles.css')};
 import ${source('local-workspace.css')};
 import ${source('scientific.css')};
@@ -35,7 +40,8 @@ const datasets = Object.entries(records).map(([id, rows]) => ({ id, projectId: '
   manifest: { name: id, dictionary: ['site', 'grade'].map((key) => ({ key, owner: 'patient', type: 'text' })),
     summary: { slideCount: rows.length, includedSlides: rows.length, unlinkedSlideCount: 0 } } }));
 const selected = (spec) => (spec.datasetIds?.length ? spec.datasetIds : [spec.datasetId]).flatMap((id) => records[id] ?? [])
-  .filter((row) => spec.eligibility.every((condition) => condition.op !== 'eq' || row.attributes[condition.field] === condition.value));
+  .filter((row) => spec.eligibility.every((condition) => condition.op === 'in' ? condition.value.includes(row.attributes[condition.field])
+    : condition.op !== 'eq' || row.attributes[condition.field] === condition.value));
 const values = (rows, field) => [...new Set(rows.map((row) => row.attributes[field]))]
   .map((value) => ({ value, count: rows.filter((row) => row.attributes[field] === value).length }));
 const stats = (rows) => ({ totalSlides: rows.length, patientCount: rows.length, fallbackSlideCount: 0,
@@ -52,6 +58,9 @@ scientific.exploreProtocol = async (_, request) => {
 };
 evaluation.drafts = async () => ({ drafts: copy(state.drafts) });
 evaluation.list = async () => ({ items: copy(state.cohorts) });
+// A frozen cohort lists its reference standards and the runs on it; this study has neither.
+references.list = async () => ({ items: [] });
+modelEvaluations.list = async () => ({ items: [] });
 evaluation.draft = async (_, id) => copy(state.drafts.find((draft) => draft.id === id));
 evaluation.get = async (_, id) => copy(state.cohorts.find((cohort) => cohort.id === id));
 evaluation.saveDraft = async (_, name, spec, current) => {
@@ -83,7 +92,9 @@ evaluation.freeze = async (_, draft, previewHash, operationId, versionLabel) => 
   return copy(cohort);
 };
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-createRoot(document.getElementById('app')).render(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={{ project: { id: 'project', name: 'Bladder study' } }} /></QueryClientProvider>);
+// Apply models frames the cohort library with its own header and record tabs.
+const frame = (library, actions) => <div className="clinical-workspace"><PageHeader eyebrow={stageEyebrow('apply')} title="Apply models" description="Cohorts view" actions={<div className="inline-actions">{actions}</div>} /><StageLibrary project="project" title="Apply models">{library}</StageLibrary></div>;
+createRoot(document.getElementById('app')).render(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={{ project: { id: 'project', name: 'Bladder study' } }} frame={frame} /></QueryClientProvider>);
 `);
 
 await build({ configFile: false, root: web, logLevel: 'error', plugins: [react()],
@@ -172,59 +183,63 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: pathToFileURL(join(dist, 'index.html')).href });
   await waitFor('Boolean(document.body)');
-  await waitFor('document.body.innerText.includes("No test cohorts yet")');
+  await waitFor('document.body.innerText.includes("No cohorts yet")');
   assert.equal(await evaluate('document.querySelectorAll(".test-cohort-stage").length'), 0);
-  await assertAction('Create test cohort', 'create');
+  await assertAction('Create labeled cohort', 'create');
   assert.equal(await evaluate('document.querySelectorAll(".page-header [data-stage-action=create]").length'), 1);
   await screenshot('00-list');
-  await click('Create test cohort');
+  await click('Create labeled cohort');
   await fill('Cohort name', 'External validation');
   await evaluate(field('Hospital A', 'input') + '.click()');
   await evaluate(field('Hospital B', 'input') + '.click()');
   await click('Add condition');
   await fill('Field', 'site', 'select');
-  await fill('Value', 'external', 'input');
-  await waitFor('window.workflow.calls.some(call => call.method === "explore" && call.request.datasetId === "dataset-b" && call.request.eligibility[0]?.value === "external")');
+  // Conditions pick from the values found in the selected datasets.
+  await waitFor(field('external', 'input'), 'value option external');
+  await evaluate(field('external', 'input') + '.click()');
+  await waitFor('window.workflow.calls.some(call => call.method === "explore" && call.request.datasetId === "dataset-b" && call.request.eligibility[0]?.value?.includes("external"))');
   await waitFor('[...document.querySelectorAll("progress")].filter(el => el.value === 2).length === 2');
   assert.equal(await evaluate('document.querySelectorAll(".test-cohort-stage").length'), 1);
   await screenshot('01-test-data');
-  await assertAction('Back to test cohorts', 'back');
-  await assertAction('Continue to prediction targets', 'continue');
-  await click('Continue to prediction targets');
+  await assertAction('Back to cohorts', 'back');
+  await assertAction('Continue to labels', 'continue');
+  await click('Continue to labels');
   assert.equal(await evaluate('document.querySelector(".test-cohort-datasets") === null'), true);
   await fill('Target attribute', 'grade', 'select');
   await waitFor(field('Class names', 'input') + '?.value.includes("high")');
   await fill('Positive class', 'high', 'select');
-  await waitFor('document.body.innerText.includes("grade · selected test records")');
+  await waitFor('document.body.innerText.includes("grade · selected slides")');
   await screenshot('02-targets');
   // A duplicate source edit must preserve both mappings rather than silently collapse one.
   await fill('Source value', 'high', 'input');
   await waitFor('document.body.innerText.includes("already has a mapping")');
   assert.equal(await evaluate('document.querySelectorAll(".science-label-row").length'), 2);
   await click('Continue to review and freeze');
-  await waitFor('document.body.innerText.includes("Selected test slides")');
+  await waitFor('document.body.innerText.includes("Selected slides")');
   const saved = await evaluate('window.workflow.calls.filter(call => call.method === "saveDraft").at(-1).spec');
   assert.deepEqual(saved.datasetIds, ['dataset-a', 'dataset-b']);
-  assert.deepEqual(saved.eligibility, [{ field: 'site', op: 'eq', value: 'external' }]);
+  assert.deepEqual(saved.eligibility, [{ field: 'site', op: 'in', value: ['external'] }]);
   assert.equal(saved.target.positiveClass, 'high');
   assert.deepEqual(Object.keys(saved.target.labels), ['low', 'high']);
   assert.ok(!saved.protocolId && !saved.featureBundleId && !saved.developmentFeatureBundleId);
   await screenshot('03-review');
-  assert.equal(await evaluate(button('Freeze test cohort') + '.dataset.stageAction'), undefined);
-  await click('Freeze test cohort');
+  assert.equal(await evaluate(button('Freeze cohort') + '.dataset.stageAction'), undefined);
+  await click('Freeze cohort');
   await fill('Version tag', 'external-validation-v1');
-  await click('Freeze test cohort version');
-  await waitFor('document.body.innerText.includes("Frozen test cohort") && !document.querySelector("[role=dialog]")');
+  await click('Freeze cohort version');
+  await waitFor('document.body.innerText.includes("Frozen cohort") && !document.querySelector("[role=dialog]")');
+  await waitFor('document.querySelector("a[data-stage-action=continue]")?.getAttribute("href") === "#apply?view=new&cohort=cohort-1"');
   assert.equal(await evaluate('window.workflow.cohorts[0].manifest.summary.includedSlides'), 4);
   await screenshot('04-frozen');
-  await click('Back to test cohorts');
+  await click('Back to cohorts');
   await waitFor('document.querySelector(".test-cohort-registry")?.textContent.includes("external-validation-v1")');
-  await click('Create test cohort');
+  assert.equal(await evaluate('document.querySelector(\'.test-cohort-registry a[href="#apply?view=new&cohort=cohort-1"]\')?.textContent'), 'Apply predictors');
+  await click('Create labeled cohort');
   await fill('Cohort name', 'Planned follow-up cohort');
   await evaluate(field('Hospital A', 'input') + '.click()');
   await click('Save draft');
-  await waitFor('document.body.innerText.includes("Test cohort draft saved.")');
-  await click('Back to test cohorts');
+  await waitFor('document.body.innerText.includes("Cohort draft saved.")');
+  await click('Back to cohorts');
   await waitFor('document.querySelector(".test-cohort-registry")?.textContent.includes("Planned follow-up cohort")');
   await screenshot('05-frozen-and-planned-list');
   assert.equal(await evaluate('document.body.innerText.includes("Stage 0 · Saved records")'), false);
@@ -236,7 +251,7 @@ try {
   await fill('Status', 'planned', 'select');
   await waitFor('document.querySelector(".test-cohort-registry").textContent.includes("Planned follow-up cohort")');
   await fill('Search', 'missing cohort');
-  await waitFor('document.body.innerText.includes("No matching test cohorts")');
+  await waitFor('document.body.innerText.includes("No matching cohorts")');
   await click('Clear filters');
   await waitFor('document.querySelectorAll(".test-cohort-registry tbody tr").length === 2');
   await click('Planned follow-up cohort');
@@ -246,8 +261,8 @@ try {
   assert.equal(await evaluate('window.workflow.drafts.filter(draft => draft.status === "editable").length'), 1);
   assert.deepEqual(await evaluate('window.workflow.errors'), []);
   assert.deepEqual(exceptions, []);
-  await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'Real React component and Chromium DOM with in-memory mocked scientific/evaluation APIs; no backend or HistoPilot server.', steps: ['shared create/back/continue controls preserve explicit freeze', 'list', 'create', 'multiple datasets', 'conditions', 'live distribution', 'prediction target', 'duplicate mapping guard', 'review', 'tagged freeze', 'list frozen and planned', 'search, status filters, reset and exact Manage record keys', 'resume draft'], calls: await evaluate('window.workflow.calls') }, null, 2));
-  console.log('PASS: real React/Chromium staged test-cohort workflow with mocked APIs, including freeze without development/features and draft resume.');
+  await writeFile(join(output, 'verification.json'), JSON.stringify({ passed: true, scope: 'Real React component and Chromium DOM with in-memory mocked scientific/evaluation APIs; no backend or HistoPilot server.', steps: ['shared create/back/continue controls preserve explicit freeze', 'list inside the Apply models frame', 'frozen cohort links to applying predictors', 'create', 'multiple datasets', 'conditions', 'live distribution', 'prediction target', 'duplicate mapping guard', 'review', 'tagged freeze', 'list frozen and planned', 'search, status filters, reset and exact Manage record keys', 'resume draft'], calls: await evaluate('window.workflow.calls') }, null, 2));
+  console.log('PASS: real React/Chromium staged cohort workflow in Apply models with mocked APIs, including freeze without development/features and draft resume.');
   console.log('Artifacts: ' + output);
 } catch (error) {
   try { await writeFile(join(output, 'failure.txt'), await evaluate('document.body.innerText')); await screenshot('failure'); } catch { /* Chromium may not have launched. */ }

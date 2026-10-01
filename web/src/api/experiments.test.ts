@@ -10,7 +10,7 @@ describe('model experiment identity contracts', () => {
     const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' })).mockRejectedValueOnce(new TypeError('Response lost')).mockResolvedValueOnce(response({ id: 'experiment-1' }));
     vi.stubGlobal('fetch', fetcher);
     const { experiments } = await import('./experiments');
-    const input = { name: 'Baseline', notes: 'Compare seeds', tags: ['baseline'], operationId: 'same-intent' };
+    const input = { name: 'Baseline', notes: 'Compare seeds', tags: ['baseline'], setupVersion: 1 as const, operationId: 'same-intent' };
     await expect(experiments.create('project/one', input)).rejects.toMatchObject({ status: 0, code: 'SERVICE_UNREACHABLE' });
     await experiments.create('project/one', input);
     expect(fetcher.mock.calls[1][0]).toBe('/api/v1/projects/project%2Fone/model-experiments');
@@ -45,8 +45,8 @@ describe('model experiment identity contracts', () => {
       .mockResolvedValueOnce(response({ id: 'copy', stage: 'running', configurationLocked: true }));
     vi.stubGlobal('fetch', fetcher);
     const { experiments } = await import('./experiments');
-    await experiments.create('p', { name: 'New hypothesis', tags: ['comparison'], sourceExperimentId: 'source/one', operationId: 'create-one' });
-    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ name: 'New hypothesis', tags: ['comparison'], sourceExperimentId: 'source/one', operationId: 'create-one' });
+    await experiments.create('p', { name: 'New hypothesis', tags: ['comparison'], sourceExperimentId: 'source/one', setupVersion: 1, operationId: 'create-one' });
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ name: 'New hypothesis', tags: ['comparison'], sourceExperimentId: 'source/one', setupVersion: 1, operationId: 'create-one' });
     const submission = { expectedRevision: 5, operationId: 'submit-once' };
     await expect(experiments.submit('p', 'copy/one', submission)).rejects.toMatchObject({ code: 'SERVICE_UNREACHABLE' });
     await expect(experiments.submit('p', 'copy/one', submission)).resolves.toMatchObject({ stage: 'running', configurationLocked: true });

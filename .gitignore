@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 .venv-training/
+.venv-agent/
 .pytest_cache/
 .ruff_cache/
 build/
@@ -14,6 +15,8 @@ node_modules/
 *.tsbuildinfo
 .cache/
 coverage/
+.coverage
+.coverage.*
 .DS_Store
 .env
 .env.*
@@ -59,5 +62,5 @@ test-results/
 /docs/hardening/
 /docs/INFERENCE_MODE.md
 /docs/REAL_SLIDE_VIEWER_VALIDATION.md
-/docs/gej-extraction-performance-2026-09-25.md
+/docs/*-extraction-performance-*.md
 /docs/verification/real-slide-viewer-20260925.json

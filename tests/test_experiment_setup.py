@@ -1,4 +1,4 @@
-"""Experimental Setup freezes scientific intent; explicit execution alone starts compute."""
+"""A frozen experiment design records scientific intent; only an explicit start runs compute."""
 
 import copy
 import runpy
@@ -159,9 +159,7 @@ def submit(service, record):
 
 
 @pytest.mark.parametrize("managed_setup", ["legacy", "slide"], indirect=True)
-def test_setup_selects_training_population_and_freezes_without_compute(
-    managed_setup, task_center
-):
+def test_setup_selects_training_population_and_freezes_without_compute(managed_setup, task_center):
     service, original, _request, target_split, _source, training = managed_setup
     with pytest.raises(StorageError) as pending:
         submit(service, original)
@@ -341,9 +339,7 @@ def test_freeze_recovers_publication_before_draft_receipt_without_duplicate(
     assert len(service.store.list_configurations("experiment-setup")) == 1
 
 
-def test_freeze_remains_available_when_execution_runtime_is_unavailable(
-    managed_setup, task_center
-):
+def test_freeze_remains_available_when_execution_runtime_is_unavailable(managed_setup, task_center):
     service, _, _, _, _, training = managed_setup
     record = configure(managed_setup)
     training.runtime.unavailable_after = 0
@@ -380,9 +376,7 @@ def test_freeze_publication_rechecks_feature_files_after_review(
     assert launched(task_center) == []
 
 
-def test_failed_execution_launch_retries_same_frozen_setup(
-    managed_setup, task_center, monkeypatch
-):
+def test_failed_execution_launch_retries_same_frozen_setup(managed_setup, task_center, monkeypatch):
     service, *_ = managed_setup
     frozen = freeze(service, configure(managed_setup))
 
@@ -518,17 +512,21 @@ def test_generic_draft_api_cannot_bypass_frozen_setup_lock(managed_setup, tmp_pa
 
 
 @pytest.mark.parametrize(
-    "mode", ["monte_carlo", "leave_one_domain_out", "nested_kfold", "held_out"]
+    "update,code",
+    [
+        ({"mode": "monte_carlo"}, "TRAINING_SPLIT_UNSUPPORTED"),
+        ({"mode": "nested_kfold"}, "NESTED_SELECTION_REQUIRED"),
+        # A held-out assessment trains with one split seed.
+        ({"mode": "held_out", "seeds": [42, 43]}, "TRAINING_SPLIT_UNSUPPORTED"),
+    ],
 )
-def test_setup_rejects_unexecutable_training_design_before_derivation(managed_setup, mode):
+def test_setup_rejects_unexecutable_training_design_before_derivation(managed_setup, update, code):
     service, record, request, *_ = managed_setup
     before = service.store.list_configurations("protocol")
-    split = request.trainingSplit.model_copy(
-        update={"mode": mode, "domainField": "cohort" if mode == "leave_one_domain_out" else None}
-    )
+    split = request.trainingSplit.model_copy(update=update)
     with pytest.raises(StorageError) as unsupported:
         service.setup_inputs(record["id"], request.model_copy(update={"trainingSplit": split}))
-    assert unsupported.value.code == "TRAINING_SPLIT_UNSUPPORTED"
+    assert unsupported.value.code == code
     assert service.store.list_configurations("protocol") == before
     assert service.get(record["id"])["revision"] == record["revision"]
     assert service.get(record["id"])["setupDesign"] is None

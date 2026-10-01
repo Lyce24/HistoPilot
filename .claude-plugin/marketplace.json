@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "histopilot",
+  "owner": {
+    "name": "Yancheng Liu"
+  },
+  "description": "HistoPilot for Claude Code: agent tools and a skill for a HistoPilot service you run yourself.",
+  "plugins": [
+    {
+      "name": "histopilot",
+      "source": "./plugins/histopilot",
+      "description": "Read HistoPilot studies, explain failed tasks, and prepare experiments and Apply models runs for a person to approve.",
+      "version": "0.1.0"
+    }
+  ]
+}

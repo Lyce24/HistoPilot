@@ -42,6 +42,8 @@ class ProjectRequest(RequestModel):
     slidePath: str | None = Field(default=None, min_length=1, max_length=4096)
     featurePath: str | None = Field(default=None, min_length=1, max_length=4096)
     config: ProjectConfig = Field(default_factory=ProjectConfig)
+    # Optional: the same ID again returns the project the first request created.
+    operationId: str | None = Field(default=None, min_length=1, max_length=200)
 
     @field_validator("name")
     @classmethod

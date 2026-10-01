@@ -1,3 +1,4 @@
+import { coupling } from '../lib/templates';
 import { useEffect, useRef, useState } from 'react';
 import { defaultRecipe } from '../api/development';
 import type { ComparisonMetric, DevelopmentBatchSpec, TrainingRecipe } from '../api/development';
@@ -36,7 +37,7 @@ export function comparisonSummary(spec: Pick<DevelopmentBatchSpec, 'configuratio
   return `Controlled comparison · reference: configuration ${spec.comparison.reference}${reference ? ` (${armLabel(reference)})` : ''} · primary metric ${comparisonMetricLabel(spec.comparison.primaryMetric)}`;
 }
 
-const nnmilOff = { nnmilBatchSampler: 'patient_weighted', nnmilCheckpointSelection: 'best_validation', nnmilWindowSeedFromTraining: false } as const;
+const nnmilOff = coupling.comparisonArm.nnmilOff;
 
 /**
  * The base recipe with another model. Only settings that model owns change: nnMIL gets its
@@ -47,11 +48,11 @@ const nnmilOff = { nnmilBatchSampler: 'patient_weighted', nnmilCheckpointSelecti
 export function withArmModel(base: TrainingRecipe, model: string): TrainingRecipe {
   if (model === base.model) return base;
   const reference = defaultRecipe();
-  const own = model === 'nnmil' ? { attentionDim: 256, gatedAttention: true, nnmilWindowSeedFromTraining: true }
+  const own = model === 'nnmil' ? coupling.comparisonArm.nnmil
     : { ...nnmilOff, ...(model === 'abmil' ? { attentionDim: reference.attentionDim, gatedAttention: reference.gatedAttention } : {}) };
   // A slide embedding has no patch bag; this only applies when the base recipe is clinical only.
   const slide = featureKindOf(model) === 'slide' && featureKindOf(base.model) !== 'slide'
-    ? { bagSize: 1, bagCurriculum: false, instanceDropout: 0, evalBagSize: null, gradientCheckpointing: false } : {};
+    ? coupling.modelSelect.slide : {};
   return { ...base, model, ...own, ...slide };
 }
 

@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field, StrictInt, field_validator, model_validator
+from pydantic import Field, StrictInt, field_validator, model_serializer, model_validator
 
 from histopilot.schemas.evaluations import ConfigurationId
 from histopilot.schemas.workspace import RequestModel
@@ -18,6 +18,8 @@ class ClinicalSelection(RequestModel):
     thresholdMin: float = Field(default=0.01, gt=0, lt=1, allow_inf_nan=False)
     thresholdMax: float = Field(default=0.99, gt=0, lt=1, allow_inf_nan=False)
     thresholdSteps: Annotated[StrictInt, Field(ge=2, le=501)] = 99
+    # Outcomes from a reference standard of the run's cohort instead of the cohort's labels.
+    referenceId: ConfigurationId | None = None
 
     @field_validator("name")
     @classmethod
@@ -38,6 +40,15 @@ class ClinicalSelection(RequestModel):
         if self.thresholdMin >= self.thresholdMax:
             raise ValueError("The minimum threshold must be below the maximum threshold.")
         return self
+
+    @model_serializer(mode="wrap")
+    def omit_default_reference(self, handler):
+        # Analyses saved before references existed never carried the field; an analysis
+        # of the cohort's labels keeps their content, and so their ID and replays.
+        serialized = handler(self)
+        if self.referenceId is None:
+            serialized.pop("referenceId", None)
+        return serialized
 
 
 class SaveClinicalAnalysis(ClinicalSelection):

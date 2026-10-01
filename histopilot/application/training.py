@@ -7,6 +7,7 @@ from pathlib import Path
 
 from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.development import development_plans
+from histopilot.application.development_splits import training_split_issue
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.mil_inputs import MILInputService
@@ -47,6 +48,15 @@ from histopilot.workers.training_process import (
 from histopilot.workers.training_process import (
     confirmed_process_alive as process_alive,
 )
+
+
+def plan_label(split: dict) -> str:
+    """A split plan as people read it: its held-out site or cohort, its fold, or the
+    held-out assessment of a design with one plan per seed."""
+    if split.get("domain") is not None:
+        return f"Held-out {split['domain']}"
+    fold = split.get("fold")
+    return f"Fold {fold + 1}" if isinstance(fold, int) else "Held-out assessment"
 
 
 def membership_plan_id(row: dict) -> str:
@@ -285,12 +295,12 @@ class TrainingService:
                 "The loading policy differs from the frozen batch.", "TRAINING_INPUTS_STALE"
             )
         protocol = self.store.get_configuration(spec.inputs.protocolId)["manifest"]
-        if (
-            protocol["spec"]["split"].get("version") != 4
-            or protocol["spec"]["split"]["mode"] != "kfold"
-        ):
+        split_issue = training_split_issue(protocol["spec"]["split"])
+        if protocol["spec"]["split"].get("version") != 4 or split_issue:
             raise StorageError(
-                "Training currently supports Stage 2 development-only k-fold protocols.",
+                split_issue[1]
+                if split_issue
+                else "Training needs a development-only training design.",
                 "TRAINING_SPLIT_UNSUPPORTED",
                 422,
             )
@@ -302,8 +312,7 @@ class TrainingService:
                 422,
             )
         if any(
-            not catalog.is_supported(item["recipe"]["model"])
-            for item in manifest["configurations"]
+            not catalog.is_supported(item["recipe"]["model"]) for item in manifest["configurations"]
         ):
             raise StorageError(
                 f"Choose one of: {catalog.choices()}.", "TRAINING_MODEL_UNSUPPORTED", 422
@@ -402,7 +411,9 @@ class TrainingService:
         from histopilot.application.clinical_inputs import development_clinical_values
 
         clinical_values = development_clinical_values(
-            self.store, self.filesystem, protocol,
+            self.store,
+            self.filesystem,
+            protocol,
             [item["recipe"] for item in manifest["configurations"]],
         )
         data = {
@@ -423,13 +434,17 @@ class TrainingService:
                 for plan_id, rows in groups.items():
                     _, resolution = resolve_nnmil_recipe(candidate["recipe"], rows, files)
                     if resolution:
-                        resolutions.append({"candidateId": candidate["id"],
-                                            "splitPlanId": plan_id, **resolution})
+                        resolutions.append(
+                            {"candidateId": candidate["id"], "splitPlanId": plan_id, **resolution}
+                        )
         except ValueError as error:
             raise StorageError(str(error), "MIL_BAG_PLANNING_INVALID", 422) from error
         if resolutions != manifest.get("nnmilPlanning", []):
-            raise StorageError("Fitting features differ from the frozen MIL bag preview.",
-                               "TRAINING_INPUTS_STALE", 409)
+            raise StorageError(
+                "Fitting features differ from the frozen MIL bag preview.",
+                "TRAINING_INPUTS_STALE",
+                409,
+            )
         plan = {
             "version": 1,
             "batchId": batch["id"],
@@ -443,7 +458,11 @@ class TrainingService:
             ],
             "featureBundleContentHash": bundle["contentHash"],
             "target": target,
-            **({"splitUnit": protocol["spec"]["splitUnit"]} if "splitUnit" in protocol["spec"] else {}),
+            **(
+                {"splitUnit": protocol["spec"]["splitUnit"]}
+                if "splitUnit" in protocol["spec"]
+                else {}
+            ),
             **({"groupByPatient": True} if protocol["spec"]["split"].get("groupByPatient") else {}),
             **({"selectionMetric": spec.selectionMetric} if spec.selectionMetric else {}),
             **({"candidateSelection": spec.candidateSelection} if spec.candidateSelection else {}),
@@ -556,7 +575,7 @@ class TrainingService:
                     "kind": "mil-fold",
                     "adapter": "mil-fold",
                     "title": f"{batch_name} · Config {candidate.get('number', '?')} · "
-                    f"Fold {fold_number} · Train seed {run['trainingSeed']} · "
+                    f"{plan_label(split)} · Train seed {run['trainingSeed']} · "
                     f"Split seed {split.get('seed')}",
                     "group": group,
                     "planOrder": index,
@@ -987,7 +1006,9 @@ class TrainingService:
             return
         # The marker precedes every stop request: stopped folds are then classified as
         # cancelled and queued folds are never started.
-        write_json_atomic(folder / "cancel.json", {"requestedAt": utc_now(), "operationId": operation_id})
+        write_json_atomic(
+            folder / "cancel.json", {"requestedAt": utc_now(), "operationId": operation_id}
+        )
         cancelled = set()
         if group is not None:
             try:
