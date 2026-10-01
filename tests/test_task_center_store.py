@@ -518,6 +518,10 @@ def test_the_runner_row_lists_its_code_files_and_old_stores_gain_the_column(tmp_
     TaskStore(path).initialize()  # idempotent on a migrated store
 
 
+@pytest.mark.skipif(
+    not hasattr(sqlite3, "SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE"),
+    reason="before Python 3.12 every close checkpoints the write-ahead log, so none is left",
+)
 def test_checkpoint_truncates_the_write_ahead_log_left_by_heartbeats(tmp_path):
     store = TaskStore(tmp_path / "task-center.sqlite")
     files = [f"/checkout/histopilot/module_{index}.py" for index in range(120)]

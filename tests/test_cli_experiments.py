@@ -73,7 +73,12 @@ def design_file(service, ids, path):
     return design
 
 
-def test_an_experiment_goes_from_a_design_file_to_queued_training(study, tmp_path):
+def test_an_experiment_goes_from_a_design_file_to_queued_training(study, tmp_path, monkeypatch):
+    from support.training import runtime
+
+    # Starting checks the training runtime; nothing trains here, so the training extra
+    # need not be installed.
+    monkeypatch.setattr("histopilot.application.training.training_runtime", runtime)
     service, ids = study
     design_file(service, ids, tmp_path / "design.yaml")
 

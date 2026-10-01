@@ -1,5 +1,6 @@
 """Managed MIL batches run as Task Center tasks and keep every legacy evidence contract."""
 
+import importlib.util
 import os
 import runpy
 import signal
@@ -68,6 +69,13 @@ def tiny_spec(spec, **changes):
     values.update(mode="single", trainingSeeds=[11], **changes)
     values["recipe"].update(maxEpochs=1, bagSize=2, batchSize=2)
     return DevelopmentBatchSpec.model_validate(values)
+
+
+# These run real fold workers, which train with Torch and Lightning (the `training` extra).
+needs_training = pytest.mark.skipif(
+    any(importlib.util.find_spec(name) is None for name in ("torch", "lightning")),
+    reason="runs real training workers: needs the training extra",
+)
 
 
 @pytest.fixture
@@ -426,6 +434,7 @@ def test_failed_enqueue_is_recorded_and_the_same_operation_resumes(managed):
 
 
 @pytest.mark.slow
+@needs_training
 def test_managed_batch_runs_every_fold_and_collects_pinned_results(managed):
     context = managed
     context.service.launch(context.identity, "launch")
@@ -450,6 +459,7 @@ def test_managed_batch_runs_every_fold_and_collects_pinned_results(managed):
 
 
 @pytest.mark.slow
+@needs_training
 def test_cancel_stops_running_folds_cancels_pending_ones_and_resume_completes(managed):
     context = managed
     context.store.update_settings({"cpuTaskSlots": 1})
@@ -489,6 +499,7 @@ def test_cancel_stops_running_folds_cancels_pending_ones_and_resume_completes(ma
 
 
 @pytest.mark.slow
+@needs_training
 def test_single_run_cancels_finish_the_batch_cancelled_and_resume_reruns_them(managed):
     context = managed
     context.store.update_settings({"cpuTaskSlots": 1})
@@ -556,6 +567,7 @@ def lose(task):
 
 
 @pytest.mark.slow
+@needs_training
 def test_lost_runner_interrupts_and_auto_resumes_the_running_fold(managed):
     context = managed
     context.store.update_settings({"cpuTaskSlots": 1})
@@ -595,6 +607,7 @@ def test_lost_runner_interrupts_and_auto_resumes_the_running_fold(managed):
 
 
 @pytest.mark.slow
+@needs_training
 def test_a_fold_lost_in_a_restart_resumes_once_its_runtime_answers(managed, monkeypatch):
     from histopilot.taskcenter.adapters import mil
 
@@ -635,6 +648,7 @@ def test_a_fold_lost_in_a_restart_resumes_once_its_runtime_answers(managed, monk
 
 
 @pytest.mark.slow
+@needs_training
 def test_stop_and_hold_requeues_running_folds_until_release(managed):
     context = managed
     context.service.launch(context.identity, "launch")
