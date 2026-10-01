@@ -74,11 +74,13 @@ def design_file(service, ids, path):
 
 
 def test_an_experiment_goes_from_a_design_file_to_queued_training(study, tmp_path, monkeypatch):
-    from support.training import runtime
+    from support.training import HOST, runtime
 
-    # Starting checks the training runtime; nothing trains here, so the training extra
-    # need not be installed.
+    # Starting checks the training runtime and this machine's capacity. Nothing trains
+    # here: the training extra need not be installed, and a small CI runner must not
+    # refuse the launch.
     monkeypatch.setattr("histopilot.application.training.training_runtime", runtime)
+    monkeypatch.setattr("histopilot.application.training.host_snapshot", lambda: dict(HOST))
     service, ids = study
     design_file(service, ids, tmp_path / "design.yaml")
 

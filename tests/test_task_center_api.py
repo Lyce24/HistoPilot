@@ -1737,7 +1737,7 @@ def test_operations_inventory_reads_leases_without_pruning(api, registry):
 def _launched_batch(api, tmp_path, monkeypatch):
     """A real task-center batch of five folds, launched in a project of this workspace."""
     from support import projects
-    from support.training import runtime
+    from support.training import HOST, runtime
 
     from histopilot.application.development import DevelopmentService
     from histopilot.application.protocols import ProtocolService
@@ -1747,6 +1747,8 @@ def _launched_batch(api, tmp_path, monkeypatch):
 
     monkeypatch.setattr("histopilot.application.training.gpu_snapshot", lambda: {"gpus": []})
     monkeypatch.setattr("histopilot.workers.training_process.gpu_snapshot", lambda: {"gpus": []})
+    # A fixed host, so launch checks never inherit a small CI runner's CPU count.
+    monkeypatch.setattr("histopilot.application.training.host_snapshot", lambda: dict(HOST))
     project_id, _folder = register(api)
     store = api.app.state.projects.scientific_store(project_id)
     rows = [
