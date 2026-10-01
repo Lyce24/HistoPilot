@@ -645,7 +645,47 @@
 .start-project-manage { display: flex; justify-content: end; padding: 0 20px 13px; }
 .start-project-manage .text-link { color: var(--theme-muted); font-size: 11px; }
 .start-project-manage .text-link:not(:disabled):hover { color: var(--brand-primary); }
+/* Recent projects, five per page: the incoming page slides in from the direction of travel. */
+.start-recent-page-forward { animation: start-recent-page-forward 0.24s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.start-recent-page-back { animation: start-recent-page-back 0.24s cubic-bezier(0.2, 0.7, 0.2, 1); }
+@keyframes start-recent-page-forward { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes start-recent-page-back { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+.start-recent-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 13px;
+}
+.start-recent-page-numbers { display: flex; gap: 3px; }
+.start-recent-pager button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.start-recent-pager button:not(:disabled):hover { background: var(--theme-soft-hover); color: var(--theme-ink); }
+.start-recent-pager button:disabled { opacity: 0.45; cursor: default; }
+.start-recent-pager button[aria-current='page'] {
+  background: var(--theme-surface);
+  border-color: var(--theme-line-strong);
+  color: var(--theme-ink);
+  box-shadow: 0 1px 3px rgb(var(--theme-shadow-rgb) / 0.045);
+}
+.start-recent-previous > svg { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) {
+  .start-recent-page-forward,
+  .start-recent-page-back { animation: none; }
   .start-action-card,
   .start-action-link > svg { transition: none; }
   .start-action-card:not(:disabled):hover,

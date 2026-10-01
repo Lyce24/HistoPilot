@@ -76,9 +76,22 @@ export function savedProjectsByState(projects: ProjectSummary[], state: Lifecycl
   return projects.filter((project) => project.mode !== 'synthetic-demo' && (project.lifecycleState ?? 'active') === state);
 }
 
+export const RECENT_PAGE_SIZE = 5;
+
+/** One page of a project list; a page past the end (after the list shrank) shows the last page. */
+export function recentProjectPage<T>(items: T[], page: number, size = RECENT_PAGE_SIZE) {
+  const pageCount = Math.max(1, Math.ceil(items.length / size));
+  const current = Math.min(Math.max(page, 0), pageCount - 1);
+  return { items: items.slice(current * size, (current + 1) * size), page: current, pageCount };
+}
+
+type PageTurn = 'forward' | 'back';
+
 export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) => void }) {
   const [view, setView] = useState<StartView>('welcome');
   const [projectState, setProjectState] = useState<LifecycleState>('active');
+  const [recentPage, setRecentPage] = useState(0);
+  const [pageTurn, setPageTurn] = useState<PageTurn | null>(null);
   const [name, setName] = useState('');
   const [storageOverride, setStorageOverride] = useState<string | null>(null);
   const [storageParent, setStorageParent] = useState<string | null>(null);
@@ -111,6 +124,7 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
     (project) => project.mode !== 'synthetic-demo',
   );
   const filteredProjects = savedProjectsByState(savedProjects, projectState);
+  const recent = recentProjectPage(filteredProjects, recentPage);
   const busy = create.isPending || open.isPending;
 
   useEffect(() => {
@@ -153,9 +167,24 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
     open.mutate(loadPath.trim());
   }
 
-  function recentList(items: ProjectSummary[]) {
+  function showRecentPage(page: number) {
+    if (page === recent.page) return;
+    setPageTurn(page > recent.page ? 'forward' : 'back');
+    setRecentPage(page);
+  }
+
+  function chooseProjectState(state: LifecycleState) {
+    setProjectState(state);
+    setRecentPage(0);
+    setPageTurn(null);
+  }
+
+  function recentList(items: ProjectSummary[], turn: { key: string; direction: PageTurn | null } | null = null) {
     return (
-      <ul className="start-recent-list">
+      <ul
+        key={turn?.key}
+        className={`start-recent-list${turn?.direction ? ` start-recent-page-${turn.direction}` : ''}`}
+      >
         {items.map((project) => (
           <li key={project.id}>
             <button
@@ -202,7 +231,7 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
       : view === 'load'
         ? 'Load an existing project'
         : 'Your next discovery starts here.';
-  const projectFilters = <div className="start-project-filters" role="group" aria-label="Project state">{(['active', 'archived', 'trashed'] as const).map((state) => <button key={state} type="button" className={state === projectState ? 'selected' : ''} aria-pressed={state === projectState} disabled={busy} onClick={() => setProjectState(state)}>{lifecycleLabel[state]} <span>{savedProjectsByState(savedProjects, state).length}</span></button>)}</div>;
+  const projectFilters = <div className="start-project-filters" role="group" aria-label="Project state">{(['active', 'archived', 'trashed'] as const).map((state) => <button key={state} type="button" className={state === projectState ? 'selected' : ''} aria-pressed={state === projectState} disabled={busy} onClick={() => chooseProjectState(state)}>{lifecycleLabel[state]} <span>{savedProjectsByState(savedProjects, state).length}</span></button>)}</div>;
 
   return (
     <div className="start-shell">
@@ -308,7 +337,7 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
             <section className="start-recent" aria-labelledby="recent-heading">
               <div className="start-section-heading">
                 <h2 id="recent-heading">Recent projects</h2>
-                {filteredProjects.length > 3 ? (
+                {filteredProjects.length > RECENT_PAGE_SIZE ? (
                   <button
                     type="button"
                     className="text-link"
@@ -326,7 +355,48 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
                 </p>
               ) : null}
               {filteredProjects.length ? (
-                recentList(filteredProjects.slice(0, 3))
+                <>
+                  {recentList(recent.items, { key: `${projectState}-${recent.page}`, direction: pageTurn })}
+                  {recent.pageCount > 1 ? (
+                    <nav className="start-recent-pager" aria-label="Recent project pages">
+                      <button
+                        type="button"
+                        className="start-recent-step start-recent-previous"
+                        onClick={() => showRecentPage(recent.page - 1)}
+                        disabled={busy || recent.page === 0}
+                        aria-label="Previous page of recent projects"
+                      >
+                        <Icon name="chevron" size={14} /> Previous
+                      </button>
+                      <span className="start-recent-page-numbers">
+                        {Array.from({ length: recent.pageCount }, (_, index) => (
+                          <button
+                            key={index}
+                            type="button"
+                            onClick={() => showRecentPage(index)}
+                            disabled={busy}
+                            aria-current={index === recent.page ? 'page' : undefined}
+                            aria-label={`Page ${index + 1} of recent projects`}
+                          >
+                            {index + 1}
+                          </button>
+                        ))}
+                      </span>
+                      <button
+                        type="button"
+                        className="start-recent-step"
+                        onClick={() => showRecentPage(recent.page + 1)}
+                        disabled={busy || recent.page >= recent.pageCount - 1}
+                        aria-label="Next page of recent projects"
+                      >
+                        Next <Icon name="chevron" size={14} />
+                      </button>
+                      <span className="sr-only" aria-live="polite">
+                        Page {recent.page + 1} of {recent.pageCount}
+                      </span>
+                    </nav>
+                  ) : null}
+                </>
               ) : !projects.isPending && !projects.isError ? (
                 <p className="start-list-note">No {lifecycleLabel[projectState].toLowerCase()} projects. Archived projects and Trash can be restored through Manage cleanup.</p>
               ) : null}
