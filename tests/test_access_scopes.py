@@ -83,6 +83,7 @@ def test_a_token_reaches_its_own_project_within_its_scopes(service):
     assert preview.status_code == 403 and code(preview) == "SCOPE_MISSING"
     for method, path in (
         ("PUT", f"{API}/projects/{own}/ai-exposure"),
+        ("PUT", f"{API}/projects/{own}/name"),
         ("PUT", f"{API}/task-center/capacity"),
         ("GET", f"{API}/filesystem/roots"),
         ("GET", f"{API}/system"),

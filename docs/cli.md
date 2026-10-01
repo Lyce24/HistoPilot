@@ -30,7 +30,7 @@ Commands are grouped by what they act on: `histopilot <noun> <verb>`. `histopilo
 
 | Noun | Reads | Records |
 | --- | --- | --- |
-| `project` | `list`, `show`, `roadmap`, `exposure` | Projects known to this service |
+| `project` | `list`, `show`, `roadmap`, `exposure` | Projects known to this service (`rename` is a change, below) |
 | `experiment` | `list`, `show`, `results`, `preview`, `batches list` | Experiments; `results` shows each configuration's seed-averaged AUROC with its interval, the seed ensemble, recall by class and the paired comparisons |
 | `dataset` | `list`, `show`, `records`, `inspect` | Frozen datasets and their per-slide records; `inspect` reads a table before importing it |
 | `targets` | `list`, `show` | Targets & splits versions |
@@ -120,6 +120,7 @@ Proceed? [y/N]:
 
 | Noun | Changes |
 | --- | --- |
+| `project` | `rename PROJECT --name NEW` changes a project's name; its ID, folder and records stay the same |
 | `cleanup` | `list` shows every record's cleanup key; `preview` and `apply` archive, trash or restore records |
 | `backup` | `export`, `verify` and `restore` study archives as Task Center tasks, with `--wait`; `list`, `show`, `cancel`, `retry` |
 | `sources` | `list` registered folders; `add` a folder, or `relink` one that moved |

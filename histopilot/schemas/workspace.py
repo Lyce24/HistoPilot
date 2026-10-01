@@ -66,3 +66,17 @@ class ProjectUpdateRequest(RequestModel):
     config: ProjectConfig
     # Older API clients may omit this; the UI always sends its editor baseline.
     expectedConfig: ProjectConfig | None = None
+
+
+class ProjectRenameRequest(RequestModel):
+    name: str = Field(min_length=1, max_length=120)
+    # The name the caller saw, so a rename never silently replaces someone else's.
+    expectedName: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def nonempty_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Enter a project name.")
+        return value

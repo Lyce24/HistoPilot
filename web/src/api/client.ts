@@ -208,6 +208,11 @@ export const api = {
     request<ProjectSummary>('/projects/open', { method: 'POST', body: JSON.stringify({ path }) }),
   projectWorkspace: (id: string) =>
     request<Workspace>(`/projects/${encodeURIComponent(id)}/workspace`),
+  renameProject: (id: string, name: string, expectedName: string) =>
+    request<{ projectId: string; name: string; previous: string; project: ProjectSummary }>(
+      `/projects/${encodeURIComponent(id)}/name`,
+      { method: 'PUT', body: JSON.stringify({ name, expectedName }) },
+    ),
   system: () => request<SystemStatus>('/system'),
   systemCompute: (signal?: AbortSignal) => request<SystemCompute>('/system/compute', { signal }),
   roots: (purpose: 'data' | 'storage' = 'data') =>

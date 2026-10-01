@@ -470,6 +470,7 @@ ERROR_CODES: dict[str, str] = {
     "PREVIEW_STALE": "conflict",
     "PROJECT_BUSY": "conflict",
     "PROJECT_CONFIG_CONFLICT": "conflict",
+    "PROJECT_NAME_CONFLICT": "conflict",
     "PUBLICATION_INTERRUPTED": "conflict",
     "REFIT_INCOMPLETE": "conflict",
     "REVISION_CONFLICT": "conflict",

@@ -152,6 +152,7 @@ def register(app: typer.Typer) -> None:
         )
 
     register_exposure(group)
+    register_rename(group)
 
 
 MEANING = {
@@ -189,4 +190,32 @@ def register_exposure(group: typer.Typer) -> None:
                 "PUT", path, body={"level": level, "expectedLevel": current}
             ),
             summary=f"Change AI exposure of {project} from {current} to {level}. {MEANING[level]}",
+        )
+
+
+def register_rename(group: typer.Typer) -> None:
+    @command(group, "rename", commit=True)
+    def rename(
+        ctx,
+        identity: str | None = typer.Argument(
+            None, metavar="PROJECT", help="Project ID (default: --project)."
+        ),
+        name: str = typer.Option(..., "--name", help="The new project name (1-120 characters)."),
+    ):
+        """Rename a project. Only its name changes: its ID, folder and records stay the same."""
+        project = identity or ctx.project()
+        new = name.strip()
+        if not new or len(new) > 120:
+            raise usage_error("Give --name a project name of 1 to 120 characters.")
+        current = (resources.project(ctx.client, project).get("project") or {}).get("name")
+        preview = {"projectId": project, "from": current, "to": new}
+        return ctx.commit(
+            preview,
+            lambda: ctx.client.request(
+                "PUT",
+                f"/projects/{segment(project)}/name",
+                body={"name": new, "expectedName": current},
+            ),
+            summary=f"Rename project {project} from {current!r} to {new!r}. Its ID, folder and "
+            "records do not change.",
         )

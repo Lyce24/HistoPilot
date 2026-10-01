@@ -57,6 +57,8 @@ _TABLE = {
     # Widening what agents may see is an admin change.
     ("GET", "{P}/ai-exposure"): READ,
     ("PUT", "{P}/ai-exposure"): ADMIN,
+    # A project's name is how people find it on this machine; agents never rename one.
+    ("PUT", "{P}/name"): ADMIN,
     ("POST", "{P}/sources"): ADMIN,
     ("GET", "{P}/storage"): READ,
     ("GET", "{P}/workspace"): READ,

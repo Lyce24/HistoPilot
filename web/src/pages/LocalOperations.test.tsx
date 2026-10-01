@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import LocalOperations, { archiveSubmitDisabled } from './LocalOperations';
+import LocalOperations, { ProjectNamePanel, archiveSubmitDisabled, renameReady } from './LocalOperations';
 import type { Workspace } from '../api/types';
 import type { OperationsInventory } from '../api/operations';
 import { extractionActive } from '../api/trident';
@@ -60,3 +60,26 @@ describe('project operations workspace', () => {
     for (const text of ['archive-session', 'tmux attach', 'Reconnect', 'Retry saved operation', 'Cancel archive operation', '>Resume<']) expect(html).not.toContain(text);
   });
 });
+
+describe('project name', () => {
+  it('is ready to rename only to a new, non-blank name of at most 120 characters', () => {
+    expect(renameReady('CRC KRAS', 'KRAS')).toBe(true);
+    expect(renameReady('  KRAS  ', 'KRAS')).toBe(false);
+    expect(renameReady('   ', 'KRAS')).toBe(false);
+    expect(renameReady('x'.repeat(121), 'KRAS')).toBe(false);
+    expect(renameReady('x'.repeat(120), 'KRAS')).toBe(true);
+  });
+
+  it('shows the current name and says the ID and folder stay the same', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    clients.push(client);
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><ProjectNamePanel project="project-1" name="KRAS" folder="/workspace/kras" /></QueryClientProvider>);
+    expect(html).toContain('Project name');
+    expect(html).toContain('value="KRAS"');
+    expect(html).toContain('Rename project');
+    expect(html).toContain('project-1');
+    expect(html).toContain('/workspace/kras');
+    expect(html).toMatch(/<button type="submit" class="btn btn-secondary" disabled="">/);
+  });
+});
+

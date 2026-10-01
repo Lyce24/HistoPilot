@@ -66,7 +66,7 @@ Every service error carries a code, and [error codes](error-codes.md) gives each
 | read | changes nothing: every GET, plus POST queries and exports such as dataset queries, scores, agreement, subgroups and case exports. Caches and housekeeping do not count. | 117 |
 | preview | prepares a change without making it: the `…preview` checks, which return findings with a `previewHash` or a `can…` gate, and saves of drafts, which include experiments and their batch plans. Nothing is frozen, queued or removed. | 24 |
 | commit | changes one project for real: freeze, publish or save a record; launch, submit, resume, cancel, retry, hold or move work; clean up; relabel a version; write a slide review; edit the project's planning settings. | 50 |
-| admin | reaches beyond one project or widens access: create or open projects, register or relink source folders, create folders, study archives, the Task Center's capacity and runner, agent tokens, a project's AI-exposure level, and deciding agents' requests. | 16 |
+| admin | reaches beyond one project or widens access: create or open projects, register or relink source folders, create folders, study archives, the Task Center's capacity and runner, agent tokens, a project's AI-exposure level or name, and deciding agents' requests. | 16 |
 
 - A route with several actions takes the class of its strongest. Archive export, verify and restore share one route, and restore writes a new study folder, so the route is admin.
 - The CLI uses the classes for confirmation and busy retries. A route missing from the table, for example one sent through `histopilot api`, counts as commit.

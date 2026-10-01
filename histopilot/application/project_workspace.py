@@ -523,6 +523,39 @@ class ProjectWorkspace:
             self._register(summary)
             return {"projectId": identity, "level": level, "previous": current}
 
+    def rename(self, identity: str, name: str, expected: str) -> dict:
+        """Change the project's display name, if nobody renamed it since ``expected`` was read.
+
+        Only the label changes: the project ID, its folder and every frozen record, which
+        refer to the project by ID, stay as they are.
+        """
+        with self.lock:
+            _, path = self._load(identity)
+            with lifecycle_guard(path), writer_lock(path):
+                LifecycleStore(path, identity).assert_usable([f"project:{identity}"])
+                document = self._read(path)
+                if document["id"] != identity:
+                    raise WorkspaceError(
+                        "The folder now belongs to a different project.",
+                        409,
+                        code="PROJECT_FOLDER_REASSIGNED",
+                    )
+                current = document["name"]
+                # Retrying a rename whose response was lost is a no-op.
+                if current != name:
+                    if current != expected:
+                        raise StorageError(
+                            f"The project is now named {current!r}; review it before renaming it.",
+                            "PROJECT_NAME_CONFLICT",
+                            409,
+                        )
+                    document["name"] = name
+                    document["updatedAt"] = utc_now(zulu=True)
+                    self._write(path, document)
+            summary = self._summary(document, path)
+            self._register(summary)
+            return {"projectId": identity, "name": name, "previous": current, "project": summary}
+
     def add_source(self, identity: str, value: str, role: str) -> dict:
         with self.lock:
             _, path = self._load(identity)

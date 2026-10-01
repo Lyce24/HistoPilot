@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '../api/client';
 import { operations } from '../api/operations';
 import type { ArchiveAction, ArchiveJob, ArchiveRequest, SourceRegistration } from '../api/operations';
 import type { Workspace } from '../api/types';
@@ -59,6 +60,44 @@ function SourceRow({ project, source, onSaved }: { project: string; source: Sour
   </article>;
 }
 
+/** A rename is ready when the trimmed name is new and 1–120 characters long. */
+export const renameReady = (draft: string, current: string) => {
+  const name = draft.trim();
+  return name.length > 0 && name.length <= 120 && name !== current;
+};
+
+export function ProjectNamePanel({ project, name, folder }: { project: string; name: string; folder: string }) {
+  const client = useQueryClient();
+  const [draft, setDraft] = useState(name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [notice, setNotice] = useState('');
+  // Follow the saved name, also after a rename made elsewhere.
+  useEffect(() => { setDraft(name); }, [name]);
+  async function rename() {
+    setBusy(true); setError(null); setNotice('');
+    try {
+      const result = await api.renameProject(project, draft.trim(), name);
+      setDraft(result.name);
+      setNotice(`Renamed from “${result.previous}” to “${result.name}”.`);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['workspace', project] }),
+        client.invalidateQueries({ queryKey: ['projects'] }),
+      ]);
+    } catch (reason) { setError(readableError(reason)); }
+    finally { setBusy(false); }
+  }
+  return <Panel title="Project name" subtitle="How this project appears on the start page, in the Task Center and to anyone sharing this machine.">
+    <ErrorNotice error={error} />
+    {notice ? <p className="callout" role="status">{notice}</p> : null}
+    <form className="operations-form" onSubmit={(event) => { event.preventDefault(); if (renameReady(draft, name)) void rename(); }}>
+      <label className="operations-field">Name<input value={draft} maxLength={120} disabled={busy} onChange={(event) => setDraft(event.target.value)} /></label>
+      <button type="submit" className="btn btn-secondary" disabled={busy || !renameReady(draft, name)}>{busy ? 'Renaming…' : 'Rename project'}</button>
+    </form>
+    <p className="muted">Only the name changes. The project ID <code>{project}</code>, its folder <code className="operations-path">{folder}</code> and every record stay the same.</p>
+  </Panel>;
+}
+
 export default function LocalOperations({ workspace }: { workspace: Workspace }) {
   const project = workspace.project.id;
   const client = useQueryClient();
@@ -103,9 +142,10 @@ export default function LocalOperations({ workspace }: { workspace: Workspace })
     finally { setBusy(false); }
   }
   return <div className="local-operations">
-    <PageHeader eyebrow="Project operations" title="Study backups & sources" description="Verify project archives and reconnect moved source folders." actions={<button type="button" className="btn btn-secondary" onClick={() => { void inventory.refetch(); void archives.refetch(); void sources.refetch(); }}>Refresh</button>} />
+    <PageHeader eyebrow="Project operations" title="Study backups & sources" description="Rename the project, verify project archives and reconnect moved source folders." actions={<button type="button" className="btn btn-secondary" onClick={() => { void inventory.refetch(); void archives.refetch(); void sources.refetch(); }}>Refresh</button>} />
     <ErrorNotice error={error ?? inventory.error ?? sources.error ?? archives.error} />
     {notice ? <p className="callout" role="status">{notice}</p> : null}
+    {workspace.mode === 'local' ? <ProjectNamePanel key={project} project={project} name={workspace.project.name} folder={workspace.project.storagePath} /> : null}
     <p className="callout operations-task-center" role="note"><Icon name="clock" size={16} /><span>{taskCenterWork(true)}, including the archive operations on this page, run in the <a href={taskCenterHref({ project })}>Task Center</a>, which orders and tracks them for every project on this machine.</span></p>
     <Panel title="Verified project archives" subtitle="Save the project database, frozen records, review notes, logs and project-contained outputs with checksums.">
       <p className="callout">External slides, feature folders and outputs remain external references. The archive records unavailable references. You can submit an export at any time: it waits in the Task Center until this project's running jobs finish. Restoring preserves the project identity and never overwrites an existing folder.</p>

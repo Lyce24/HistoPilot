@@ -120,6 +120,7 @@ Every command takes `--json`, `--url`, `--project` and `--timeout SECONDS`. Comm
 | `histopilot project exposure PROJECT` | Show or change what AI agents may see of a project (an admin change). |
 | `histopilot project list` | List projects, most recently changed first. |
 | `histopilot project open FOLDER` | Load an existing project's folder into this service. |
+| `histopilot project rename PROJECT` | Rename a project. Only its name changes: its ID, folder and records stay the same. |
 | `histopilot project roadmap PROJECT` | Each stage's status as the roadmap page shows it, and the suggested next stage. |
 | `histopilot project show PROJECT` | Show a project: its folder, latest dataset and record counts. |
 | `histopilot reference create` | Map a dataset column to a cohort's classes as a reference standard. |

@@ -64,6 +64,7 @@ A scoped agent token (`hpt_…`) goes in the same header and reaches one project
 | `POST /projects/open` | Register an existing project folder by `{path}` and return its summary. |
 | `GET /projects/{identity}/workspace` | The project's summary, saved setup and sources. The demo ID `blca-demo-v1` returns the demo. |
 | `PATCH /projects/{identity}` | Replace the optional planning `config`. Send `expectedConfig` to detect concurrent edits. |
+| `PUT /projects/{identity}/name` | Rename the project: `{name, expectedName}`. Only the display name changes; the ID, folder and records keep theirs. A stale `expectedName` returns 409 `PROJECT_NAME_CONFLICT`; an agent token can never rename. |
 | `POST /projects/{identity}/sources` | Register a read-only `data`, `slides` or `features` folder (201). Nothing is scanned or copied. |
 | `GET /projects/{identity}/storage` | Scientific store schema, journal mode, counts and publication operation states. |
 

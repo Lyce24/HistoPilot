@@ -25,6 +25,7 @@ from histopilot.schemas.scientific import CreateDraftRequest, UpdateDraftRequest
 from histopilot.schemas.workspace import (
     CreateDirectoryRequest,
     OpenProjectRequest,
+    ProjectRenameRequest,
     ProjectRequest,
     ProjectSourceRequest,
     ProjectUpdateRequest,
@@ -221,6 +222,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.patch("/api/v1/projects/{identity}")
     def update_project(identity: str, payload: ProjectUpdateRequest):
         return projects.update_config(identity, payload.config, payload.expectedConfig)
+
+    @app.put("/api/v1/projects/{identity}/name")
+    def rename_project(identity: str, payload: ProjectRenameRequest):
+        return projects.rename(identity, payload.name, payload.expectedName)
 
     @app.post("/api/v1/projects/{identity}/sources", status_code=201)
     def project_source(identity: str, payload: ProjectSourceRequest):

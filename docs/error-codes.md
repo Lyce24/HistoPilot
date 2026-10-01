@@ -484,6 +484,7 @@ A code's kind groups codes by what the caller should do next, and the CLI turns 
 | `PREVIEW_STALE` | conflict | 409 | Inputs changed since the preview. Preview again, then send its new hash. |
 | `PROJECT_BUSY` | conflict | 409 | Another operation is writing this project. Retry after it finishes. |
 | `PROJECT_CONFIG_CONFLICT` | conflict | 409 | Project settings changed in another tab. Your edits have not been saved. Reload the saved settings before making further changes. |
+| `PROJECT_NAME_CONFLICT` | conflict | 409 | The project is now named …; review it before renaming it. |
 | `PUBLICATION_INTERRUPTED` | conflict | 403 | Dataset publication was interrupted; reopen to recover. |
 | `REFIT_INCOMPLETE` | conflict | 409 | The refit must complete and stop before publication. |
 | `REVISION_CONFLICT` | conflict | 409 | The record changed since it was read. Reload it, then retry. |
