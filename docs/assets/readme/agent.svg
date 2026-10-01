@@ -1,0 +1,111 @@
+<svg class="rich-terminal" viewBox="0 0 1190 464.79999999999995" xmlns="http://www.w3.org/2000/svg">
+    <!-- Generated with Rich https://www.textualize.io -->
+    <style>
+
+    .hp-matrix {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+        font-size: 20px;
+        line-height: 24.4px;
+        font-variant-east-asian: full-width;
+    }
+
+    .hp-title {
+        font-size: 18px;
+        font-weight: bold;
+        font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+    }
+
+    .hp-r1 { fill: #848c88 }
+.hp-r2 { fill: #e9e7ef }
+.hp-r3 { fill: #ffffff }
+.hp-r4 { fill: #00a58f }
+.hp-r5 { fill: #ffffff;font-weight: bold }
+.hp-r6 { fill: #c86e93;font-weight: bold }
+.hp-r7 { fill: #ffc72c;font-weight: bold }
+    </style>
+
+    <defs>
+    <clipPath id="hp-clip-terminal">
+      <rect x="0" y="0" width="1170.1999999999998" height="413.79999999999995" />
+    </clipPath>
+    <clipPath id="hp-line-0">
+    <rect x="0" y="1.5" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-1">
+    <rect x="0" y="25.9" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-2">
+    <rect x="0" y="50.3" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-3">
+    <rect x="0" y="74.7" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-4">
+    <rect x="0" y="99.1" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-5">
+    <rect x="0" y="123.5" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-6">
+    <rect x="0" y="147.9" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-7">
+    <rect x="0" y="172.3" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-8">
+    <rect x="0" y="196.7" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-9">
+    <rect x="0" y="221.1" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-10">
+    <rect x="0" y="245.5" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-11">
+    <rect x="0" y="269.9" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-12">
+    <rect x="0" y="294.3" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-13">
+    <rect x="0" y="318.7" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-14">
+    <rect x="0" y="343.1" width="1171.2" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-15">
+    <rect x="0" y="367.5" width="1171.2" height="24.65"/>
+            </clipPath>
+    </defs>
+
+    <rect fill="#1f1e28" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1188" height="462.8" rx="8"/><text class="hp-title" fill="#e9e7ef" text-anchor="middle" x="594" y="27">Claude&#160;Code&#160;·&#160;HistoPilot&#160;plugin&#160;·&#160;example</text>
+            <g transform="translate(26,22)">
+            <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
+            <circle cx="22" cy="0" r="7" fill="#febc2e"/>
+            <circle cx="44" cy="0" r="7" fill="#28c840"/>
+            </g>
+        
+    <g transform="translate(9, 41)" clip-path="url(#hp-clip-terminal)">
+    
+    <g class="hp-matrix">
+    <text class="hp-r1" x="0" y="20" textLength="1171.2" clip-path="url(#hp-line-0)">╭──────────────────────────────────────────────────────────────────────────────────────────────╮</text><text class="hp-r2" x="1171.2" y="20" textLength="12.2" clip-path="url(#hp-line-0)">
+</text><text class="hp-r1" x="0" y="44.4" textLength="12.2" clip-path="url(#hp-line-1)">│</text><text class="hp-r3" x="24.4" y="44.4" textLength="829.6" clip-path="url(#hp-line-1)">&gt;&#160;Which&#160;design&#160;won&#160;the&#160;grade&#160;comparison,&#160;and&#160;is&#160;the&#160;difference&#160;real?</text><text class="hp-r1" x="1159" y="44.4" textLength="12.2" clip-path="url(#hp-line-1)">│</text><text class="hp-r2" x="1171.2" y="44.4" textLength="12.2" clip-path="url(#hp-line-1)">
+</text><text class="hp-r1" x="0" y="68.8" textLength="1171.2" clip-path="url(#hp-line-2)">╰──────────────────────────────────────────────────────────────────────────────────────────────╯</text><text class="hp-r2" x="1171.2" y="68.8" textLength="12.2" clip-path="url(#hp-line-2)">
+</text><text class="hp-r2" x="1171.2" y="93.2" textLength="12.2" clip-path="url(#hp-line-3)">
+</text><text class="hp-r4" x="0" y="117.6" textLength="24.4" clip-path="url(#hp-line-4)">●&#160;</text><text class="hp-r5" x="24.4" y="117.6" textLength="378.2" clip-path="url(#hp-line-4)">histopilot&#160;·&#160;experiment_results</text><text class="hp-r1" x="402.6" y="117.6" textLength="73.2" clip-path="url(#hp-line-4)">&#160;(MCP)</text><text class="hp-r2" x="1171.2" y="117.6" textLength="12.2" clip-path="url(#hp-line-4)">
+</text><text class="hp-r1" x="24.4" y="142" textLength="902.8" clip-path="url(#hp-line-5)">experiment:&#160;&quot;Grade:&#160;attention&#160;vs&#160;mean&#160;pooling&#160;vs&#160;clinical&quot;,&#160;detail:&#160;&quot;full&quot;</text><text class="hp-r2" x="1171.2" y="142" textLength="12.2" clip-path="url(#hp-line-5)">
+</text><text class="hp-r1" x="24.4" y="166.4" textLength="1024.8" clip-path="url(#hp-line-6)">↳&#160;4&#160;configurations&#160;·&#160;3&#160;training&#160;seeds&#160;each&#160;·&#160;60&#160;of&#160;60&#160;runs&#160;·&#160;arms&#160;vs&#160;configuration&#160;1</text><text class="hp-r2" x="1171.2" y="166.4" textLength="12.2" clip-path="url(#hp-line-6)">
+</text><text class="hp-r2" x="1171.2" y="190.8" textLength="12.2" clip-path="url(#hp-line-7)">
+</text><text class="hp-r4" x="0" y="215.2" textLength="24.4" clip-path="url(#hp-line-8)">●&#160;</text><text class="hp-r2" x="24.4" y="215.2" textLength="597.8" clip-path="url(#hp-line-8)">ABMIL&#160;on&#160;clinical&#160;+&#160;image&#160;inputs&#160;scores&#160;highest,&#160;</text><text class="hp-r5" x="622.2" y="215.2" textLength="231.8" clip-path="url(#hp-line-8)">AUROC&#160;0.904&#160;±&#160;0.054</text><text class="hp-r2" x="854" y="215.2" textLength="317.2" clip-path="url(#hp-line-8)">&#160;over&#160;3&#160;seeds,&#160;but&#160;it&#160;is&#160;&#160;</text><text class="hp-r2" x="1171.2" y="215.2" textLength="12.2" clip-path="url(#hp-line-8)">
+</text><text class="hp-r2" x="24.4" y="239.6" textLength="610" clip-path="url(#hp-line-9)">not&#160;clearly&#160;better&#160;than&#160;the&#160;image-only&#160;reference&#160;(</text><text class="hp-r5" x="634.4" y="239.6" textLength="158.6" clip-path="url(#hp-line-9)">0.889&#160;±&#160;0.088</text><text class="hp-r2" x="793" y="239.6" textLength="378.2" clip-path="url(#hp-line-9)">):&#160;the&#160;paired&#160;difference,&#160;0.015</text><text class="hp-r2" x="1171.2" y="239.6" textLength="12.2" clip-path="url(#hp-line-9)">
+</text><text class="hp-r2" x="24.4" y="264" textLength="1146.8" clip-path="url(#hp-line-10)">in&#160;its&#160;favour,&#160;has&#160;a&#160;95%&#160;interval&#160;from&#160;−0.014&#160;to&#160;+0.046&#160;(Holm&#160;p&#160;=&#160;0.37).&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="hp-r2" x="1171.2" y="264" textLength="12.2" clip-path="url(#hp-line-10)">
+</text><text class="hp-r2" x="1171.2" y="288.4" textLength="12.2" clip-path="url(#hp-line-11)">
+</text><text class="hp-r2" x="24.4" y="312.8" textLength="170.8" clip-path="url(#hp-line-12)">Mean&#160;pooling&#160;(</text><text class="hp-r6" x="195.2" y="312.8" textLength="61" clip-path="url(#hp-line-12)">0.728</text><text class="hp-r2" x="256.2" y="312.8" textLength="256.2" clip-path="url(#hp-line-12)">)&#160;and&#160;clinical-only&#160;(</text><text class="hp-r6" x="512.4" y="312.8" textLength="61" clip-path="url(#hp-line-12)">0.717</text><text class="hp-r2" x="573.4" y="312.8" textLength="597.8" clip-path="url(#hp-line-12)">)&#160;are&#160;clearly&#160;worse:&#160;0.16&#160;and&#160;0.17&#160;below&#160;the&#160;&#160;&#160;&#160;&#160;</text><text class="hp-r2" x="1171.2" y="312.8" textLength="12.2" clip-path="url(#hp-line-12)">
+</text><text class="hp-r2" x="24.4" y="337.2" textLength="1146.8" clip-path="url(#hp-line-13)">reference,&#160;with&#160;paired&#160;intervals&#160;that&#160;exclude&#160;zero&#160;(Holm&#160;p&#160;=&#160;0.003&#160;and&#160;0.008).&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="hp-r2" x="1171.2" y="337.2" textLength="12.2" clip-path="url(#hp-line-13)">
+</text><text class="hp-r2" x="1171.2" y="361.6" textLength="12.2" clip-path="url(#hp-line-14)">
+</text><text class="hp-r2" x="24.4" y="386" textLength="1146.8" clip-path="url(#hp-line-15)">One&#160;caution:&#160;the&#160;reference&#160;moves&#160;between&#160;training&#160;seeds&#160;(0.788–0.941).&#160;Quote&#160;the&#160;seed&#160;mean&#160;or&#160;</text><text class="hp-r2" x="1171.2" y="386" textLength="12.2" clip-path="url(#hp-line-15)">
+</text><text class="hp-r2" x="24.4" y="410.4" textLength="231.8" clip-path="url(#hp-line-16)">the&#160;seed&#160;ensemble&#160;(</text><text class="hp-r7" x="256.2" y="410.4" textLength="61" clip-path="url(#hp-line-16)">0.949</text><text class="hp-r2" x="317.2" y="410.4" textLength="854" clip-path="url(#hp-line-16)">),&#160;never&#160;a&#160;single&#160;seed.&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="hp-r2" x="1171.2" y="410.4" textLength="12.2" clip-path="url(#hp-line-16)">
+</text>
+    </g>
+    </g>
+</svg>

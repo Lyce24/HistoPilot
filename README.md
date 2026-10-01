@@ -1,188 +1,166 @@
 <p align="center">
-  <img src="web/public/favicon.svg" width="56" height="56" alt="HistoPilot compass" />
+  <img src="docs/assets/readme/banner.svg" width="100%" alt="HistoPilot: from pathology slides to model evidence. Work in the browser, the terminal or with an AI agent." />
 </p>
 
-<h1 align="center">HistoPilot</h1>
-<p align="center"><strong>From pathology slides to model evidence.</strong></p>
 <p align="center">
-  <a href="#get-started">Get started</a> ·
-  <a href="#three-ways-to-work">Three ways to work</a> ·
-  <a href="#the-workflow">The workflow</a> ·
-  <a href="#controlled-comparisons">Controlled comparisons</a> ·
-  <a href="#the-task-center">Task Center</a> ·
-  <a href="#documentation">Documentation</a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+" />
+  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20WSL-292833" alt="Linux or WSL" />
+  <img src="https://img.shields.io/badge/data-stays%20on%20your%20machine-006b5f" alt="Data stays on your machine" />
+  <img src="https://img.shields.io/badge/agents-MCP%20server-6e5aa7" alt="MCP server" />
+  <img src="https://img.shields.io/badge/Claude%20Code-plugin-c86e93" alt="Claude Code plugin" />
 </p>
 
-HistoPilot is a local research workspace for computational pathology. It takes you from a slide table to evaluated models:
-1. Import slide and patient metadata.
-2. Extract or attach foundation-model patch features.
-3. Fix your training and testing sets.
-4. Train multiple instance learning (MIL) models with cross-validation.
-5. Compare designs with controlled ablations.
-6. Apply the resulting predictors to labeled and unlabeled cohorts, and interpret them.
+<p align="center">
+  <a href="#quick-start"><b>Quick start</b></a> ·
+  <a href="#one-question-three-cockpits"><b>Three cockpits</b></a> ·
+  <a href="#fly-it-your-way"><b>Browser · Terminal · Agent</b></a> ·
+  <a href="#how-it-fits-together"><b>Concepts</b></a> ·
+  <a href="#documentation"><b>Docs</b></a>
+</p>
 
-It runs as a single-user service on your own workstation. Slides, features and results stay on that machine. Source files are read in place, never uploaded or copied.
+HistoPilot is a research workspace for computational pathology. It takes a slide table to cross-validated, compared and applied multiple instance learning (MIL) models, and it keeps every step frozen, versioned and reproducible. It runs on your own workstation, and you can drive it three ways: from the **browser**, from the **terminal**, or by asking an **AI agent**.
 
-![Project roadmap of a synthetic grading study, with every required step complete](docs/assets/app/roadmap.png)
+## One question, three cockpits
 
-<sub>Every screenshot on this page comes from the current interface running on a fully synthetic study. That study has 205 generated slides across four sites, with no real patients, images or results. Its numbers illustrate the software, not a finding.</sub>
+*"Which design won the comparison, and is the difference real?"* Here is one synthetic study answering in each cockpit. The numbers agree because all three read the same local API.
 
-## Get started
+**Browser**: *Experiments → Results → Controlled comparison*
 
-**Requirements:**
-- Linux or WSL
-- Python 3.11+ and [uv](https://docs.astral.sh/uv/)
-- Node.js 22.12+ with npm
-- tmux
+<img src="docs/assets/app/controlled-comparison.png" width="100%" alt="Controlled comparison in the browser: four arms on the same folds and seeds, each against the reference with paired 95% intervals and Holm-adjusted p-values" />
 
-Training and feature extraction also need an NVIDIA GPU in practice. The BLCA demo needs no GPU.
+**Terminal**: `histopilot experiment results`
+
+<img src="docs/assets/readme/terminal.svg" width="100%" alt="histopilot experiment results printing each configuration's seed-mean AUROC, 95% interval, seed ensemble and recall by class" />
+
+**Agent**: Claude Code with the HistoPilot plugin
+
+<img src="docs/assets/readme/agent.svg" width="100%" alt="An example exchange: the agent calls experiment_results and explains which arm is clearly better and which difference is within noise" />
+
+<sub>The terminal view is the CLI's own output for this study; the agent exchange is an example written from the same numbers.</sub>
+
+## Quick start
 
 ```bash
-git clone https://github.com/Lyce24/HistoPilot.git
-cd HistoPilot
-uv sync --locked                    # the service
-npm --prefix web ci                 # the browser UI's build tools
-UV_PROJECT_ENVIRONMENT=.venv-training uv sync --locked --extra training   # training, predictor runs, attention
+git clone https://github.com/Lyce24/HistoPilot.git && cd HistoPilot
+uv sync --locked && npm --prefix web ci                                   # service, CLI and UI
+UV_PROJECT_ENVIRONMENT=.venv-training uv sync --locked --extra training   # model training
+bash serve.sh --data-root /path/to/your/data
 ```
 
-Add `--extra imaging` to the first `uv sync` to view SVS, TIFF and other OpenSlide slides in the browser. Feature extraction uses a separate TRIDENT checkout; see [TRIDENT feature extraction](docs/deployment.md#trident-feature-extraction).
+Open `http://127.0.0.1:8787` and pick **Open BLCA demo**: a read-only tour of a synthetic study that needs no data and no GPU. When you're ready, choose **Start a new project**.
 
-Start the service in a terminal and allow the folders that hold your data:
+<details>
+<summary><b>Requirements and options</b></summary>
+
+- Linux or WSL, Python 3.11+ with [uv](https://docs.astral.sh/uv/), Node.js 22.12+ and tmux.
+- An NVIDIA GPU for training and feature extraction in practice.
+- `--extra imaging` on the first `uv sync` adds slide viewing (SVS, TIFF and other OpenSlide formats).
+- Feature extraction runs [TRIDENT](docs/deployment.md#trident-feature-extraction) from its own checkout.
+- `bash serve.sh --help` lists the options, such as `--port` and `--workspace`.
+
+</details>
+
+## Fly it your way
+
+<table>
+<tr>
+<th width="33%">Browser</th>
+<th width="33%">Terminal</th>
+<th width="33%">Agent</th>
+</tr>
+<tr>
+<td valign="top">Every stage, from the project roadmap to attention maps on the slides. Forms, charts and viewers.</td>
+<td valign="top"><code>histopilot &lt;noun&gt; &lt;verb&gt;</code> for scripts, spec files under version control, and SSH sessions.</td>
+<td valign="top">Ask in plain language. It reads results and failures, and prepares work for you to approve.</td>
+</tr>
+<tr>
+<td valign="top"><code>http://127.0.0.1:8787</code></td>
+<td valign="top"><code>uv run histopilot --help</code></td>
+<td valign="top"><code>/plugin install histopilot@histopilot</code></td>
+</tr>
+</table>
+
+### Browser
+
+The roadmap shows where a project stands and opens each stage in turn. Each stage ends by freezing a version you can come back to.
+
+<img src="docs/assets/blca/overview.png" width="100%" alt="The BLCA demo project in the browser, with the five workflow modules in the sidebar" />
+
+### Terminal
+
+Run the CLI from the checkout as `uv run histopilot`. It talks to the service at `http://127.0.0.1:8787`; set `HISTOPILOT_URL` to reach another port.
+
+| I want to… | Run |
+| --- | --- |
+| pick a project | `histopilot project list`, then `histopilot use PROJECT_ID` |
+| see where it stands | `histopilot project roadmap` |
+| read cross-validated results | `histopilot experiment results NAME` |
+| design an experiment as a file | `histopilot experiment template -o design.yaml` |
+| train it | `histopilot experiment create --from design.yaml`, then `experiment freeze EXP` and `experiment start EXP --wait` |
+| apply its predictors to a cohort | `histopilot apply template --experiment EXP -o apply.yaml`, then `apply run --from apply.yaml` |
+| watch the queue | `histopilot tasks list`, `histopilot tasks log TASK --follow` |
+| script any of it | add `--json`: one envelope per command, with stable exit codes |
+
+Every command that changes something shows its preview and asks first. `--dry-run` stops at the preview.
+
+### Agent
+
+**1. Share a project with AI, and make a token for it.**
 
 ```bash
-bash serve.sh --data-root /path/to/research-data
+histopilot use PROJECT_ID
+histopilot project exposure --set metadata     # patient and slide IDs become pseudonyms
+histopilot token create --name "Claude Code"   # read and preview, for this project only
 ```
 
-Open `http://127.0.0.1:8787`. Choose **Start a new project** and pick an empty folder. Or choose **Open BLCA demo** for a read-only [synthetic walkthrough](docs/blca-demo.md) that needs no data or GPU. The folder pickers browse the machine running HistoPilot, not the computer running the browser.
+**2. Install the plugin in Claude Code.** It asks for the service URL and the token. Other MCP apps run `histopilot agent serve`; see [AI agents](docs/agents.md#connecting-an-agent).
 
-`serve.sh` rebuilds the browser UI whenever `web/` has changed, then starts the service in the foreground. Stop it with **Ctrl+C**. After pulling an update:
-1. Rerun the setup commands if the dependencies changed.
-2. Start `bash serve.sh` again.
-
-The Task Center runner restarts itself on the new code. Running tasks are adopted, not stopped. `bash serve.sh --help` lists the options, such as `--port`, `--workspace` and `--no-build`.
-
-## Three ways to work
-
-The browser, the command line and AI agents all use the same local API. Each sees the same records, and each previews a change before a person confirms it.
-
-- **The browser**, at `http://127.0.0.1:8787`, covers every stage, starting from the project roadmap.
-- **The command line**, `histopilot <noun> <verb>` (`uv run histopilot` from the checkout), reads projects, results and runs; prepares datasets, experiments and Apply models runs from spec files; and operates the Task Center. Add `--json` for scripts. See [Command line](docs/cli.md).
-
-  ```bash
-  histopilot project roadmap                                 # where the project stands
-  histopilot experiment results EXP                          # seed-averaged results with intervals
-  histopilot apply template --experiment EXP -o apply.yaml   # what Apply models would propose
-  ```
-
-- **AI agents**, such as Claude Code with the bundled `histopilot` skill or a chat app through MCP, read and prepare work with a scoped token, on projects you have shared with AI. A person approves every change. See [AI agents](docs/agents.md).
-
-## The workflow
-
-The **Project roadmap** groups the modules into five steps. Each step ends by **freezing** an immutable version, and freezing never starts compute.
-
-| Step | Module | You produce |
-| --- | --- | --- |
-| 01 | **Datasets** | A frozen dataset: slide and patient records from a CSV/XLSX table, linked to slide files |
-| 02 | **Slide features** · **Targets & splits** | A validated feature bundle (TRIDENT extraction or existing HDF5 features). Separately, a frozen target with fixed training and testing sets. |
-| 03 | **Experiments** | A frozen design (inputs, cross-validation folds, model recipes, controlled comparisons and predictor choices), then trained folds, cross-validated results, and ensemble, refit or seed-ensemble predictors |
-| 04 | **Apply models** | Predictor runs on cohorts. Labels, frozen with a cohort or added later as reference standards, add metrics with confidence intervals, subgroups, agreement and clinical utility; without labels a run gets label-free predictions |
-| 05 | **Model interpretation** | Attention maps and top patches on the slides |
-
-The training and testing sets are fixed from dataset records alone, before any features or models exist. Splits are made by slide or by patient. By patient, all of a patient's slides stay on one side of every split. The testing set becomes a reserved labeled cohort in Apply models. Folds are drawn only from the training set.
-
-<p align="center">
-  <img src="docs/assets/app/targets-splits.png" width="820" alt="A frozen patient-level target and split: sites A and B for development, site C as an external test cohort" />
-</p>
-
-Models include ABMIL, nnMIL, mean- and max-pooling MIL, and linear and MLP probes on slide embeddings. A recipe can read the image, a set of clinical variables, or both.
-
-## Controlled comparisons
-
-HistoPilot is built to ablate design decisions, not just to train one model. Start from one configuration and tick the models and inputs to compare under **Ablation arms**. HistoPilot then creates one configuration per arm:
-- Every other setting is copied from your configuration.
-- Every arm trains on the same frozen folds and training seeds.
-- Your configuration becomes the reference.
-
-<p align="center">
-  <img src="docs/assets/app/ablation-arms.png" width="820" alt="Ablation arms: ABMIL with clinical and image inputs as the reference, plus mean pooling, image-only and clinical-only arms" />
-</p>
-
-The batch review blocks a comparison whose arms differ in anything other than the model and its inputs. For example, a learning rate, epoch budget or bag size that differs between arms would mix the ablated factor with an optimisation choice.
-
-Clinical variables come from the frozen dataset. The prediction target, the testing target and any field that defines the split are refused, with the reason shown. Every fold learns its own missing-value filling, scaling and categories.
-
-<p align="center">
-  <img src="docs/assets/app/clinical-inputs.png" width="820" alt="Clinical fields offered from the frozen dataset; Site and Grade are refused because they define the split and the target" />
-</p>
-
-**Results** reports every arm against the reference. Each difference comes with a paired 95% interval, computed from the same patient resamples for both arms, and a Holm-adjusted p-value for the planned contrasts.
-
-<p align="center">
-  <img src="docs/assets/app/controlled-comparison.png" width="820" alt="Controlled comparison results: seed-mean AUROC per arm, and each arm against the ABMIL reference with paired intervals and Holm-adjusted p-values" />
-</p>
-
-Every result also breaks down by training seed and test fold, so you can see how far one run can move. The results page shows out-of-fold (OOF) values as the mean ± SD across seeds, with a patient bootstrap interval and a seed ensemble. It also flags seed and fold variation, very early checkpoints and partial results. OOF results guide development. To get an independent estimate for the configuration you choose, use **Apply this configuration**: it applies the configuration's seed ensemble to the reserved testing set.
-
-<p align="center">
-  <img src="docs/assets/app/folds-and-seeds.png" width="820" alt="AUROC for every test fold and training seed with the checkpoint epoch each fold's validation chose" />
-</p>
-
-## Apply models
-
-**Apply models** runs ready predictors on a cohort, one run per predictor. No run reads a label while it predicts. What a run reports depends on its cohort:
-- **Labeled cohort.** The service scores the predictions against the cohort's frozen labels. **Performance** gives metrics for the target unit with bootstrap confidence intervals, performance by subgroup and **clinical utility**: calibration, precision–recall and operating characteristics, and decision curves.
-- **Unlabeled cohort.** The run reports predictions only, with no metrics.
-
-Every run also has **Predictions**, **Cases** and **Compare** views. They show confidence and margin histograms, a threshold sweep, agreement between fold models and breakdowns by any frozen attribute. Case review ranks cases by confidence, margin or ensemble disagreement, and Compare pairs two runs on the same cohort case by case. Slides from patients used in development are flagged throughout and left out of every metric.
-
-| A scored run | Its clinical utility |
-| :---: | :---: |
-| [![A run on a labeled cohort with patient-level metrics and bootstrap intervals](docs/assets/app/evaluation.png)](docs/assets/app/evaluation.png) | [![Decision curve and potential clinical impact across decision thresholds](docs/assets/app/clinical-utility.png)](docs/assets/app/clinical-utility.png) |
-
-<p align="center">
-  <img src="docs/assets/app/inference.png" width="820" alt="A run on an unlabeled cohort: confidence by predicted class and positive-class probability against the frozen threshold" />
-</p>
-
-## The Task Center
-
-All compute runs through one queue per machine, shared by every project: training folds, refits, predictor runs on cohorts, attention maps, feature extraction, packing and study archives.
-- **Admission:** a task starts when a GPU slot, GPU memory, RAM and CPU threads are free.
-- **Controls:** each experiment keeps its tasks together, and can be held, stopped, reordered, cancelled or retried.
-- **Recovery:** cancelled or interrupted work resumes from its last completed epoch.
-- **Reproducibility:** follow-up work on a submitted experiment runs from an archived copy of the code it started with.
-
-<p align="center">
-  <img src="docs/assets/app/task-center.png" width="820" alt="Task Center with eight fold runs in progress and an experiment's queued tasks" />
-</p>
-
-From a terminal, `histopilot tasks list`, `tasks show`, `tasks log --follow` and `tasks wait` follow the queue, and `histopilot runner status` reports the runner; see [Command line](docs/cli.md#the-task-center).
-
-## Development
-
-```bash
-uv sync --locked --extra training --extra imaging     # a development environment with Torch
-uv run pytest -n auto --dist worksteal -m "not slow"  # fast tier, about 3 minutes
-uv run pytest -n auto --dist worksteal                # full suite
-uv run ruff check .
-npm --prefix web test && npm --prefix web run build
+```text
+/plugin marketplace add Lyce24/HistoPilot
+/plugin install histopilot@histopilot
 ```
 
-See [contributing](CONTRIBUTING.md) for the test helpers, and for the rules that keep stored projects, queued tasks and archived code loadable across releases.
+**3. Ask.** For example:
+
+- *"Where does my project stand, and what should I do next?"*
+- *"Summarize my experiments. Which configuration should I report?"*
+- *"Why did the last training task fail?"*
+- *"Prepare an experiment comparing ABMIL with mean pooling on the same folds."*
+- *"Do the two models agree on the external cohort?"*
+
+> [!IMPORTANT]
+> An agent never changes a study by itself. It prepares a change and hands you the command. With a `--scope commit` token it files a request instead, which you approve with `histopilot confirm approve ID`. Whatever an agent reads goes to its AI provider, so read [AI agents](docs/agents.md) before you share real data.
+
+## How it fits together
+
+<img src="docs/assets/readme/pipeline.svg" width="100%" alt="Five steps: datasets, then features and splits, experiments, Apply models and interpretation" />
+
+```mermaid
+flowchart LR
+    browser(["Browser"]) --> service
+    terminal(["Terminal"]) --> service
+    agent(["Agent"]) -- "scoped token" --> service
+    service["HistoPilot service<br/>one local API"] --> projects[("Projects<br/>frozen versions")]
+    service --> queue[["Task Center<br/>one compute queue"]]
+```
+
+- **Local first.** Slides are read in place, never uploaded or copied. Features, models and results stay on your machine.
+- **Frozen and versioned.** Each step ends in an immutable record. Freezing never starts compute, and a change makes a new version.
+- **Preview, then confirm.** The browser, the CLI and the agent all show a change before a person confirms it.
+- **One queue.** Training, feature extraction, predictor runs and attention maps share one queue per machine. Work can be held, cancelled and resumed.
+- **Models.** ABMIL, nnMIL, mean- and max-pooling MIL, and linear and MLP probes on slide embeddings, reading the image, clinical variables or both.
 
 ## Documentation
 
 | Guide | For |
 | --- | --- |
-| [User guide](docs/user-guide.md) | Running a study end to end, stage by stage |
-| [Methods](docs/methods.md) | How splits, cross-validation, comparisons, metrics, intervals and predictors are defined |
-| [Deployment](docs/deployment.md) | Installation, runtime environments, configuration and remote access |
-| [Task Center](docs/task-center.md) | How compute is queued, admitted, cancelled and recovered |
-| [BLCA demo](docs/blca-demo.md) | The read-only synthetic walkthrough |
-| [Architecture](docs/architecture.md) | Runtime, storage, execution model and code map |
-| [Command line](docs/cli.md) | The `histopilot` CLI, stage by stage |
-| [AI agents](docs/agents.md) | Letting an AI agent read and prepare work: exposure levels, tokens, approvals and isolation |
-| [CLI contract](docs/cli-contract.md) | What scripts and agents can rely on: output, exit codes, confirmation and spec files |
-| [API](docs/api.md), [error codes](docs/error-codes.md) | The local HTTP API and every error code it returns |
-| [Contributing](CONTRIBUTING.md) | Development environments, tests and conventions |
+| [User guide](docs/user-guide.md) | Running a study, stage by stage |
+| [Command line](docs/cli.md) | Every `histopilot` command |
+| [AI agents](docs/agents.md) | Exposure levels, tokens, approvals and safe setups |
+| [Methods](docs/methods.md) | Splits, cross-validation, comparisons, metrics and intervals |
+| [Deployment](docs/deployment.md) | Installation, configuration, feature extraction and remote access |
+| [BLCA demo](docs/blca-demo.md) | The synthetic walkthrough |
+| [Architecture](docs/architecture.md) · [Task Center](docs/task-center.md) · [API](docs/api.md) | How it works inside |
+| [Contributing](CONTRIBUTING.md) | Development setup and tests |
 
-<sub>No project license has been selected. Third-party models and backends retain their own licenses.</sub>
+<sub>Every screenshot and number on this page comes from synthetic data. No project license has been selected; third-party models and backends keep their own licenses.</sub>

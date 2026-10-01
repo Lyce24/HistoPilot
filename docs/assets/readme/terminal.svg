@@ -1,0 +1,89 @@
+<svg class="rich-terminal" viewBox="0 0 1519 342.79999999999995" xmlns="http://www.w3.org/2000/svg">
+    <!-- Generated with Rich https://www.textualize.io -->
+    <style>
+
+    .hp-matrix {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+        font-size: 20px;
+        line-height: 24.4px;
+        font-variant-east-asian: full-width;
+    }
+
+    .hp-title {
+        font-size: 18px;
+        font-weight: bold;
+        font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+    }
+
+    .hp-r1 { fill: #00a58f;font-weight: bold }
+.hp-r2 { fill: #ffffff;font-weight: bold }
+.hp-r3 { fill: #ffc72c }
+.hp-r4 { fill: #e9e7ef }
+.hp-r5 { fill: #848c88;font-weight: bold }
+    </style>
+
+    <defs>
+    <clipPath id="hp-clip-terminal">
+      <rect x="0" y="0" width="1499.6" height="291.79999999999995" />
+    </clipPath>
+    <clipPath id="hp-line-0">
+    <rect x="0" y="1.5" width="1500.6" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-1">
+    <rect x="0" y="25.9" width="1500.6" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-2">
+    <rect x="0" y="50.3" width="1500.6" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-3">
+    <rect x="0" y="74.7" width="1500.6" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-4">
+    <rect x="0" y="99.1" width="1500.6" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-5">
+    <rect x="0" y="123.5" width="1500.6" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-6">
+    <rect x="0" y="147.9" width="1500.6" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-7">
+    <rect x="0" y="172.3" width="1500.6" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-8">
+    <rect x="0" y="196.7" width="1500.6" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-9">
+    <rect x="0" y="221.1" width="1500.6" height="24.65"/>
+            </clipPath>
+<clipPath id="hp-line-10">
+    <rect x="0" y="245.5" width="1500.6" height="24.65"/>
+            </clipPath>
+    </defs>
+
+    <rect fill="#1f1e28" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1517" height="340.8" rx="8"/><text class="hp-title" fill="#e9e7ef" text-anchor="middle" x="758" y="27">histopilot&#160;·&#160;terminal</text>
+            <g transform="translate(26,22)">
+            <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
+            <circle cx="22" cy="0" r="7" fill="#febc2e"/>
+            <circle cx="44" cy="0" r="7" fill="#28c840"/>
+            </g>
+        
+    <g transform="translate(9, 41)" clip-path="url(#hp-clip-terminal)">
+    
+    <g class="hp-matrix">
+    <text class="hp-r1" x="0" y="20" textLength="24.4" clip-path="url(#hp-line-0)">❯&#160;</text><text class="hp-r2" x="24.4" y="20" textLength="366" clip-path="url(#hp-line-0)">histopilot&#160;experiment&#160;results&#160;</text><text class="hp-r3" x="390.4" y="20" textLength="561.2" clip-path="url(#hp-line-0)">&quot;Grade:&#160;attention&#160;vs&#160;mean&#160;pooling&#160;vs&#160;clinical&quot;</text><text class="hp-r4" x="1500.6" y="20" textLength="12.2" clip-path="url(#hp-line-0)">
+</text><text class="hp-r5" x="0" y="44.4" textLength="1476.2" clip-path="url(#hp-line-1)">BATCH&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;#&#160;&#160;MODEL&#160;&#160;&#160;&#160;&#160;&#160;INPUT&#160;&#160;&#160;&#160;&#160;&#160;&#160;SEEDS&#160;&#160;AUROC&#160;MEAN&#160;±&#160;SD&#160;&#160;&#160;&#160;&#160;&#160;95%&#160;CI&#160;&#160;&#160;&#160;&#160;&#160;&#160;SEED&#160;ENSEMBLE&#160;&#160;REPORTED</text><text class="hp-r4" x="1500.6" y="44.4" textLength="12.2" clip-path="url(#hp-line-1)">
+</text><text class="hp-r4" x="0" y="68.8" textLength="780.8" clip-path="url(#hp-line-2)">Pooling&#160;and&#160;clinical&#160;ablation&#160;&#160;1&#160;&#160;abmil&#160;&#160;&#160;&#160;&#160;&#160;image&#160;&#160;&#160;&#160;&#160;&#160;&#160;3/3&#160;&#160;&#160;&#160;</text><text class="hp-r2" x="780.8" y="68.8" textLength="231.8" clip-path="url(#hp-line-2)">0.889&#160;±&#160;0.088&#160;(n=3)</text><text class="hp-r4" x="1012.6" y="68.8" textLength="366" clip-path="url(#hp-line-2)">&#160;&#160;0.826–0.940&#160;&#160;0.949&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text><text class="hp-r1" x="1378.6" y="68.8" textLength="36.6" clip-path="url(#hp-line-2)">yes</text><text class="hp-r4" x="1500.6" y="68.8" textLength="12.2" clip-path="url(#hp-line-2)">
+</text><text class="hp-r4" x="0" y="93.2" textLength="780.8" clip-path="url(#hp-line-3)">Pooling&#160;and&#160;clinical&#160;ablation&#160;&#160;2&#160;&#160;mean_pool&#160;&#160;image&#160;&#160;&#160;&#160;&#160;&#160;&#160;3/3&#160;&#160;&#160;&#160;</text><text class="hp-r2" x="780.8" y="93.2" textLength="231.8" clip-path="url(#hp-line-3)">0.728&#160;±&#160;0.020&#160;(n=3)</text><text class="hp-r4" x="1012.6" y="93.2" textLength="390.4" clip-path="url(#hp-line-3)">&#160;&#160;0.608–0.830&#160;&#160;0.761&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;no</text><text class="hp-r4" x="1500.6" y="93.2" textLength="12.2" clip-path="url(#hp-line-3)">
+</text><text class="hp-r4" x="0" y="117.6" textLength="780.8" clip-path="url(#hp-line-4)">Pooling&#160;and&#160;clinical&#160;ablation&#160;&#160;3&#160;&#160;abmil&#160;&#160;&#160;&#160;&#160;&#160;multimodal&#160;&#160;3/3&#160;&#160;&#160;&#160;</text><text class="hp-r2" x="780.8" y="117.6" textLength="231.8" clip-path="url(#hp-line-4)">0.904&#160;±&#160;0.054&#160;(n=3)</text><text class="hp-r4" x="1012.6" y="117.6" textLength="390.4" clip-path="url(#hp-line-4)">&#160;&#160;0.844–0.951&#160;&#160;0.936&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;no</text><text class="hp-r4" x="1500.6" y="117.6" textLength="12.2" clip-path="url(#hp-line-4)">
+</text><text class="hp-r4" x="0" y="142" textLength="780.8" clip-path="url(#hp-line-5)">Pooling&#160;and&#160;clinical&#160;ablation&#160;&#160;4&#160;&#160;abmil&#160;&#160;&#160;&#160;&#160;&#160;clinical&#160;&#160;&#160;&#160;3/3&#160;&#160;&#160;&#160;</text><text class="hp-r2" x="780.8" y="142" textLength="231.8" clip-path="url(#hp-line-5)">0.717&#160;±&#160;0.052&#160;(n=3)</text><text class="hp-r4" x="1012.6" y="142" textLength="390.4" clip-path="url(#hp-line-5)">&#160;&#160;0.607–0.821&#160;&#160;0.712&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;no</text><text class="hp-r4" x="1500.6" y="142" textLength="12.2" clip-path="url(#hp-line-5)">
+</text><text class="hp-r4" x="1500.6" y="166.4" textLength="12.2" clip-path="url(#hp-line-6)">
+</text><text class="hp-r5" x="0" y="190.8" textLength="512.4" clip-path="url(#hp-line-7)">Recall&#160;by&#160;class,&#160;mean&#160;over&#160;training&#160;seeds:</text><text class="hp-r4" x="1500.6" y="190.8" textLength="12.2" clip-path="url(#hp-line-7)">
+</text><text class="hp-r4" x="0" y="215.2" textLength="707.6" clip-path="url(#hp-line-8)">&#160;&#160;Pooling&#160;and&#160;clinical&#160;ablation&#160;#1:&#160;low&#160;0.899&#160;·&#160;high&#160;0.633</text><text class="hp-r4" x="1500.6" y="215.2" textLength="12.2" clip-path="url(#hp-line-8)">
+</text><text class="hp-r4" x="0" y="239.6" textLength="707.6" clip-path="url(#hp-line-9)">&#160;&#160;Pooling&#160;and&#160;clinical&#160;ablation&#160;#2:&#160;low&#160;0.891&#160;·&#160;high&#160;0.400</text><text class="hp-r4" x="1500.6" y="239.6" textLength="12.2" clip-path="url(#hp-line-9)">
+</text><text class="hp-r4" x="0" y="264" textLength="707.6" clip-path="url(#hp-line-10)">&#160;&#160;Pooling&#160;and&#160;clinical&#160;ablation&#160;#3:&#160;low&#160;0.877&#160;·&#160;high&#160;0.722</text><text class="hp-r4" x="1500.6" y="264" textLength="12.2" clip-path="url(#hp-line-10)">
+</text><text class="hp-r4" x="0" y="288.4" textLength="707.6" clip-path="url(#hp-line-11)">&#160;&#160;Pooling&#160;and&#160;clinical&#160;ablation&#160;#4:&#160;low&#160;0.913&#160;·&#160;high&#160;0.267</text><text class="hp-r4" x="1500.6" y="288.4" textLength="12.2" clip-path="url(#hp-line-11)">
+</text>
+    </g>
+    </g>
+</svg>
