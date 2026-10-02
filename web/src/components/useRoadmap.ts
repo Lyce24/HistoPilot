@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { bundles } from '../api/bundles';
+import { pollDelay } from '../api/client';
 import { targetSplits as targetSplitApi } from '../api/targetSplits';
 import { scientific } from '../api/scientific';
 import { development, developmentPollInterval, trainingActive } from '../api/development';
@@ -22,12 +23,14 @@ export function useRoadmap(workspace: Workspace) {
   const setups = useQuery({ queryKey: ['scientific', project, 'configurations', 'experiment-setup'], queryFn: () => scientific.configurations(project, 'experiment-setup'), enabled });
   const features = useQuery({ queryKey: ['scientific', project, 'configurations', 'feature'], queryFn: () => scientific.configurations(project, 'feature'), enabled });
   const featureBundles = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project), enabled });
-  const extractions = useQuery({ queryKey: ['extractions', project, 'jobs'], queryFn: () => trident.jobs(project), enabled, refetchIntervalInBackground: false, refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 3000 : false });
-  const batches = useQuery({ queryKey: ['development-batches', project], queryFn: () => development.list(project), enabled, refetchIntervalInBackground: false, refetchInterval: (query) => developmentPollInterval(query.state.data) });
+  const extractions = useQuery({ queryKey: ['extractions', project, 'jobs'], queryFn: () => trident.jobs(project), enabled, refetchIntervalInBackground: false, refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? pollDelay(3000) : false });
+  // Module status needs each run's status, not its results: the status listing is a small
+  // fraction of the full one, which this query polls every few seconds while training runs.
+  const batches = useQuery({ queryKey: ['development-batches', project], queryFn: () => development.list(project, 'status'), enabled, refetchIntervalInBackground: false, refetchInterval: (query) => developmentPollInterval(query.state.data) });
   const evaluationCohorts = useQuery({ queryKey: ['evaluation-cohorts', project], queryFn: () => evaluation.list(project), enabled });
   // Predictors are published by finished training and by the predictor coordinator,
   // so they only need a fast refresh while a development batch is running.
-  const frozenPredictors = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), enabled, refetchIntervalInBackground: false, refetchInterval: () => batches.data?.executions?.some(trainingActive) ? 10000 : 60000 });
+  const frozenPredictors = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), enabled, refetchIntervalInBackground: false, refetchInterval: () => pollDelay(batches.data?.executions?.some(trainingActive) ? 10000 : 60000) });
   const evaluationRecords = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), enabled });
   const clinicalRecords = useQuery({ queryKey: ['clinical-analyses', project], queryFn: () => clinicalAnalyses.list(project), enabled });
   const interpretationRecords = useQuery({ queryKey: ['interpretations', project], queryFn: () => interpretations.list(project), enabled, refetchIntervalInBackground: false, refetchInterval: (query) => computePollInterval(query.state.data?.items) });

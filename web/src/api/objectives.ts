@@ -41,7 +41,9 @@ export const sameFiling = (left: ExperimentFiling, right: ExperimentFiling) =>
 
 const prefix = (project: string) => `/projects/${encodeURIComponent(project)}/objectives`;
 export const objectives = {
-  list: (project: string) => request<{ revision: number; items: Objective[] }>(prefix(project)),
+  /** The objectives, and every filed experiment's filing by experiment ID (`filings`), which
+   * runs, batches, predictors and studies use to group themselves by objective. */
+  list: (project: string) => request<{ revision: number; items: Objective[]; filings?: Record<string, ExperimentFiling> }>(prefix(project)),
   create: (project: string, input: { name: string; rank: ObjectiveRank; description: string; operationId: string }) =>
     request<Objective>(prefix(project), { method: 'POST', body: JSON.stringify(input) }),
   update: (project: string, id: string, input: { expectedRevision: number; name?: string; rank?: ObjectiveRank; description?: string }) =>

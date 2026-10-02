@@ -5,11 +5,14 @@ from pathlib import Path
 import typer
 
 from histopilot import resolvers
+from histopilot.client import objectives as goals
 from histopilot.client import records as store
 from histopilot.client import resources
 from histopilot.client.api import segment
+from histopilot.client.errors import usage_error
 from histopilot.client.paging import page, served
 from histopilot.client.resources import project_path
+from histopilot.schemas.objectives import EXPERIMENT_ROLES
 
 from . import output
 from .common import FORCE, Result, command
@@ -112,6 +115,9 @@ def _listed(
     inactive: bool = False,
     experiment: str | None = None,
     cohort: str | None = None,
+    objective: str | None = None,
+    unfiled: bool = False,
+    role: str | None = None,
 ) -> Result:
     project = ctx.project()
     items = store.records(
@@ -123,13 +129,45 @@ def _listed(
     if cohort is not None:
         wanted = store.existing(ctx.client, project, "cohort", cohort)
         items = [item for item in items if _manifest(item).get("cohortId") == wanted]
+    if objective is not None or unfiled or role is not None:
+        items = _filed(ctx, project, kind.noun, items, objective, unfiled, role)
     rows, bounds = page(items, offset=ctx.offset, limit=ctx.limit)
     return Result(rows, page=bounds, text=lambda: output.table(rows, columns(kind)))
+
+
+def _filed(ctx, project, noun, items, objective, unfiled, role) -> list[dict]:
+    """The records whose experiment is filed as asked: under an objective (or none), in a
+    role. A record from several experiments is kept when any of them is."""
+    if objective is not None and unfiled:
+        raise usage_error("Give --objective or --unfiled, not both.")
+    if role is not None and role not in EXPERIMENT_ROLES:
+        raise usage_error(f"Choose --role from: {', '.join(EXPERIMENT_ROLES)}.")
+    wanted = goals.objective_id(ctx.client, project, objective) if objective else None
+    filings = goals.filings(ctx.client, project)
+
+    def kept(filing: dict) -> bool:
+        return ((objective is None and not unfiled) or filing.get("objectiveId") == wanted) and (
+            role is None or filing.get("role") == role
+        )
+
+    return [
+        item
+        for item in items
+        if any(kept(filings.get(identity) or {}) for identity in store.experiments_of(noun, item))
+        or (not store.experiments_of(noun, item) and kept({}))
+    ]
 
 
 INACTIVE = typer.Option(False, "--include-inactive", help="Include archived and trashed records.")
 EXPERIMENT = typer.Option(None, "--experiment", help="Only this experiment's; its ID or name.")
 COHORT = typer.Option(None, "--cohort", help="Only runs on this cohort; its ID or @tag.")
+OBJECTIVE = typer.Option(
+    None, "--objective", help="Only those from experiments filed under this objective."
+)
+UNFILED = typer.Option(False, "--unfiled", help="Only those from experiments under no objective.")
+ROLE = typer.Option(
+    None, "--role", help=f"Only those from experiments in this role: {', '.join(EXPERIMENT_ROLES)}."
+)
 
 
 def _register_list(group: typer.Typer, kind: store.Kind) -> None:
@@ -144,20 +182,69 @@ def _register_list(group: typer.Typer, kind: store.Kind) -> None:
             inactive: bool = INACTIVE,
             experiment: str | None = EXPERIMENT,
             cohort: str | None = COHORT,
+            objective: str | None = OBJECTIVE,
+            unfiled: bool = UNFILED,
+            role: str | None = ROLE,
         ):
-            return _listed(ctx, kind, inactive=inactive, experiment=experiment, cohort=cohort)
+            return _listed(
+                ctx,
+                kind,
+                inactive=inactive,
+                experiment=experiment,
+                cohort=cohort,
+                objective=objective,
+                unfiled=unfiled,
+                role=role,
+            )
 
     elif kind.noun == "predictor":
 
         @command(group, "list", lists=True, help=listing)
-        def list_predictors(ctx, inactive: bool = INACTIVE, experiment: str | None = EXPERIMENT):
-            return _listed(ctx, kind, inactive=inactive, experiment=experiment)
+        def list_predictors(
+            ctx,
+            inactive: bool = INACTIVE,
+            experiment: str | None = EXPERIMENT,
+            objective: str | None = OBJECTIVE,
+            unfiled: bool = UNFILED,
+            role: str | None = ROLE,
+        ):
+            return _listed(
+                ctx,
+                kind,
+                inactive=inactive,
+                experiment=experiment,
+                objective=objective,
+                unfiled=unfiled,
+                role=role,
+            )
 
     elif kind.noun == "batch":
 
         @command(group, "list", lists=True, help=listing)
-        def list_batches(ctx, experiment: str | None = EXPERIMENT):
-            return _listed(ctx, kind, experiment=experiment)
+        def list_batches(
+            ctx,
+            experiment: str | None = EXPERIMENT,
+            objective: str | None = OBJECTIVE,
+            unfiled: bool = UNFILED,
+            role: str | None = ROLE,
+        ):
+            return _listed(
+                ctx, kind, experiment=experiment, objective=objective, unfiled=unfiled, role=role
+            )
+
+    elif kind.noun in ("apply", "interpretation"):
+
+        @command(group, "list", lists=True, help=listing)
+        def list_filed(
+            ctx,
+            inactive: bool = INACTIVE,
+            objective: str | None = OBJECTIVE,
+            unfiled: bool = UNFILED,
+            role: str | None = ROLE,
+        ):
+            return _listed(
+                ctx, kind, inactive=inactive, objective=objective, unfiled=unfiled, role=role
+            )
 
     elif kind.inactive:
 
@@ -182,6 +269,8 @@ def _shown(noun: str, data: dict) -> str:
                 ("Predictor", manifest.get("name")),
                 ("ID", data.get("id")),
                 ("Experiment", model.get("experiment")),
+                ("Objective", model.get("objective")),
+                ("Role", model.get("role")),
                 ("Model", model.get("description")),
                 ("Architecture", model.get("architecture")),
                 ("Members", len(manifest.get("checkpoints") or []) or None),
@@ -198,6 +287,7 @@ def _shown(noun: str, data: dict) -> str:
                 ("Run", manifest.get("name")),
                 ("ID", data.get("id")),
                 ("Purpose", manifest.get("purpose")),
+                ("Objective", model.get("objective")),
                 ("Model", model.get("description")),
                 ("Predictor", manifest.get("predictorId")),
                 ("Cohort", manifest.get("cohortId")),

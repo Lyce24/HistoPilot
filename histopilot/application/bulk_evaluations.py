@@ -16,6 +16,7 @@ from histopilot.application.task_records import LEGACY_CODE, TaskCenterAccess
 from histopilot.resolvers import MAX_APPLY_PREDICTORS
 from histopilot.schemas.bulk_evaluations import BulkEvaluationSelection
 from histopilot.schemas.predictors import EvaluationRunSelection
+from histopilot.storage import read_sessions
 from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
@@ -498,6 +499,7 @@ class BulkEvaluationService:
             "items": items,
         }
 
+    @read_sessions.reads
     def list(self, *, include_inactive=False):
         return {
             "items": [

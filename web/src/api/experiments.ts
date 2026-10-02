@@ -1,4 +1,4 @@
-import { request } from './client';
+import { pollDelay, request } from './client';
 import type { BatchManifest, DevelopmentBatchSpec, FrozenBatch, TrainingExecution } from './development';
 import type { LifecycleState } from './lifecycle';
 import type { MILExperimentSpec } from './mil';
@@ -155,7 +155,7 @@ export function experimentPollInterval(data?: { items: { status: string; statusR
     if (['running', 'queued', 'waiting'].includes(status)) return 3000;
     return status === 'held' ? 5000 : 15000;
   });
-  return intervals.length ? Math.min(...intervals) : 15000;
+  return pollDelay(intervals.length ? Math.min(...intervals) : 15000);
 }
 const statusLabels: Record<ExperimentStatus, string> = {
   created: 'Created', planned: 'Planned', ready: 'Ready to run',

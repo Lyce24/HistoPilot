@@ -211,6 +211,15 @@ def experiment_of(noun: str, row: dict):
     return manifest.get("experimentId")
 
 
+def experiments_of(noun: str, row: dict) -> list[str]:
+    """Every experiment a record comes from: an Apply models batch can span several."""
+    if noun == "apply":
+        found = [item.get("experimentId") for item in row.get("items") or []]
+    else:
+        found = [experiment_of(noun, row)]
+    return sorted({identity for identity in found if isinstance(identity, str) and identity})
+
+
 def records(
     client: Client,
     project: str,
@@ -251,13 +260,21 @@ def described(client: Client, project: str, noun: str, rows: list[dict]) -> list
         return rows
     batch_name = resolvers.batch_names(listed)
     experiment_names = {item.get("id"): item.get("name") for item in listed}
+    filed = {item.get("id"): item for item in listed}
 
     def model(manifest: dict) -> dict:
         experiment = manifest.get("experimentId")
+        # Where the experiment is filed: its objective, its role there and its series.
+        filing = filed.get(experiment) or {}
         return {
             "experiment": (manifest.get("experiment") or {}).get("name")
             or experiment_names.get(experiment),
             "experimentId": experiment,
+            "objective": (filing.get("objective") or {}).get("name"),
+            "objectiveId": filing.get("objectiveId"),
+            "role": filing.get("role"),
+            "series": filing.get("series"),
+            "seriesMember": filing.get("seriesMember"),
             "batch": batch_name(manifest.get("batchId")),
             "batchId": manifest.get("batchId"),
             "architecture": (manifest.get("recipe") or {}).get("model"),

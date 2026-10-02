@@ -157,7 +157,7 @@ Every task and owner has a link of the form:
 #task-center?owner=<key>&task=<id>&project=<id>&kind=<kind>&state=<state>
 ```
 
-`task=` opens the task's detail drawer. Stage chips link here, and tasks link back to their record. In the web code, `taskCenterHref` and `readTaskCenterRoute` in `web/src/api/taskCenter.ts` build and parse these links. The page polls a snapshot every 2 seconds while work is live and every 10 seconds otherwise; chips poll every 3 seconds while running, 5 seconds while waiting and 30 seconds otherwise.
+`task=` opens the task's detail drawer. Stage chips link here, and tasks link back to their record. In the web code, `taskCenterHref` and `readTaskCenterRoute` in `web/src/api/taskCenter.ts` build and parse these links. The page polls a snapshot every 2 seconds while work is live and every 10 seconds otherwise; chips poll every 3 seconds while running, 5 seconds while waiting and 30 seconds otherwise. Every poll in the browser waits at least three times as long as the slowest read of the last 30 seconds (`pollDelay` in `web/src/api/client.ts`), so a busy service, such as one listing a large project, is never asked again before it has answered.
 
 ## State directory and maintenance
 

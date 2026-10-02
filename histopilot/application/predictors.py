@@ -21,6 +21,7 @@ from histopilot.application.training import membership_plan_id
 from histopilot.domain.features import representation_kind
 from histopilot.models import catalog
 from histopilot.schemas.predictors import PredictorSelection, SeedEnsembleSelection
+from histopilot.storage import read_sessions
 from histopilot.storage.io import content_hash, read_file_bounded
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError, reject_symlink_components
@@ -222,6 +223,7 @@ class PredictorService:
                 409,
             )
 
+    @read_sessions.reads
     def list(self, *, include_inactive=False):
         return {
             "items": [

@@ -36,6 +36,7 @@ from histopilot.schemas.protocols import (
     ProtocolSpec,
     iter_conditions,
 )
+from histopilot.storage import read_sessions
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.io import canonical_json, content_hash
 from histopilot.storage.project_lock import StorageError
@@ -442,22 +443,35 @@ class ProtocolService:
             ):
                 raise _failure("The frozen data dictionary is invalid.", "STORAGE_CORRUPT")
             fields[column["key"]] = column
-        for row in records:
-            if (
-                not isinstance(row, dict)
-                or not isinstance(row.get("slideId"), str)
-                or not row["slideId"].strip()
-                or not isinstance(row.get("attributes"), dict)
-                or any(
-                    value is not None and not isinstance(value, str)
-                    for value in row["attributes"].values()
-                )
-                or row.get("patientId") is not None
-                and not isinstance(row["patientId"], str)
-            ):
-                raise _failure(
-                    "The frozen slide records have an invalid schema.", "STORAGE_CORRUPT"
-                )
+
+        def check_records():
+            for row in records:
+                if (
+                    not isinstance(row, dict)
+                    or not isinstance(row.get("slideId"), str)
+                    or not row["slideId"].strip()
+                    or not isinstance(row.get("attributes"), dict)
+                    or any(
+                        value is not None and not isinstance(value, str)
+                        for value in row["attributes"].values()
+                    )
+                    or row.get("patientId") is not None
+                    and not isinstance(row["patientId"], str)
+                ):
+                    raise _failure(
+                        "The frozen slide records have an invalid schema.", "STORAGE_CORRUPT"
+                    )
+
+        # Every caller gets its own parsed rows; a read session checks their schema once.
+        read_sessions.remember(
+            (
+                "dataset-records-schema",
+                read_sessions.store_key(self.store),
+                dataset_id,
+                dataset["contentHash"],
+            ),
+            check_records,
+        )
         return dataset, fields, sorted(records, key=lambda row: row["slideId"])
 
     def explore(self, request: ProtocolExploreRequest) -> dict:

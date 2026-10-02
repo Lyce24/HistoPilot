@@ -80,6 +80,31 @@ def run_processes(run: dict) -> list:
 
 MANAGED = "task-center"
 TASK_GROUP = "mil-batch"
+# What a run keeps in a status listing: enough to count, match and date it.
+RUN_STATUS_FIELDS = (
+    "id",
+    "candidateId",
+    "splitPlanId",
+    "trainingSeed",
+    "splitSeed",
+    "status",
+    "attempt",
+    "startedAt",
+    "finishedAt",
+    "exitCode",
+    "error",
+)
+
+
+def status_view(state: dict) -> dict:
+    """An execution with each run reduced to ``RUN_STATUS_FIELDS``: no results, metrics or
+    live progress, which make up nearly all of a large project's listing."""
+    return {
+        **state,
+        "runs": [
+            {key: run[key] for key in RUN_STATUS_FIELDS if key in run} for run in state["runs"]
+        ],
+    }
 
 
 def session_name(folder) -> str:
@@ -235,18 +260,22 @@ class TrainingService:
             task["kind"] == "mil-fold" and task["state"] in TASK_LIVE for task in group["tasks"]
         )
 
-    def list(self, *, include_inactive=False):
+    def list(self, *, include_inactive=False, runs="full"):
+        """Every batch's execution. ``runs="status"`` lists each run by its status alone
+        (``status_view``) and skips reading live progress, for pages that poll."""
         lifecycle = LifecycleStore(self.store.folder, self.store.project_id).read()["records"]
         items = []
         for batch in self.store.list_configurations("mil-batch", include_inactive=True):
-            state = self.execution(batch["id"], include_inactive=True)
+            state = self.execution(
+                batch["id"], include_inactive=True, include_progress=runs == "full"
+            )
             if state is not None and (
                 include_inactive
                 or state["status"] in ACTIVE
                 or lifecycle.get(f"configuration:{batch['id']}", {}).get("state", "active")
                 == "active"
             ):
-                items.append(state)
+                items.append(state if runs == "full" else status_view(state))
         return {"items": items}
 
     def results(self, identity):

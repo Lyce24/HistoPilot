@@ -32,6 +32,7 @@ import { clinicalAnalyses } from ${source('api/clinicalUtility.ts')};
 import { interpretations } from ${source('api/interpretation.ts')};
 import { experiments } from ${source('api/experiments.ts')};
 import { taskCenter } from ${source('api/taskCenter.ts')};
+import { objectives } from ${source('api/objectives.ts')};
 import ${source('styles.css')};
 import ${source('local-workspace.css')};
 import ${source('scientific.css')};
@@ -55,6 +56,7 @@ for (const api of [bundles, evaluation, predictors, modelEvaluations, clinicalAn
 development.list = async () => ({ items: [], executions: [] });
 predictors.refits = async () => ({ items: [] });
 experiments.summaries = async () => ({ items: [] });
+objectives.list = async () => ({ revision: 0, items: [], filings: {} });
 taskCenter.rollup = async (scope) => ({ scope: scope ?? {}, state: 'not-started', counts: {}, byKind: {}, progress: null, live: 0, active: 0, pending: 0, held: false, position: null, queuePosition: null, waitingReason: null, eta: null, runnerAlive: true, paused: false, stopRequest: null, lastFailure: null, recentFailures: 0, current: null, startedAt: null, finishedAt: null, ownerKey: null, ownerKind: null, ownerId: null, title: null, projectId: null, projectName: null, href: '#task-center', updatedAt: '2026-09-25T10:05:00Z' });
 
 const dataset = { id: 'dataset', projectId: 'project', contentHash: 'fixture', createdAt: '', manifest: {}, artifacts: {} };

@@ -93,6 +93,18 @@ export function adoptSavedInterpretation(current: InterpretationWizardDraft, rec
     resources: { ...current.resources, width: commonOverride ? String(first.patchWidthLevel0) : '', height: commonOverride ? String(first.patchHeightLevel0) : '' },
     batch: { id: `saved-${record.id}`, selected, request: null, pending: null, items: selected.map((slide) => ({ slidePath: slide.slidePath, slideId: slide.slideId, interpretationId: record.id, interpretation: record, status: record.execution?.status ?? 'not_started', reused: true })) } };
 }
+/**
+ * A saved study (lib/interpretationStudies): its records' slides reopened together, each slide
+ * with its own record, on the model and features of the first.
+ */
+export function adoptSavedStudy(current: InterpretationWizardDraft, records: readonly Interpretation[]): InterpretationWizardDraft {
+  if (!records.length || current.batch?.pending) return current;
+  const base = adoptSavedInterpretation({ ...current, batch: null }, records[0]);
+  const adopted = records.map((record) => adoptSavedInterpretation({ ...current, batch: null }, record).batch);
+  const items = adopted.flatMap((batch) => batch?.items ?? []);
+  const selected = adopted.flatMap((batch) => batch?.selected ?? []);
+  return { ...base, selected: base.bundleId ? selected : [], batch: base.batch ? { ...base.batch, id: `saved-study-${records[0].id}`, selected, items } : null };
+}
 /** Keep selection edits and their URL in the same reloadable context. */
 export function replaceWizardContext(project: string, draft: InterpretationWizardDraft, parameters: URLSearchParams, stage: InterpretationStage, studyId?: string, slideId?: string) {
   persistWizardDraft(project, draft);

@@ -23,6 +23,7 @@ from histopilot.application.predictors import (
 )
 from histopilot.inference_summary import describe
 from histopilot.schemas.interpretation import InterpretationSelection, SaveInterpretation
+from histopilot.storage import read_sessions
 from histopilot.storage.attention_inputs import (
     as_input_error,
     file_stamp,
@@ -400,6 +401,7 @@ class InterpretationService:
                 )
             return {"items": results, "interpretations": documents}
 
+    @read_sessions.reads
     def list(self, *, include_inactive=False):
         return {
             "items": [

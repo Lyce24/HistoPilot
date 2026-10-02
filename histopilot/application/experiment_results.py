@@ -28,6 +28,7 @@ from pathlib import Path
 
 from histopilot import cv_summary as cv
 from histopilot.application.model_experiments import ModelExperimentService
+from histopilot.storage import read_sessions
 from histopilot.storage.io import read_json_bounded
 from histopilot.storage.project_lock import StorageError
 
@@ -815,6 +816,7 @@ def _findings(
     return notes
 
 
+@read_sessions.reads
 def experiment_headlines(store, filesystem) -> dict:
     """Seed-mean OOF headline of every batch, from its small ``results.json`` only.
 

@@ -39,6 +39,7 @@ from histopilot.schemas.evaluations import (
 )
 from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.schemas.protocols import TargetSpec
+from histopilot.storage import read_sessions
 from histopilot.storage.io import (
     content_hash,
     read_file_bounded,
@@ -121,6 +122,7 @@ class EvaluationRunService:
         self.cohorts = EvaluationService(store, filesystem)
         self.jobs = ComputeJobService(store, filesystem)
 
+    @read_sessions.reads
     def list(self, *, include_inactive=False):
         return {
             "items": [

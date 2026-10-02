@@ -1,4 +1,4 @@
-import { downloadArtifact, request } from './client';
+import { downloadArtifact, pollDelay, request } from './client';
 import type { TaskState } from './taskCenter';
 import type { ResourcePolicy, TrainingRecipe, TrainingMetricDetails, TrainingMetrics } from './development';
 import type { LifecycleState } from './lifecycle';
@@ -109,7 +109,7 @@ export const computeActive = (job?: ComputeExecution) => Boolean(job && ['queued
  * should not keep the control service reading its records every few seconds.
  */
 export const computePollInterval = (items?: readonly { execution?: ComputeExecution }[]) =>
-  items?.some((item) => computeActive(item.execution)) ? 5000 : 30000;
+  pollDelay(items?.some((item) => computeActive(item.execution)) ? 5000 : 30000);
 export const computeStatusLabel = (job?: ComputeExecution) => job?.cancellationRequested && computeActive(job) ? 'Cancelling' : ({ not_started: 'Ready to run', completed: 'Completed', queued: 'Queued', running: 'Running', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted' }[job?.status ?? 'not_started']);
 export interface RefitBuild {
   id: string; createdAt: string; contentHash: string; lifecycleState: LifecycleState;

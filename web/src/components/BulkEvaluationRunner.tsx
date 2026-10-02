@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { bulkEvaluationActive, bulkEvaluations, type BulkEvaluationSelection, type EvaluationBatch } from '../api/bulkEvaluations';
 import { predictorMethodLabel, predictorSeedLabel, type FrozenPredictor } from '../api/predictors';
 import type { ModelExperimentSummary } from '../api/experiments';
+import type { Objective } from '../api/objectives';
 import type { EvaluationCohort } from '../api/evaluation';
 import { versionLabelText } from '../lib/versionLabels';
 import { cohortKindText, cohortLabeled, reservedTestingCohort } from '../lib/applyModels';
@@ -33,8 +34,10 @@ const METHODS: Record<EvaluationMethod, string> = {
  * Apply ready predictors to one cohort: labeled cohorts are scored, unlabeled ones get
  * predictions only. Selection, review and the batch's jobs are the same for both.
  */
-export default function BulkEvaluationRunner({ project, predictors, experiments = [], experimentsLoading, cohorts, linkedCohort = '', linkedExperiment = '', linkedPredictor = '', experimentIds, onExperimentsChange, onLockChange, onOpenEvaluation }: {
+export default function BulkEvaluationRunner({ project, predictors, experiments = [], experimentsLoading, objectives = [], objectiveScope = '', cohorts, linkedCohort = '', linkedExperiment = '', linkedPredictor = '', experimentIds, onExperimentsChange, onLockChange, onOpenEvaluation }: {
   project: string; predictors: FrozenPredictor[]; experiments?: ModelExperimentSummary[]; experimentsLoading?: boolean;
+  /** The project's objectives and its objective focus, to list experiments by objective. */
+  objectives?: readonly Objective[]; objectiveScope?: string;
   cohorts: EvaluationCohort[]; linkedCohort?: string; linkedExperiment?: string; linkedPredictor?: string; experimentIds?: string[];
   onExperimentsChange?: (ids: string[]) => void; onLockChange?: (locked: boolean) => void; onOpenEvaluation: (id: string) => void;
 }) {
@@ -94,7 +97,7 @@ export default function BulkEvaluationRunner({ project, predictors, experiments 
     ]} onChange={(next) => { if (next === 'experiments' || next === 'inputs') { action.reset(); setInputStep(next); } else if (next === 'results' && batchId) setInputStep('results'); }} />
     <StagePage pageKey={page}>
     {page === 'experiments' ? <>
-    <EvaluationExperimentPicker options={options} selected={sourceIds} onChange={changeExperiments} disabled={fixed} loading={experimentsLoading} />
+    <EvaluationExperimentPicker options={options} selected={sourceIds} onChange={changeExperiments} disabled={fixed} loading={experimentsLoading} objectives={objectives} scope={objectiveScope} />
     <div className="stage-actions"><p className="muted">{draftIds.length} {draftIds.length === 1 ? 'predictor' : 'predictors'} to apply from {sourceIds.length} selected {sourceIds.length === 1 ? 'experiment' : 'experiments'}</p><StageContinueButton disabled={!sourceIds.length || fixed} onClick={() => setInputStep('inputs')}>Continue to methods and cohort</StageContinueButton></div>
     </> : null}
     {page === 'inputs' ? <>

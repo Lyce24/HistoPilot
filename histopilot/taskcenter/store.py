@@ -15,7 +15,7 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
 
-from histopilot.storage import sqlite_connections
+from histopilot.storage import read_sessions, sqlite_connections
 from histopilot.storage.io import utc_now
 from histopilot.storage.project_lock import (
     StorageError,
@@ -324,15 +324,36 @@ class TaskStore:
                 ) from error
             self._ready = True
 
-    @contextmanager
-    def _connection(self, *, write=False):
-        self.initialize()
+    def _opened(self) -> sqlite3.Connection:
         try:
-            connection = self._open()
+            return self._open()
         except sqlite3.Error as error:
             raise StorageError(
                 f"The Task Center store is unavailable: {error}", "TASK_CENTER_UNAVAILABLE", 503
             ) from error
+
+    @contextmanager
+    def _connection(self, *, write=False):
+        self.initialize()
+        shared = (
+            None
+            if write
+            else read_sessions.connection(
+                ("task-center", str(self.path)), self._opened, sqlite_connections.close
+            )
+        )
+        if shared is not None:
+            # A read session reuses one connection for every read (storage/read_sessions).
+            try:
+                yield shared
+            except sqlite3.Error as error:
+                raise StorageError(
+                    f"The Task Center store is unavailable: {error}",
+                    "TASK_CENTER_UNAVAILABLE",
+                    503,
+                ) from error
+            return
+        connection = self._opened()
         try:
             if write:
                 connection.execute("BEGIN IMMEDIATE")

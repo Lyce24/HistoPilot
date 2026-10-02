@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { bulkEvaluationActive, bulkEvaluationPollInterval, bulkEvaluations, type EvaluationBatch } from '../api/bulkEvaluations';
 import { clinicalAnalyses } from '../api/clinicalUtility';
@@ -13,7 +13,11 @@ import ApplyRunsTable, { newRunFilters } from '../components/ApplyRunsTable';
 import BulkEvaluationRunner, { EvaluationBatchStatus, batchMemberStatus } from '../components/BulkEvaluationRunner';
 import { StageBackButton, StageCreateButton, StageLibrary, StageLibraryTabs, StageLibraryToolbar, StageRecordManageButton, useStageLibrary } from '../components/StageWorkflow';
 import { Badge, EmptyState, ErrorNotice, PageHeader, Panel } from '../components/ui';
-import { cohortKindText, cohortName, runLabeled } from '../lib/applyModels';
+import { cohortKindText, cohortName, cohortObjectives, runLabeled } from '../lib/applyModels';
+import { experimentRoleLabel, objectiveRankLabel, objectives as objectiveRecords, type ExperimentFiling, type Objective } from '../api/objectives';
+import { sectionByObjective, sharedObjective } from '../lib/experimentLibrary';
+import { inObjectiveScope, useObjectiveScope } from '../lib/objectiveScope';
+import { ObjectiveScopeNotice } from '../components/ObjectiveScope';
 import { applyHref, readApplyLink, type ApplyLink, type ApplyView, type RunTab } from '../lib/applyRoutes';
 import { useHashVisit } from '../lib/hashRoute';
 import { shortRecordId } from '../lib/recordLabels';
@@ -49,6 +53,13 @@ export default function LocalApplyModels({ workspace }: { workspace: Workspace }
   const records = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), refetchIntervalInBackground: false, refetchInterval: (query) => computePollInterval(query.state.data?.items) });
   // Reference standards score runs on unlabeled cohorts, so the library says which cohorts have them.
   const standards = useQuery({ queryKey: ['reference-standards', project], queryFn: () => references.list(project), staleTime: 60000 });
+  // Objectives and each experiment's filing: every list here groups by the objective its
+  // records' experiments answer, and the project-wide focus keeps one objective's work.
+  const objectiveList = useQuery({ queryKey: ['objectives', project], queryFn: () => objectiveRecords.list(project), staleTime: 30000 });
+  const objectiveItems = objectiveList.data?.items ?? [];
+  const filings = objectiveList.data?.filings ?? {};
+  const [objectiveScope, setObjectiveScope] = useObjectiveScope(objectiveItems);
+  const clearScope = () => setObjectiveScope('');
   // A saved clinical analysis opens inside the run it analyzes.
   const analysis = useQuery({ queryKey: ['clinical-analysis', project, link.clinical], queryFn: () => clinicalAnalyses.get(project, link.clinical!), enabled: Boolean(link.clinical && !link.run) });
   const [setup, setSetup] = useState<SetupSeed | null>(() => link.view === 'new' ? seedOf(link, 0) : null);
@@ -126,18 +137,19 @@ export default function LocalApplyModels({ workspace }: { workspace: Workspace }
   let content: ReactNode = null;
   if (view === 'library') {
     content = library === 'cohorts'
-      ? <LocalEvaluationSetup key={visit} workspace={workspace} newCohort={link.newCohort} frame={frame} />
+      ? <LocalEvaluationSetup key={visit} workspace={workspace} newCohort={link.newCohort} frame={frame} objectives={objectiveItems} cohortObjectives={!records.isPending && !batches.isPending && !experimentRegistry.isPending && !objectiveList.isPending ? cohortObjectives({ cohorts: cohortItems, runs, batches: batchRows, experiments: experimentItems, filings }) : undefined} objectiveScope={objectiveScope} onClearScope={clearScope} />
       : frame(library === 'batches'
-        ? <BatchLibrary batches={batchRows} cohorts={cohortItems} loading={batches.isPending} onOpen={(id) => go({ batch: id })} actions={libraryActions} />
+        ? <BatchLibrary batches={batchRows} cohorts={cohortItems} loading={batches.isPending} onOpen={(id) => go({ batch: id })} actions={libraryActions} objectives={objectiveItems} filings={filings} objectiveScope={objectiveScope} onClearScope={clearScope} />
         : library === 'methods'
-          ? <ApplyMethods project={project} runs={runs} predictors={predictorItems} experiments={experimentItems} cohorts={cohortItems} loading={records.isPending} onOpen={openRun} />
-          : <ApplyRunsTable runs={runs} predictors={predictorItems} experiments={experimentItems} cohorts={cohortItems} references={standards.data?.items ?? []} loading={records.isPending} onOpen={openRun} onCreate={create} filters={runFilters} onFiltersChange={setRunFilters} actions={libraryActions} />);
+          ? <ApplyMethods project={project} runs={runs.filter((run) => inObjectiveScope(objectiveScope, filings[run.manifest.experimentId]?.objectiveId))} predictors={predictorItems} experiments={experimentItems} cohorts={cohortItems} loading={records.isPending} onOpen={openRun} />
+          : <ApplyRunsTable runs={runs} predictors={predictorItems} experiments={experimentItems} cohorts={cohortItems} references={standards.data?.items ?? []} objectives={objectiveItems} filings={filings} objectiveScope={objectiveScope} onClearScope={clearScope} loading={records.isPending} onOpen={openRun} onCreate={create} filters={runFilters} onFiltersChange={setRunFilters} actions={libraryActions} />);
   } else if (view === 'run') {
     content = <div className="clinical-workspace model-chains apply-models">
       <PageHeader eyebrow={stageEyebrow('apply')} title={record?.manifest.name ?? 'Run'}
         description={!record ? 'One predictor applied to one cohort.' : runLabeled(record) ? 'Predicted without reading labels, then scored against the cohort’s frozen labels or a reference standard added later.' : 'Predictions for an unlabeled cohort, read without labels. A reference standard added when labels arrive scores them.'}
         actions={<div className="inline-actions"><StageBackButton onClick={() => go({})}>Back to runs</StageBackButton>{record ? <StageRecordManageButton type="configuration" id={record.id} name={record.manifest.name} /> : null}</div>} />
       {errors}
+      {record ? <FilingLine filing={filings[record.manifest.experimentId]} objectives={objectiveItems} /> : null}
       {record ? <ApplyRunDetail key={record.id} project={project} record={record} runs={runs} predictors={predictorItems} experiments={experimentItems} cohorts={cohortItems} tab={tab} onTabChange={(next) => showRun({ tab: next, reference })} reference={reference} onReferenceChange={(next, nextTab = tab) => showRun({ tab: nextTab, reference: next })} initialAnalysis={link.clinical} />
         : <Panel title="Run"><p role="status">{records.isPending || resolving ? 'Loading run…' : records.isError ? 'The run could not be loaded. Retry to check this record.' : link.clinical && analysis.isError ? 'This clinical analysis is unavailable. Its run may be in Trash.' : 'This run is unavailable. Return to the runs to choose a saved record.'}</p>{records.isError ? <button type="button" className="btn btn-secondary" onClick={() => void records.refetch()}>Retry loading run</button> : null}</Panel>}
     </div>;
@@ -155,15 +167,16 @@ export default function LocalApplyModels({ workspace }: { workspace: Workspace }
     {setup ? <div className="clinical-workspace model-chains apply-models" hidden={view !== 'setup'}>
       <PageHeader eyebrow={stageEyebrow('apply')} title="Apply predictors" description="Choose experiments and their predictors, then one cohort. Review compatibility, then run: one job per predictor." actions={<StageBackButton disabled={locked} onClick={() => go({})}>Back to runs</StageBackButton>} />
       {view === 'setup' ? errors : null}
-      <ApplySetup key={setup.key} project={project} seed={setup} predictors={predictorItems} predictorsLoading={registry.isPending} experiments={experimentItems} experimentsLoading={experimentRegistry.isPending} cohorts={cohortItems} onLockChange={setLocked} onOpenRun={openRun} />
+      <ApplySetup key={setup.key} project={project} seed={setup} predictors={predictorItems} predictorsLoading={registry.isPending} experiments={experimentItems} experimentsLoading={experimentRegistry.isPending} objectives={objectiveItems} objectiveScope={objectiveScope} cohorts={cohortItems} onLockChange={setLocked} onOpenRun={openRun} />
     </div> : null}
     {content}
   </div>;
 }
 
-function ApplySetup({ project, seed, predictors, predictorsLoading, experiments, experimentsLoading, cohorts, onLockChange, onOpenRun }: {
+function ApplySetup({ project, seed, predictors, predictorsLoading, experiments, experimentsLoading, objectives, objectiveScope, cohorts, onLockChange, onOpenRun }: {
   project: string; seed: SetupSeed; predictors: FrozenPredictor[]; predictorsLoading: boolean; experiments: ModelExperimentSummary[];
-  experimentsLoading: boolean; cohorts: EvaluationCohort[]; onLockChange: (locked: boolean) => void; onOpenRun: (id: string) => void;
+  experimentsLoading: boolean; objectives: readonly Objective[]; objectiveScope: string;
+  cohorts: EvaluationCohort[]; onLockChange: (locked: boolean) => void; onOpenRun: (id: string) => void;
 }) {
   const [chosen, setChosen] = useState<string[] | null>(() => seed.experiment ? [seed.experiment] : null);
   // Only an active predictor can run; a linked one brings its experiment once the registry loads.
@@ -172,13 +185,25 @@ function ApplySetup({ project, seed, predictors, predictorsLoading, experiments,
   return <Panel title="Apply predictors to a cohort" subtitle="Each ready predictor you select runs on the cohort and keeps its own results.">
     <p className="callout">No job reads a label. On a labeled cohort the predictions are then scored against its frozen labels; on an unlabeled cohort they are predictions only. Development slides are never predicted, and patients seen in development are allowed only for slide-level predictors, flagged, and left out of every metric.</p>
     {seed.predictor && !predictorsLoading && !linked ? <p className="callout">The linked predictor is archived, in Trash or unavailable, so it cannot be applied. Restore it, or choose an experiment and its ready predictors below.</p> : null}
-    <BulkEvaluationRunner project={project} predictors={predictors} experiments={experiments} experimentsLoading={experimentsLoading} cohorts={cohorts} linkedCohort={seed.cohort} linkedPredictor={seed.predictor} experimentIds={experimentIds} onExperimentsChange={setChosen} onLockChange={onLockChange} onOpenEvaluation={onOpenRun} />
+    <BulkEvaluationRunner project={project} predictors={predictors} experiments={experiments} experimentsLoading={experimentsLoading} objectives={objectives} objectiveScope={objectiveScope} cohorts={cohorts} linkedCohort={seed.cohort} linkedPredictor={seed.predictor} experimentIds={experimentIds} onExperimentsChange={setChosen} onLockChange={onLockChange} onOpenEvaluation={onOpenRun} />
   </Panel>;
 }
 
-/** Predictors applied together to one cohort, labeled or not. */
-export function BatchLibrary({ batches, cohorts, loading, onOpen, actions }: {
+/** Where a run's experiment is filed: its objective, its role there and its series. */
+function FilingLine({ filing, objectives }: { filing?: ExperimentFiling; objectives: readonly Objective[] }) {
+  const objective = objectives.find((item) => item.id === filing?.objectiveId);
+  if (!objective && !filing?.role && !filing?.series) return null;
+  return <p className="experiment-filing-summary">
+    {objective ? <><span className="muted">Objective</span> <strong>{objective.name}</strong> <Badge tone={objective.rank === 'primary' ? 'purple' : 'neutral'}>{objectiveRankLabel[objective.rank]}</Badge></> : <span className="muted">Not filed under an objective.</span>}
+    {filing?.role ? <><span className="experiment-filing-separator" aria-hidden="true">·</span><span className="muted">Role</span> <strong>{experimentRoleLabel[filing.role]}</strong></> : null}
+    {filing?.series ? <><span className="experiment-filing-separator" aria-hidden="true">·</span><span className="muted">Series</span> <strong>{filing.series}{filing.seriesMember ? ` › ${filing.seriesMember}` : ''}</strong></> : null}
+  </p>;
+}
+
+/** Predictors applied together to one cohort, labeled or not; by objective once the project has some. */
+export function BatchLibrary({ batches, cohorts, loading, onOpen, actions, objectives = [], filings = {}, objectiveScope = '', onClearScope }: {
   batches: EvaluationBatch[]; cohorts: EvaluationCohort[]; loading: boolean; onOpen: (id: string) => void; actions?: ReactNode;
+  objectives?: readonly Objective[]; filings?: Record<string, ExperimentFiling>; objectiveScope?: string; onClearScope?: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [state, setState] = useState('active');
@@ -186,10 +211,14 @@ export function BatchLibrary({ batches, cohorts, loading, onOpen, actions }: {
   const [sort, setSort] = useState('recent');
   const cohortById = new Map(cohorts.map((item) => [item.id, item]));
   const nameOf = (id: string) => cohortName(cohortById.get(id), id);
-  const visible = batches.filter((item) => (state === 'all' || (item.lifecycleState ?? 'active') === state)
+  // A batch's objective: that of its predictors' experiments when they agree.
+  const objectiveOf = (item: EvaluationBatch) => sharedObjective(item.items.map((source) => source.experimentId ? filings[source.experimentId]?.objectiveId : null));
+  const matching = batches.filter((item) => (state === 'all' || (item.lifecycleState ?? 'active') === state)
     && (status === 'all' || item.status === status)
     && `${item.name ?? ''} ${item.id} ${nameOf(item.cohortId)} ${item.items.map((source) => source.predictorName ?? source.predictorId).join(' ')}`.toLowerCase().includes(search.trim().toLowerCase()))
     .sort((a, b) => (sort === 'name' ? (a.name ?? a.id).localeCompare(b.name ?? b.id) : sort === 'oldest' ? (a.createdAt ?? '').localeCompare(b.createdAt ?? '') : (b.createdAt ?? '').localeCompare(a.createdAt ?? '')) || a.id.localeCompare(b.id));
+  const visible = matching.filter((item) => !objectiveScope || item.items.some((source) => inObjectiveScope(objectiveScope, source.experimentId ? filings[source.experimentId]?.objectiveId : null)));
+  const sections = objectives.length ? sectionByObjective(visible, objectiveOf, objectives) : [{ key: 'all', objective: null, items: visible }];
   const filtered = Boolean(search || state !== 'active' || status !== 'all' || sort !== 'recent');
   const reset = () => { setSearch(''); setState('active'); setStatus('all'); setSort('recent'); };
   return <>
@@ -198,14 +227,18 @@ export function BatchLibrary({ batches, cohorts, loading, onOpen, actions }: {
       <label className="label">Status<select className="field" aria-label="Batch status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option>{[...new Set(batches.map((item) => item.status))].sort().map((value) => <option key={value} value={value}>{batchMemberStatus(value)}</option>)}</select></label>
       <label className="label">Sort<select className="field" aria-label="Sort batches" value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">Newest first</option><option value="oldest">Oldest first</option><option value="name">Name</option></select></label>
     </StageLibraryToolbar>
+    {onClearScope ? <ObjectiveScopeNotice objectives={objectives} scope={objectiveScope} hidden={matching.length - visible.length} noun={matching.length - visible.length === 1 ? 'batch' : 'batches'} onClear={onClearScope} /> : null}
     {loading ? <p role="status">Loading batches…</p> : visible.length ? <div className="table-wrap"><table className="chain-table"><thead><tr><th scope="col">Batch</th><th scope="col">Status</th><th scope="col">Cohort</th><th scope="col">Runs</th><th scope="col">Actions</th></tr></thead><tbody>
-      {visible.map((item) => { const cohort = cohortById.get(item.cohortId); return <tr key={item.id}>
+      {sections.map((section) => <Fragment key={section.key}>
+      {objectives.length ? <tr className="run-group run-objective-group"><th colSpan={5}>{section.objective?.name ?? (section.key === 'several' ? 'Several objectives' : 'No objective')}{section.objective ? <Badge tone={section.objective.rank === 'primary' ? 'purple' : 'neutral'}>{objectiveRankLabel[section.objective.rank]}</Badge> : null}<small>{section.items.length} {section.items.length === 1 ? 'batch' : 'batches'}</small></th></tr> : null}
+      {section.items.map((item) => { const cohort = cohortById.get(item.cohortId); return <tr key={item.id}>
         <th scope="row">{item.lifecycleState === 'trashed' ? item.name ?? shortRecordId(item.id) : <button type="button" className="text-button stage-record-name" onClick={() => onOpen(item.id)}>{item.name ?? shortRecordId(item.id)}</button>}{item.lifecycleState === 'archived' || item.lifecycleState === 'trashed' ? <small>{item.lifecycleState === 'trashed' ? 'Trash' : 'Archived'}</small> : null}</th>
         <td><Badge>{batchMemberStatus(item.status)}</Badge></td>
         <td>{nameOf(item.cohortId)}{cohort ? <small>{cohortKindText(cohort)}</small> : null}</td>
         <td>{item.items.length.toLocaleString()}</td>
         <td><StageRecordManageButton type="configuration" id={item.id} name={item.name ?? item.id} /></td>
       </tr>; })}
+      </Fragment>)}
     </tbody></table></div> : <EmptyState title={batches.length ? 'No matching batches' : 'No batches yet'} description={batches.length ? 'Try another search or clear the filters.' : 'A batch is saved each time predictors are applied to a cohort together.'} action={batches.length ? <button type="button" className="btn btn-secondary" onClick={reset}>Clear filters</button> : undefined} />}
   </>;
 }

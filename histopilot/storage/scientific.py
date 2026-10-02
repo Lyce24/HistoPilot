@@ -24,7 +24,7 @@ from histopilot.schemas.version_labels import (
     SetVersionLabelRequest,
     VersionLabelValues,
 )
-from histopilot.storage import sqlite_connections
+from histopilot.storage import read_sessions, sqlite_connections
 from histopilot.storage.io import canonical_json, read_file_bounded, regular_file, utc_now
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
@@ -290,8 +290,7 @@ class ScientificStore:
             for suffix in ("", "-wal", "-shm", "-journal"):
                 regular_file(Path(str(self.path) + suffix), missing_ok=True, parents=not suffix)
 
-    @contextmanager
-    def _connection(self, *, create: bool = False) -> Iterator[sqlite3.Connection]:
+    def _open_connection(self, *, create: bool = False) -> sqlite3.Connection:
         connection = None
         try:
             uri = self.path.as_uri() + ("?mode=rwc" if create else "?mode=rw")
@@ -303,15 +302,34 @@ class ScientificStore:
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA trusted_schema=OFF")
             connection.execute("PRAGMA synchronous=FULL")
+            return connection
+        except sqlite3.Error as error:
+            if connection is not None:
+                self._close_connection(connection)
+            raise _error(
+                "The scientific database is unavailable or invalid.", "STORAGE_DATABASE_INVALID"
+            ) from error
+        except BaseException:
+            if connection is not None:
+                self._close_connection(connection)
+            raise
+
+    @staticmethod
+    def _close_connection(connection: sqlite3.Connection) -> None:
+        with _SQLITE_LIFECYCLE_LOCK:
+            connection.close()
+
+    @contextmanager
+    def _connection(self, *, create: bool = False) -> Iterator[sqlite3.Connection]:
+        connection = self._open_connection(create=create)
+        try:
             yield connection
         except sqlite3.Error as error:
             raise _error(
                 "The scientific database is unavailable or invalid.", "STORAGE_DATABASE_INVALID"
             ) from error
         finally:
-            if connection is not None:
-                with _SQLITE_LIFECYCLE_LOCK:
-                    connection.close()
+            self._close_connection(connection)
 
     @staticmethod
     @contextmanager
@@ -361,6 +379,19 @@ class ScientificStore:
         its schema changed or an interrupted publication awaits recovery. A writer
         holding the lock initializes and recovers under it, so reads do not wait.
         """
+        shared = read_sessions.connection(
+            ("scientific", str(self.path)), self._open_reader, self._close_connection
+        )
+        if shared is not None:
+            # Within a read session the first read validates the database once.
+            try:
+                yield shared
+            except sqlite3.Error as error:
+                raise _error(
+                    "The scientific database is unavailable or invalid.",
+                    "STORAGE_DATABASE_INVALID",
+                ) from error
+            return
         cached = _READY.get(str(self.path))
         validated = False
         if cached is not None and self.path.exists():
@@ -375,6 +406,29 @@ class ScientificStore:
         self._prepare_read(validated)
         with self._connection() as connection:
             yield connection
+
+    def _open_reader(self) -> sqlite3.Connection:
+        """A validated read connection, as ``_reader`` opens one, for a read session."""
+        cached = _READY.get(str(self.path))
+        validated = False
+        if cached is not None and self.path.exists():
+            connection = self._open_connection()
+            try:
+                validated = self._database_identity(connection) == cached
+                pending = connection.execute(
+                    "SELECT 1 FROM publications WHERE status='preparing' LIMIT 1"
+                ).fetchone()
+            except sqlite3.Error as error:
+                self._close_connection(connection)
+                raise _error(
+                    "The scientific database is unavailable or invalid.",
+                    "STORAGE_DATABASE_INVALID",
+                ) from error
+            if validated and pending is None:
+                return connection
+            self._close_connection(connection)
+        self._prepare_read(validated)
+        return self._open_connection()
 
     def _prepare_read(self, validated: bool = False) -> None:
         try:
@@ -1326,7 +1380,13 @@ class ScientificStore:
         document = self._dataset_document(row["document"])
         if document["id"] != identity:
             raise _error("The dataset index is inconsistent.", "STORAGE_CORRUPT")
-        self._verify_directory(self.folder / "datasets" / identity, document, checksums=checksums)
+        # A read session verifies each dataset once, however many records read it.
+        read_sessions.remember(
+            ("dataset-verified", str(self.folder), identity, checksums),
+            lambda: self._verify_directory(
+                self.folder / "datasets" / identity, document, checksums=checksums
+            ),
+        )
         return document
 
     def get_dataset(self, identity: str, *, include_inactive: bool = False) -> dict:
@@ -1359,15 +1419,22 @@ class ScientificStore:
                 "The requested artifact is not declared in this dataset.", "ARTIFACT_NOT_FOUND", 404
             )
         metadata = document["artifacts"][name]
-        content = read_file_bounded(
-            self.folder / "datasets" / dataset_id / name, metadata["sizeBytes"]
+
+        def verified() -> bytes:
+            content = read_file_bounded(
+                self.folder / "datasets" / dataset_id / name, metadata["sizeBytes"]
+            )
+            if (
+                len(content) != metadata["sizeBytes"]
+                or hashlib.sha256(content).hexdigest() != metadata["sha256"]
+            ):
+                raise _error("A dataset artifact failed checksum validation.", "ARTIFACT_CORRUPT")
+            return content
+
+        # A read session reads and checks each artifact once (bytes cannot be changed).
+        return read_sessions.remember(
+            ("dataset-artifact", str(self.folder), dataset_id, name, metadata["sha256"]), verified
         )
-        if (
-            len(content) != metadata["sizeBytes"]
-            or hashlib.sha256(content).hexdigest() != metadata["sha256"]
-        ):
-            raise _error("A dataset artifact failed checksum validation.", "ARTIFACT_CORRUPT")
-        return content
 
     @staticmethod
     def _dataset_request_hash(

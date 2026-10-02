@@ -1,5 +1,5 @@
 import { fromTemplate, recipePreset, templates } from '../lib/templates';
-import { downloadArtifact, request } from './client';
+import { downloadArtifact, pollDelay, request } from './client';
 import type { MILExperimentSpec, MILExperimentPreview } from './mil';
 import type { Finding, VersionLabel } from './scientific';
 import type { ExperimentPredictorPolicy } from './experiments';
@@ -180,7 +180,9 @@ const prefix = (project: string) => `/projects/${encodeURIComponent(project)}/mi
 const batchPrefix = (project: string, batch: string) => `${prefix(project)}/${encodeURIComponent(batch)}`;
 const body = (value: unknown) => ({ method: 'POST', body: JSON.stringify(value) });
 export const development = {
-  list: (project: string) => request<DevelopmentBatchList>(prefix(project)),
+  /** Frozen batches and their executions. `status` lists each run by its status alone,
+   * without results, metrics or live progress: what a page polling every batch needs. */
+  list: (project: string, runs: 'full' | 'status' = 'full') => request<DevelopmentBatchList>(runs === 'status' ? `${prefix(project)}?runs=status` : prefix(project)),
   runtime: (project: string) => request<TrainingRuntime>(`/projects/${encodeURIComponent(project)}/mil-experiments/runtime`),
   execution: (project: string, batch: string) => request<TrainingExecution | null>(`${batchPrefix(project, batch)}/execution`),
   history: (project: string, batch: string, run: string) => request<TrainingHistory>(`${batchPrefix(project, batch)}/runs/${encodeURIComponent(run)}/history`),
@@ -215,7 +217,7 @@ export const nnmilRecipe = (): TrainingRecipe => recipePreset('nnmil');
 export const defaultResources = (): ResourcePolicy => fromTemplate(templates.resources.training);
 export const managedByTaskCenter = (execution?: Pick<TrainingExecution, 'executor' | 'taskCenter'> | null) => execution?.executor === 'task-center' || Boolean(execution?.taskCenter);
 export const trainingActive = (execution?: TrainingExecution | null) => execution?.status === 'queued' || execution?.status === 'running';
-export const developmentPollInterval = (data?: DevelopmentBatchList) => data?.executionImplemented ? data.executions?.some(trainingActive) ? 3000 : 15000 : false;
+export const developmentPollInterval = (data?: DevelopmentBatchList) => data?.executionImplemented ? pollDelay(data.executions?.some(trainingActive) ? 3000 : 15000) : false;
 /** A project-level refresh can discover a CLI launch before the selected-batch query. */
 export function latestExecution(selected?: TrainingExecution | null, listed?: TrainingExecution) {
   if (!selected) return listed ?? selected;

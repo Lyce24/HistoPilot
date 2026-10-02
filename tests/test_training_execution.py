@@ -18,7 +18,7 @@ from support.training import (
 from support.training import tc_execution as tc_execution
 from test_worker_process_ownership import isolated_worker_tree as _worker_tree
 
-from histopilot.application.training import membership_plan_id
+from histopilot.application.training import RUN_STATUS_FIELDS, membership_plan_id
 from histopilot.storage.io import read_json_bounded, write_json_atomic
 from histopilot.storage.project_lock import StorageError
 from histopilot.workers.train_batch import collect_results, execute_plan
@@ -173,6 +173,30 @@ def test_archived_experiment_blocks_new_training_but_preserves_launch_replay(
     assert error.value.code == "EXPERIMENT_ARCHIVED"
     assert service.launch(batch["id"], operation)["batchId"] == state["batchId"]
     assert attempts(task_center, batch["id"]) == queued
+
+
+def test_a_status_listing_keeps_what_runs_are_and_drops_their_results(tc_execution):
+    service, frozen, _source = tc_execution
+    _batch, completed = synthetic_results(service, frozen)
+    state = service.launch(frozen["id"], "launch-status")
+    rows = [{**run, "metrics": {"validation": {"auroc": 0.8}}} for run in completed["runs"]]
+    folder = Path(state["outputPath"])
+    saved = read_json_bounded(folder / "state.json")
+    write_json_atomic(folder / "state.json", {**saved, "runs": rows})
+    (folder / "runs" / rows[0]["id"] / "progress.json").write_text("{}")
+    full = {item["batchId"]: item for item in service.list()["items"]}[frozen["id"]]
+    brief = {item["batchId"]: item for item in service.list(runs="status")["items"]}[frozen["id"]]
+    assert [(run["id"], run["status"]) for run in brief["runs"]] == [
+        (run["id"], run["status"]) for run in full["runs"]
+    ]
+    assert all("result" in run and "metrics" in run for run in full["runs"])
+    for run in brief["runs"]:
+        assert set(run) <= set(RUN_STATUS_FIELDS)
+        assert {"id", "candidateId", "splitPlanId", "trainingSeed", "status"} <= set(run)
+    # The rest of the execution is the same.
+    assert {key: value for key, value in brief.items() if key != "runs"} == {
+        key: value for key, value in full.items() if key != "runs"
+    }
 
 
 def test_other_operations_do_not_launch_a_second_scheduler(tc_execution, task_center):

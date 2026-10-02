@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider, type QueryObserverOptions } from '@tanstack/react-query';
 import type { GallerySlide, Interpretation, InterpretationExecution, VisualizeSelection } from '../api/interpretation';
 import type { Workspace } from '../api/types';
-import { adoptSavedInterpretation, replaceWizardContext, initialWizardDraft, persistWizardDraft, predictionCounts, restoreWizardDraft, selectedBatchReady, slideProgress, wizardResources, wizardRoute, wizardStage, type InterpretationWizardDraft, type SelectedStudyState } from '../lib/interpretationWizard';
+import { adoptSavedInterpretation, adoptSavedStudy, replaceWizardContext, initialWizardDraft, persistWizardDraft, predictionCounts, restoreWizardDraft, selectedBatchReady, slideProgress, wizardResources, wizardRoute, wizardStage, type InterpretationWizardDraft, type SelectedStudyState } from '../lib/interpretationWizard';
 import LocalInterpretation from './LocalInterpretation';
 
 const workspace = { project: { id: 'p' } } as Workspace;
@@ -101,6 +101,19 @@ describe('interpretation stages and resumable context', () => {
     previous.batch!.pending = { selection: previous.batch!.request!, operationId: 'uncertain' };
     expect(adoptSavedInterpretation(previous, saved)).toBe(previous);
   });
+  it('reopens a saved study with each of its slides on its own record', () => {
+    const previous = { ...draft(), bundleId: 'other-bundle' };
+    const first = record('one'), second = record('two');
+    for (const item of [first, second]) item.manifest.featureBundleId = 'bundle';
+    const opened = adoptSavedStudy(previous, [first, second]);
+    expect(opened).toMatchObject({ predictorId: 'predictor', bundleId: 'bundle', packChoice: '' });
+    expect(opened.selected.map((slide) => slide.slidePath)).toEqual(['/slides/one.svs', '/slides/two.svs']);
+    expect(opened.batch?.id).toBe('saved-study-study-one');
+    expect(opened.batch?.items.map((item) => [item.slideId, item.interpretationId])).toEqual([['one', 'study-one'], ['two', 'study-two']]);
+    expect(adoptSavedStudy(previous, [])).toBe(previous);
+    previous.batch!.pending = { selection: previous.batch!.request!, operationId: 'uncertain' };
+    expect(adoptSavedStudy(previous, [first, second])).toBe(previous);
+  });
   it('persists an explicit selection context and replaces its URL before a reload', () => {
     const values = storage('#interpretation?stage=select&predictor=old&evaluation=old-evaluation');
     const history = { state: null, replaceState: vi.fn((_state: unknown, _title: string, route: string) => { window.location.hash = route; }) };
@@ -189,7 +202,8 @@ describe('focused interpretation screens', () => {
     expect(html).toContain('<fieldset class="interpretation-sources" disabled="">');
     expect(html).not.toContain('Evidence links'); expect(html).not.toContain('Linked evaluation');
     expect(html).toContain('Model weights'); expect(html).toContain('refit model, 1 checkpoint · predicts low / high');
-    expect(html).toMatch(/<button class="text-button" disabled="">Attention one/);
+    // Saved studies stay listed, and cannot be opened while the request is unresolved.
+    expect(html).toContain('Attention one'); expect(html).toMatch(/<button type="button" class="btn btn-secondary btn-small" disabled="">Open study<\/button>/);
     expect(html).not.toContain('Slide folder on the server'); expect(html).toContain('Imported slides');
   });
 });

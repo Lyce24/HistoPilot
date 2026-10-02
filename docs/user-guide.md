@@ -161,6 +161,10 @@ Seeds and hyperparameter grids stay inside each experiment, where Runs and Resul
 
 File an experiment from its **Manage experiment** section, from the create form, or with `histopilot experiment assign`. Filing never changes the experiment, so started and archived ones can be filed too, and their revisions, results and update times stay as they were. **Group by objective** switches the library between sections per objective and a single table; a search or status filter opens every series and tuning row so that matches stay visible.
 
+Everything made from an experiment follows its filing: Apply models and Model interpretation list their predictors, runs, batches, cohorts and attention studies by objective too (see [Apply models](#5-apply-models) and [Model interpretation](#6-model-interpretation)).
+
+**Focus on one objective.** Once the project has objectives, the **Objective** menu in the top bar of the roadmap, Experiments, Apply models and Model interpretation narrows each of them to one objective, or to work filed under none. The focus is part of the page address, so it stays as you move between modules, and links you share keep it. Above each focused list, a note says how much it hides and offers **Show all objectives**. The roadmap shows one card per objective: its experiments by role, ready predictors, runs and attention studies, with links that open Experiments, Apply models or Model interpretation focused on it.
+
 ### Inputs & training design
 
 Choose the three inputs and the training design:
@@ -248,6 +252,11 @@ OOF results are development evidence. Choosing a configuration or batch from the
 
 **Apply models** runs ready predictors on cohorts. Its library has four views: **Runs**, **Batches**, **Cohorts** and **Compare methods**. Every link to a run, batch or view opens it directly, so a run can be shared or reopened.
 
+In a project with objectives, each view is organized by them:
+- **Runs** are grouped by objective, then by experiment in role order, with each series member named. **Group by** switches to one group per cohort.
+- **Batches** are grouped by the objective of their experiments; a batch from experiments of different objectives is listed under **Several objectives**.
+- **Cohorts** list the objectives they serve: those of the experiments whose runs or batches use them, or whose Targets & splits reserved them as the testing set.
+
 ### Cohorts
 
 A cohort is a frozen set of slides that predictors are applied to:
@@ -271,7 +280,7 @@ Every run on the cohort whose classes the reference maps to can then be scored a
 
 Choose **Apply predictors**, or start from a predictor, an experiment's **Apply predictors →**, or **Apply this configuration** in Results.
 
-1. **Experiments:** choose one or more experiments. Each shows its ready ensemble, refit and seed-ensemble counts. A linked predictor skips this step.
+1. **Experiments:** choose one or more experiments. Each shows its ready ensemble, refit and seed-ensemble counts. With objectives, experiments are listed by objective and role: **Select all with ready predictors** takes an objective's experiments, and **Select series** takes every member of a series, such as all leave-one-cohort-out arms. A linked predictor skips this step.
 2. **Methods and cohort:** choose the methods, the cohort and the feature settings.
    - Methods are **Seed ensembles** (the default when the experiments have them), **Fold ensembles and refits** of every seed group, or either one alone. **Advanced: choose individual predictors** picks predictors one by one.
    - The cohort list marks each cohort as labeled or unlabeled, and proposes the testing set the predictors' development reserved.
@@ -309,9 +318,11 @@ An **Operating threshold** you enter is labeled as a descriptive override. Choos
 
 **Model interpretation** shows where a predictor's attention falls on the slides. It needs no runs from Apply models.
 
-1. **Model & features.** Choose an ABMIL or nnMIL ensemble or refit predictor and a compatible feature bundle, with original files or a verified pack. The slide folder comes from the bundle's dataset.
+1. **Model & features.** Choose an ABMIL or nnMIL ensemble or refit predictor and a compatible feature bundle, with original files or a verified pack. Predictors are grouped by objective, experiment and role. The slide folder comes from the bundle's dataset.
 2. **Slides.** Browse the dataset's slide folder with thumbnails and search, and select up to 128 slides. Selecting starts nothing.
 3. **Attention review.** HistoPilot reuses finished or running attention and queues the rest as Task Center tasks. Each slide shows its own status; failed slides can be retried without losing the others. Open a slide for the focused viewer.
+
+**Saved attention studies** lists earlier studies, by objective when the project has them, with when each was saved, its model, the experiment the model came from and its number of slides. The slides of one study are saved one record each, so records of one predictor, feature bundle and slide folder saved within 30 minutes of each other count as one study. **Open study** reopens all of its slides in the attention review.
 
 Features must match the predictor's encoder, dimension and dtype, and coordinates must be integer level-0 patch origins in the same order as the features. Mismatches block the job; there is no approximate matching. A slide can have up to 2 million patches and 8 GiB of features.
 

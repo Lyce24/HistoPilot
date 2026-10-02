@@ -21,6 +21,12 @@ def objectives(client: Client, project: str) -> list[dict]:
     return listed_items(client.get(objectives_path(project)), "items")
 
 
+def filings(client: Client, project: str) -> dict[str, dict]:
+    """Every filed experiment's filing (objective ID, role, series, member) by its ID."""
+    listed = client.get(objectives_path(project))
+    return dict((listed or {}).get("filings") or {}) if isinstance(listed, dict) else {}
+
+
 def _folded(name: str) -> str:
     return " ".join(name.split()).casefold()
 

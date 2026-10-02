@@ -79,3 +79,32 @@ export function configurationChoice(choices: readonly SeedEnsembleChoice[], regi
   return { action: folds.length ? 'choose' : 'none', predictorIds: folds.map((item) => item.id),
     detail: choice?.reason ?? (folds.length ? `${folds.length} fold ensembles are ready, one per seed group; choose among them in Apply models.` : 'No predictor is ready for this configuration yet.') };
 }
+
+/**
+ * The objectives each cohort serves: those of the experiments whose runs it holds, whose
+ * batches name it, or whose Targets & splits reserved it as their testing set. A cohort
+ * can serve several objectives; one nothing has used yet serves none.
+ */
+export function cohortObjectives({ cohorts, runs, batches, experiments, filings }: {
+  cohorts: readonly EvaluationCohort[]; runs: readonly { manifest: { cohortId: string; experimentId: string } }[];
+  batches: readonly { cohortId: string; items: readonly { experimentId?: string }[] }[];
+  experiments: readonly Pick<ModelExperimentSummary, 'id' | 'setupDesign'>[];
+  filings: Record<string, { objectiveId: string | null }>;
+}): Map<string, string[]> {
+  const found = new Map<string, Set<string>>();
+  const add = (cohortId: string, experimentId?: string) => {
+    const objective = experimentId ? filings[experimentId]?.objectiveId : null;
+    if (!objective) return;
+    const known = found.get(cohortId);
+    if (known) known.add(objective); else found.set(cohortId, new Set([objective]));
+  };
+  for (const run of runs) add(run.manifest.cohortId, run.manifest.experimentId);
+  for (const batch of batches) for (const item of batch.items) add(batch.cohortId, item.experimentId);
+  const reservedBy = new Map<string, string[]>();
+  for (const experiment of experiments) {
+    const split = experiment.setupDesign?.targetSplitId;
+    if (split) reservedBy.set(split, [...(reservedBy.get(split) ?? []), experiment.id]);
+  }
+  for (const cohort of cohorts) for (const experiment of reservedBy.get(cohort.manifest.spec.sourceTargetSplitId ?? '') ?? []) add(cohort.id, experiment);
+  return new Map([...found].map(([cohort, objectives]) => [cohort, [...objectives]]));
+}

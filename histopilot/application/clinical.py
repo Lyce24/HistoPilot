@@ -26,6 +26,7 @@ from histopilot.application.run_evidence import (
 from histopilot.schemas.clinical import ClinicalSelection
 from histopilot.scoring import class_ranking_score
 from histopilot.scoring import logsumexp as _logsumexp
+from histopilot.storage import read_sessions
 from histopilot.storage.io import content_hash
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
@@ -600,6 +601,7 @@ class ClinicalService:
         self.store, self.filesystem = store, filesystem
         self.evaluations = EvaluationRunService(store, filesystem)
 
+    @read_sessions.reads
     def list(self, *, include_inactive=False):
         return {
             "items": [

@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from support import projects as fixtures
 from support.cli import Service
 
 from histopilot.application.lifecycle import CleanupService
@@ -86,6 +87,7 @@ def test_objectives_list_by_rank_then_name_and_creation_replays(objectives):
     ]
     assert listed["ranks"] == ["primary", "secondary", "exploratory"]
     assert "creationOperationId" not in listed["items"][0]
+    assert listed["filings"] == {}
     # A lost answer replays; the same operation asking for something else is refused.
     assert objectives.create(command) == first
     with pytest.raises(StorageError) as reused:
@@ -148,6 +150,8 @@ def test_filing_leaves_the_experiment_record_as_it_was(experiments, objectives):
         "seriesMember": "cptac",
     }
     assert saved["objective"] == {"id": aim["id"], "name": aim["name"], "rank": "secondary"}
+    # Downstream records group by this map: experiment ID to filing.
+    assert objectives.list()["filings"] == {record["id"]: filed(saved)}
     # The record is untouched: same revision, same update time, nothing in its payload.
     assert (saved["revision"], saved["updatedAt"]) == (record["revision"], record["updatedAt"])
     payload = experiments.store.get_draft(record["id"])["payload"]
@@ -392,3 +396,75 @@ def test_the_cli_files_experiments_under_objectives(tmp_path, monkeypatch):
         assert removed.code == 0, removed.stdout
         assert removed.envelope["data"]["result"]["unfiled"] == 1
         assert service.cli("objective", "show", "Aim 2 · Transport", "--json").code == 5
+
+
+def test_downstream_lists_follow_the_objective_of_their_experiment(tmp_path, monkeypatch):
+    from histopilot.client.records import experiments_of
+
+    with Service(tmp_path, monkeypatch) as service:
+        project = service.create_project()
+        service.cli("use", project)
+        base = f"/api/v1/projects/{project}/model-experiments"
+        made = {}
+        for name in ("Primary grade", "Encoder comparison", "Loose pilot"):
+            response = service.http.post(
+                base, json={"name": name, "operationId": name, "setupVersion": 1}
+            )
+            assert response.status_code == 201, response.text
+            made[name] = response.json()["id"]
+        aim = service.cli("objective", "create", "--name", "Aim 1", "--yes", "--json")
+        assert aim.code == 0, aim.stdout
+        for name, role in (("Primary grade", "primary"), ("Encoder comparison", "comparison")):
+            filed_one = service.cli(
+                "experiment", "assign", name, "--objective", "Aim 1", "--role", role, "--json"
+            )
+            assert filed_one.code == 0, filed_one.stdout
+        store = ScientificStore(service.settings.workspace / "projects" / "Study", project)
+        data, _rows = fixtures.dataset(store)
+        predictors = {}
+        for name, identity in made.items():
+            published = store.publish_configuration(
+                manifest={
+                    "kind": "frozen-predictor",
+                    "datasetId": data["id"],
+                    "name": f"{name} model",
+                    "experimentId": identity,
+                    "method": "ensemble",
+                    "recipe": {"model": "abmil"},
+                    "checkpoints": [],
+                },
+                operation_id=f"predictor-{name}",
+            )
+            predictors[name] = published["id"]
+
+        def listed(*options):
+            outcome = service.cli("predictor", "list", *options, "--json")
+            assert outcome.code == 0, outcome.stdout
+            return sorted(row["id"] for row in outcome.envelope["data"])
+
+        assert listed("--objective", "aim 1") == sorted(
+            predictors[name] for name in ("Primary grade", "Encoder comparison")
+        )
+        assert listed("--objective", "Aim 1", "--role", "comparison") == [
+            predictors["Encoder comparison"]
+        ]
+        assert listed("--unfiled") == [predictors["Loose pilot"]]
+        assert listed("--role", "primary") == [predictors["Primary grade"]]
+        assert service.cli("predictor", "list", "--objective", "x", "--unfiled").code == 2
+        assert service.cli("predictor", "list", "--role", "main").code == 2
+        assert service.cli("predictor", "list", "--objective", "Aim 9").code == 5
+        # Runs, Apply models batches and studies take the same filters; none exist yet.
+        for noun in ("run", "apply", "interpretation", "batch"):
+            outcome = service.cli(noun, "list", "--objective", "Aim 1", "--json")
+            assert outcome.code == 0 and outcome.envelope["data"] == [], noun
+        shown = service.cli("predictor", "show", predictors["Primary grade"]).stdout.splitlines()
+        shown = [" ".join(line.split()) for line in shown]
+        assert "Objective Aim 1" in shown and "Role primary" in shown
+        described = service.cli("predictor", "show", predictors["Loose pilot"], "--json")
+        assert described.envelope["data"]["model"]["objectiveId"] is None
+
+    # An Apply models batch comes from every experiment its items name.
+    batch = {"items": [{"experimentId": "b"}, {"experimentId": "a"}, {"experimentId": "b"}, {}]}
+    assert experiments_of("apply", batch) == ["a", "b"]
+    assert experiments_of("run", {"manifest": {"experimentId": "a"}}) == ["a"]
+    assert experiments_of("run", {"manifest": {}}) == []

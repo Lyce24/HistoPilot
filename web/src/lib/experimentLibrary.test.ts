@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Objective } from '../api/objectives';
-import { groupExperiments, libraryEntries, memberSummary, UNSORTED, type Filed } from './experimentLibrary';
+import { groupExperiments, libraryEntries, memberSummary, sectionByObjective, SEVERAL, sharedObjective, UNSORTED, type Filed } from './experimentLibrary';
 
 const objective = (id: string, name: string, rank: Objective['rank']): Objective => ({ id, name, rank, description: '', revision: 1, createdAt: '', updatedAt: '' });
 const aims = [objective('aim-1', 'Aim 1 · Validity', 'primary'), objective('aim-2', 'Aim 2 · Transport', 'secondary'), objective('aim-3', 'Aim 3 · Resolution', 'exploratory')];
@@ -54,5 +54,22 @@ describe('experiment library by objective', () => {
     expect(memberSummary(items)).toBe('cptac, rih, rih_sm, sr386 and 1 more');
     expect(memberSummary(items.slice(0, 2))).toBe('cptac, rih');
     expect(memberSummary([filed('named only')])).toBe('named only');
+  });
+
+  it('sections downstream records by objective, then work spanning several, then work under none', () => {
+    const runs = [{ id: 'r1', objective: 'aim-2' }, { id: 'r2', objective: null }, { id: 'r3', objective: 'aim-1' }, { id: 'r4', objective: SEVERAL }, { id: 'r5', objective: 'removed' }, { id: 'r6', objective: 'aim-1' }];
+    const sections = sectionByObjective(runs, (run) => run.objective, aims);
+    expect(sections.map((section) => [section.key, section.items.map((item) => item.id)])).toEqual([['aim-1', ['r3', 'r6']], ['aim-2', ['r1']], [SEVERAL, ['r4']], [UNSORTED, ['r2', 'r5']]]);
+    expect(sections[0].objective?.name).toBe('Aim 1 · Validity');
+    expect(sections.slice(2).map((section) => section.objective)).toEqual([null, null]);
+    expect(sectionByObjective([], () => null, aims)).toEqual([]);
+  });
+
+  it('names one objective for work from several experiments only when they agree', () => {
+    expect(sharedObjective([])).toBeNull();
+    expect(sharedObjective(['aim-1', 'aim-1'])).toBe('aim-1');
+    expect(sharedObjective([null, undefined])).toBeNull();
+    expect(sharedObjective(['aim-1', undefined])).toBe(SEVERAL);
+    expect(sharedObjective(['aim-1', 'aim-2'])).toBe(SEVERAL);
   });
 });

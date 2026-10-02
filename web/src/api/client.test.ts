@@ -250,4 +250,26 @@ describe('control service client', () => {
       .rejects.toMatchObject({ status: 409, message: 'Review could not be saved.', code });
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+
+  it('paces polls by the slowest recent read, and lets them recover', async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const fetcher = vi.fn().mockImplementationOnce(async () => json({ token: 'session' }))
+      .mockImplementationOnce(async () => { now += 4000; return json({ items: [] }); })
+      .mockImplementationOnce(async () => { now += 9000; return json({ saved: true }); });
+    vi.stubGlobal('fetch', fetcher);
+    const { pollDelay, request } = await import('./client');
+    expect(pollDelay(3000)).toBe(3000);
+    await request('/projects');
+    // A read that took 4 s: polls wait 12 to 15 s while it is recent.
+    expect(pollDelay(3000)).toBeGreaterThanOrEqual(12000); expect(pollDelay(3000)).toBeLessThanOrEqual(15000);
+    expect(pollDelay(60000)).toBe(60000);
+    expect(pollDelay(false)).toBe(false);
+    // Writes are never counted.
+    await request('/projects', { method: 'POST', body: '{}' });
+    expect(pollDelay(3000)).toBeLessThanOrEqual(15000);
+    now += 30_001;
+    expect(pollDelay(3000)).toBe(3000);
+    vi.restoreAllMocks();
+  });
 });

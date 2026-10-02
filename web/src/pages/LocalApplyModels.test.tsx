@@ -5,7 +5,8 @@ import type { EvaluationCohort } from '../api/evaluation';
 import type { Workspace } from '../api/types';
 import { fixtureEvaluation } from '../testFixtures/evaluations';
 import { fixturePredictor } from '../testFixtures/predictors';
-import LocalApplyModels from './LocalApplyModels';
+import type { Objective } from '../api/objectives';
+import LocalApplyModels, { BatchLibrary } from './LocalApplyModels';
 
 const workspace = { mode: 'local', project: { id: 'project', name: 'Study', lifecycleState: 'active' } } as Workspace;
 const source = fixturePredictor(1, 11, 'ensemble');
@@ -68,5 +69,22 @@ describe('Apply models views', () => {
     const html = render('#apply?run=missing');
     expect(html).toContain('This run is unavailable.');
     expect(html).not.toContain('id="run-tab-');
+  });
+
+  it('lists batches by the objective of their experiments, with mixed batches apart', () => {
+    const aims: Objective[] = [{ id: 'aim-1', name: 'Aim 1 · Grade', rank: 'primary', description: '', revision: 1, createdAt: '', updatedAt: '' }, { id: 'aim-2', name: 'Aim 2 · Transport', rank: 'secondary', description: '', revision: 1, createdAt: '', updatedAt: '' }];
+    const filing = (objectiveId: string) => ({ objectiveId, role: null, series: null, seriesMember: null });
+    const made = (id: string, ...experiments: string[]) => ({ ...batch, id, name: `Batch ${id}`, items: experiments.map((experimentId) => ({ ...batch.items[0], experimentId })) });
+    const batches = [made('mixed', 'main', 'loco'), made('loose', 'pilot'), made('grade', 'main', 'main'), made('transport', 'loco')];
+    const filings = { main: filing('aim-1'), loco: filing('aim-2') };
+    const render = (objectiveScope = '') => renderToStaticMarkup(<BatchLibrary batches={batches} cohorts={[cohort('unlabeled', 'inference')]} loading={false} onOpen={() => {}} objectives={aims} filings={filings} objectiveScope={objectiveScope} onClearScope={() => {}} />);
+    const html = render();
+    const order = ['Aim 1 · Grade', 'Batch grade', 'Aim 2 · Transport', 'Batch transport', 'Several objectives', 'Batch mixed', 'No objective', 'Batch loose'].map((text) => html.indexOf(text));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    // A focus keeps every batch that applied one of its experiments.
+    const focused = render('aim-2');
+    expect(focused).toContain('Batch transport'); expect(focused).toContain('Batch mixed');
+    expect(focused).not.toContain('Batch grade'); expect(focused).toContain('2 other batches hidden');
   });
 });

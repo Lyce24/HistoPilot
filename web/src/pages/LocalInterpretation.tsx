@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { interpretations, type GallerySlide, type GallerySource, type Interpretation, type InterpretationDatasetSource, type InterpretationSource, type VisualizeSelection } from '../api/interpretation';
 import { computeActive, predictorMethodLabel, predictors, type FrozenPredictor } from '../api/predictors';
@@ -11,9 +11,16 @@ import InterpretationReview from '../components/InterpretationReview';
 import { useInterpretationBatch } from '../components/useInterpretationBatch';
 import RunStatusChip from '../components/RunStatusChip';
 import { defaultRepresentation, representationCompatible, sourceCompatible, validInterpretationResources } from '../lib/interpretationGallery';
-import { adoptSavedInterpretation, completedSlideResult, replaceWizardContext, persistWizardDraft, restoreWizardDraft, wizardResources, wizardRoute, wizardStage, type InterpretationStage, type InterpretationWizardDraft } from '../lib/interpretationWizard';
+import { adoptSavedInterpretation, adoptSavedStudy, completedSlideResult, replaceWizardContext, persistWizardDraft, restoreWizardDraft, wizardResources, wizardRoute, wizardStage, type InterpretationStage, type InterpretationWizardDraft } from '../lib/interpretationWizard';
 import { useHashParameters } from '../lib/hashRoute';
 import { modelLabel, supportsAttention } from '../lib/modelCapabilities';
+import { experimentRoleLabel, objectiveRankLabel, objectives as objectiveRecords, type ExperimentFiling, type Objective } from '../api/objectives';
+import { sectionByObjective } from '../lib/experimentLibrary';
+import { interpretationStudies } from '../lib/interpretationStudies';
+import { inObjectiveScope, useObjectiveScope } from '../lib/objectiveScope';
+import { predictorOptionGroups } from '../lib/predictorGroups';
+import { ObjectiveScopeNotice } from '../components/ObjectiveScope';
+import { Badge } from '../components/ui';
 import './ModelChains.css';
 import './ClinicalInsights.css';
 import './InterpretationGallery.css';
@@ -43,6 +50,11 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
   }, [contextSignature, parameters, project, draft.predictorId, draft.search, draft.batch?.pending]);
   useEffect(() => persistWizardDraft(project, draft), [project, draft]);
   const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project) });
+  // Predictors and studies follow the project's objectives, and its objective focus.
+  const objectiveList = useQuery({ queryKey: ['objectives', project], queryFn: () => objectiveRecords.list(project), staleTime: 30000 });
+  const objectiveItems = objectiveList.data?.items ?? [];
+  const filings = objectiveList.data?.filings ?? {};
+  const [objectiveScope, setObjectiveScope] = useObjectiveScope(objectiveItems);
   const sources = useQuery({ queryKey: ['interpretation-sources', project], queryFn: () => interpretations.sources(project) });
   const datasets = useQuery({ queryKey: ['interpretation-datasets', project], queryFn: () => interpretations.datasets(project), retry: false });
   const records = useQuery({ queryKey: ['interpretations', project], queryFn: () => interpretations.list(project), enabled: stage === 'select' });
@@ -109,6 +121,16 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
     batch.retrySlides(selection(failedPaths));
   }
   function openSaved(record: Interpretation) { if (batch.locked) return; navigate('review', record.id, record.manifest.slides[0]?.slideId); }
+  /** Reopen every slide of a saved study, then show its first. */
+  function openStudy(records: Interpretation[]) {
+    if (batch.locked || !records.length) return;
+    const next = adoptSavedStudy(draft, records);
+    if (next === draft) { openSaved(records[0]); return; }
+    setDraft(next);
+    persistWizardDraft(project, next);
+    window.history.pushState(window.history.state, '', wizardRoute(parameters, 'review', next, records[0].id, records[0].manifest.slides[0]?.slideId));
+    window.dispatchEvent(new Event('hashchange'));
+  }
   function openReviewSlide(slide: GallerySlide) {
     const item = draft.batch?.items.find((entry) => entry.slidePath === slide.slidePath);
     navigate('review', item?.interpretationId ?? undefined, slide.slideId, true);
@@ -138,7 +160,7 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
     <ErrorNotice error={registry.error ?? sources.error ?? records.error} />
     <Panel title="Load model weights and features" subtitle="Slides come from the chosen frozen dataset. Attention runs the model weights on the feature bundle's features or its frozen pack.">
       <fieldset className="interpretation-sources" disabled={batch.locked}><legend className="sr-only">Model weights and features</legend>
-        <label className="label">Trained model (weights)<select className="field" value={draft.predictorId} onChange={(event) => changeSource({ predictorId: event.target.value, bundleId: null, packChoice: null })}><option value="">Choose a frozen ABMIL or nnMIL predictor</option>{draft.predictorId && !predictor ? <option value={draft.predictorId} disabled>Linked predictor unavailable</option> : null}{(registry.data?.items ?? []).filter((item) => item.lifecycleState === 'active' || item.id === draft.predictorId && item.lifecycleState === 'archived').map((item) => <option key={item.id} value={item.id} disabled={!supportsAttention(item.manifest.recipe.model, item.manifest.recipe.inputMode)}>{item.manifest.name} · {modelLabel(item.manifest.recipe.model)} · {predictorMethodLabel(item.manifest.method)}{!supportsAttention(item.manifest.recipe.model, item.manifest.recipe.inputMode) ? ' · attention unsupported' : ''}</option>)}</select></label>
+        <label className="label">Trained model (weights)<select className="field" value={draft.predictorId} onChange={(event) => changeSource({ predictorId: event.target.value, bundleId: null, packChoice: null })}><option value="">Choose a frozen ABMIL or nnMIL predictor</option>{draft.predictorId && !predictor ? <option value={draft.predictorId} disabled>Linked predictor unavailable</option> : null}{predictorOptionGroups((registry.data?.items ?? []).filter((item) => (item.lifecycleState === 'active' || item.id === draft.predictorId && item.lifecycleState === 'archived') && (item.id === draft.predictorId || inObjectiveScope(objectiveScope, filings[item.manifest.experimentId]?.objectiveId))), filings, objectiveItems).map((group) => <optgroup key={group.key} label={group.label}>{group.items.map((item) => <option key={item.id} value={item.id} disabled={!supportsAttention(item.manifest.recipe.model, item.manifest.recipe.inputMode)}>{item.manifest.name} · {modelLabel(item.manifest.recipe.model)} · {predictorMethodLabel(item.manifest.method)}{!supportsAttention(item.manifest.recipe.model, item.manifest.recipe.inputMode) ? ' · attention unsupported' : ''}</option>)}</optgroup>)}</select>{objectiveScope ? <small>Showing the models of the focused objective. <button type="button" className="text-button" onClick={() => setObjectiveScope('')}>Show all objectives</button></small> : null}</label>
         <label className="label">Dataset (slides)<select className="field" value={datasetId} disabled={datasets.isPending && !datasets.isError} onChange={(event) => changeSource({ datasetId: event.target.value || null })}><option value="">{datasets.isError ? 'Use the feature bundle’s dataset' : 'Choose a frozen dataset'}</option>{datasetItems.map((item) => <option key={item.datasetId} value={item.datasetId} disabled={!usableDataset(item)}>{item.datasetName}{item.slideCount != null ? ` · ${item.slideCount.toLocaleString()} slides` : ''}{!usableDataset(item) ? ' · slide folder unavailable' : ''}</option>)}</select></label>
         <label className="label">Feature bundle<select className="field" value={bundleId} disabled={!predictor || sources.isPending} onChange={(event) => changeSource({ bundleId: event.target.value, packChoice: null })}><option value="">Choose a frozen feature bundle</option>{bundleId && !source ? <option value={bundleId} disabled>Predictor’s feature bundle unavailable</option> : null}{(sources.data?.items ?? []).map((item) => <option key={item.id} value={item.id} disabled={!sourceCompatible(item, contract?.encoderId, contract?.dimensions, contract?.dtype)}>{item.name} · {item.slideCount.toLocaleString()} slides{!sourceCompatible(item, contract?.encoderId, contract?.dimensions, contract?.dtype) ? ' · incompatible or needs verification' : ''}</option>)}</select></label>
         <label className="label">Feature representation<select className="field" value={packId ?? '__unavailable__'} disabled={!source} onChange={(event) => changeSource({ packChoice: event.target.value })}>{packId === null ? <option value="__unavailable__" disabled>Choose a compatible feature representation</option> : null}<option value="" disabled={!representationCompatible(source?.dtype, contract?.dtype)}>Original slide features{source ? ` · ${dtypeLabel(source.dtype)}${!representationCompatible(source.dtype, contract?.dtype) ? ` · requires ${dtypeLabel(contract?.dtype)}` : ''}` : ''}</option>{source?.packs.map((item) => <option key={item.id} value={item.id} disabled={!representationCompatible(item.outputDtype, contract?.dtype)}>{item.name} · {item.outputDtype}{!representationCompatible(item.outputDtype, contract?.dtype) ? ` · requires ${dtypeLabel(contract?.dtype)}` : ''}</option>)}</select></label>
@@ -151,7 +173,7 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
     </Panel>
     {ready ? <GalleryWorkspace project={project} source={gallerySource} selected={draft.selected} search={draft.search} offset={draft.offset} locked={batch.locked} canContinue={resourcesValid} onSelection={selectSlides} onSearch={(search) => setDraft((current) => ({ ...current, search, offset: 0 }))} onPage={(offset) => setDraft((current) => ({ ...current, offset }))} onContinue={startReview} /> : <Panel title="Choose slides"><p className="muted">Load a compatible model and feature bundle to browse its dataset slides.</p></Panel>}
     {batch.locked ? <p className="callout">Your attention request is still being resolved. <button className="text-button" onClick={() => navigate('review')}>Return to attention review</button></p> : draft.batch ? <p className="callout">An attention batch of {draft.batch.selected.length} slides is open ({readyCount} ready). <button className="text-button" onClick={() => navigate('review')}>Return to attention review</button></p> : null}
-    <details className="interpretation-history"><summary>Open a saved attention study</summary>{(records.data?.items ?? []).filter((item) => item.lifecycleState !== 'trashed').map((item) => <article className="report-card" key={item.id}><button className="text-button" disabled={batch.locked} onClick={() => openSaved(item)}>{item.manifest.name}</button><small>{item.manifest.slides.length} slides · {predictorMethodLabel(item.manifest.method)}</small></article>)}</details>
+    <SavedStudies records={(records.data?.items ?? []).filter((item) => item.lifecycleState !== 'trashed')} loading={records.isPending} predictors={registry.data?.items ?? []} objectives={objectiveItems} filings={filings} objectiveScope={objectiveScope} onClearScope={() => setObjectiveScope('')} disabled={batch.locked} onOpen={openStudy} />
   </div>;
 }
 
@@ -187,5 +209,35 @@ export function GalleryWorkspace({ project, source, selected, search, offset, lo
     {current && !gallery.data?.items.length ? <p className="callout">No slides match{settledSearch ? ` “${settledSearch}”` : ' this dataset'}. Your selection is preserved.</p> : null}
     <div className="slide-gallery-grid">{current ? gallery.data?.items.map((slide) => <SlideGalleryCard key={slide.slidePath} project={project} slide={slide} checked={paths.has(slide.slidePath)} disabled={locked} selectionDisabled={!paths.has(slide.slidePath) && selected.length >= MAX_SLIDES} onToggle={(checked) => toggle(slide, checked)} />) : null}</div>
     {gallery.data && (offset > 0 || gallery.data.hasMore) ? <div className="slide-gallery-pagination"><button className="btn btn-secondary" disabled={!current || offset === 0} onClick={() => onPage(Math.max(0, offset - PAGE_SIZE))}>Previous slides</button><span>Page {Math.floor(offset / PAGE_SIZE) + 1} / {Math.max(1, Math.ceil(gallery.data.total / PAGE_SIZE))}</span><button className="btn btn-secondary" disabled={!current || !gallery.data.hasMore} onClick={() => onPage(offset + PAGE_SIZE)}>Next slides</button></div> : null}
+  </Panel>;
+}
+
+/**
+ * Saved attention studies, by the objective of the experiment whose model they used. A study
+ * is the slides interpreted together, though each slide is saved as its own record.
+ */
+function SavedStudies({ records, loading, predictors: models, objectives, filings, objectiveScope, onClearScope, disabled, onOpen }: {
+  records: Interpretation[]; loading: boolean; predictors: FrozenPredictor[]; objectives: readonly Objective[];
+  filings: Record<string, ExperimentFiling>; objectiveScope: string; onClearScope: () => void; disabled: boolean; onOpen: (records: Interpretation[]) => void;
+}) {
+  const studies = interpretationStudies(records);
+  const visible = studies.filter((study) => inObjectiveScope(objectiveScope, filings[study.experimentId]?.objectiveId));
+  const model = new Map(models.map((item) => [item.id, item]));
+  const sections = objectives.length ? sectionByObjective(visible, (study) => filings[study.experimentId]?.objectiveId ?? null, objectives) : [{ key: 'all', objective: null, items: visible }];
+  return <Panel title="Saved attention studies" subtitle="Open a study to review its slides again. Each study is listed with the model it used and the experiment that model came from.">
+    <ObjectiveScopeNotice objectives={objectives} scope={objectiveScope} hidden={studies.length - visible.length} noun={studies.length - visible.length === 1 ? 'study' : 'studies'} onClear={onClearScope} />
+    {loading ? <p role="status">Loading saved studies…</p> : !visible.length ? <p className="muted">{studies.length ? 'No saved studies in this focus.' : 'No attention studies yet. Choose a model and slides above to start one.'}</p>
+      : <div className="table-wrap"><table className="chain-table interpretation-studies"><thead><tr><th scope="col">Study</th><th scope="col">Model</th><th scope="col">Experiment</th><th scope="col">Slides</th><th scope="col">Open</th></tr></thead><tbody>
+        {sections.map((section) => <Fragment key={section.key}>
+          {objectives.length ? <tr className="run-group run-objective-group"><th colSpan={5}>{section.objective?.name ?? 'No objective'}{section.objective ? <Badge tone={section.objective.rank === 'primary' ? 'purple' : 'neutral'}>{objectiveRankLabel[section.objective.rank]}</Badge> : null}<small>{section.items.length} {section.items.length === 1 ? 'study' : 'studies'}</small></th></tr> : null}
+          {section.items.map((study) => { const source = model.get(study.predictorId)?.manifest; const filing = filings[study.experimentId]; return <tr key={study.key}>
+            <th scope="row">{new Date(study.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}<small>{study.records.length === 1 ? study.records[0].manifest.name : `${study.records[0].manifest.name} and ${study.records.length - 1} more`}</small></th>
+            <td>{source ? `${source.name} · ${modelLabel(source.recipe.model)}` : 'Predictor unavailable'}<small>{source ? predictorMethodLabel(source.method) : null}</small></td>
+            <td>{source?.experiment?.name ?? study.experimentId}{filing?.role ? <small><span className={`experiment-role experiment-role-${filing.role}`}>{experimentRoleLabel[filing.role]}</span>{filing.seriesMember ? ` · ${filing.series} › ${filing.seriesMember}` : ''}</small> : null}</td>
+            <td>{study.slides.toLocaleString()}</td>
+            <td><button type="button" className="btn btn-secondary btn-small" disabled={disabled} onClick={() => onOpen(study.records)}>Open study</button></td>
+          </tr>; })}
+        </Fragment>)}
+      </tbody></table></div>}
   </Panel>;
 }

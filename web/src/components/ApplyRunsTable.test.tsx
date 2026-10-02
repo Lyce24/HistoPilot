@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { EvaluationCohort } from '../api/evaluation';
+import type { ExperimentFiling, Objective } from '../api/objectives';
 import type { ModelEvaluation } from '../api/predictors';
 import type { ReferenceStandard } from '../api/references';
 import { fixtureEvaluation } from '../testFixtures/evaluations';
@@ -59,5 +60,27 @@ describe('runs in Apply models', () => {
     expect(html).toContain('No models applied yet');
     expect(html).toContain('Apply predictors');
     expect(html).not.toContain('Search runs');
+  });
+
+  it('sections runs by objective, then by experiment in role order, and keeps the focused objective', () => {
+    const aims: Objective[] = [{ id: 'aim-1', name: 'Aim 1 · Grade', rank: 'primary', description: '', revision: 1, createdAt: '', updatedAt: '' }, { id: 'aim-2', name: 'Aim 2 · Transport', rank: 'secondary', description: '', revision: 1, createdAt: '', updatedAt: '' }];
+    const filing = (objectiveId: string | null, role: ExperimentFiling['role'], series: string | null = null, seriesMember: string | null = null): ExperimentFiling => ({ objectiveId, role, series, seriesMember });
+    const run = (id: string, experimentId: string) => ({ ...scored, id, manifest: { ...scored.manifest, experimentId, name: `Run ${id}` } });
+    const runs = [run('comparison', 'encoder'), run('loco-tcga', 'tcga'), run('primary', 'main'), run('loose', 'pilot'), run('loco-cptac', 'cptac')];
+    const filings = { main: filing('aim-1', 'primary'), encoder: filing('aim-1', 'comparison'), tcga: filing('aim-2', 'generalization', 'LOCO', 'tcga'), cptac: filing('aim-2', 'generalization', 'LOCO', 'cptac') };
+    const render = (objectiveScope = '', filters = newRunFilters()) => renderToStaticMarkup(<ApplyRunsTable runs={runs} predictors={[seeds]} experiments={[]} cohorts={[cohort('grade-2')]} objectives={aims} filings={filings} objectiveScope={objectiveScope} onClearScope={() => {}} loading={false} onOpen={() => {}} onCreate={() => {}} filters={filters} onFiltersChange={() => {}} />);
+    const html = render();
+    const order = ['Aim 1 · Grade', 'Run primary', 'Run comparison', 'Aim 2 · Transport', 'LOCO › cptac', 'Run loco-cptac', 'LOCO › tcga', 'Run loco-tcga', 'No objective', 'Run loose'].map((text) => html.indexOf(text));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(html).toContain('<option value="objective" selected="">Objective and experiment</option>');
+    expect(html).toContain('experiment-role experiment-role-generalization');
+    // A focus keeps one objective's runs and says how many it hides.
+    const focused = render('aim-2');
+    expect(focused).toContain('Run loco-cptac'); expect(focused).not.toContain('Run primary'); expect(focused).not.toContain('Run loose');
+    expect(focused).toContain('3 other runs hidden');
+    // Grouping by cohort still reads as before.
+    const byCohort = render('', { ...newRunFilters(), group: 'cohort' });
+    expect(byCohort).not.toContain('run-objective-group'); expect(byCohort).not.toContain('Aim 1 · Grade');
   });
 });

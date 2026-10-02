@@ -39,12 +39,14 @@ def mil_router(projects: ProjectWorkspace, filesystem: LocalFilesystem) -> APIRo
         return {"fields": clinical_field_choices(store, filesystem, protocol)}
 
     @router.get("/batches")
-    def batches(identity: str):
+    def batches(identity: str, runs: Literal["full", "status"] = "full"):
+        """Frozen batches and their executions; ``runs=status`` lists each run by its status
+        alone, as pages that poll every batch need."""
         store = projects.scientific_store(identity)
         return {
             **DevelopmentService(store, filesystem).list(),
             "executionImplemented": True,
-            "executions": TrainingService(store, filesystem).list()["items"],
+            "executions": TrainingService(store, filesystem).list(runs=runs)["items"],
         }
 
     @router.get("/runtime")

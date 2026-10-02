@@ -27,6 +27,9 @@ import { cohortKind, cohortKindLabel, isInferencePurpose } from '../lib/inferenc
 import { stageEyebrow } from '../lib/roadmap';
 import { applyHref } from '../lib/applyRoutes';
 import CohortReferences from '../components/CohortReferences';
+import type { Objective } from '../api/objectives';
+import { UNFILED_SCOPE } from '../lib/objectiveScope';
+import { ObjectiveScopeNotice } from '../components/ObjectiveScope';
 
 const newTestTarget = (): ProtocolSpec['target'] => fromTemplate(templates.starters.testTarget);
 
@@ -126,8 +129,13 @@ export function TestCohortSummary({ preview, inference = false }: { preview: Pic
  * in the module's page; an open cohort or draft takes the whole page. `newCohort` opens a new
  * draft of that kind.
  */
-export default function LocalEvaluationSetup({ workspace, frame, newCohort }: {
+export default function LocalEvaluationSetup({ workspace, frame, newCohort, objectives = [], cohortObjectives, objectiveScope = '', onClearScope }: {
   workspace: Workspace; frame: (library: ReactNode, actions: ReactNode) => ReactNode; newCohort?: 'labeled' | 'unlabeled';
+  /** The project's objectives and the ones each cohort serves (lib/applyModels cohortObjectives);
+   * `cohortObjectives` is undefined until the runs, batches and experiments behind it have loaded. */
+  objectives?: readonly Objective[]; cohortObjectives?: Map<string, string[]>;
+  /** The project-wide objective focus: keeps the cohorts that serve it. */
+  objectiveScope?: string; onClearScope?: () => void;
 }) {
   const project = workspace.project.id;
   const [presetInference] = useState(() => newCohort === 'unlabeled');
@@ -272,9 +280,15 @@ export default function LocalEvaluationSetup({ workspace, frame, newCohort }: {
     ...draftRows.map((record) => ({ kind: 'draft' as const, record, name: record.name, spec: record.payload.spec, status: 'planned', created: record.createdAt ?? '', updated: record.updatedAt ?? record.createdAt ?? '' })),
     ...cohortRows.map((record) => ({ kind: 'configuration' as const, record, name: versionLabelText(record, 'Cohort'), spec: record.manifest.spec, status: record.current === false ? 'review' : 'frozen', created: record.createdAt, updated: record.versionLabel?.updatedAt ?? record.createdAt })),
   ];
-  const visibleRows = libraryRows.filter((item) => (libraryStatus === 'all' || item.status === libraryStatus)
+  const servedBy = (id: string) => cohortObjectives?.get(id) ?? [];
+  const matchingRows = libraryRows.filter((item) => (libraryStatus === 'all' || item.status === libraryStatus)
     && `${item.name} ${item.record.id} ${datasetNames(item.spec)} ${item.spec.target?.field ?? ''} ${cohortKindLabel[cohortKind(item.spec)]} ${item.kind === 'configuration' ? item.record.versionLabel?.note ?? '' : ''}`.toLowerCase().includes(librarySearch.trim().toLowerCase()))
     .sort((a, b) => (librarySort === 'name' ? a.name.localeCompare(b.name) : librarySort === 'oldest' ? a.created.localeCompare(b.created) : b.updated.localeCompare(a.updated)) || a.record.id.localeCompare(b.record.id));
+  // A cohort serving several objectives shows under any of them. Drafts serve none yet and
+  // stay in view under every focus, so a cohort being made never drops out of its list.
+  // Until it is known which objectives each cohort serves, a focus hides nothing.
+  const visibleRows = matchingRows.filter((item) => !objectiveScope || !cohortObjectives || item.kind === 'draft' || (objectiveScope === UNFILED_SCOPE ? !servedBy(item.record.id).length : servedBy(item.record.id).includes(objectiveScope)));
+  const objectiveName = new Map(objectives.map((item) => [item.id, item.name]));
   function resetLibraryFilters() { setLibrarySearch(''); setLibraryStatus('all'); setLibrarySort('recent'); }
   // Returning to the library saves real work; an untouched new cohort leaves no record.
   function openLibrary() { if (busy || freezeReview) return; void run(async () => { if (step !== 0 && unsaved) await save(); showStep(0); }); }
@@ -300,8 +314,9 @@ export default function LocalEvaluationSetup({ workspace, frame, newCohort }: {
       <label className="label">Status<select className="field" aria-label="Cohort status" value={libraryStatus} onChange={(event) => setLibraryStatus(event.target.value)}><option value="all">All statuses</option><option value="planned">Planned</option><option value="frozen">Frozen</option><option value="review">Needs review</option></select></label>
       <label className="label">Sort<select className="field" aria-label="Sort cohorts" value={librarySort} onChange={(event) => setLibrarySort(event.target.value)}><option value="recent">Last updated</option><option value="oldest">Oldest first</option><option value="name">Name</option></select></label>
     </StageLibraryToolbar>
-    {drafts.isPending || frozen.isPending ? <p className="muted" role="status">Loading cohorts…</p> : visibleRows.length ? <div className="table-wrap"><table className="test-cohort-registry"><thead><tr><th scope="col">Cohort</th><th scope="col">Status</th><th scope="col">Datasets</th><th scope="col">Slides</th><th scope="col">Labels · target</th><th scope="col">Actions</th></tr></thead><tbody>
-      {visibleRows.map((item) => <tr key={`${item.kind}:${item.record.id}`}><th scope="row"><button type="button" className="text-button stage-record-name" disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); await (item.kind === 'draft' ? openDraft(item.record.id) : openCohort(item.record.id)); })}>{item.name}</button>{item.kind === 'draft' ? <small>Revision {item.record.revision}</small> : item.record.versionLabel?.note ? <small>{item.record.versionLabel.note}</small> : null}</th><td><Badge tone={item.status === 'frozen' ? 'frozen' : 'orange'}>{item.status === 'planned' ? 'Planned' : item.status === 'frozen' ? 'Frozen' : 'Needs review'}</Badge></td><td>{datasetNames(item.spec)}</td><td>{item.kind === 'draft' ? 'Pending review' : item.record.manifest.summary.includedSlides.toLocaleString()}</td><td><Badge tone={cohortKind(item.spec) === 'inference' ? 'purple' : 'neutral'}>{cohortKindLabel[cohortKind(item.spec)]}</Badge>{item.spec.target?.field ? <small>{item.spec.target.field}</small> : null}</td><td><div className="inline-actions">{item.kind === 'configuration' && item.status === 'frozen' ? <a className="text-link" href={applyHref({ view: 'new', cohort: item.record.id })}>Apply predictors</a> : null}<StageRecordManageButton type={item.kind} id={item.record.id} name={item.name} /></div></td></tr>)}
+    {onClearScope ? <ObjectiveScopeNotice objectives={objectives} scope={objectiveScope} hidden={matchingRows.length - visibleRows.length} noun={matchingRows.length - visibleRows.length === 1 ? 'cohort' : 'cohorts'} onClear={onClearScope} /> : null}
+    {drafts.isPending || frozen.isPending ? <p className="muted" role="status">Loading cohorts…</p> : visibleRows.length ? <div className="table-wrap"><table className="test-cohort-registry"><thead><tr><th scope="col">Cohort</th><th scope="col">Status</th><th scope="col">Datasets</th><th scope="col">Slides</th><th scope="col">Labels · target</th>{objectives.length ? <th scope="col">Objectives</th> : null}<th scope="col">Actions</th></tr></thead><tbody>
+      {visibleRows.map((item) => <tr key={`${item.kind}:${item.record.id}`}><th scope="row"><button type="button" className="text-button stage-record-name" disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); await (item.kind === 'draft' ? openDraft(item.record.id) : openCohort(item.record.id)); })}>{item.name}</button>{item.kind === 'draft' ? <small>Revision {item.record.revision}</small> : item.record.versionLabel?.note ? <small>{item.record.versionLabel.note}</small> : null}</th><td><Badge tone={item.status === 'frozen' ? 'frozen' : 'orange'}>{item.status === 'planned' ? 'Planned' : item.status === 'frozen' ? 'Frozen' : 'Needs review'}</Badge></td><td>{datasetNames(item.spec)}</td><td>{item.kind === 'draft' ? 'Pending review' : item.record.manifest.summary.includedSlides.toLocaleString()}</td><td><Badge tone={cohortKind(item.spec) === 'inference' ? 'purple' : 'neutral'}>{cohortKindLabel[cohortKind(item.spec)]}</Badge>{item.spec.target?.field ? <small>{item.spec.target.field}</small> : null}</td>{objectives.length ? <td className="cohort-objectives">{!cohortObjectives ? <span className="muted">Loading…</span> : servedBy(item.record.id).length ? servedBy(item.record.id).map((id) => <small key={id}>{objectiveName.get(id) ?? id}</small>) : <span className="muted">—</span>}</td> : null}<td><div className="inline-actions">{item.kind === 'configuration' && item.status === 'frozen' ? <a className="text-link" href={applyHref({ view: 'new', cohort: item.record.id })}>Apply predictors</a> : null}<StageRecordManageButton type={item.kind} id={item.record.id} name={item.name} /></div></td></tr>)}
     </tbody></table></div> : libraryRows.length ? <EmptyState icon="folder" title="No matching cohorts" description="Try another search or clear the filters." action={<button type="button" className="btn btn-secondary" onClick={resetLibraryFilters}>Clear filters</button>} /> : <EmptyState icon="folder" title="No cohorts yet" description="Create a labeled cohort to score predictors against its labels, or an unlabeled one to predict slides without reading labels." action={<StageCreateButton disabled={busy} onClick={() => void run(async () => { await keepCurrentWork(); reset(); })}>Create labeled cohort</StageCreateButton>} />}
   </>, createActions)}</div>;
 

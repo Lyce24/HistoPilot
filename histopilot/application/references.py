@@ -17,6 +17,7 @@ from collections import Counter, defaultdict
 from histopilot.application.predictors import lifecycle_document, reference
 from histopilot.application.protocols import ProtocolService
 from histopilot.schemas.references import ReferenceSelection
+from histopilot.storage import read_sessions
 from histopilot.storage.io import content_hash
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
@@ -35,6 +36,7 @@ class ReferenceService:
     def __init__(self, store, filesystem):
         self.store, self.filesystem = store, filesystem
 
+    @read_sessions.reads
     def list(self, *, cohort_id=None, include_inactive=False):
         """References without their per-slide memberships, which can be large."""
         return {

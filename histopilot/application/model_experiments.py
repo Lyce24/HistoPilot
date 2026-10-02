@@ -24,6 +24,7 @@ from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.schemas.model_experiments import ExperimentPredictorPolicy
 from histopilot.schemas.objectives import ExperimentFiling
+from histopilot.storage import read_sessions
 from histopilot.storage.io import content_hash, utc_now
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
@@ -1587,6 +1588,7 @@ class ModelExperimentService:
             "executionImplemented": True,
         }
 
+    @read_sessions.reads
     def list(self, *, state="all", summary=False, _identity=None):
         """Read-only: parallel page reads never wait for, or block, project writers."""
         states = self.store.lifecycle.read()["records"]

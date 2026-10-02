@@ -1,0 +1,55 @@
+/* The project-wide objective focus. In the top bar it reads as context, not a form field. */
+.topbar-actions .objective-scope-select { display: flex; flex-direction: row; align-items: center; gap: 8px; margin: 0; font-size: 12px; color: var(--theme-muted); }
+.topbar-actions .objective-scope-select .field { min-height: 30px; padding: 4px 28px 4px 10px; font-size: 12.5px; max-width: 260px; }
+.objective-scope-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+@media (max-width: 720px) { .topbar-actions .objective-scope-select > span { display: none; } .topbar-actions .objective-scope-select .field { max-width: 150px; } }
+
+/* An experiment's role and where it is filed, wherever its work is listed. */
+.experiment-role { display: inline-block; font-size: 10.5px; font-weight: 650; letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; color: var(--theme-muted); }
+.experiment-role-primary { color: var(--brand-primary); }
+.experiment-filing-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0; font-size: 13px; }
+.experiment-filing-separator { color: var(--theme-line); padding: 0 2px; }
+
+/* Apply models: runs and batches by objective, then by experiment. */
+.run-table .run-objective-group th { padding: 11px 12px; font-size: 13px; font-weight: 650; color: var(--theme-ink); background: var(--theme-soft); border-top: 2px solid var(--theme-line); }
+.run-table .run-objective-group th .badge, .chain-table .run-objective-group th .badge { margin-left: 8px; vertical-align: middle; }
+.run-table .run-objective-group th small, .chain-table .run-objective-group th small { display: inline; margin-left: 10px; color: var(--theme-muted); font-weight: 400; font-size: 12px; }
+.run-table .run-subgroup th { padding: 8px 12px 6px 20px; background: transparent; font-size: 12.5px; font-weight: 600; letter-spacing: normal; text-transform: none; color: var(--theme-ink); border-bottom: 1px dashed var(--theme-line); }
+.run-table .run-subgroup th > * + * { margin-left: 8px; }
+.run-table .run-subgroup th small { display: inline; color: var(--theme-muted); font-weight: 400; font-size: 12px; }
+.chain-table .run-objective-group th { padding: 10px 12px; font-size: 13px; text-transform: none; letter-spacing: normal; color: var(--theme-ink); background: var(--theme-soft); }
+
+/* The experiments to apply, by objective and series. */
+.evaluation-experiment-list:has(.evaluation-objective-heading) { max-height: min(62vh, 640px); }
+.evaluation-objective-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 4px 2px; position: sticky; top: 0; z-index: 1; background: var(--theme-surface); border-bottom: 1px solid var(--theme-line); }
+.evaluation-objective-heading strong { font-size: 13.5px; }
+.evaluation-objective-heading small, .evaluation-experiment-heading small { color: var(--theme-muted); font-size: 12px; }
+.evaluation-objective-heading .text-button, .evaluation-experiment-heading .text-button { margin-left: auto; font-size: 12px; }
+.evaluation-experiment-series { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--theme-line); border-radius: 8px; }
+.evaluation-experiment-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 2px 4px; }
+.evaluation-experiment-option .experiment-role { margin-left: 8px; vertical-align: 1px; }
+.evaluation-experiment-option.series-member { padding: 10px 12px; margin-left: 10px; }
+
+/* Cohorts: the objectives each one serves. */
+/* Objective names wrap, so a long one never pushes the actions out of view. */
+.test-cohort-registry .cohort-objectives { min-width: 120px; max-width: 200px; }
+.test-cohort-registry .cohort-objectives small { display: block; color: var(--theme-ink); font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
+.test-cohort-registry .cohort-objectives small + small { margin-top: 3px; }
+
+/* The roadmap's objectives: one card each, with the way into every module focused on it. */
+.objective-overview { margin-top: 28px; }
+.objective-overview-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.objective-overview-heading h2 { margin: 0; font-size: 16px; }
+.objective-overview-heading a { font-size: 12.5px; }
+.objective-overview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
+.objective-card { display: grid; gap: 10px; align-content: start; padding: 16px 18px; border: 1px solid var(--theme-line); border-radius: 10px; background: var(--theme-surface); }
+.objective-card header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.objective-card header strong { font-size: 14px; }
+.objective-card p { margin: 0; font-size: 12.5px; }
+.objective-card dl { display: grid; gap: 6px; margin: 0; font-size: 12.5px; }
+.objective-card dl > div { display: grid; grid-template-columns: 112px 1fr; gap: 10px; }
+.objective-card dt { color: var(--theme-muted); }
+.objective-card dd { margin: 0; color: var(--theme-ink); }
+.objective-card dd small { display: block; color: var(--theme-muted); font-size: 11.5px; margin-top: 2px; }
+.objective-card-actions { padding-top: 8px; border-top: 1px solid var(--theme-line); font-size: 12.5px; }
+.objective-overview-unfiled { margin-top: 10px; font-size: 12.5px; }

@@ -37,6 +37,7 @@ import { scientific } from ${source('api/scientific.ts')};
 import { references } from ${source('api/references.ts')};
 import { recalibration } from ${source('api/recalibration.ts')};
 import { taskCenter } from ${source('api/taskCenter.ts')};
+import { objectives } from ${source('api/objectives.ts')};
 import { bundles } from ${source('api/bundles.ts')};
 import { useReviewedPublication } from ${source('components/useReviewedPublication.ts')};
 import ${source('styles.css')};
@@ -54,6 +55,7 @@ const state = window.workflow = { calls: [], evaluations: [complete], batches: [
 window.fetch = async (...args) => { state.errors.push('Unexpected network request: ' + args[0]); throw new Error(state.errors.at(-1)); };
 predictors.list = async () => ({ items: models });
 experiments.summaries = async () => ({ items: [fixtureExperiment('study')] });
+objectives.list = async () => ({ revision: 0, items: [], filings: {} });
 evaluation.list = async () => ({ items: [cohort] });
 evaluation.get = async () => copy(cohort);
 evaluation.drafts = async () => ({ drafts: [] });

@@ -167,10 +167,22 @@ class ObjectiveService:
             ) from error
 
     def list(self) -> dict:
+        """The objectives, primary first, and every filed experiment's filing by experiment
+        ID. Predictors, runs, batches and interpretations name their experiment, so any list
+        can be grouped by objective from this answer alone."""
         document = self._read()
+        known = {item.id for item in document.objectives}
+        filings = {}
+        for experiment, filing in document.experiments.items():
+            values = _values(filing)
+            if values["objectiveId"] not in known:
+                values["objectiveId"] = None
+            if any(values.values()):
+                filings[experiment] = values
         return {
             "revision": document.revision,
             "items": [_public(item) for item in _ordered(document.objectives)],
+            "filings": filings,
             "ranks": list(OBJECTIVE_RANKS),
             "roles": list(EXPERIMENT_ROLES),
         }

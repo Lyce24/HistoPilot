@@ -1,4 +1,4 @@
-import { downloadArtifact, fetchArtifactBlob, request } from './client';
+import { downloadArtifact, fetchArtifactBlob, pollDelay, request } from './client';
 
 /** Machine-wide task queue served by the Task Center runner. These states exist
  * only in the task store; record status files keep their own vocabularies. */
@@ -282,7 +282,7 @@ export const taskCenterLive = (summary?: Pick<TaskCenterSummary, 'counts'> | nul
   const counts = taskCounts(summary?.counts);
   return counts.running + counts.queued + counts.blocked > 0;
 };
-export const taskCenterPollInterval = (summary?: Pick<TaskCenterSummary, 'counts'> | null) => taskCenterLive(summary) ? 2000 : 10000;
+export const taskCenterPollInterval = (summary?: Pick<TaskCenterSummary, 'counts'> | null) => pollDelay(taskCenterLive(summary) ? 2000 : 10000);
 
 /** "4 running · 41 queued", with other states only when present. */
 export function ownerCountsText(counts?: TaskStateCounts | null) {
@@ -435,9 +435,9 @@ export function rollupScopeKey(scope: RollupScope) {
 const rollupLive = (rollup?: Pick<TaskRollup, 'state'> | null) => Boolean(rollup && ['queued', 'running', 'held', 'stopping', 'runner-stopped'].includes(rollup.state));
 /** Fast only while something runs: 3 s active, 5 s waiting, 30 s otherwise. */
 export function rollupPollInterval(rollup?: Pick<TaskRollup, 'state' | 'active'> | null) {
-  if (!rollup) return 30000;
-  if (rollup.state === 'running' || rollup.state === 'stopping') return 3000;
-  return rollupLive(rollup) ? 5000 : 30000;
+  if (!rollup) return pollDelay(30000);
+  if (rollup.state === 'running' || rollup.state === 'stopping') return pollDelay(3000);
+  return pollDelay(rollupLive(rollup) ? 5000 : 30000);
 }
 export const rollupIsLive = rollupLive;
 /** Stage Resume/Retry buttons appear only when a retry would resume something. */

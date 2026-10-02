@@ -1,6 +1,7 @@
 import type { useRoadmap } from '../components/useRoadmap';
 import { ROADMAP_STEPS, suggestedRoadmapModule } from '../lib/roadmap';
 import { Icon } from '../components/ui';
+import ObjectiveOverview from '../components/ObjectiveOverview';
 
 export type Roadmap = ReturnType<typeof useRoadmap>;
 type Module = Roadmap['modules'][number];
@@ -104,7 +105,7 @@ export function RoadmapLauncher({ modules }: { modules: Module[] }) {
   </>;
 }
 
-export default function ProjectRoadmap({ roadmap }: { roadmap: Roadmap }) {
+export default function ProjectRoadmap({ roadmap, project }: { roadmap: Roadmap; project?: string }) {
   return <div className="project-roadmap">
     {/* The next-step card below states what to open, so the heading does not repeat it. */}
     <header className="roadmap-heading"><h1>Project roadmap</h1></header>
@@ -114,6 +115,7 @@ export default function ProjectRoadmap({ roadmap }: { roadmap: Roadmap }) {
       : <>
         <RoadmapProgress modules={roadmap.modules} />
         <RoadmapLauncher modules={roadmap.modules} />
+        {project ? <ObjectiveOverview project={project} /> : null}
       </>}
   </div>;
 }

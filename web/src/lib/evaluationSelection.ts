@@ -1,5 +1,6 @@
 import type { ModelExperimentSummary } from '../api/experiments';
 import { experimentStage, experimentStageLabel } from '../api/experiments';
+import type { ExperimentRole } from '../api/objectives';
 import type { FrozenPredictor } from '../api/predictors';
 import { groupPredictors } from './predictorGroups';
 import { shortRecordId } from './recordLabels';
@@ -8,6 +9,8 @@ import { shortRecordId } from './recordLabels';
 export type EvaluationMethod = 'both' | 'ensemble' | 'refit' | 'seed_ensemble';
 export interface EvaluationExperimentOption {
   id: string; name: string; description: string; ensemble: number; refit: number; seedEnsemble: number; ready: number;
+  /** Where the experiment is filed, so the picker can list experiments by objective. */
+  objectiveId?: string | null; role?: ExperimentRole | null; series?: string | null; seriesMember?: string | null;
 }
 
 /** Include plans with no outputs, without presenting pending work as ready weights. */
@@ -22,6 +25,7 @@ export function evaluationExperiments(records: ModelExperimentSummary[], predict
     const total = ensemble + refit + seedEnsemble;
     const state = record ? `${experimentStageLabel[experimentStage(record)]}${record.state === 'archived' ? ' · archived' : ''}` : group ? 'Retained predictors' : 'Experiment unavailable';
     return { id, name: record?.name ?? group?.name ?? shortRecordId(id), ensemble, refit, seedEnsemble, ready: total,
+      objectiveId: record?.objectiveId ?? null, role: record?.role ?? null, series: record?.series ?? null, seriesMember: record?.seriesMember ?? null,
       description: `${state} · ${total ? `${ensemble} ensemble / ${refit} refit${seedEnsemble ? ` / ${seedEnsemble} seed ensemble` : ''} ready` : 'No ready predictors'}` };
   }).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }

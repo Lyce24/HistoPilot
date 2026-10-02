@@ -5,6 +5,7 @@ Import-light by design: no torch, no FastAPI.
 
 import threading
 
+from histopilot.storage import read_sessions
 from histopilot.taskcenter import paths
 from histopilot.taskcenter.model import ACTIVE, LIVE, PENDING, STATES, TERMINAL, awaiting_requeue
 from histopilot.taskcenter.store import TaskStore
@@ -113,7 +114,9 @@ class TaskCenterClient:
     def runner_alive(self) -> bool:
         from histopilot.taskcenter.launcher import runner_alive
 
-        return runner_alive(self.store.path.parent / "runner.lock")
+        lock = self.store.path.parent / "runner.lock"
+        # A list probes the runner once, not once per record (storage/read_sessions).
+        return read_sessions.remember(("runner-alive", str(lock)), lambda: runner_alive(lock))
 
 
 _DEFAULT: dict[str, TaskCenterClient] = {}

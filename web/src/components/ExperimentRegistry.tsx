@@ -13,6 +13,8 @@ import type { LifecycleState } from '../api/lifecycle';
 import { lifecycleLabel } from '../api/lifecycle';
 import { sameJSON } from '../lib/json';
 import { groupExperiments, memberSummary, type LibraryEntry, type LibraryGroup } from '../lib/experimentLibrary';
+import { inObjectiveScope, UNFILED_SCOPE, useObjectiveScope } from '../lib/objectiveScope';
+import { ObjectiveScopeNotice } from './ObjectiveScope';
 import { Badge, EmptyState, ErrorNotice, Icon, PageHeader, Panel } from './ui';
 import { RecordManageButton } from './RecordManagement';
 import { StageLibrary, StageLibraryToolbar, StagePage, StageSteps, useStageLibrary } from './StageWorkflow';
@@ -283,7 +285,8 @@ export function ExperimentFilingEditor({ project, record, objectives, seriesName
       client.setQueryData(['model-experiment', project, record.id], result);
       setBaseline(filingOf(result)); setDraft(filingOf(result));
       setNotice('Filing saved. The experiment and its results are unchanged.');
-      await client.invalidateQueries({ queryKey: ['model-experiments', project] });
+      // Apply models and Model interpretation group their records by this filing.
+      await Promise.all([client.invalidateQueries({ queryKey: ['model-experiments', project] }), client.invalidateQueries({ queryKey: ['model-experiment-summaries', project] }), client.invalidateQueries({ queryKey: ['objectives', project] })]);
     } catch (reason) {
       setError(reason instanceof Error ? reason : new Error('The filing could not be saved.'));
       if (reason instanceof ApiError && reason.status === 409) void client.invalidateQueries({ queryKey: ['model-experiment', project, record.id] });
@@ -345,7 +348,7 @@ export function ObjectivesManager({ project, items, experiments: filed, focus }:
     try {
       const done = await work();
       // Say it once the lists show it, so the page never reports a change it does not show yet.
-      await Promise.all([client.invalidateQueries({ queryKey: ['objectives', project] }), client.invalidateQueries({ queryKey: ['model-experiments', project] })]);
+      await Promise.all([client.invalidateQueries({ queryKey: ['objectives', project] }), client.invalidateQueries({ queryKey: ['model-experiments', project] }), client.invalidateQueries({ queryKey: ['model-experiment-summaries', project] })]);
       setNotice(done);
       return true;
     } catch (reason) {
@@ -465,9 +468,13 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
   const allItems = query.data?.items ?? [];
   const items = libraryExperiments(allItems);
   const objectiveItems = objectiveQuery.data?.items ?? [];
+  const [scope, setScope] = useObjectiveScope(objectiveItems);
   const title = 'Experiments';
-  const visible = filterExperiments(items, state, '', search, sort)
+  const unscoped = filterExperiments(items, state, '', search, sort)
     .filter((item) => !status || (status === 'draft' ? experimentDraft(item) : !experimentDraft(item) && experimentExecutionStatus(item.status) === status));
+  // The project-wide focus keeps one objective's experiments (or those under none).
+  const visible = unscoped.filter((item) => inObjectiveScope(scope, item.objectiveId));
+  const scopedObjectives = scope === UNFILED_SCOPE ? [] : scope ? objectiveItems.filter((item) => item.id === scope) : objectiveItems;
   const comparisonQueries = useQueries({ queries: selected.map((id) => ({ queryKey: ['model-experiment', project, id], queryFn: () => experiments.get(project, id), refetchInterval: 15000 })) });
   // One headline per experiment; folds, seeds and intervals load when an experiment opens.
   const headlines = useQuery({ queryKey: ['experiment-headlines', project], queryFn: () => experimentHeadlines.list(project),
@@ -478,7 +485,7 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
   const filtering = Boolean(search.trim() || status);
   const isOpen = (key: string) => filtering || opened.has(key);
   const showGroups = grouped && (objectiveItems.length > 0 || items.some((item) => item.objectiveId || item.role || item.series));
-  const groups = showGroups ? groupExperiments(visible, objectiveItems, { showEmpty: !filtering && (state === 'active' || state === 'all') }) : [];
+  const groups = showGroups ? groupExperiments(visible, scopedObjectives, { showEmpty: !filtering && (state === 'active' || state === 'all') }) : [];
 
   function trainingCell(item: ModelExperimentSummary) {
     const count = item.batches.length + (experimentStage(item) === 'planning' ? item.batchPlans?.length ?? 0 : 0);
@@ -545,7 +552,7 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
     {!creating ? <PageHeader eyebrow={stageEyebrow('experiments')} title={comparing ? 'Compare saved designs' : managing !== null ? 'Objectives' : title} description={comparing ? 'Compare saved inputs and training settings.' : managing !== null ? 'The questions experiments answer, ranked as a protocol ranks them. Experiments are filed under an objective with a role.' : 'Design training on frozen targets, splits and features, freeze the design and start it, then follow its runs, results and predictors.'} actions={comparing ? <StageBackButton onClick={() => setComparing(false)}>Back to experiments</StageBackButton> : managing !== null ? <StageBackButton onClick={() => setManaging(null)}>Back to experiments</StageBackButton> : <StageCreateButton onClick={() => setCreating(true)}>Create experiment</StageCreateButton>} /> : null}
 
     <StagePage pageKey={page}>
-    {creating ? <CreateExperiment project={project} templates={allItems} objectives={objectiveItems} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); void client.invalidateQueries({ queryKey: ['scientific', project, 'drafts'] }); onOpen(item.id); }} /> : comparing ? <>
+    {creating ? <CreateExperiment project={project} templates={allItems} objectives={objectiveItems} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); void client.invalidateQueries({ queryKey: ['objectives', project] }); void client.invalidateQueries({ queryKey: ['scientific', project, 'drafts'] }); onOpen(item.id); }} /> : comparing ? <>
       <ErrorNotice error={comparisonQueries.find((value) => value.error)?.error ?? null} />
       {compared.length !== selected.length ? <p role="status">Loading selected experiment snapshots…</p> : compared.length >= 2 ? <ExperimentComparison items={compared} /> : <p>Select at least two experiments from the library to compare.</p>}
       <div className="stage-actions"><StageBackButton type="button" onClick={() => setComparing(false)}>Back to experiment selection</StageBackButton></div>
@@ -565,6 +572,7 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
         <label className="label">Sort<select className="field" value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">Last updated</option><option value="oldest">Oldest first</option><option value="name">Name</option></select></label>
         <label className="development-check experiment-group-toggle"><input type="checkbox" checked={grouped} onChange={(event) => setGrouped(event.target.checked)} /> Group by objective</label>
       </StageLibraryToolbar>
+      <ObjectiveScopeNotice objectives={objectiveItems} scope={scope} hidden={unscoped.length - visible.length} noun={unscoped.length - visible.length === 1 ? 'experiment' : 'experiments'} onClear={() => setScope('')} />
       {selected.length ? <div className="experiment-selection"><span>{selected.length} selected <span className="muted">· Choose 2–4 to compare</span></span><div className="inline-actions"><button type="button" className="text-button" onClick={() => setSelected([])}>Clear comparison</button><button type="button" className="btn btn-secondary btn-small" disabled={selected.length < 2} onClick={() => setComparing(true)}>Compare selected experiments</button></div></div> : null}
       {query.isPending ? <p className="panel-body" role="status">Loading experiments…</p> : visible.length ? <div className="experiment-table-scroll"><table className={`experiment-record-table${showGroups ? ' experiment-record-table-grouped' : ''}`} aria-label="Saved experiments"><thead><tr><th scope="col"><span className="sr-only">Select 2–4 experiments to compare</span></th><th scope="col">Role</th><th scope="col">Experiment</th><th scope="col">Status</th><th scope="col">Training</th><th scope="col" className="experiment-result-column" title="Out-of-fold result of the best batch: mean ± SD across training seeds">Result</th><th scope="col">Updated</th><th scope="col">Actions</th></tr></thead>
         {showGroups ? groups.map(groupBody) : <tbody>{visible.map((item) => experimentRow(item))}</tbody>}

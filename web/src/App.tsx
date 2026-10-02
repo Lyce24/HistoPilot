@@ -14,6 +14,7 @@ import WorkspaceErrorBoundary from './components/WorkspaceErrorBoundary';
 import WorkspaceCleanup from './pages/WorkspaceCleanup';
 import { RecordManagementScope } from './components/RecordManagement';
 import { lazyPage, PageLoading } from './components/LazyPage';
+import { TopbarObjectiveScope } from './components/ObjectiveScope';
 
 const Start = lazyPage(() => import('./pages/Start'));
 const System = lazyPage(() => import('./pages/System'));
@@ -119,7 +120,7 @@ function StageContent({ page, workspace, roadmap }: { page: Page; workspace: Wor
     <p>Its records and files have been retained. Restore the project in Workspace cleanup before continuing your work.</p>
     <a className="btn btn-primary" href="#cleanup">Open Workspace cleanup</a>
   </div>;
-  if (page === 'overview') return <ProjectRoadmap roadmap={roadmap} />;
+  if (page === 'overview') return <ProjectRoadmap roadmap={roadmap} project={workspace.mode === 'local' ? workspace.project.id : undefined} />;
   const moduleId = moduleForPage(page);
   const module = roadmap.modules.find((item) => item.id === moduleId);
   const check = module ? roadmap.checksById[module.id] : null;
@@ -245,7 +246,7 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
       </aside>
       {mobile && menu ? <button className="nav-backdrop" aria-label="Close navigation overlay" onClick={() => setMenu(false)} /> : null}
       <div className="main-shell">
-        <header className="topbar"><div className="breadcrumbs"><button ref={menuButton} className="icon-button mobile-menu" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="menu" /></button><button type="button" className="breadcrumb-home" onClick={onExit}>Projects</button><Icon name="chevron" size={12} /><a href="#overview" className="breadcrumb-project">{w.project.name}</a><Icon name="chevron" size={12} /><strong>{page === 'overview' ? 'Roadmap' : module?.shortTitle ?? pages[page]}</strong></div><div className="topbar-actions">{w.project.aiExposure ? <a href="#operations" className="ai-exposure-indicator" title="What AI agents may see of this project">AI: {w.project.aiExposure}</a> : null}<span className="demo-indicator"><span />{w.mode === 'synthetic-demo' ? 'Synthetic demo' : 'Saved locally'}</span><button className="btn btn-secondary btn-small" aria-label="Export workspace" onClick={() => { if (w.mode === 'local') window.location.hash = 'operations'; else downloadJSON('histopilot-workspace.json', { schema_version: '0.1.0', executable: false, ...w }); }}><Icon name="download" size={15} /><span>Export</span></button></div></header>
+        <header className="topbar"><div className="breadcrumbs"><button ref={menuButton} className="icon-button mobile-menu" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="menu" /></button><button type="button" className="breadcrumb-home" onClick={onExit}>Projects</button><Icon name="chevron" size={12} /><a href="#overview" className="breadcrumb-project">{w.project.name}</a><Icon name="chevron" size={12} /><strong>{page === 'overview' ? 'Roadmap' : module?.shortTitle ?? pages[page]}</strong></div><div className="topbar-actions">{w.mode === 'local' && !blcaDemo && ['overview', 'experiments', 'apply', 'interpretation'].includes(moduleForPage(page)) ? <TopbarObjectiveScope project={w.project.id} /> : null}{w.project.aiExposure ? <a href="#operations" className="ai-exposure-indicator" title="What AI agents may see of this project">AI: {w.project.aiExposure}</a> : null}<span className="demo-indicator"><span />{w.mode === 'synthetic-demo' ? 'Synthetic demo' : 'Saved locally'}</span><button className="btn btn-secondary btn-small" aria-label="Export workspace" onClick={() => { if (w.mode === 'local') window.location.hash = 'operations'; else downloadJSON('histopilot-workspace.json', { schema_version: '0.1.0', executable: false, ...w }); }}><Icon name="download" size={15} /><span>Export</span></button></div></header>
         <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}${['dataset', 'cohort', 'features', 'experiments', 'source-cv', 'apply'].includes(page) ? ' stage-workspace' : ''}`} id="main-content" tabIndex={-1} ref={main}>
           {/* Module progress now belongs to the roadmap, and each library states its
               own records' status. A module-level chip beside a record editor described

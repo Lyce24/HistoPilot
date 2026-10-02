@@ -41,6 +41,30 @@ describe('cohorts in Apply models', () => {
     expect(legacy).toContain('value="predictor"');
   });
 
+  it('names the objectives each cohort serves, and focuses on one only once they are known', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const cohort = (id: string, tag: string) => ({ id, current: true, createdAt: '2026-09-28', versionLabel: { tag }, manifest: { kind: 'evaluation-cohort', datasetId: 'dataset', spec: newEvaluationSpec(), target: null, summary: { includedSlides: 12 }, findings: [] } });
+    client.setQueryData(['scientific', 'project', 'datasets'], { datasets: [] });
+    client.setQueryData(['evaluation-drafts', 'project'], { drafts: [{ id: 'draft', name: 'Cohort being made', revision: 1, status: 'editable', payload: { type: 'evaluation-cohort', spec: newEvaluationSpec() } }] });
+    client.setQueryData(['evaluation-cohorts', 'project'], { items: [cohort('held-out', 'Held-out primaries'), cohort('unused', 'Unused external')] });
+    const workspace = { project: { id: 'project', name: 'Demo' } } as Workspace;
+    const objectives = [{ id: 'aim-1', name: 'Aim 1 · Validity: mutant vs wild type, a long objective name', rank: 'primary' as const, description: '', revision: 1, createdAt: '', updatedAt: '' }];
+    const render = (served: Map<string, string[]> | undefined, objectiveScope = '') => renderToStaticMarkup(<QueryClientProvider client={client}><LocalEvaluationSetup workspace={workspace} frame={frame} objectives={objectives} cohortObjectives={served} objectiveScope={objectiveScope} onClearScope={() => {}} /></QueryClientProvider>);
+    try {
+      const loading = render(undefined, 'aim-1');
+      // Until the runs behind it load, no cohort is said to serve nothing and none is hidden.
+      expect(loading.match(/Loading…/g)).toHaveLength(3);
+      expect(loading).toContain('Unused external'); expect(loading).not.toContain('other cohort');
+      const served = new Map([['held-out', ['aim-1']]]);
+      const all = render(served);
+      expect(all).toContain('<small>Aim 1 · Validity: mutant vs wild type, a long objective name</small>');
+      expect(all).toContain('Objectives</th>');
+      const focused = render(served, 'aim-1');
+      expect(focused).toContain('Held-out primaries'); expect(focused).not.toContain('Unused external');
+      expect(focused).toContain('Cohort being made'); expect(focused).toContain('1 other cohort hidden');
+    } finally { client.clear(); }
+  });
+
   it('lists cohorts by their labels inside the Apply models frame and offers both kinds', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     client.setQueryData(['scientific', 'project', 'datasets'], { datasets: [] });

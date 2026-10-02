@@ -154,9 +154,44 @@ export async function request<T>(
   retrySession = true,
   scientificCapability?: ScientificCapability,
 ): Promise<T> {
+  const started = readOnly(init) ? Date.now() : null;
   const response = await authenticatedResponse(path, init, retrySession, scientificCapability);
   if (response.status === 204) return undefined as T;
-  return responseJSON<T>(response, init);
+  const value = await responseJSON<T>(response, init);
+  if (started !== null) noteRead(Date.now() - started);
+  return value;
+}
+
+/**
+ * How long recent reads took. The service answers one request at a time where it computes,
+ * so pages that poll several large lists can ask faster than it answers, and every request
+ * then waits behind the others. Polls are paced by {@link pollDelay} instead.
+ */
+const READ_WINDOW_MS = 30_000;
+const POLL_PACE = 3;
+const recentReads: { at: number; took: number }[] = [];
+function noteRead(took: number) {
+  const now = Date.now();
+  recentReads.push({ at: now, took });
+  while (recentReads.length && (now - recentReads[0].at > READ_WINDOW_MS || recentReads.length > 256)) recentReads.shift();
+}
+/**
+ * A poll interval, stretched to at least three times the slowest read of the last 30
+ * seconds (and spread by up to a quarter more): the service is never asked again before it
+ * has answered, and polls return to their own pace once reads are quick again. `false` (no
+ * polling) stays `false`.
+ */
+export function pollDelay(interval: number): number;
+export function pollDelay(interval: false): false;
+export function pollDelay(interval: number | false): number | false;
+export function pollDelay(interval: number | false): number | false {
+  if (interval === false) return false;
+  const now = Date.now();
+  const slowest = recentReads.reduce((most, read) => (now - read.at <= READ_WINDOW_MS ? Math.max(most, read.took) : most), 0);
+  const paced = POLL_PACE * slowest;
+  // Stretched polls are spread by up to a quarter, so lists that waited together do not
+  // all ask again at the same moment.
+  return paced > interval ? Math.round(paced * (1 + Math.random() / 4)) : interval;
 }
 const SCIENTIFIC_SAVE_RESTART = 'The running HistoPilot server does not support this save. Restart HistoPilot, then try saving again here. Your entered tag and note have been kept; you do not need to reload this page.';
 

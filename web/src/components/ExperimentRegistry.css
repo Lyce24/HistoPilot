@@ -52,9 +52,7 @@
 
 /* Objectives: a section per objective, roles in order, series and tuning folded. */
 .experiment-group-toggle { align-self: end; min-height: 38px; font-size: 13px; white-space: nowrap; }
-.experiment-role { display: inline-block; font-size: 10.5px; font-weight: 650; letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; color: var(--theme-muted); }
 .experiment-record-table .experiment-role-cell { padding-left: 12px; padding-right: 8px; }
-.experiment-role-primary { color: var(--brand-primary); }
 .experiment-record-table .experiment-objective-row th { padding: 14px 18px 12px; background: var(--theme-soft); border-top: 1px solid var(--theme-line); text-transform: none; letter-spacing: normal; font-size: inherit; font-weight: 400; }
 .experiment-group + .experiment-group .experiment-objective-row th { border-top: 10px solid var(--theme-surface); box-shadow: inset 0 1px 0 var(--theme-line); }
 .experiment-objective-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
@@ -76,8 +74,6 @@
 .experiment-filed-under { color: var(--theme-ink) !important; }
 
 /* The experiment's own page: where it is filed, and the form that files it. */
-.experiment-filing-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0; font-size: 13px; }
-.experiment-filing-separator { color: var(--theme-line); padding: 0 2px; }
 .experiment-filing-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; border: 0; padding: 0; margin: 0 0 6px; min-width: 0; }
 .experiment-management h3 { margin: 18px 0 4px; font-size: 14px; }
 .experiment-management h3:first-of-type { margin-top: 8px; }

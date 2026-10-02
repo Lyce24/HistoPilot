@@ -21,6 +21,7 @@ from histopilot.application.protocols import (
 from histopilot.domain.features import representation_kind
 from histopilot.schemas.evaluations import STORED, EvaluationSpec, is_inference_purpose
 from histopilot.schemas.protocols import TargetSpec, iter_conditions
+from histopilot.storage import read_sessions
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.io import content_hash
 from histopilot.storage.pack_import import pack_layout
@@ -64,7 +65,11 @@ def slide_sources(store, dataset, rows, selected):
             sources[slide].add(("path", path))
     if paths and "inventory.json" in dataset.get("artifacts", {}):
         try:
-            inventory = json.loads(store.read_artifact(dataset["id"], "inventory.json"))
+            # Only read here, so the cohorts of one list share the parsed inventory.
+            inventory = read_sessions.remember(
+                ("slide-inventory", read_sessions.store_key(store), dataset["id"]),
+                lambda: json.loads(store.read_artifact(dataset["id"], "inventory.json")),
+            )
             if not isinstance(inventory, list) or any(
                 not isinstance(row, dict) for row in inventory
             ):
@@ -868,6 +873,7 @@ class EvaluationService:
     def get(self, identity):
         return self._resolve(self.store.get_configuration(identity))
 
+    @read_sessions.reads
     def list(self):
         return {
             "items": [

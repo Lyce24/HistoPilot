@@ -134,6 +134,27 @@ def submit_task(client, owner, spec, *, reason, active_message, active_code):
     client.store.requeue([spec["id"]], reason=reason, include_succeeded=True)
 
 
+# Plan hashes by the plan file's identity. A plan is written once, or replaced through a
+# rename, so a changed file has a new identity and is hashed again; an unchanged one is not
+# re-read whenever a list shows its job (a plan can hold hundreds of kilobytes per run).
+_PLAN_HASHES: dict[tuple, str] = {}
+_PLAN_HASH_LIMIT = 8192
+
+
+def plan_hash(path: Path) -> str:
+    """``content_hash`` of the plan file at ``path``, remembered while the file is unchanged."""
+    reject_symlink_components(path)
+    info = os.stat(path, follow_symlinks=False)
+    key = (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+    known = _PLAN_HASHES.get(key)
+    if known is None:
+        known = content_hash(read_json_bounded(path))
+        if len(_PLAN_HASHES) >= _PLAN_HASH_LIMIT:
+            _PLAN_HASHES.clear()
+        _PLAN_HASHES[key] = known
+    return known
+
+
 def task_view(client, task_id):
     """A managed job's task, or ``{"unknown": True}`` when the Task Center cannot answer.
 
@@ -330,8 +351,7 @@ class ComputeJobService:
             "interrupted",
         }:
             raise StorageError("Compute state is invalid.", "COMPUTE_STATE_INVALID")
-        plan = read_json_bounded(folder / "plan.json")
-        if content_hash(plan) != state.get("planHash"):
+        if plan_hash(folder / "plan.json") != state.get("planHash"):
             raise StorageError("The saved execution plan changed.", "COMPUTE_PLAN_CHANGED")
         cancellation_requested = (folder / "cancel.requested").exists()
         managed = state.get("executor") == "task-center"

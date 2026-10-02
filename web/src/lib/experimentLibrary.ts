@@ -60,7 +60,7 @@ export function libraryEntries<T extends Filed>(items: T[], group: string): Libr
  * nothing is filed under yet, so a new one is visible before anything joins it; filtered
  * views leave them out.
  */
-export function groupExperiments<T extends Filed>(items: T[], objectives: Objective[], { showEmpty }: { showEmpty: boolean }): LibraryGroup<T>[] {
+export function groupExperiments<T extends Filed>(items: T[], objectives: readonly Objective[], { showEmpty }: { showEmpty: boolean }): LibraryGroup<T>[] {
   const known = new Set(objectives.map((objective) => objective.id));
   const buckets = new Map<string, T[]>();
   for (const item of items) {
@@ -82,4 +82,36 @@ export function memberSummary(items: Filed[], shown = 4) {
   const names = items.map((item) => item.seriesMember || item.name);
   if (names.length <= shown) return names.join(', ');
   return `${names.slice(0, shown).join(', ')} and ${names.length - shown} more`;
+}
+
+/** Records of one objective; `objective` is null for those filed under none. */
+export interface ObjectiveSection<T> { key: string; objective: Objective | null; items: T[] }
+export const SEVERAL = 'several';
+
+/**
+ * Downstream records (runs, batches, predictors, studies) by the objective of the experiment
+ * they come from, in the objectives' order, then any that span several objectives, then those
+ * filed under none. Records keep their order within a section. `objectiveOf` returns an
+ * objective ID, {@link SEVERAL}, or null.
+ */
+export function sectionByObjective<T>(items: readonly T[], objectiveOf: (item: T) => string | null, objectives: readonly Objective[]): ObjectiveSection<T>[] {
+  const known = new Set(objectives.map((objective) => objective.id));
+  const buckets = new Map<string, T[]>();
+  for (const item of items) {
+    const value = objectiveOf(item);
+    const key = value === SEVERAL ? SEVERAL : value && known.has(value) ? value : UNSORTED;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(item); else buckets.set(key, [item]);
+  }
+  return [
+    ...objectives.map((objective) => ({ key: objective.id, objective })),
+    { key: SEVERAL, objective: null }, { key: UNSORTED, objective: null },
+  ].flatMap(({ key, objective }) => buckets.get(key)?.length ? [{ key, objective, items: buckets.get(key)! }] : []);
+}
+
+/** One objective for records from several experiments: theirs when they agree. */
+export function sharedObjective(objectiveIds: readonly (string | null | undefined)[]): string | null {
+  const distinct = new Set(objectiveIds.map((value) => value ?? null));
+  if (!distinct.size) return null;
+  return distinct.size === 1 ? [...distinct][0] : SEVERAL;
 }

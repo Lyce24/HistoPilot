@@ -26,6 +26,16 @@ describe('development batch intent', () => {
     expect(developmentPollInterval()).toBe(false);
   });
 
+  it('asks for the status listing of runs when only their statuses are needed', async () => {
+    const response = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const fetcher = vi.fn().mockResolvedValueOnce(response({ token: 'session' })).mockImplementation(async () => response({ items: [], executionImplemented: true, executions: [] }));
+    vi.stubGlobal('fetch', fetcher);
+    const { development } = await import('./development');
+    await development.list('project/one', 'status');
+    await development.list('project/one');
+    expect(fetcher.mock.calls.slice(1).map(([url]) => url)).toEqual(['/api/v1/projects/project%2Fone/mil-experiments/batches?runs=status', '/api/v1/projects/project%2Fone/mil-experiments/batches']);
+  });
+
   it('uses new project-level execution evidence when a selected-batch cache predates an external launch or completion', () => {
     const running = { status: 'running', updatedAt: '2026-09-11T16:00:00Z' } as TrainingExecution;
     const completed = { status: 'completed', updatedAt: '2026-09-11T16:01:00Z' } as TrainingExecution;

@@ -1,4 +1,4 @@
-import { request } from './client';
+import { pollDelay, request } from './client';
 
 export type LifecycleState = 'active' | 'archived' | 'trashed';
 export type CleanupAction = 'archive' | 'trash' | 'restore';
@@ -37,7 +37,7 @@ export function cleanupJobActive(item: CleanupItem) {
   return Boolean(item.job && (item.job.cancellable || ['queued', 'pending', 'active', 'running', 'starting', 'stopping', 'cancelling', 'cancel_requested'].includes(item.job.status)));
 }
 export function cleanupPollInterval(inventory?: CleanupInventory) {
-  return inventory?.items.some(cleanupJobActive) ? 3000 : 15000;
+  return pollDelay(inventory?.items.some(cleanupJobActive) ? 3000 : 15000);
 }
 export function cleanupReviewMatches(preview: CleanupPreview | null, inventory: CleanupInventory | undefined, action: CleanupAction, keys: string[]) {
   if (!preview || !inventory || preview.revision !== inventory.revision || preview.action !== action) return false;
