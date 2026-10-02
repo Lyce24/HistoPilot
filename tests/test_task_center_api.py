@@ -1459,6 +1459,25 @@ def test_capacity_suggestion_degrades_when_evidence_cannot_be_read(api, monkeypa
     assert [item["code"] for item in suggestion["findings"]][-1] == "CAPACITY_EVIDENCE_UNAVAILABLE"
 
 
+def test_capacity_suggestion_reads_measured_evidence_at_most_once_a_minute(api, monkeypatch):
+    from histopilot.taskcenter import estimator, service
+
+    reads = []
+    original = estimator.gather_observations
+
+    def counted(*args, **kwargs):
+        reads.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(estimator, "gather_observations", counted)
+    for _ in range(2):
+        assert api.get(f"{API}/capacity").status_code == 200
+    assert len(reads) == 1
+    monkeypatch.setattr(service, "EVIDENCE_SECONDS", 0.0)
+    assert api.get(f"{API}/capacity").status_code == 200
+    assert len(reads) == 2
+
+
 def test_tasks_filter_by_absolute_project_folder(api):
     first, second = register(api), register(api, "Other study")
     enqueue(owner(first), [task(first, "first-1")])

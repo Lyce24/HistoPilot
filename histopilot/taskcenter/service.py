@@ -422,6 +422,10 @@ class _Errors:
             raise self.first
 
 
+# How long the capacity suggestion reuses measured training evidence.
+EVIDENCE_SECONDS = 60.0
+
+
 class TaskCenterService:
     """Workspace view of the machine-wide Task Center.
 
@@ -451,6 +455,7 @@ class TaskCenterService:
         self._code_cache: tuple[tuple, str] | None = None
         self._code_checked: tuple[float, tuple | None, str | None] | None = None
         self._log_cache: dict[str, tuple[tuple, tuple]] = {}
+        self._evidence_cache: tuple[float, tuple, object] | None = None
         self._operations: dict[str, list] = {}
         self._restart_thread: threading.Thread | None = None
 
@@ -2002,6 +2007,21 @@ class TaskCenterService:
             "suggestion": self._suggestion(settings, host),
         }
 
+    def _suggestion_evidence(self, folders: tuple, store):
+        """Measured training evidence of every project, for the advisory capacity suggestion.
+        The Task Center page asks for it every 30 seconds and reading it takes seconds on a
+        large project, while it changes only as batches finish: read it at most once a minute.
+        The runner's own admission reads its evidence separately."""
+        now = time.monotonic()
+        cached = self._evidence_cache
+        if cached is not None and cached[1] == folders and now - cached[0] < EVIDENCE_SECONDS:
+            return cached[2]
+        observations = estimator.gather_observations(
+            list(folders), measurements=store.measurements()
+        )
+        self._evidence_cache = (now, folders, observations)
+        return observations
+
     def _suggestion(self, settings: dict, host: dict) -> dict:
         store = self.store
         live = store.list(states=LIVE, limit=None)
@@ -2023,9 +2043,7 @@ class TaskCenterService:
         folders = set(self._registry())
         folders |= {_norm(owner["projectFolder"]) for owner in store.owners(live_only=False)}
         try:
-            observations = estimator.gather_observations(
-                sorted(folders), measurements=store.measurements()
-            )
+            observations = self._suggestion_evidence(tuple(sorted(folders)), store)
             return estimator.suggest(workloads, observations, host, settings, running=running)
         except StorageError:
             raise
