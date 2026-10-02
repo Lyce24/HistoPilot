@@ -294,7 +294,14 @@ def test_runner_cancellation_terminates_process_group(tmp_path):
             time.sleep(0.02)
         assert ready.exists()
         pid = int(ready.read_text())
-        identity = json.loads(Path(plan["processPath"]).read_text())
+        # The runner records itself, then the worker once Popen returns; a busy machine
+        # can run the worker before that second write lands.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            identity = json.loads(Path(plan["processPath"]).read_text())
+            if identity["pid"] == pid:
+                break
+            time.sleep(0.02)
         assert identity["pid"] == pid
         assert identity["startTicks"] > 0
         assert identity["bootId"] == Path("/proc/sys/kernel/random/boot_id").read_text().strip()

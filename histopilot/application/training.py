@@ -26,6 +26,7 @@ from histopilot.schemas.training_controls import (
     validate_selection_metric,
     validate_training_controls,
 )
+from histopilot.storage import read_sessions
 from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError, ensure_managed_directory, writer_lock
@@ -260,6 +261,7 @@ class TrainingService:
             task["kind"] == "mil-fold" and task["state"] in TASK_LIVE for task in group["tasks"]
         )
 
+    @read_sessions.reads
     def list(self, *, include_inactive=False, runs="full"):
         """Every batch's execution. ``runs="status"`` lists each run by its status alone
         (``status_view``) and skips reading live progress, for pages that poll."""

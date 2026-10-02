@@ -13,6 +13,12 @@ so code that hands work to another thread opens its own there. Nested blocks sha
 outer one. Values that are costly to probe and cannot change within one call, such as
 whether the Task Center runner is alive, can be remembered for the block with
 ``remember``.
+
+Sessions also take turns, ``TURNS`` at a time. The service computes under one interpreter
+lock, so lists read side by side make each other wait at every file and database call: the
+first page load of a large project read its lists in 20 s side by side and in 7 s one after
+another. A session that waits ``TURN_SECONDS`` reads anyway, so none can hold up the rest
+for good.
 """
 
 import functools
@@ -22,6 +28,9 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 _SESSION: ContextVar[dict | None] = ContextVar("histopilot_read_session", default=None)
+TURNS = 2
+TURN_SECONDS = 120.0
+_TURNS = threading.Semaphore(TURNS)
 
 
 @contextmanager
@@ -30,6 +39,7 @@ def read_session() -> Iterator[None]:
     if _SESSION.get() is not None:
         yield
         return
+    turn = _TURNS.acquire(timeout=TURN_SECONDS)
     session: dict = {"connections": {}, "values": {}}
     token = _SESSION.set(session)
     try:
@@ -41,6 +51,8 @@ def read_session() -> Iterator[None]:
                 close(connection)
             except Exception:  # closing a shared reader never hides the call's own outcome
                 pass
+        if turn:
+            _TURNS.release()
 
 
 def active() -> bool:

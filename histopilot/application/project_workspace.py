@@ -27,6 +27,7 @@ from histopilot.schemas.workspace import (
     ProjectRequest,
     RequestModel,
 )
+from histopilot.storage import read_sessions
 from histopilot.storage.database import Database, Record
 from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
 from histopilot.storage.io import utc_now
@@ -405,6 +406,7 @@ class ProjectWorkspace:
         # Each store operation initializes/reconciles under its own writer lock.
         return ScientificStore(path, document["id"])
 
+    @read_sessions.reads
     def workspace(self, identity: str) -> dict:
         if identity == DEMO_ID:
             return load_demo()

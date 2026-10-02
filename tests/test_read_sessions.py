@@ -121,3 +121,38 @@ def test_a_changed_plan_file_is_hashed_again(tmp_path):
     replacement.write_text(json.dumps({"runs": [1, 2, 4]}))
     replacement.replace(path)
     assert compute_jobs.plan_hash(path) != first
+
+
+def test_sessions_take_turns_and_a_long_wait_reads_anyway(monkeypatch):
+    monkeypatch.setattr(read_sessions, "_TURNS", threading.Semaphore(1))
+    monkeypatch.setattr(read_sessions, "TURN_SECONDS", 0.2)
+    order = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    def first():
+        with read_sessions.read_session():
+            order.append("first in")
+            entered.set()
+            release.wait(5)
+        order.append("first out")
+
+    def second():
+        entered.wait(5)
+        with read_sessions.read_session():
+            order.append("second in")
+
+    threads = [threading.Thread(target=first), threading.Thread(target=second)]
+    for thread in threads:
+        thread.start()
+    entered.wait(5)
+    threads[1].join(1)
+    # The second session waited its turn up to TURN_SECONDS, then read without one.
+    assert order == ["first in", "second in"]
+    release.set()
+    threads[0].join(5)
+    # A nested session never waits for a turn of its own.
+    monkeypatch.setattr(read_sessions, "_TURNS", threading.Semaphore(1))
+    with read_sessions.read_session(), read_sessions.read_session():
+        assert read_sessions.active()
+    assert read_sessions._TURNS.acquire(timeout=0)
