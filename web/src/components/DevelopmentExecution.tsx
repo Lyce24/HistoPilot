@@ -10,6 +10,7 @@ import LegacyRecordNote from './LegacyRecordNote';
 import { Findings } from './ScientificUI';
 import { downloadJSON } from '../lib/download';
 import { gib, metricValue, metricsText, MetricEvidence, ResourceCards, RunTable } from './ExperimentTracking';
+import { pollDelay } from '../api/client';
 export { RunTable } from './ExperimentTracking';
 export type ExperimentExecutionStage = 'planning' | 'running' | 'finished';
 
@@ -28,7 +29,7 @@ export default function DevelopmentExecution({ project, batch, implemented, know
   const submitting = useRef(false);
   const executionQuery = useQuery({
     queryKey: ['training-execution', project, batch.id], queryFn: () => development.execution(project, batch.id), enabled: trackingEnabled,
-    refetchInterval: (query) => trainingActive(latestExecution(query.state.data, knownExecution)) ? 5000 : false,
+    refetchInterval: (query) => trainingActive(latestExecution(query.state.data, knownExecution)) ? pollDelay(5000) : false,
   });
   const execution = latestExecution(executionQuery.data, knownExecution);
   // Task Center batches are stopped and resumed from the Task Center (and the experiment's one
@@ -42,7 +43,7 @@ export default function DevelopmentExecution({ project, batch, implemented, know
     queryKey: ['development-results', project, batch.id], queryFn: () => development.results(project, batch.id),
     enabled: resultsEnabled,
     // Partial results change only when a group's last fold finishes.
-    refetchInterval: trainingActive(execution) ? 10000 : false,
+    refetchInterval: trainingActive(execution) ? pollDelay(10000) : false,
   });
   const status = execution?.status;
   useEffect(() => {

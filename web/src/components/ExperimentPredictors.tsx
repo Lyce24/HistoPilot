@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ApiError } from '../api/client';
+import { ApiError, pollDelay } from '../api/client';
 import { experimentStage, experiments, type ExperimentPredictorExecution, type ModelExperiment } from '../api/experiments';
 import { modelEvaluations, predictors, predictorMethodLabel, type FrozenPredictor } from '../api/predictors';
 import { taskCenterHref } from '../api/taskCenter';
@@ -31,7 +31,7 @@ export default function ExperimentPredictors({ project, record, view = 'all' }: 
   const stage = experimentStage(record);
   const managed = record.predictorExecution?.executor === 'task-center';
   const showLibrary = view !== 'progress';
-  const query = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), enabled: showLibrary || !managed, refetchInterval: stage === 'running' && showLibrary ? 30000 : false });
+  const query = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), enabled: showLibrary || !managed, refetchInterval: stage === 'running' && showLibrary ? pollDelay(30000) : false });
   // Runs share the list Apply models reads, so each predictor links to the runs it made.
   const runs = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), enabled: showLibrary });
   const runCounts = (runs.data?.items ?? []).filter((item) => item.lifecycleState === 'active').reduce((counts, item) => counts.set(item.manifest.predictorId, (counts.get(item.manifest.predictorId) ?? 0) + 1), new Map<string, number>());
@@ -118,7 +118,7 @@ function PredictorDetails({ item }: { item: FrozenPredictor }) {
  * it is available after predictor creation closes and nothing trains.
  */
 function SeedEnsembles({ project, record, refresh }: { project: string; record: ModelExperiment; refresh: boolean }) {
-  const query = useQuery({ queryKey: ['seed-ensembles', project, record.id], queryFn: () => predictors.seedEnsembles(project, record.id), refetchInterval: refresh ? 30000 : false });
+  const query = useQuery({ queryKey: ['seed-ensembles', project, record.id], queryFn: () => predictors.seedEnsembles(project, record.id), refetchInterval: refresh ? pollDelay(30000) : false });
   const { busy, error, pending, build } = useSeedEnsembleBuild(project, record);
   const choices = (query.data?.items ?? []).filter((item) => item.seedGroups > 1);
   if (!choices.length) return null;

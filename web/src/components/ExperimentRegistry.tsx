@@ -5,7 +5,7 @@ import { flushSync } from 'react-dom';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { experimentHeadlines } from '../api/experimentResults';
 import ExperimentHeadline, { SeriesHeadline } from './ExperimentHeadline';
-import { ApiError } from '../api/client';
+import { ApiError, pollDelay } from '../api/client';
 import { experiments, experimentExecutionStatus, experimentPollInterval, experimentStatusReason, experimentStage, experimentStageLabel, experimentStatusFilters, experimentStatusLabel, experimentStatusTone } from '../api/experiments';
 import type { CreateExperimentInput, ModelExperiment, ModelExperimentSummary } from '../api/experiments';
 import { experimentRoleHelp, experimentRoleLabel, experimentRoles, filingOf, objectiveRankLabel, objectiveRanks, objectives as objectiveRecords, sameFiling, type ExperimentFiling, type ExperimentRole, type Objective, type ObjectiveRank } from '../api/objectives';
@@ -475,10 +475,10 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
   // The project-wide focus keeps one objective's experiments (or those under none).
   const visible = unscoped.filter((item) => inObjectiveScope(scope, item.objectiveId));
   const scopedObjectives = scope === UNFILED_SCOPE ? [] : scope ? objectiveItems.filter((item) => item.id === scope) : objectiveItems;
-  const comparisonQueries = useQueries({ queries: selected.map((id) => ({ queryKey: ['model-experiment', project, id], queryFn: () => experiments.get(project, id), refetchInterval: 15000 })) });
+  const comparisonQueries = useQueries({ queries: selected.map((id) => ({ queryKey: ['model-experiment', project, id], queryFn: () => experiments.get(project, id), refetchInterval: (query: { state: { data?: ModelExperiment } }) => query.state.data && experimentStage(query.state.data) === 'running' ? pollDelay(15000) : false })) });
   // One headline per experiment; folds, seeds and intervals load when an experiment opens.
   const headlines = useQuery({ queryKey: ['experiment-headlines', project], queryFn: () => experimentHeadlines.list(project),
-    refetchInterval: allItems.some((item) => experimentStage(item) === 'running') ? 30000 : false });
+    refetchInterval: allItems.some((item) => experimentStage(item) === 'running') ? pollDelay(30000) : false });
   const headlineOf = new Map((headlines.data?.items ?? []).map((row) => [row.experimentId, row.batches]));
   const compared = comparisonQueries.flatMap((value) => value.data ? [value.data] : []);
   // A search or status filter shows every match: series and tuning open, objectives too.

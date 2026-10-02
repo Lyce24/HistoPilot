@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { interpretations, type GallerySlide } from '../api/interpretation';
 import { computeActive, computeStatusLabel } from '../api/predictors';
 import { useVisibleElement } from './useVisibleElement';
+import { pollDelay } from '../api/client';
 export function useImageBlob(blob?: Blob) {
   const [image, setImage] = useState<{ blob: Blob; url: string } | null>(null);
   useEffect(() => { if (!blob) return; const url = URL.createObjectURL(blob); setImage({ blob, url }); return () => URL.revokeObjectURL(url); }, [blob]);
@@ -13,7 +14,7 @@ export default function SlideGalleryCard({ project, slide, checked, disabled, se
 }) {
   const { ref, visible } = useVisibleElement<HTMLElement>();
   const thumbnail = useQuery({ queryKey: ['interpretation-gallery-thumbnail', project, slide.slidePath], queryFn: ({ signal }) => interpretations.galleryThumbnail(project, slide.slidePath, signal), enabled: visible, staleTime: 60000, gcTime: 60000 });
-  const execution = useQuery({ queryKey: ['compute-job', project, 'interpretation', interpretationId], queryFn: () => interpretations.execution(project, interpretationId!), enabled: visible && Boolean(interpretationId), refetchInterval: (query) => computeActive(query.state.data) ? 2500 : false });
+  const execution = useQuery({ queryKey: ['compute-job', project, 'interpretation', interpretationId], queryFn: () => interpretations.execution(project, interpretationId!), enabled: visible && Boolean(interpretationId), refetchInterval: (query) => computeActive(query.state.data) ? pollDelay(2500) : false });
   const currentStatus = execution.isError ? 'Status unavailable' : execution.data ? computeStatusLabel(execution.data) : status?.replaceAll('_', ' ');
   const url = useImageBlob(thumbnail.data);
   return <article ref={ref} className={`slide-gallery-card ${checked ? 'is-selected' : ''}`}>

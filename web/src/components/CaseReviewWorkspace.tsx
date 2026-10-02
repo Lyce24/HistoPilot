@@ -11,6 +11,7 @@ import SlideReviewEditor from './SlideReviewEditor';
 import AttentionSlideViewer from './AttentionSlideViewer';
 import { QualitySlide } from './VisualQualityExplorer';
 import './CaseReview.css';
+import { pollDelay } from '../api/client';
 
 interface Props {
   project: string; evaluation: ModelEvaluation; comparisons: ModelEvaluation[]; initial?: Partial<CaseQuery>;
@@ -156,7 +157,7 @@ export function CaseSlideDetail({ project, slide, page }: { project: string; sli
   const attentionPredictor = attentionModel?.predictorId;
   const matches = (item: Interpretation) => Boolean(attentionModel && matchesRunAttention(item, slide, attentionModel));
   const attention = useQuery({ queryKey: ['interpretations', project], queryFn: () => interpretations.list(project), enabled: showAttention && Boolean(attentionPredictor), staleTime: 30000,
-    refetchInterval: (query) => showAttention && query.state.data?.items.some((item) => matches(item) && computeActive(item.execution)) ? 3000 : false });
+    refetchInterval: (query) => showAttention && query.state.data?.items.some((item) => matches(item) && computeActive(item.execution)) ? pollDelay(3000) : false });
   const study = attention.data?.items.find((item) => matches(item) && item.execution?.status === 'completed');
   const pending = attention.data?.items.find((item) => matches(item) && computeActive(item.execution));
   const [region, setRegion] = useState({ x: '0', y: '0', width: '512', height: '512' });

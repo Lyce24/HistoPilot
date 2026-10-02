@@ -12,6 +12,7 @@ import DevelopmentExecution, { OOFPredictionDownloads } from './DevelopmentExecu
 import ApplyConfiguration from './ApplyConfiguration';
 import { EmptyState, ErrorNotice, Icon } from './ui';
 import './ExperimentResults.css';
+import { pollDelay } from '../api/client';
 
 type DesignStrategy = NonNullable<Results['design']>['strategy'];
 /** One assessment run of the design, as its runs and fold tables name it. */
@@ -35,7 +36,7 @@ export default function ExperimentResults({ project, record }: { project: string
     queryKey: ['experiment-results', project, record.id],
     queryFn: () => experimentResults.get(project, record.id),
     // Seeds complete one at a time; the summary only changes when a fold or seed finishes.
-    refetchInterval: stage === 'running' ? 15000 : false,
+    refetchInterval: stage === 'running' ? pollDelay(15000) : false,
     refetchIntervalInBackground: false,
   });
   const [metric, setMetric] = useState<ResultMetric>('auroc');

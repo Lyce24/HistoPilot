@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { access, approveRequest } from '../api/access';
 import type { AgentRequest, ExposureLevel } from '../api/access';
 import { ErrorNotice, Panel } from './ui';
+import { pollDelay } from '../api/client';
 
 export const exposureMeaning: Record<ExposureLevel, string> = {
   none: 'AI agents see nothing of this project.',
@@ -20,7 +21,7 @@ export default function AgentAccess({ project, projectName }: { project: string;
   const client = useQueryClient();
   const exposure = useQuery({ queryKey: ['ai-exposure', project], queryFn: () => access.exposure(project), staleTime: 30_000 });
   const tokens = useQuery({ queryKey: ['agent-tokens', project], queryFn: () => access.tokens(project), staleTime: 30_000 });
-  const requests = useQuery({ queryKey: ['agent-requests', project], queryFn: () => access.requests(project), refetchInterval: 30_000 });
+  const requests = useQuery({ queryKey: ['agent-requests', project], queryFn: () => access.requests(project), refetchInterval: () => pollDelay(30_000) });
   const current = exposure.data?.level ?? 'none';
   const [level, setLevel] = useState<ExposureLevel | null>(null);
   const [typedName, setTypedName] = useState('');

@@ -22,6 +22,7 @@ import RunStatusChip from './RunStatusChip';
 import LegacyRecordNote, { computeCreatedBeforeTaskCenter } from './LegacyRecordNote';
 import { StageCreateButton, StageBackButton, StageContinueButton, StagePage, StageSteps } from './StageWorkflow';
 import './RunWorkspace.css';
+import { pollDelay } from '../api/client';
 
 const METHODS: Record<EvaluationMethod, string> = {
   seed_ensemble: 'Seed ensembles · one per configuration',
@@ -155,7 +156,7 @@ export const batchMemberStatus = (status: string) => memberStatus[status] ?? sta
 export function EvaluationBatchStatus({ project, id, onOpen }: { project: string; id: string; onOpen: (id: string) => void }) {
   const client = useQueryClient();
   const scope = { ownerKind: 'evaluation-batch', ownerId: id, project };
-  const record = useQuery({ queryKey: ['evaluation-batch', project, id], queryFn: () => bulkEvaluations.get(project, id), refetchInterval: (query) => query.state.data && bulkEvaluationActive(query.state.data) ? 15000 : false });
+  const record = useQuery({ queryKey: ['evaluation-batch', project, id], queryFn: () => bulkEvaluations.get(project, id), refetchInterval: (query) => query.state.data && bulkEvaluationActive(query.state.data) ? pollDelay(15000) : false });
   const batch: EvaluationBatch | undefined = record.data;
   const legacy = Boolean(batch?.items.some((item) => computeCreatedBeforeTaskCenter(item.execution)));
   return <><ErrorNotice error={record.error} />{batch ? <>

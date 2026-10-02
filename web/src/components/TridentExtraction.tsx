@@ -29,6 +29,7 @@ import { StagePage, StageSteps } from './StageWorkflow';
 import { readHashParameters } from '../lib/hashRoute';
 import { extractionFeatureInput, type ExtractionFeatureInput } from '../lib/featureSource';
 import './TridentExtraction.css';
+import { pollDelay } from '../api/client';
 
 const stages = [
   { value: 'all', label: 'Full pipeline', description: 'Segment → patch → extract', icon: 'features' },
@@ -87,7 +88,7 @@ export default function TridentExtraction({
     queryKey: [...queryKey, 'jobs'],
     queryFn: () => trident.jobs(project),
     // Runs are followed by their status chip; the list refreshes slowly while one is active.
-    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 10_000 : false,
+    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? pollDelay(10_000) : false,
   });
   const [datasetId, setDatasetId] = useState<string | null>(initialDatasetId ?? null);
   const [slideList, setSlideList] = useState<SlideListSource | null>(null);
@@ -114,7 +115,7 @@ export default function TridentExtraction({
     queryKey: [...queryKey, 'job', selectedId],
     queryFn: () => trident.job(project, selectedId),
     enabled: Boolean(selectedId),
-    refetchInterval: (query) => extractionActive(query.state.data) ? 10_000 : false,
+    refetchInterval: (query) => extractionActive(query.state.data) ? pollDelay(10_000) : false,
   });
   const values = { ...catalog.data?.defaults, ...overrides };
   const task = String(values.task ?? 'all');

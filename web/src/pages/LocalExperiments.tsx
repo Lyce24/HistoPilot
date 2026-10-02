@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { splitModeLabel, unitLabel } from '../lib/labels';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Workspace } from '../api/types';
-import { ApiError } from '../api/client';
+import { ApiError, pollDelay } from '../api/client';
 import type { ProtocolPreview, ProtocolSpec } from '../api/scientific';
 import { experiments, experimentStage, experimentStatusLabel, experimentStatusReason, experimentStatusTone, type ModelExperiment } from '../api/experiments';
 import { lifecycleLabel } from '../api/lifecycle';
@@ -238,7 +238,7 @@ export default function LocalExperiments({ workspace, initialTab = 'setup' }: { 
     return () => { window.removeEventListener('hashchange', update); window.removeEventListener('popstate', update); };
   }, [initialTab]);
   // A started experiment refreshes quickly; a design or finished record does not.
-  const detail = useQuery({ queryKey: ['model-experiment', workspace.project.id, route.id], queryFn: () => experiments.get(workspace.project.id, route.id), enabled: Boolean(route.id), refetchIntervalInBackground: false, refetchInterval: (query) => query.state.data && experimentStage(query.state.data) === 'running' ? 5000 : 30000 });
+  const detail = useQuery({ queryKey: ['model-experiment', workspace.project.id, route.id], queryFn: () => experiments.get(workspace.project.id, route.id), enabled: Boolean(route.id), refetchIntervalInBackground: false, refetchInterval: (query) => pollDelay(query.state.data && experimentStage(query.state.data) === 'running' ? 5000 : 30000) });
   function open(id: string) { window.location.hash = preparationLink('experiments', context, id ? { experiment: id } : {}); setRoute({ id, tab: 'setup', explicitTab: false }); }
   if (!route.id) return <><PreparationNotice context={context} /><ExperimentRegistry project={workspace.project.id} onOpen={open} filters={libraryFilters} onFiltersChange={setLibraryFilters} /></>;
   if (!detail.data) return <div className="clinical-workspace"><StageBackButton onClick={() => open('')}>Back to experiments</StageBackButton><ErrorNotice error={detail.error} />{detail.isPending ? <p role="status">Loading experiment…</p> : null}</div>;

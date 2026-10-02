@@ -2,7 +2,7 @@ import { StageBackButton, StageContinueButton } from './StageActions';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Configuration, FeaturePreview, FeatureSpec } from '../api/scientific';
-import { ApiError } from '../api/client';
+import { ApiError, pollDelay } from '../api/client';
 import { featurePackActive, featurePackSpecKey, packing } from '../api/packing';
 import type { FeaturePackArtifact, FeaturePackJob, FeaturePackJobs, FeaturePackPreview, FeaturePackSpec, FeaturePackState, FeatureValidationReport } from '../api/packing';
 import { configurationVersionLabel } from '../lib/versionLabels';
@@ -246,7 +246,7 @@ export default function FeaturePacking({ project, configuration, configurations,
     queryKey: key,
     queryFn: () => packing.jobs(project),
     // Jobs are followed by their status chip; the list refreshes slowly while one is active.
-    refetchInterval: (query) => query.state.data?.jobs.some(featurePackActive) ? 10_000 : false,
+    refetchInterval: (query) => query.state.data?.jobs.some(featurePackActive) ? pollDelay(10_000) : false,
     refetchIntervalInBackground: true,
   });
   const versionJobs = jobs.data?.jobs.filter((job) => job.featureSetId === featureSetId) ?? [];
@@ -257,12 +257,12 @@ export default function FeaturePacking({ project, configuration, configurations,
   const selectedSummary = versionJobs.find((job) => job.id === selectedId);
   const detail = useQuery({
     queryKey: [...key, 'job', selectedId], queryFn: () => packing.job(project, selectedId), enabled: Boolean(selectedId),
-    refetchInterval: (query) => featurePackActive(query.state.data) || featurePackActive(selectedSummary) ? 10_000 : false,
+    refetchInterval: (query) => featurePackActive(query.state.data) || featurePackActive(selectedSummary) ? pollDelay(10_000) : false,
     refetchIntervalInBackground: true,
   });
   const validation = useQuery({
     queryKey: [...key, 'validation', featureSetId], queryFn: () => packing.validation(project, featureSetId),
-    refetchInterval: activeJobs.length ? 10_000 : false,
+    refetchInterval: activeJobs.length ? pollDelay(10_000) : false,
   });
   const latestCompletion = completedJobs[0];
   const completionKey = latestCompletion ? `${latestCompletion.id}:${latestCompletion.updatedAt}` : '';

@@ -33,6 +33,7 @@ import { preparationLink, preparationContext, type PreparationContext } from '..
 import PreparationNotice from '../components/PreparationNotice';
 import './LocalFeatures.css';
 import { stageEyebrow } from '../lib/roadmap';
+import { pollDelay } from '../api/client';
 export default function LocalFeatures({ workspace: w }: { workspace: Workspace }) {
   const parameters = useHashParameters();
   const context = preparationContext(parameters);
@@ -65,7 +66,7 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest, packReque
     queryKey: ['extractions', project, 'jobs'],
     queryFn: () => trident.jobs(project),
     // Runs are followed by their status chips; the list refreshes slowly while one is active.
-    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? 10_000 : false,
+    refetchInterval: (query) => query.state.data?.jobs.some(extractionActive) ? pollDelay(10_000) : false,
   });
   const runs = extractionJobs.data?.jobs ?? [];
   const activeExtractions = runs.filter(extractionActive);

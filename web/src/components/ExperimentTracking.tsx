@@ -8,6 +8,7 @@ import { downloadJSON } from '../lib/download';
 import CurveChart from './CurveChart';
 import { Badge, ErrorNotice } from './ui';
 import './ExperimentTracking.css';
+import { pollDelay } from '../api/client';
 
 export { ResourceCards } from './RunResourceUsage';
 
@@ -83,7 +84,7 @@ export function runHistoryOptions(project: string, batchId: string, run: Trainin
   const active = ['queued', 'running'].includes(run.status);
   // A terminal transition must read the final epoch even when the poll stopped
   // just before the worker wrote it. The status key also refreshes resumed runs.
-  return queryOptions({ queryKey: ['training-history', project, batchId, run.id, run.status], queryFn: () => development.history(project, batchId, run.id), refetchInterval: active ? 3000 : false });
+  return queryOptions({ queryKey: ['training-history', project, batchId, run.id, run.status], queryFn: () => development.history(project, batchId, run.id), refetchInterval: active ? pollDelay(3000) : false });
 }
 
 const wholeEpoch = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;

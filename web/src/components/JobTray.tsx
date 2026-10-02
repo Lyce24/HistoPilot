@@ -4,6 +4,7 @@ import { formatDuration, taskCenter, taskCenterHref, taskCenterKeys, taskCenterW
 import { useRunRollup } from './RunStatusChip';
 import { Badge, ErrorNotice, Icon } from './ui';
 import './JobTray.css';
+import { pollDelay } from '../api/client';
 
 interface JobLink { id: string; name: string; link: string; detail: string; status: string }
 
@@ -45,7 +46,7 @@ export default function JobTray({ inline = false }: { inline?: boolean }) {
   const machine = useRunRollup({});
   const rollup = machine.data;
   const live = (rollup?.live ?? 0) > 0;
-  const tasks = useQuery({ queryKey: taskCenterKeys.tasks('tray'), queryFn: () => taskCenter.tasks({ state: 'live', limit: 5 }), enabled: open, refetchIntervalInBackground: false, refetchInterval: live ? 5000 : 30000 });
+  const tasks = useQuery({ queryKey: taskCenterKeys.tasks('tray'), queryFn: () => taskCenter.tasks({ state: 'live', limit: 5 }), enabled: open, refetchIntervalInBackground: false, refetchInterval: () => pollDelay(live ? 5000 : 30000) });
   const loading = machine.isPending;
   const error = machine.error ?? null;
   const text = jobTrayStatus(rollup);

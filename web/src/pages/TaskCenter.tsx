@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useId, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ApiError } from '../api/client';
+import { ApiError, pollDelay } from '../api/client';
 import type { Workspace } from '../api/types';
 import { experimentPollInterval, experiments } from '../api/experiments';
 import {
@@ -428,7 +428,7 @@ function useModalKeys(dialog: RefObject<HTMLElement | null>, onClose: () => void
  */
 export function TaskDetails({ id, onClose, actions, project = '', navigate = noNavigation }: { id: string; onClose: () => void; actions?: Actions; project?: string; navigate?: Navigate }) {
   // Concluded tasks awaiting an automatic resume keep being read until they are requeued.
-  const detail = useQuery({ queryKey: taskCenterKeys.task(id), queryFn: () => taskCenter.task(id), refetchIntervalInBackground: false, refetchInterval: (query) => taskLive(query.state.data) ? 3000 : query.state.data?.awaitingRequeue ? 5000 : false });
+  const detail = useQuery({ queryKey: taskCenterKeys.task(id), queryFn: () => taskCenter.task(id), refetchIntervalInBackground: false, refetchInterval: (query) => taskLive(query.state.data) ? pollDelay(3000) : query.state.data?.awaitingRequeue ? pollDelay(5000) : false });
   const task = detail.data;
   const now = useNow(Boolean(task && ['starting', 'running', 'stopping'].includes(task.state)));
   const request = task?.request;
@@ -662,7 +662,7 @@ export function TaskHistory({ project, actions, quiet = false, route = {}, navig
   const [page, setPage] = useState(0);
   const [ref, visible] = useInView<HTMLDivElement>();
   const params = { state, project: route.project, kind: kind || undefined, limit: historyPageSize, offset: page * historyPageSize };
-  const history = useQuery({ queryKey: taskCenterKeys.history(params), queryFn: () => taskCenter.history(params), refetchInterval: visible ? 15000 : false, refetchIntervalInBackground: false });
+  const history = useQuery({ queryKey: taskCenterKeys.history(params), queryFn: () => taskCenter.history(params), refetchInterval: visible ? pollDelay(15000) : false, refetchIntervalInBackground: false });
   const groups = history.data?.groups ?? [];
   const total = history.data?.total ?? 0;
   const change = (next: TaskCenterRoute) => { navigate({ ...route, ...next }); setPage(0); };
@@ -718,7 +718,7 @@ function OwnerStateBadge({ owner }: { owner: Pick<TaskOwner, 'held' | 'counts'> 
 
 /** One owner's whole story, for links from stage pages: counts, queue controls and every task. */
 function OwnerFocus({ ownerKey, project, actions, navigate, route }: { ownerKey: string; project: string; actions: Actions; navigate: Navigate; route: TaskCenterRoute }) {
-  const owner = useQuery({ queryKey: taskCenterKeys.owner(ownerKey), queryFn: () => taskCenter.owner(ownerKey), refetchIntervalInBackground: false, refetchInterval: (query) => { const counts = taskCounts(query.state.data?.counts); return counts.running + counts.queued + counts.blocked ? 3000 : 30000; } });
+  const owner = useQuery({ queryKey: taskCenterKeys.owner(ownerKey), queryFn: () => taskCenter.owner(ownerKey), refetchIntervalInBackground: false, refetchInterval: (query) => { const counts = taskCounts(query.state.data?.counts); return pollDelay(counts.running + counts.queued + counts.blocked ? 3000 : 30000); } });
   const data = owner.data;
   if (owner.isPending) return <p role="status">Loading this owner…</p>;
   if (!data) return <ErrorNotice error={owner.error} />;
@@ -761,7 +761,7 @@ export default function TaskCenter({ workspace }: { workspace: Workspace }) {
   const live = { refetchIntervalInBackground: false } as const;
   // One read for the summary, running tasks and the live queue.
   const snapshot = useQuery({ queryKey: taskCenterKeys.snapshot, queryFn: taskCenter.snapshot, ...live, refetchInterval: (query) => query.state.error ? 10000 : taskCenterPollInterval(query.state.data?.summary) });
-  const capacity = useQuery({ queryKey: taskCenterKeys.capacity, queryFn: taskCenter.capacity, ...live, refetchInterval: 30000 });
+  const capacity = useQuery({ queryKey: taskCenterKeys.capacity, queryFn: taskCenter.capacity, ...live, refetchInterval: () => pollDelay(30000) });
   const actions = useTaskCenterActions([['model-experiment', project], ['model-experiments', project], ['development-batches', project], ['training-execution', project]]);
   const client = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, pollDelay } from '../api/client';
 import { operations } from '../api/operations';
 import type { ArchiveAction, ArchiveJob, ArchiveRequest, SourceRegistration } from '../api/operations';
 import type { Workspace } from '../api/types';
@@ -104,9 +104,9 @@ export default function LocalOperations({ workspace }: { workspace: Workspace })
   const [action, setAction] = useState<ArchiveAction>('export');
   // The inventory only informs Export, which the Task Center holds until the project's active
   // jobs finish: read it for export, often while jobs run and rarely otherwise.
-  const inventory = useQuery({ queryKey: ['operations', project], queryFn: () => operations.inventory(project), enabled: action === 'export', refetchInterval: (query) => query.state.data?.jobs.some((job) => active.has(job.job.status) || job.job.busy) ? 10_000 : 60_000 });
+  const inventory = useQuery({ queryKey: ['operations', project], queryFn: () => operations.inventory(project), enabled: action === 'export', refetchInterval: (query) => query.state.data?.jobs.some((job) => active.has(job.job.status) || job.job.busy) ? pollDelay(10_000) : pollDelay(60_000) });
   const sources = useQuery({ queryKey: ['operation-sources', project], queryFn: () => operations.sources(project), staleTime: 30_000 });
-  const archives = useQuery({ queryKey: ['operation-archives', project], queryFn: () => operations.archives(project), refetchInterval: (query) => query.state.data?.jobs.some((job) => active.has(job.status)) ? 10_000 : 30_000 });
+  const archives = useQuery({ queryKey: ['operation-archives', project], queryFn: () => operations.archives(project), refetchInterval: (query) => query.state.data?.jobs.some((job) => active.has(job.status)) ? pollDelay(10_000) : pollDelay(30_000) });
   const [archivePath, setArchivePath] = useState('');
   const [destination, setDestination] = useState('');
   const [busy, setBusy] = useState(false);

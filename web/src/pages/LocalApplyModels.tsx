@@ -25,6 +25,7 @@ import { stageEyebrow } from '../lib/roadmap';
 import { rememberWorkspaceLocation, useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import LocalEvaluationSetup from './LocalEvaluationSetup';
 import './ModelChains.css';
+import { pollDelay } from '../api/client';
 
 /** What a new setup starts from: the experiment, predictor and cohort a link named. */
 interface SetupSeed { key: number; experiment?: string; predictor?: string; cohort?: string }
@@ -47,7 +48,7 @@ export default function LocalApplyModels({ workspace }: { workspace: Workspace }
   // Lists refresh quickly while their own jobs run and slowly once they finish.
   const batches = useQuery({ queryKey: ['evaluation-batches', project], queryFn: () => bulkEvaluations.list(project, true), refetchIntervalInBackground: false, refetchInterval: (query) => bulkEvaluationPollInterval(query.state.data) });
   const running = Boolean(batches.data?.items.some(bulkEvaluationActive));
-  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchIntervalInBackground: false, refetchInterval: () => running ? 30000 : 120000 });
+  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchIntervalInBackground: false, refetchInterval: () => pollDelay(running ? 30000 : 120000) });
   const experimentRegistry = useQuery({ queryKey: ['model-experiment-summaries', project], queryFn: () => experiments.summaries(project), refetchIntervalInBackground: false, refetchInterval: (query) => experimentPollInterval(query.state.data) });
   const cohorts = useQuery({ queryKey: ['evaluation-cohorts', project], queryFn: () => evaluation.list(project) });
   const records = useQuery({ queryKey: ['model-evaluations', project], queryFn: () => modelEvaluations.list(project), refetchIntervalInBackground: false, refetchInterval: (query) => computePollInterval(query.state.data?.items) });

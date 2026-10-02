@@ -1,8 +1,8 @@
 import { Fragment, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { predictors, predictorMethodLabel, predictorSeedLabel, computeActive, computePollInterval, computeStatusLabel, type FrozenPredictor, type RefitBuild } from '../api/predictors';
+import { predictors, predictorMethodLabel, predictorSeedLabel, computeActive, computeStatusLabel, type FrozenPredictor, type RefitBuild } from '../api/predictors';
 import { predictorSourceKey } from '../api/predictorBuilds';
-import { ApiError } from '../api/client';
+import { ApiError, pollDelay } from '../api/client';
 import type { Workspace } from '../api/types';
 import { lifecycleLabel, type LifecycleState } from '../api/lifecycle';
 import { Badge, ErrorNotice, PageHeader, Panel } from '../components/ui';
@@ -34,9 +34,9 @@ function PredictorWorkspace({ workspace, sourceExperiment, sourcePredictor, sour
   const project = workspace.project.id;
   const client = useQueryClient();
   // Poll only while refits run: new predictors appear as they finish, nothing changes otherwise.
-  const refits = useQuery({ queryKey: ['refit-builds', project], queryFn: () => predictors.refits(project), refetchInterval: (query) => computePollInterval(query.state.data?.items) === 5000 ? 10000 : false });
+  const refits = useQuery({ queryKey: ['refit-builds', project], queryFn: () => predictors.refits(project), refetchInterval: (query) => (query.state.data?.items ?? []).some((item) => computeActive(item.execution)) ? pollDelay(10000) : false });
   const refitsActive = (refits.data?.items ?? []).some((item) => computeActive(item.execution));
-  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchInterval: refitsActive ? 15000 : false });
+  const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project), refetchInterval: refitsActive ? pollDelay(15000) : false });
   const choices = useQuery({ queryKey: ['predictor-choices', project], queryFn: () => predictors.choices(project), enabled: !historical, refetchInterval: false });
   // Seed groups become choices when their training ends: re-read them when this project's
   // training settles in the Task Center, instead of polling.
