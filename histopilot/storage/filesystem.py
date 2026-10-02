@@ -21,6 +21,13 @@ class FilesystemError(ValueError):
 SCOPED_ROOTS: ContextVar[tuple[Path, ...] | None] = ContextVar("scoped_roots", default=None)
 
 
+def within(path, root) -> bool:
+    """``Path(path).is_relative_to(root)`` for normalized paths, as the same lexical test on
+    strings: a Path per parent made checking thousands of slide paths take seconds."""
+    text, base = os.fspath(path), os.fspath(root)
+    return text == base or text.startswith(base if base.endswith(os.sep) else base + os.sep)
+
+
 class LocalFilesystem:
     LIST_LIMIT = 200
 
@@ -61,10 +68,10 @@ class LocalFilesystem:
         return resolved
 
     def _contains(self, path: Path) -> bool:
-        if not any(path.is_relative_to(root) for root in self.roots):
+        if not any(within(path, root) for root in self.roots):
             return False
         scoped = SCOPED_ROOTS.get()
-        return scoped is None or any(path.is_relative_to(root) for root in scoped)
+        return scoped is None or any(within(path, root) for root in scoped)
 
     def create_directory(self, parent_value: str, name: str) -> dict:
         """Create exactly one new child; never follow links or replace an existing entry."""

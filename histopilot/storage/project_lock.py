@@ -30,12 +30,61 @@ class StorageError(ValueError):
         self.findings = findings
 
 
+def _symlink_refused() -> StorageError:
+    return StorageError(
+        "Managed project storage cannot contain symbolic links.", "STORAGE_UNSAFE_PATH", 403
+    )
+
+
 def reject_symlink_components(path: Path) -> None:
-    for component in (path, *path.parents):
-        if component.is_symlink():
-            raise StorageError(
-                "Managed project storage cannot contain symbolic links.", "STORAGE_UNSAFE_PATH", 403
-            )
+    """Refuse a path when it, or any folder above it, is a symbolic link."""
+    text = os.fspath(Path(path))
+    while True:
+        if os.path.islink(text):
+            raise _symlink_refused()
+        parent = os.path.dirname(text)
+        if not parent or parent == text:
+            return
+        text = parent
+
+
+class SymlinkCheck:
+    """``reject_symlink_components`` for many paths. Each folder is checked once, and a
+    folder's entries are read in one listing instead of one ``lstat`` per file: for the
+    thousands of slides of a Windows-mounted or network disk, milliseconds, not seconds."""
+
+    def __init__(self):
+        self._clear: set[str] = set()
+        self._links: dict[str, frozenset | None] = {}
+
+    def __call__(self, path) -> None:
+        text = os.fspath(Path(path))
+        folder, name = os.path.split(text)
+        links = self._links_in(folder) if folder and name else None
+        if os.path.islink(text) if links is None else name in links:
+            raise _symlink_refused()
+        checked = []
+        while folder and folder not in self._clear:
+            if os.path.islink(folder):
+                raise _symlink_refused()
+            checked.append(folder)
+            parent = os.path.dirname(folder)
+            if parent == folder:
+                break
+            folder = parent
+        # Every folder checked here has only clear folders above it.
+        self._clear.update(checked)
+
+    def _links_in(self, folder: str):
+        if folder not in self._links:
+            try:
+                with os.scandir(folder) as entries:
+                    self._links[folder] = frozenset(
+                        entry.name for entry in entries if entry.is_symlink()
+                    )
+            except OSError:
+                self._links[folder] = None
+        return self._links[folder]
 
 
 def fsync_directory(path: Path) -> None:

@@ -11,7 +11,8 @@ import json
 import math
 import os
 import stat
-from collections import defaultdict
+import threading
+from collections import OrderedDict, defaultdict
 from pathlib import Path
 
 from histopilot.application.development import development_plans
@@ -61,7 +62,12 @@ def finding(code, message):
 
 
 def lifecycle_document(store, document):
-    state = store.lifecycle.read()["records"].get(f"configuration:{document['id']}", {})
+    # A list reads the project's lifecycle once, not once per record.
+    records = read_sessions.remember(
+        ("lifecycle-records", read_sessions.store_key(store)),
+        lambda: store.lifecycle.read()["records"],
+    )
+    state = records.get(f"configuration:{document['id']}", {})
     return {**document, "lifecycleState": state.get("state", "active")}
 
 
@@ -82,13 +88,34 @@ def _file_path(path, root):
     return path
 
 
+# Evidence already checked for NaN and infinities, by file identity. Finished runs' plans,
+# states and receipts are written once, and an experiment page reads every one of them.
+_CHECKED: OrderedDict = OrderedDict()
+_CHECKED_LOCK = threading.Lock()
+_CHECKED_LIMIT = 16384
+
+
+def _file_identity(path: Path) -> tuple:
+    info = os.stat(path)
+    return (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+
 def read_evidence(path, root):
     path = _file_path(path, root)
     try:
+        before = _file_identity(path)
         value = json.loads(read_file_bounded(path, 32 * 1024 * 1024))
         if not isinstance(value, dict):
             raise ValueError
-        content_hash(value)  # Reject NaN/Infinity in evidence as well as in scientific records.
+        with _CHECKED_LOCK:
+            checked = before in _CHECKED
+        if not checked or _file_identity(path) != before:
+            content_hash(value)  # Reject NaN/Infinity in evidence as well as in scientific records.
+            if _file_identity(path) == before:
+                with _CHECKED_LOCK:
+                    _CHECKED[before] = True
+                    while len(_CHECKED) > _CHECKED_LIMIT:
+                        _CHECKED.popitem(last=False)
         return value
     except (OSError, ValueError, TypeError) as error:
         raise StorageError(
@@ -300,7 +327,9 @@ class PredictorService:
             groups[(run["candidateId"], run["trainingSeed"], split["seed"])].append(run)
         return groups
 
-    def choices(self):
+    def choices(self, experiment_id=None):
+        """Every configuration and seed group that can make a predictor; ``experiment_id``
+        reads only that experiment's batches and their evidence."""
         items = []
         lifecycle = self.store.lifecycle.read()["records"]
         predictors = {
@@ -317,13 +346,15 @@ class PredictorService:
                 refits[key] = item["id"]
         for batch in self.store.list_configurations("mil-batch"):
             manifest = batch["manifest"]
-            experiment_id = manifest["spec"].get("experimentId") or f"legacy-{batch['id']}"
-            if lifecycle.get(f"draft:{experiment_id}", {}).get("state", "active") != "active":
+            owner = manifest["spec"].get("experimentId") or f"legacy-{batch['id']}"
+            if experiment_id is not None and owner != experiment_id:
+                continue
+            if lifecycle.get(f"draft:{owner}", {}).get("state", "active") != "active":
                 continue
             selected_candidate = None
             select_best = manifest["spec"].get("candidateSelection") == "best_validation"
             try:
-                experiment = self._experiment(experiment_id, batch)
+                experiment = self._experiment(owner, batch)
                 folder = self.store.folder / "training" / batch["id"]
                 state_path = folder / "state.json"
                 state = read_evidence(state_path, folder) if state_path.exists() else {}
@@ -344,7 +375,7 @@ class PredictorService:
                 )
             candidates = {row["id"]: row for row in manifest["configurations"]}
             for (candidate, training_seed, split_seed), runs in self._groups(manifest).items():
-                group = (experiment_id, batch["id"], candidate, training_seed, split_seed)
+                group = (owner, batch["id"], candidate, training_seed, split_seed)
                 existing = {
                     method: predictors[(*group, method)]["id"]
                     for method in ("ensemble", "refit")
@@ -377,7 +408,7 @@ class PredictorService:
                 )
                 items.append(
                     {
-                        "experimentId": experiment_id,
+                        "experimentId": owner,
                         "experimentName": experiment["name"],
                         "batchId": batch["id"],
                         "batchName": manifest["spec"]["batchName"],
@@ -408,7 +439,7 @@ class PredictorService:
     def seed_ensemble_choices(self, experiment_id=None):
         """Configurations whose seed groups can pool into one seed-ensemble predictor."""
         grouped = defaultdict(list)
-        for item in self.choices()["items"]:
+        for item in self.choices(experiment_id)["items"]:
             if experiment_id is None or item["experimentId"] == experiment_id:
                 grouped[(item["experimentId"], item["batchId"], item["candidateId"])].append(item)
         existing = {

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import stat
@@ -27,11 +28,13 @@ from histopilot.application.project_outputs import overlaps as _overlaps
 from histopilot.application.project_outputs import protected_output
 from histopilot.schemas.feature_packs import FeaturePackSpec
 from histopilot.schemas.features import FeatureSpec
+from histopilot.storage import read_sessions
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.io import content_hash, read_file_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import (
     StorageError,
+    SymlinkCheck,
     ensure_managed_directory,
     reject_symlink_components,
     writer_lock,
@@ -835,12 +838,15 @@ class FeaturePackService:
                 hit = _SOURCE_FINDINGS.get(key)
             if hit is not None and time.monotonic() - hit[0] < SOURCE_FINDINGS_SECONDS:
                 return [dict(item) for item in hit[1]]
-        findings = self._check_sources(configuration)
+        # A bundle and each of its packs check the same feature version: once per request.
+        findings = read_sessions.remember(
+            ("source-findings", *key), lambda: self._check_sources(configuration)
+        )
         with _CACHE_LOCK:
             if len(_SOURCE_FINDINGS) > 256:
                 _SOURCE_FINDINGS.clear()
             _SOURCE_FINDINGS[key] = (time.monotonic(), [dict(item) for item in findings])
-        return findings
+        return [dict(item) for item in findings]
 
     def _check_sources(self, configuration: dict) -> list[dict]:
         findings = []
@@ -867,11 +873,14 @@ class FeaturePackService:
             if "coordinateFile" in item
         ]
         inputs += [(item["path"], item) for item in manifest.get("provenance", [])]
+        reject_links = SymlinkCheck()
         for value, expected in inputs:
             try:
                 path = Path(value)
-                reject_symlink_components(path)
-                if not self.outputs._contains(path.resolve(strict=True)):
+                reject_links(path)
+                # With no link anywhere on it, the path resolves to its normalized form; a
+                # missing file fails at stat() below, as resolve(strict=True) failed before.
+                if not self.outputs._contains(Path(os.path.normpath(os.path.abspath(path)))):
                     raise ValueError("Source moved outside configured roots")
                 info = path.stat()
                 if not stat.S_ISREG(info.st_mode) or any(

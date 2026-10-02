@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections import Counter, defaultdict
+import threading
+from collections import Counter, OrderedDict, defaultdict
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -43,6 +44,15 @@ def _representation(feature):
         "encoderId": manifest.get("layout", {}).get("encoderId")
         or manifest.get("spec", {}).get("encoderId"),
     }
+
+
+# A cohort frozen without a development protocol is prepared from frozen records alone (its
+# datasets, their artifacts and its Targets & splits), so its review stays the same until
+# one of those records is archived, trashed or restored, which changes the project's
+# lifecycle revision. A review that failed is never kept.
+_REVIEWS: OrderedDict = OrderedDict()
+_REVIEWS_LOCK = threading.Lock()
+_REVIEWS_LIMIT = 4096
 
 
 def slide_sources(store, dataset, rows, selected):
@@ -854,9 +864,27 @@ class EvaluationService:
             before_publish=check,
         )
 
+    def _review_key(self, document):
+        spec = document["manifest"].get("spec")
+        if not isinstance(spec, dict) or spec.get("protocolId"):
+            return None
+        revision = read_sessions.remember(
+            ("lifecycle-revision", read_sessions.store_key(self.store)),
+            lambda: self.store.lifecycle.read()["revision"],
+        )
+        return (str(self.store.folder), document["id"], document.get("contentHash"), revision)
+
     def _resolve(self, document):
         if document["manifest"].get("kind") != "evaluation-cohort":
             raise StorageError("Test cohort not found.", "EVALUATION_NOT_FOUND", 404)
+        key = self._review_key(document)
+        with _REVIEWS_LOCK:
+            kept = _REVIEWS.get(key) if key else None
+            if kept is not None:
+                _REVIEWS.move_to_end(key)
+        if kept is not None:
+            current, findings = json.loads(kept)
+            return {**document, "current": current, "findings": findings, "executionEnabled": False}
         try:
             preview, _guards = self._prepare(
                 EvaluationSpec.model_validate(document["manifest"]["spec"], context=STORED)
@@ -868,6 +896,12 @@ class EvaluationService:
             findings = [
                 {"severity": "error", "code": "EVALUATION_INPUT_UNAVAILABLE", "message": str(error)}
             ]
+            key = None
+        if key:
+            with _REVIEWS_LOCK:
+                _REVIEWS[key] = json.dumps([current, findings])
+                while len(_REVIEWS) > _REVIEWS_LIMIT:
+                    _REVIEWS.popitem(last=False)
         return {**document, "current": current, "findings": findings, "executionEnabled": False}
 
     def get(self, identity):

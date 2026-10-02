@@ -11,8 +11,9 @@ from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.imports import SLIDE_EXTENSIONS
 from histopilot.application.predictors import PredictorService, reference
 from histopilot.schemas.interpretation import InterpretationSlide
-from histopilot.storage.filesystem import FilesystemError
-from histopilot.storage.project_lock import StorageError, reject_symlink_components
+from histopilot.storage import read_sessions
+from histopilot.storage.filesystem import FilesystemError, within
+from histopilot.storage.project_lock import StorageError, SymlinkCheck, reject_symlink_components
 from histopilot.viewer.slide_images import allowed_file
 
 MAX_ENTRIES = 20000
@@ -108,6 +109,7 @@ class InterpretationGalleryService:
             )
             records = self._records(dataset_id) if records is None else records
             paths = []
+            reject_links = SymlinkCheck()
             for row in records:
                 value = row.get("slidePath")
                 if value is None:
@@ -122,7 +124,7 @@ class InterpretationGalleryService:
                     or path.suffix.lower() not in IMAGE_EXTENSIONS
                 ):
                     raise ValueError("The dataset contains an invalid recorded slide path.")
-                reject_symlink_components(path)
+                reject_links(path)
                 if not self.filesystem._contains(path):
                     raise ValueError(
                         "The dataset's recorded slides are outside configured data roots."
@@ -135,7 +137,7 @@ class InterpretationGalleryService:
                 try:
                     folder = allowed_folder(self.filesystem, declared)
                     if folder == Path(folder.anchor) or any(
-                        not path.is_relative_to(folder) for path in paths
+                        not within(path, folder) for path in paths
                     ):
                         raise ValueError(
                             "The saved folder does not contain this dataset's recorded slides."
@@ -169,6 +171,7 @@ class InterpretationGalleryService:
         }
         return {**metadata, "slideFolderFinding": finding}
 
+    @read_sessions.reads
     def sources(self):
         items = []
         for bundle in self.bundles.list()["items"]:
@@ -217,6 +220,7 @@ class InterpretationGalleryService:
             )
         return {"items": items}
 
+    @read_sessions.reads
     def dataset_sources(self):
         """Frozen datasets as slide sources: features may come from any compatible bundle."""
         items = []

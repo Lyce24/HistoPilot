@@ -5,6 +5,10 @@ bytes. A project-wide gate serializes review/commit with new references and laun
 """
 
 import json
+import os
+import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
 from histopilot.application.bulk_evaluations import BulkEvaluationService
@@ -13,6 +17,7 @@ from histopilot.application.extractions import ExtractionService
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.application.training import TrainingService, run_processes
 from histopilot.schemas.lifecycle import ApplyCleanup, CancelCleanupJob, CleanupSelection
+from histopilot.storage import read_sessions
 from histopilot.storage.io import content_hash, read_file_bounded
 from histopilot.storage.lifecycle import LifecycleStore, lifecycle_guard
 from histopilot.storage.project_lock import StorageError
@@ -38,6 +43,110 @@ def _strings(value):
             pending.extend(item.values())
         elif isinstance(item, (list, tuple)):
             pending.extend(item)
+
+
+# Every record ID is a lowercase kind, a hyphen and hex: draft-<uuid4 hex>, dataset- and
+# configuration-<sha256>, pack-<sha256>, and packing-, extraction- or project-<uuid4 hex>.
+# A document refers to a record by a string equal to its ID, so only strings of this shape
+# can be references, and serialized JSON shows each such string as one quoted token.
+_ID_SHAPE = re.compile(r"[a-z]+(?:-[a-z]+)*-[0-9a-f]{16,}")
+_QUOTED_ID = re.compile(r'"([a-z]+(?:-[a-z]+)*-[0-9a-f]{16,})"')
+
+
+def _ids_in(value) -> set:
+    """The ID-shaped strings of a JSON value, keys included, as ``_strings`` would find them."""
+    return set(_QUOTED_ID.findall(json.dumps(value)))
+
+
+class _PlanFile:
+    """A job's plan.json in a cleanup document: its IDs are read once per version of the file."""
+
+    __slots__ = ("path",)
+
+    def __init__(self, path: Path):
+        self.path = path
+
+
+# Plan files are written once at launch, so their IDs are kept by file identity.
+_PLAN_IDS: OrderedDict = OrderedDict()
+_PLAN_IDS_LOCK = threading.Lock()
+_PLAN_IDS_LIMIT = 8192
+
+
+def _plan_ids(path: Path) -> set:
+    try:
+        info = os.stat(path, follow_symlinks=False)
+        signature = (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+    except FileNotFoundError:
+        return set()
+    except OSError:
+        signature = None
+    if signature is not None and os.path.isfile(path) and not os.path.islink(path):
+        with _PLAN_IDS_LOCK:
+            known = _PLAN_IDS.get(signature)
+            if known is not None:
+                _PLAN_IDS.move_to_end(signature)
+                return known
+    # Unreadable or malformed evidence still blocks cleanup, as it always has.
+    ids = _ids_in(_read_optional(path))
+    if signature is not None:
+        with _PLAN_IDS_LOCK:
+            _PLAN_IDS[signature] = ids
+            while len(_PLAN_IDS) > _PLAN_IDS_LIMIT:
+                _PLAN_IDS.popitem(last=False)
+    return ids
+
+
+# A content-addressed record (a dataset or configuration) keeps these fields for good; its
+# version label can change, so it is read every time.
+_FIXED_FIELDS = frozenset(
+    {"id", "projectId", "contentHash", "createdAt", "manifest", "artifacts", "parentId"}
+)
+_RECORD_IDS: OrderedDict = OrderedDict()
+_RECORD_IDS_LIMIT = 65536
+
+
+def _record_ids(record: dict) -> set:
+    if not isinstance(record.get("contentHash"), str) or not isinstance(record.get("id"), str):
+        return _ids_in(record)
+    key = (record["id"], record["contentHash"])
+    with _PLAN_IDS_LOCK:
+        fixed = _RECORD_IDS.get(key)
+        if fixed is not None:
+            _RECORD_IDS.move_to_end(key)
+    if fixed is None:
+        fixed = frozenset(
+            _ids_in({name: value for name, value in record.items() if name in _FIXED_FIELDS})
+        )
+        with _PLAN_IDS_LOCK:
+            _RECORD_IDS[key] = fixed
+            while len(_RECORD_IDS) > _RECORD_IDS_LIMIT:
+                _RECORD_IDS.popitem(last=False)
+    varying = {name: value for name, value in record.items() if name not in _FIXED_FIELDS}
+    return set(fixed) | (_ids_in(varying) if varying else set())
+
+
+def _references(document, *, exact: bool) -> set:
+    """Strings of a cleanup document that may name a record. ``exact`` walks every string
+    (``_strings``), for projects holding an ID of any other shape."""
+    parts = document if isinstance(document, list) else [document]
+    if exact:
+        return {
+            value
+            for part in parts
+            for value in _strings(
+                _read_optional(part.path) if isinstance(part, _PlanFile) else part
+            )
+        }
+    found = set()
+    for part in parts:
+        if isinstance(part, _PlanFile):
+            found |= _plan_ids(part.path)
+        elif isinstance(part, dict):
+            found |= _record_ids(part)
+        else:
+            found |= _ids_in(part)
+    return found
 
 
 def _read_optional(path: Path):
@@ -118,8 +227,10 @@ class CleanupService:
         self.compute = compute or ComputeJobService(store, filesystem)
         self.evaluation_batches = evaluation_batches or BulkEvaluationService(store, filesystem)
 
+    @read_sessions.reads
     def _catalog(self, *, graph=True):
-        """``graph=False`` skips the dependency graph for job-status views."""
+        """``graph=False`` skips the dependency graph for job-status views. One read session
+        serves the whole catalog, so each job's status is read once."""
         snapshot = self.metadata.read()
         items, documents, aliases = {}, {}, {}
 
@@ -236,13 +347,13 @@ class CleanupService:
                         legacy=execution.get("executor") != "task-center",
                     )
                     if graph:
-                        documents[key] = [record, _read_optional(folder / "plan.json")]
+                        documents[key] = [record, _PlanFile(folder / "plan.json")]
             elif manifest["kind"] in {
                 "predictor-refit",
                 "model-evaluation",
                 "model-interpretation",
             }:
-                execution = self.compute.status(record["id"], include_inactive=True)
+                execution = self.compute.status(record["id"], include_inactive=True, record=record)
                 if execution["status"] != "not_started":
                     self._job(
                         items[key],
@@ -254,7 +365,7 @@ class CleanupService:
                     )
                 if graph:
                     folder = self.store.folder / "compute-jobs" / record["id"]
-                    documents[key] = [record, _read_optional(folder / "plan.json")]
+                    documents[key] = [record, _PlanFile(folder / "plan.json")]
             elif manifest["kind"] == "evaluation-batch":
                 execution = self.evaluation_batches.get(record["id"], include_inactive=True)
                 status = execution["status"]
@@ -300,9 +411,10 @@ class CleanupService:
 
         if len(items) > 20000:
             raise StorageError("Too many records to review cleanup safely.", "CLEANUP_LIMIT", 413)
+        exact = not all(_ID_SHAPE.fullmatch(identity) for identity in aliases)
         for key, document in documents.items() if graph else ():
             references = set()
-            for identity in _strings(document):
+            for identity in _references(document, exact=exact):
                 owners = aliases.get(identity, set())
                 if identity.startswith("pack-"):
                     if key in owners:

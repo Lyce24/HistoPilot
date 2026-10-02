@@ -710,3 +710,55 @@ def test_review_mode_never_allows_development_slides(evaluation):
     result = preview(service, {**spec, "purpose": "review", "target": None, "eligibility": []})
     assert not result["canFreeze"]
     assert "DEVELOPMENT_SLIDE_OVERLAP" in codes(result)
+
+
+def test_frozen_independent_cohorts_are_reviewed_once_until_a_record_changes(
+    evaluation, monkeypatch
+):
+    service, spec, _source = evaluation
+    independent = {
+        key: value
+        for key, value in spec.items()
+        if key not in {"protocolId", "developmentFeatureBundleId", "featureBundleId"}
+    }
+    item = draft(service, independent)
+    reviewed = service.preview(item["id"], 1)
+    assert reviewed["canFreeze"], reviewed["findings"]
+    frozen = service.freeze(item["id"], 1, reviewed["previewHash"], "independent-cohort")
+    prepared = []
+    original = type(service)._prepare
+
+    def counted(self, value):
+        prepared.append(value.protocolId)
+        return original(self, value)
+
+    monkeypatch.setattr(type(service), "_prepare", counted)
+    first = {row["id"]: row for row in service.list()["items"]}[frozen["id"]]
+    assert first["current"] is True and len(prepared) == 1
+    again = {row["id"]: row for row in service.list()["items"]}[frozen["id"]]
+    assert again == first and len(prepared) == 1
+    # Archiving or restoring any record reviews the cohort again.
+    lifecycle = service.store.lifecycle
+    lifecycle.apply(
+        {f"configuration:{frozen['id']}": "archived"},
+        operation_id="archive-cohort",
+        request_hash="a" * 64,
+        expected_revision=lifecycle.read()["revision"],
+    )
+    service.get(frozen["id"])
+    assert len(prepared) == 2
+    # A review that failed is never kept.
+    monkeypatch.setattr(
+        service.store,
+        "get_dataset",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(StorageError("Gone.", "DATASET_GONE")),
+    )
+    lifecycle.apply(
+        {f"configuration:{frozen['id']}": "active"},
+        operation_id="restore-cohort",
+        request_hash="b" * 64,
+        expected_revision=lifecycle.read()["revision"],
+    )
+    for _ in range(2):
+        assert service.get(frozen["id"])["current"] is False
+    assert len(prepared) == 4

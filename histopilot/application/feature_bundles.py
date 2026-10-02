@@ -7,6 +7,7 @@ from pathlib import Path
 
 from histopilot.application.feature_packs import FeaturePackService
 from histopilot.schemas.feature_bundles import FeatureBundleSpec
+from histopilot.storage import read_sessions
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.io import content_hash, read_file_bounded
 from histopilot.storage.project_lock import StorageError
@@ -308,9 +309,11 @@ class FeatureBundleService:
                 findings.append(_finding(error.code, str(error)))
         return {**document, "current": not findings, "findings": findings}
 
+    @read_sessions.reads
     def get(self, identity: str) -> dict:
         return self._resolve(self.store.get_configuration(identity))
 
+    @read_sessions.reads
     def list(self) -> dict:
         return {
             "items": [

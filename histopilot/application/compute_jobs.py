@@ -16,6 +16,7 @@ from pathlib import Path
 from histopilot.adapters.native.runtime import training_runtime
 from histopilot.application.task_records import LEGACY_MESSAGE, TaskCenterAccess, refuse_legacy
 from histopilot.schemas.development import ResourcePolicy
+from histopilot.storage import read_sessions
 from histopilot.storage.io import content_hash, read_json_bounded, utc_now, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import (
@@ -322,8 +323,13 @@ class ComputeJobService:
         reject_symlink_components(folder)
         return folder
 
-    def _record(self, identity, *, include_inactive=False):
-        document = self.store.get_configuration(identity, include_inactive=include_inactive)
+    def _record(self, identity, *, include_inactive=False, listed=None):
+        """The job's record; ``listed`` is the record as the caller already listed it."""
+        document = (
+            listed
+            if listed is not None and listed.get("id") == identity
+            else self.store.get_configuration(identity, include_inactive=include_inactive)
+        )
         if document["manifest"].get("kind") not in {
             "model-evaluation",
             "predictor-refit",
@@ -336,8 +342,17 @@ class ComputeJobService:
             )
         return document
 
-    def status(self, identity, *, include_inactive=False):
-        self._record(identity, include_inactive=include_inactive)
+    def status(self, identity, *, include_inactive=False, record=None):
+        """The job's execution. Within a read session each job is read once: a cleanup review
+        or a list of batches asks for the same runs several times. ``record`` is the job's
+        record when the caller listed it already."""
+        return read_sessions.remember(
+            ("compute-status", str(self.store.folder), identity, include_inactive),
+            lambda: self._status(identity, include_inactive=include_inactive, record=record),
+        )
+
+    def _status(self, identity, *, include_inactive=False, record=None):
+        self._record(identity, include_inactive=include_inactive, listed=record)
         folder = self.folder(identity)
         if not (folder / "state.json").exists():
             return {"status": "not_started", "result": None}
