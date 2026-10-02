@@ -795,7 +795,6 @@ export default function TaskCenter({ workspace }: { workspace: Workspace }) {
     </>} />
     <TaskCenterActionNotice actions={actions} />
     {snapshot.error ? <div className="callout callout-warning" role="alert">{taskCenterErrorMessage(snapshot.error)}{snapshot.data ? ' The last known state is shown.' : ''}</div> : null}
-    {snapshot.isPending ? <p role="status">Reading the task queue…</p> : null}
     {summary ? <RunnerStrip summary={summary} actions={actions} /> : null}
     <FilterBar route={route} navigate={navigate} owners={snapshot.data?.owners ?? []} project={project} />
     {route.owner && !unsupported ? <Panel title="Owner" subtitle="Every task of this experiment or record, with its queue controls.">
@@ -810,7 +809,7 @@ export default function TaskCenter({ workspace }: { workspace: Workspace }) {
       </Panel>}
       <Panel title="Capacity" subtitle="A task starts when a GPU slot, GPU memory, RAM and CPU threads are free. Jobs outside the Task Center count against the same capacity.">
         {summary ? <CapacityMeters summary={summary} /> : null}
-        {capacity.data ? <ParallelTasks capacity={capacity.data} actions={actions} /> : capacity.isPending ? <p role="status">Reading capacity settings…</p> : null}
+        {capacity.data ? <ParallelTasks capacity={capacity.data} actions={actions} /> : capacity.isPending ? <p role="status">Loading capacity settings…</p> : null}
         <ErrorNotice error={panelError(capacity)} />
         {summary?.foreignLeases.length ? <details className="tc-foreign"><summary>Other jobs using this machine ({summary.foreignLeases.length})</summary><ul>{summary.foreignLeases.map((lease, index) => <li key={index}>{lease.kind ? ownerKindLabel(lease.kind) : 'Compute job'}{lease.batchId ? ` · batch ${lease.batchId}` : ''}{lease.runId ? ` · run ${lease.runId}` : ''} · {lease.gpu === null ? 'CPU' : `GPU ${lease.gpu}`} · {lease.cpus} CPU threads · {gib(lease.ramGb)} RAM</li>)}</ul></details> : null}
       </Panel>

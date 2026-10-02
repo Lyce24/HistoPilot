@@ -33,6 +33,12 @@ export const lifecycle = {
 };
 
 export const lifecycleLabel = { active: 'Active', archived: 'Archived', trashed: 'Trash' } as const;
+/** Records in one lifecycle state, in a sentence: "archived runs", "projects in Trash". */
+export const recordsInState = (state: keyof typeof lifecycleLabel, noun: string) =>
+  state === 'trashed' ? `${noun} in Trash` : `${lifecycleLabel[state].toLowerCase()} ${noun}`;
+/** Where one record is: "archived", "in Trash" ("This experiment is in Trash."). */
+export const stateInSentence = (state: keyof typeof lifecycleLabel) =>
+  state === 'trashed' ? 'in Trash' : lifecycleLabel[state].toLowerCase();
 export function cleanupJobActive(item: CleanupItem) {
   return Boolean(item.job && (item.job.cancellable || ['queued', 'pending', 'active', 'running', 'starting', 'stopping', 'cancelling', 'cancel_requested'].includes(item.job.status)));
 }

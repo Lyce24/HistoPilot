@@ -41,7 +41,7 @@ export default function FeatureFolderExamples() {
             <div><dt><code>features [N, D]</code></dt><dd>A floating-point array with one row per patch. N is the patch count; D is the number of feature values per patch.</dd></div>
             <div><dt><code>coords [N, 2]</code></dt><dd>One integer x/y coordinate pair per feature row.</dd></div>
           </dl>
-          <p>Coordinates can be embedded in <code>slide_001.h5</code> or stored separately in <code>patches/slide_001_patches.h5</code>. If they are not found automatically, select the <code>patches/</code> folder under <strong>Advanced Options → Coordinate directory</strong>.</p>
+          <p>Coordinates can be embedded in <code>slide_001.h5</code> or stored separately in <code>patches/slide_001_patches.h5</code>. If they are not found automatically, select the <code>patches/</code> folder under <strong>Advanced options → Coordinate directory</strong>.</p>
           <p>Patch counts may differ between slides; the feature dimension must stay consistent. These examples describe patch features used for MIL.</p>
         </details>
       </div>

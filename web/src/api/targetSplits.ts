@@ -120,7 +120,7 @@ export interface TargetSplitPartitionPreview {
   membershipStatus?: 'fixed' | 'provisional';
 }
 
-export const TARGET_SPLIT_STEPS = ['Dataset & cohort', 'Training & Testing split', 'Prediction Targets', 'Review & Freeze'] as const;
+export const TARGET_SPLIT_STEPS = ['Dataset & cohort', 'Training & testing split', 'Prediction targets', 'Review & freeze'] as const;
 
 export function targetDefinitionReady(target: ProtocolSpec['target'] | null | undefined): boolean {
   return Boolean(target?.field && target.task && target.classes.length >= 2 && target.classes.every(Boolean)

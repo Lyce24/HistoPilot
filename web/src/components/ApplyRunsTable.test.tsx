@@ -55,6 +55,12 @@ describe('runs in Apply models', () => {
     expect(scoped).not.toContain('Evaluation · Seed ensemble');
   });
 
+  it('says the runs could not be loaded instead of claiming there are none', () => {
+    const html = renderToStaticMarkup(<ApplyRunsTable runs={[]} predictors={[]} experiments={[]} cohorts={[]} loading={false} error={new Error('The control service returned HTTP 500.')} onRetry={() => {}} onOpen={() => {}} onCreate={() => {}} />);
+    expect(html).toContain('Runs could not be loaded'); expect(html).toContain('HTTP 500');
+    expect(html).toContain('>Retry</button>'); expect(html).not.toContain('No models applied yet');
+  });
+
   it('offers to apply predictors when nothing has run yet', () => {
     const html = renderToStaticMarkup(<ApplyRunsTable runs={[]} predictors={[]} experiments={[]} cohorts={[]} loading={false} onOpen={() => {}} onCreate={() => {}} />);
     expect(html).toContain('No models applied yet');

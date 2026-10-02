@@ -137,7 +137,7 @@ try {
  await waitFor('document.body?.innerText.includes("Return to current draft")');
  await click('Return to current draft');
  assert.equal(await evaluate(field('Draft name')+'.value'),'Fixed cohort');
- assert.deepEqual(await evaluate('[...document.querySelectorAll(".stage-step-copy strong")].map(el=>el.textContent)'),['Dataset & cohort','Training & Testing split','Prediction Targets','Review & Freeze']);
+ assert.deepEqual(await evaluate('[...document.querySelectorAll(".stage-step-copy strong")].map(el=>el.textContent)'),['Dataset & cohort','Training & testing split','Prediction targets','Review & freeze']);
  await waitFor(eligibilityProgress+'?.value===20');
  assert.equal(await evaluate('Boolean('+liveSelection('Training')+'||'+liveSelection('Testing')+')'),false,'Dataset & cohort must not expose train/test details');
  assert.equal(await evaluate('window.workflow.calls.some(call=>call.method==="partitionPreview")'),false,'Dataset & cohort must not depend on split settings');

@@ -9,9 +9,10 @@ const rankedBatches = (batches?: BatchHeadline[]) =>
  * The experiment list's result cell: the best batch's OOF seed mean ± SD on macro AUROC
  * (AUROC for a binary target). Opening the experiment shows folds, seeds and intervals.
  */
-export default function ExperimentHeadline({ batches }: { batches?: BatchHeadline[] }) {
+export default function ExperimentHeadline({ batches, loading = false }: { batches?: BatchHeadline[]; loading?: boolean }) {
   const ranked = rankedBatches(batches);
-  if (!ranked.length) return <span className="muted">—</span>;
+  // While results load, a dash would read as "no result".
+  if (!ranked.length) return loading ? <span className="muted" role="status" aria-label="Loading result">…</span> : <span className="muted">—</span>;
   const best = ranked[0];
   const auroc = best.metrics.auroc!;
   const partial = best.seeds < best.plannedSeeds;
@@ -26,9 +27,9 @@ export default function ExperimentHeadline({ batches }: { batches?: BatchHeadlin
  * A series' result cell: the range of its members' headlines, each member's best batch as
  * {@link ExperimentHeadline} picks it, and how many members have one yet.
  */
-export function SeriesHeadline({ members }: { members: (BatchHeadline[] | undefined)[] }) {
+export function SeriesHeadline({ members, loading = false }: { members: (BatchHeadline[] | undefined)[]; loading?: boolean }) {
   const best = members.map((batches) => rankedBatches(batches)[0]).filter((batch): batch is BatchHeadline => Boolean(batch));
-  if (!best.length) return <span className="muted">—</span>;
+  if (!best.length) return loading ? <span className="muted" role="status" aria-label="Loading results">…</span> : <span className="muted">—</span>;
   const means = best.map((batch) => batch.metrics.auroc!.mean);
   const low = Math.min(...means);
   const high = Math.max(...means);

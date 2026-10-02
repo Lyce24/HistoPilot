@@ -11,6 +11,7 @@ import { Findings } from './ScientificUI';
 import { downloadJSON } from '../lib/download';
 import { gib, metricValue, metricsText, MetricEvidence, ResourceCards, RunTable } from './ExperimentTracking';
 import { pollDelay } from '../api/client';
+import { formatDateTime } from '../lib/dates';
 export { RunTable } from './ExperimentTracking';
 export type ExperimentExecutionStage = 'planning' | 'running' | 'finished';
 
@@ -150,7 +151,7 @@ export function ExecutionEvidence({ execution, project, showStatus = true }: { e
       {telemetry.latest.runs.length ? <div className="development-table"><table><thead><tr><th>Run</th><th>{trainingActive(execution) ? 'Latest' : 'Last recorded'} process-tree RAM</th><th>Observed peak RAM</th></tr></thead><tbody>{telemetry.latest.runs.map((run) => <tr key={run.runId}><td><code>{run.runId}</code></td><td>{gib(run.rssGb)}</td><td>{gib(telemetry.peak.runRssGb[run.runId])}</td></tr>)}</tbody></table></div> : <p className="muted">No active run measurements. Saved per-run peaks are available under Runs.</p>}
       </> : null}
     </details> : null}
-    <details className="experiment-worker-details"><summary>Worker and saved artifacts</summary><dl className="development-paths">{managedByTaskCenter(execution) ? <><dt>Execution</dt><dd>Managed by the Task Center</dd></> : null}<dt>Worker log</dt><dd><code>{execution.logPath}</code></dd><dt>Output directory</dt><dd><code>{execution.outputPath}</code></dd>{execution.computePath ? <><dt>Pinned training code</dt><dd><code>{execution.computePath}</code></dd></> : null}{execution.provenancePath ? <><dt>Attempt and driver history</dt><dd><code>{execution.provenancePath}</code></dd></> : null}{telemetry?.path ? <><dt>Resource history</dt><dd><code>{telemetry.path}</code></dd></> : null}<dt>Updated</dt><dd>{execution.updatedAt}</dd></dl></details>
+    <details className="experiment-worker-details"><summary>Worker and saved artifacts</summary><dl className="development-paths">{managedByTaskCenter(execution) ? <><dt>Execution</dt><dd>Managed by the Task Center</dd></> : null}<dt>Worker log</dt><dd><code>{execution.logPath}</code></dd><dt>Output directory</dt><dd><code>{execution.outputPath}</code></dd>{execution.computePath ? <><dt>Pinned training code</dt><dd><code>{execution.computePath}</code></dd></> : null}{execution.provenancePath ? <><dt>Attempt and driver history</dt><dd><code>{execution.provenancePath}</code></dd></> : null}{telemetry?.path ? <><dt>Resource history</dt><dd><code>{telemetry.path}</code></dd></> : null}<dt>Updated</dt><dd>{formatDateTime(execution.updatedAt)}</dd></dl></details>
     <DeviceRuntime execution={execution} />
   </section>;
 }

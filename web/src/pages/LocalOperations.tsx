@@ -11,6 +11,7 @@ import LegacyRecordNote, { createdBeforeTaskCenter } from '../components/LegacyR
 import { taskCenterHref, taskCenterWork } from '../api/taskCenter';
 import AgentAccess from '../components/AgentAccess';
 import './LocalOperations.css';
+import { statusLabel } from '../lib/statusLabels';
 
 const active = new Set(['starting', 'queued', 'running', 'cancelling']);
 const readableError = (error: unknown) => error instanceof Error ? error : new Error('The operation could not be completed.');
@@ -24,12 +25,12 @@ function ArchiveReceipt({ job, busy, project, onRetry, onSettled }: { job: Archi
   if (managed) return <article className="operations-receipt">
     <div className="operations-receipt-heading"><strong>{job.action === 'export' ? 'Project export' : job.action === 'verify' ? 'Archive verification' : 'Project restore'}</strong></div>
     <p className="muted">{new Date(job.createdAt).toLocaleString()}</p>
-    <RunStatusChip scope={job.ownerKey ? { owner: job.ownerKey } : { ownerKind: 'archive', ownerId: job.id, project }} variant="chip" primaryAction={retry} notStartedText={job.status} onSettled={onSettled} />
+    <RunStatusChip scope={job.ownerKey ? { owner: job.ownerKey } : { ownerKind: 'archive', ownerId: job.id, project }} variant="chip" primaryAction={retry} notStartedText={statusLabel(job.status)} onSettled={onSettled} />
     {job.progress && active.has(job.status) ? <div><p>{job.progress.stage} · {job.progress.completed}/{job.progress.total} files</p><progress aria-label="Archive progress" value={job.progress.completed} max={job.progress.total || 1} /></div> : null}
     {job.result ? <><p>{job.result.verified ? 'Checksums verified' : 'Not verified'} · {job.result.fileCount.toLocaleString()} files · {bytes(job.result.totalBytes)}</p><code className="operations-path">{job.result.destinationPath ?? job.result.archivePath}</code>{job.result.note ? <p className="callout">{job.result.note}</p> : null}</> : null}
   </article>;
   return <article className="operations-receipt">
-    <div className="operations-receipt-heading"><strong>{job.action === 'export' ? 'Project export' : job.action === 'verify' ? 'Archive verification' : 'Project restore'}</strong><Badge tone={job.status === 'failed' ? 'orange' : job.status === 'completed' ? 'success' : 'neutral'}>{job.status}</Badge></div>
+    <div className="operations-receipt-heading"><strong>{job.action === 'export' ? 'Project export' : job.action === 'verify' ? 'Archive verification' : 'Project restore'}</strong><Badge tone={job.status === 'failed' ? 'orange' : job.status === 'completed' ? 'success' : 'neutral'}>{statusLabel(job.status)}</Badge></div>
     <p className="muted">{new Date(job.createdAt).toLocaleString()}</p>
     {job.error ? <p role="alert">{job.error}</p> : null}
     {job.result ? <><p>{job.result.verified ? 'Checksums verified' : 'Not verified'} · {job.result.fileCount.toLocaleString()} files · {bytes(job.result.totalBytes)}</p><code className="operations-path">{job.result.destinationPath ?? job.result.archivePath}</code>{job.result.note ? <p className="callout">{job.result.note}</p> : null}{job.result.externalSources?.missingReferences.length ? <p>{job.result.externalSources.missingReferences.length} unavailable external references were recorded at export.</p> : null}</> : null}

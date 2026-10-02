@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { cleanupPollInterval, lifecycle, lifecycleLabel } from '../api/lifecycle';
 import ExperimentLifecycle from './ExperimentLifecycle';
 import { Badge, ErrorNotice, PageHeader } from './ui';
+import { neutralRecordKindLabel } from '../lib/recordKinds';
 
 interface RecordSelection { recordKey: string; name: string }
 const ManagementContext = createContext<((record: RecordSelection) => void) | null>(null);
@@ -56,7 +57,7 @@ function RecordManagementPage({ project, record, backLabel, locked, onClose, onL
         actions={<StageBackButton type="button" disabled={locked} onClick={onClose}>{backLabel}</StageBackButton>} />
       <ErrorNotice error={inventory.error} />
       {inventory.isPending ? <p role="status">Loading record status…</p> : item ? <>
-        <div className="record-management-identity"><Badge tone={item.state === 'active' ? 'green' : 'neutral'}>{lifecycleLabel[item.state]}</Badge><span className="muted">{item.kind.replaceAll('-', ' ')}</span><code>{item.id}</code></div>
+        <div className="record-management-identity"><Badge tone={item.state === 'active' ? 'green' : 'neutral'}>{lifecycleLabel[item.state]}</Badge><span className="muted">{neutralRecordKindLabel(item.kind)}</span><code>{item.id}</code></div>
         <ExperimentLifecycle key={record.recordKey} project={project} recordKey={record.recordKey} state={item.state} name={item.name} onLockChange={onLockChange} />
       </> : !inventory.error ? <p role="status">This record is no longer available in this project.</p> : null}
       {inventory.error ? <button type="button" className="btn btn-secondary" onClick={() => void inventory.refetch()}>Retry loading record</button> : null}

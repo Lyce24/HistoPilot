@@ -9,6 +9,7 @@ import CurveChart from './CurveChart';
 import { Badge, ErrorNotice } from './ui';
 import './ExperimentTracking.css';
 import { pollDelay } from '../api/client';
+import { statusLabel } from '../lib/statusLabels';
 
 export { ResourceCards } from './RunResourceUsage';
 
@@ -139,7 +140,7 @@ function RunDetailsContent({ batch, run, peakRamGb, project, history, illustrati
   const latestCheckpoint = recipe?.model.toLowerCase() === 'nnmil' && recipe.nnmilCheckpointSelection === 'latest';
   const stopping = runStoppingMetric(run, recipe, historyError ? undefined : history);
   return <section className="experiment-run-detail" aria-label="Selected run details">
-    <div className="experiment-tracking-heading"><div><span className="experiment-detail-eyebrow">Selected run</span><h3>{runLabel(batch, run)}</h3></div><Badge tone={run.status === 'failed' || run.status === 'interrupted' ? 'warning' : run.status === 'completed' ? 'success' : 'neutral'}>{run.status}</Badge></div>
+    <div className="experiment-tracking-heading"><div><span className="experiment-detail-eyebrow">Selected run</span><h3>{runLabel(batch, run)}</h3></div><Badge tone={run.status === 'failed' || run.status === 'interrupted' ? 'warning' : run.status === 'completed' ? 'success' : 'neutral'}>{statusLabel(run.status)}</Badge></div>
     {run.error ? <p className="callout callout-warning" role="status">{run.error}</p> : null}
     {run.progressWarning ? <p className="callout callout-warning" role="status">{run.progressWarning}</p> : null}
     <div className="experiment-run-metrics" aria-label="Latest reported run metrics">

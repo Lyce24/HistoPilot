@@ -12,7 +12,7 @@ import ApplyRunDetail from '../components/ApplyRunDetail';
 import ApplyRunsTable, { newRunFilters } from '../components/ApplyRunsTable';
 import BulkEvaluationRunner, { EvaluationBatchStatus, batchMemberStatus } from '../components/BulkEvaluationRunner';
 import { StageBackButton, StageCreateButton, StageLibrary, StageLibraryTabs, StageLibraryToolbar, StageRecordManageButton, useStageLibrary } from '../components/StageWorkflow';
-import { Badge, EmptyState, ErrorNotice, PageHeader, Panel } from '../components/ui';
+import { Badge, EmptyState, ErrorNotice, LoadFailed, PageHeader, Panel } from '../components/ui';
 import { cohortKindText, cohortName, cohortObjectives, runLabeled } from '../lib/applyModels';
 import { experimentRoleLabel, objectiveRankLabel, objectives as objectiveRecords, type ExperimentFiling, type Objective } from '../api/objectives';
 import { sectionByObjective, sharedObjective } from '../lib/experimentLibrary';
@@ -115,7 +115,7 @@ export default function LocalApplyModels({ workspace }: { workspace: Workspace }
   // A repeated click on Apply models returns to its runs; an open cohort returns to Cohorts itself.
   useStageLibrary(() => { if (view !== 'library' || library !== 'cohorts') go({}); });
   const refresh = () => void Promise.all([records.refetch(), batches.refetch(), cohorts.refetch(), registry.refetch(), experimentRegistry.refetch()]);
-  const errors = <ErrorNotice error={records.error ?? registry.error ?? cohorts.error ?? experimentRegistry.error ?? batches.error ?? analysis.error} />;
+  const errors = <ErrorNotice error={records.error ?? registry.error ?? cohorts.error ?? experimentRegistry.error ?? batches.error ?? analysis.error ?? objectiveList.error ?? standards.error} />;
   const libraryActions = <>
     {setup && view !== 'setup' ? <button type="button" className="btn btn-secondary btn-small" onClick={() => go({ view: 'new' })}>Resume setup</button> : null}
     <button type="button" className="btn btn-secondary btn-small" disabled={records.isFetching || batches.isFetching} onClick={refresh}>Refresh</button>
@@ -140,10 +140,10 @@ export default function LocalApplyModels({ workspace }: { workspace: Workspace }
     content = library === 'cohorts'
       ? <LocalEvaluationSetup key={visit} workspace={workspace} newCohort={link.newCohort} frame={frame} objectives={objectiveItems} cohortObjectives={!records.isPending && !batches.isPending && !experimentRegistry.isPending && !objectiveList.isPending ? cohortObjectives({ cohorts: cohortItems, runs, batches: batchRows, experiments: experimentItems, filings }) : undefined} objectiveScope={objectiveScope} onClearScope={clearScope} />
       : frame(library === 'batches'
-        ? <BatchLibrary batches={batchRows} cohorts={cohortItems} loading={batches.isPending} onOpen={(id) => go({ batch: id })} actions={libraryActions} objectives={objectiveItems} filings={filings} objectiveScope={objectiveScope} onClearScope={clearScope} />
+        ? <BatchLibrary batches={batchRows} cohorts={cohortItems} loading={batches.isPending} error={batches.error} onRetry={() => void batches.refetch()} onOpen={(id) => go({ batch: id })} actions={libraryActions} objectives={objectiveItems} filings={filings} objectiveScope={objectiveScope} onClearScope={clearScope} />
         : library === 'methods'
           ? <ApplyMethods project={project} runs={runs.filter((run) => inObjectiveScope(objectiveScope, filings[run.manifest.experimentId]?.objectiveId))} predictors={predictorItems} experiments={experimentItems} cohorts={cohortItems} loading={records.isPending} onOpen={openRun} />
-          : <ApplyRunsTable runs={runs} predictors={predictorItems} experiments={experimentItems} cohorts={cohortItems} references={standards.data?.items ?? []} objectives={objectiveItems} filings={filings} objectiveScope={objectiveScope} onClearScope={clearScope} loading={records.isPending} onOpen={openRun} onCreate={create} filters={runFilters} onFiltersChange={setRunFilters} actions={libraryActions} />);
+          : <ApplyRunsTable runs={runs} predictors={predictorItems} experiments={experimentItems} cohorts={cohortItems} references={standards.data?.items ?? []} objectives={objectiveItems} filings={filings} objectiveScope={objectiveScope} onClearScope={clearScope} loading={records.isPending} error={records.error} onRetry={() => void records.refetch()} onOpen={openRun} onCreate={create} filters={runFilters} onFiltersChange={setRunFilters} actions={libraryActions} />);
   } else if (view === 'run') {
     content = <div className="clinical-workspace model-chains apply-models">
       <PageHeader eyebrow={stageEyebrow('apply')} title={record?.manifest.name ?? 'Run'}
@@ -202,8 +202,9 @@ function FilingLine({ filing, objectives }: { filing?: ExperimentFiling; objecti
 }
 
 /** Predictors applied together to one cohort, labeled or not; by objective once the project has some. */
-export function BatchLibrary({ batches, cohorts, loading, onOpen, actions, objectives = [], filings = {}, objectiveScope = '', onClearScope }: {
+export function BatchLibrary({ batches, cohorts, loading, error = null, onRetry, onOpen, actions, objectives = [], filings = {}, objectiveScope = '', onClearScope }: {
   batches: EvaluationBatch[]; cohorts: EvaluationCohort[]; loading: boolean; onOpen: (id: string) => void; actions?: ReactNode;
+  error?: Error | null; onRetry?: () => void;
   objectives?: readonly Objective[]; filings?: Record<string, ExperimentFiling>; objectiveScope?: string; onClearScope?: () => void;
 }) {
   const [search, setSearch] = useState('');
@@ -237,9 +238,9 @@ export function BatchLibrary({ batches, cohorts, loading, onOpen, actions, objec
         <td><Badge>{batchMemberStatus(item.status)}</Badge></td>
         <td>{nameOf(item.cohortId)}{cohort ? <small>{cohortKindText(cohort)}</small> : null}</td>
         <td>{item.items.length.toLocaleString()}</td>
-        <td><StageRecordManageButton type="configuration" id={item.id} name={item.name ?? item.id} /></td>
+        <td><StageRecordManageButton type="configuration" id={item.id} name={item.name ?? shortRecordId(item.id)} /></td>
       </tr>; })}
       </Fragment>)}
-    </tbody></table></div> : <EmptyState title={batches.length ? 'No matching batches' : 'No batches yet'} description={batches.length ? 'Try another search or clear the filters.' : 'A batch is saved each time predictors are applied to a cohort together.'} action={batches.length ? <button type="button" className="btn btn-secondary" onClick={reset}>Clear filters</button> : undefined} />}
+    </tbody></table></div> : error && !batches.length ? <LoadFailed what="Batches" error={error} onRetry={onRetry} /> : <EmptyState title={batches.length ? 'No matching batches' : 'No batches yet'} description={batches.length ? 'Try another search or clear the filters.' : 'A batch is saved each time predictors are applied to a cohort together.'} action={batches.length ? <button type="button" className="btn btn-secondary" onClick={reset}>Clear filters</button> : undefined} />}
   </>;
 }

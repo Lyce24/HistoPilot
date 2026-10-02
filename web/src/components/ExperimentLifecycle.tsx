@@ -55,7 +55,7 @@ export default function ExperimentLifecycle({ project, recordKey, state, name, o
   return <section className="experiment-lifecycle" aria-label={`Manage ${name}`}>
     <div className="inline-actions">
       {state === 'active' ? <button className="btn btn-secondary btn-small" disabled={busy || Boolean(review?.uncertain)} onClick={() => void preview('archive')}>Archive</button> : <button className="btn btn-secondary btn-small" disabled={busy || Boolean(review?.uncertain)} onClick={() => void preview('restore')}>Restore to Active</button>}
-      {state !== 'trashed' ? <button className="btn btn-secondary btn-small" disabled={busy || Boolean(review?.uncertain)} onClick={() => void preview('trash')}>Delete…</button> : null}
+      {state !== 'trashed' ? <button className="btn btn-secondary btn-small" disabled={busy || Boolean(review?.uncertain)} onClick={() => void preview('trash')}>Move to Trash…</button> : null}
     </div>
     <ErrorNotice error={error ?? (open ? inventory.error : null)} />
     {notice ? <p role="status" className="muted">{notice}</p> : null}

@@ -13,7 +13,7 @@ import VersionLabelEditor from '../components/VersionLabelEditor';
 import { DatasetSelect, Findings, SavedNotice, scienceKey, useConfigurations, useDatasets, useDrafts } from '../components/ScientificUI';
 import { StageBackButton, StageContinueButton, StageCreateButton } from '../components/StageActions';
 import { StageLibrary, StageLibraryToolbar, StagePage, StageRecordManageButton, StageSteps, useStageLibrary } from '../components/StageWorkflow';
-import { Badge, EmptyState, ErrorNotice, Metric, PageHeader, Panel } from '../components/ui';
+import { Badge, EmptyState, ErrorNotice, Metric, PageHeader, Panel, LoadFailed } from '../components/ui';
 import { datasetVersionLabel, versionLabelText } from '../lib/versionLabels';
 import { readHashParameters } from '../lib/hashRoute';
 import { sameJSON } from '../lib/json';
@@ -25,6 +25,7 @@ import { scientificReviewInvalidated } from '../lib/scientificReview';
 import './LocalTargetSplit.css';
 import { stageEyebrow } from '../lib/roadmap';
 import { applyHref } from '../lib/applyRoutes';
+import { formatDate } from '../lib/dates';
 
 export const targetSplitKey = (project: string) => [...scienceKey(project), 'configurations', 'target-split'];
 const methodNames = { random: 'Random split', rules: 'Metadata conditions', imported: 'Predefined partition values' };
@@ -258,10 +259,10 @@ export default function LocalTargetSplit({ workspace }: { workspace: Workspace }
             <label className="label">Status<select className="field" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="frozen">Frozen</option><option value="draft">Draft</option></select></label>
           </StageLibraryToolbar>
           {loading ? <p className="muted" role="status">Loading saved targets and splits…</p> : visible.length ? <div className="table-wrap"><table aria-label="Targets and splits library" className="target-split-library"><thead><tr><th>Name</th><th>Status</th><th>Dataset</th><th>Training</th><th>Testing</th><th>Target</th><th>Labels</th><th>Updated</th><th>Actions</th></tr></thead><tbody>{visible.map((row) => <tr key={row.id}>
-            <td><strong>{row.name}</strong><small className="science-block">{targetSplitUnit(row.spec) === 'slide' ? 'Slide split' : 'Patient split'}</small></td><td><Badge tone={row.status === 'frozen' ? 'green' : 'neutral'}>{row.status === 'frozen' ? 'Frozen' : 'Draft'}</Badge></td><td>{datasetName(row.spec.datasetId)}</td>
-            <td>{row.summary ? `${row.summary.trainingSlides.toLocaleString()} slides` : 'Not frozen'}</td><td>{row.summary ? `${row.summary.testingSlides.toLocaleString()} slides` : 'Not frozen'}</td><td>{row.spec.target.field || 'Not selected'}{row.spec.testTarget === null ? <small className="science-block">Testing: None · inference</small> : row.spec.testTarget ? <small className="science-block">Testing: {row.spec.testTarget.field || 'Not selected'}</small> : null}</td><td>{row.spec.target.classes.join(', ') || 'Not defined'}</td><td>{row.updatedAt ? new Date(row.updatedAt).toLocaleDateString() : '—'}</td>
+            <td><button type="button" className="text-button stage-record-name" disabled={busy} onClick={() => void run(() => row.item ? openRecord(row.item) : openDraft(row.id))}>{row.name}</button><small className="science-block">{targetSplitUnit(row.spec) === 'slide' ? 'Slide split' : 'Patient split'}</small></td><td><Badge tone={row.status === 'frozen' ? 'green' : 'neutral'}>{row.status === 'frozen' ? 'Frozen' : 'Draft'}</Badge></td><td>{datasetName(row.spec.datasetId)}</td>
+            <td>{row.summary ? `${row.summary.trainingSlides.toLocaleString()} slides` : 'Not frozen'}</td><td>{row.summary ? `${row.summary.testingSlides.toLocaleString()} slides` : 'Not frozen'}</td><td>{row.spec.target.field || 'Not selected'}{row.spec.testTarget === null ? <small className="science-block">Testing: None · inference</small> : row.spec.testTarget ? <small className="science-block">Testing: {row.spec.testTarget.field || 'Not selected'}</small> : null}</td><td>{row.spec.target.classes.join(', ') || 'Not defined'}</td><td>{formatDate(row.updatedAt)}</td>
             <td><div className="inline-actions"><button className="btn btn-secondary btn-small" disabled={busy} onClick={() => void run(() => row.item ? openRecord(row.item) : openDraft(row.id))}>Open</button><StageRecordManageButton type={row.item ? 'configuration' : 'draft'} id={row.id} name={row.name} /></div></td>
-          </tr>)}</tbody></table></div> : <EmptyState title={rows.length ? 'No matching targets and splits' : 'No targets and splits yet'} description={datasets.data?.datasets.length ? 'Create a target and split version from a saved dataset.' : 'Save a dataset first, then define its target and training/testing membership.'} />}
+          </tr>)}</tbody></table></div> : (frozen.error || drafts.error) && !rows.length ? <LoadFailed what="Targets and splits" error={(frozen.error ?? drafts.error)!} onRetry={() => { void frozen.refetch(); void drafts.refetch(); }} /> : <EmptyState title={rows.length ? 'No matching targets and splits' : 'No targets and splits yet'} description={datasets.data?.datasets.length ? 'Create a target and split version from a saved dataset.' : 'Save a dataset first, then define its target and training/testing membership.'} />}
         </StageLibrary>
         {!datasets.data?.datasets.length && !datasets.isPending ? <a className="btn btn-secondary" href="#dataset">Open Datasets</a> : null}
         {legacyHistory.versions.length || legacyHistory.drafts.length ? <p className="muted"><a href="#legacy-protocol">Open legacy development protocols</a></p> : null}

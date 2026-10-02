@@ -50,6 +50,7 @@ import { readEditorRecovery, useEditorRecoveryBackup, type EditorRecovery } from
 import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import './dataset-workflow.css';
 import { stageEyebrow } from '../lib/roadmap';
+import { formatDate } from '../lib/dates';
 
 export const newDatasetImportSpec = (workspace: Workspace): ImportSpec => {
   const { source, slideIdColumn, ...rest } = fromTemplate<ImportSpec>(templates.starters.datasetImport);
@@ -320,7 +321,7 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
       />
       <StagePage pageKey={`${view}-${view === 'import' ? step : versionId}`}>
       {view !== 'library' ? <SetupContext input="Slide table and optional slide images" output="A reusable metadata dataset for targets, filters and splits">
-        Build your dataset first, then prepare slide features and Targets & Splits independently. Targets & Splits saves the training and testing populations; an experiment's design defines training folds and validation.
+        Build your dataset first, then prepare slide features and Targets & splits independently. Targets & splits saves the training and testing populations; an experiment's design defines training folds and validation.
       </SetupContext> : null}
       <ErrorNotice error={error ?? versions.error ?? savedDrafts.error} />
       <SavedNotice>{message}</SavedNotice>
@@ -347,13 +348,13 @@ export default function LocalDataset({ workspace: w }: { workspace: Workspace })
                 <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open dataset ${row.name}`} onClick={() => { setVersionId(row.item.id); setView('dataset'); setError(null); setMessage(''); }}>{row.name}</button>{row.item.versionLabel?.note ? <small>{row.item.versionLabel.note}</small> : null}</td>
                 <td><Badge tone="green">Frozen dataset</Badge></td>
                 <td>{row.item.manifest.summary?.slideCount?.toLocaleString() ?? '—'} slides</td>
-                <td>{new Date(row.updatedAt).toLocaleDateString()}</td>
+                <td>{formatDate(row.updatedAt)}</td>
                 <td><StageRecordManageButton type="dataset" id={row.item.id} name={row.name} /></td>
               </tr> : <tr key={`draft-${row.item.id}`}>
                 <td><button type="button" className="text-button stage-record-name" disabled={busy} aria-label={`Open import ${row.name}`} onClick={() => { if (draft?.id === row.item.id) setView('import'); else void run(async () => { await keepCurrentWork(); await loadDraft(row.item.id); }); }}>{row.name}</button><small>Revision {row.item.revision}</small></td>
                 <td><Badge tone={row.item.status === 'frozen' ? 'frozen' : 'neutral'}>{row.item.status === 'frozen' ? 'Frozen import' : 'Draft'}</Badge></td>
                 <td>Import mapping</td>
-                <td>{new Date(row.updatedAt).toLocaleDateString()}</td>
+                <td>{formatDate(row.updatedAt)}</td>
                 <td><StageRecordManageButton type="draft" id={row.item.id} name={row.name} /></td>
               </tr>)}</tbody>
             </table></div>

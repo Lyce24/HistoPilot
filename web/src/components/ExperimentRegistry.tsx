@@ -15,7 +15,7 @@ import { sameJSON } from '../lib/json';
 import { groupExperiments, memberSummary, type LibraryEntry, type LibraryGroup } from '../lib/experimentLibrary';
 import { inObjectiveScope, UNFILED_SCOPE, useObjectiveScope } from '../lib/objectiveScope';
 import { ObjectiveScopeNotice } from './ObjectiveScope';
-import { Badge, EmptyState, ErrorNotice, Icon, PageHeader, Panel } from './ui';
+import { Badge, EmptyState, ErrorNotice, Icon, PageHeader, Panel, LoadFailed } from './ui';
 import { RecordManageButton } from './RecordManagement';
 import { StageLibrary, StageLibraryToolbar, StagePage, StageSteps, useStageLibrary } from './StageWorkflow';
 import './ExperimentRegistry.css';
@@ -23,6 +23,7 @@ import { readSessionDraft, sessionDraftKey, useSessionDraftBackup, writeSessionD
 import { confirmWorkspaceNavigation, useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
 import { isCreateExperimentDraft, isExperimentMetadataDraft, type CreateExperimentDraft, type ExperimentMetadataBaseline, type ExperimentMetadataDraft } from '../lib/experimentEditorDraft';
 import { stageEyebrow } from '../lib/roadmap';
+import { formatDate } from '../lib/dates';
 
 export function filterExperiments<T extends Pick<ModelExperiment, 'id' | 'name' | 'notes' | 'tags' | 'state' | 'status' | 'createdAt' | 'updatedAt' | 'stage' | 'configurationLocked' | 'objective' | 'role' | 'series' | 'seriesMember'>>(items: T[], state: LifecycleState | 'all', status: string, search: string, sort: string) {
   const query = search.trim().toLocaleLowerCase();
@@ -501,8 +502,8 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
       {/* A draft design is still being edited; a frozen one is ready to run; then execution. */}
       <td><Badge tone={experimentStage(item) === 'planning' ? 'neutral' : experimentStatusTone(item.status)}>{experimentDraft(item) ? 'Draft' : experimentStatusLabel(item.status)}</Badge>{(() => { const reason = experimentStatusReason(item); return reason ? <small title={reason}>{reason}</small> : null; })()}{item.state !== 'active' ? <small>{lifecycleLabel[item.state]}</small> : null}</td>
       {trainingCell(item)}
-      <td><ExperimentHeadline batches={headlineOf.get(item.id)} /></td>
-      <td><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString()}</time></td>
+      <td><ExperimentHeadline batches={headlineOf.get(item.id)} loading={headlines.isPending} /></td>
+      <td><time dateTime={item.updatedAt}>{formatDate(item.updatedAt)}</time></td>
       <td><RecordManageButton recordKey={item.key} name={item.name} /></td>
     </tr>;
   }
@@ -517,7 +518,7 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
       <th scope="row"><button type="button" className="text-button experiment-fold-toggle" aria-expanded={expanded} onClick={() => toggle(setOpened, entry.key)}><Icon name="chevron" size={14} /><span>{entry.series}</span></button><small>{entry.items.length} experiments · {memberSummary(entry.items)}</small></th>
       <td><span className="experiment-series-status">{statusSummary(entry.items)}</span></td>
       <td>{batches} {batches === 1 ? 'batch' : 'batches'}<small>{runs ? `${runs} planned runs` : 'Not started'}</small></td>
-      <td><SeriesHeadline members={entry.items.map((item) => headlineOf.get(item.id))} /></td>
+      <td><SeriesHeadline members={entry.items.map((item) => headlineOf.get(item.id))} loading={headlines.isPending} /></td>
       <td>{latest ? <time dateTime={latest}>{new Date(latest).toLocaleDateString()}</time> : null}</td>
       <td />
     </tr>, ...(expanded ? entry.items.map((item) => experimentRow(item, true)) : [])];
@@ -555,13 +556,13 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
     {creating ? <CreateExperiment project={project} templates={allItems} objectives={objectiveItems} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); void client.invalidateQueries({ queryKey: ['objectives', project] }); void client.invalidateQueries({ queryKey: ['scientific', project, 'drafts'] }); onOpen(item.id); }} /> : comparing ? <>
       <ErrorNotice error={comparisonQueries.find((value) => value.error)?.error ?? null} />
       {compared.length !== selected.length ? <p role="status">Loading selected experiment snapshots…</p> : compared.length >= 2 ? <ExperimentComparison items={compared} /> : <p>Select at least two experiments from the library to compare.</p>}
-      <div className="stage-actions"><StageBackButton type="button" onClick={() => setComparing(false)}>Back to experiment selection</StageBackButton></div>
+      <div className="stage-actions"><StageBackButton type="button" onClick={() => setComparing(false)}>Back to experiments</StageBackButton></div>
     </> : managing !== null ? <>
       <ErrorNotice error={objectiveQuery.error} />
       {objectiveQuery.isPending ? <p role="status">Loading objectives…</p> : <ObjectivesManager project={project} items={objectiveItems} experiments={allItems} focus={managing || undefined} />}
       <div className="stage-actions"><StageBackButton type="button" onClick={() => setManaging(null)}>Back to experiments</StageBackButton></div>
     </> : <>
-    <ErrorNotice error={query.error} />
+    <ErrorNotice error={query.error ?? headlines.error} />
     {query.data?.objectivesError ? <p className="callout callout-warning" role="alert">Experiments are listed without their objectives: {query.data.objectivesError}</p> : null}
     <StageLibrary project={project} title={title}>
       <StageLibraryToolbar search={search} onSearch={setSearch} searchLabel="Search experiments" placeholder="Name, ID, notes, tag, objective or series" count={query.isPending ? undefined : visible.length} total={items.length}
@@ -576,10 +577,10 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
       {selected.length ? <div className="experiment-selection"><span>{selected.length} selected <span className="muted">· Choose 2–4 to compare</span></span><div className="inline-actions"><button type="button" className="text-button" onClick={() => setSelected([])}>Clear comparison</button><button type="button" className="btn btn-secondary btn-small" disabled={selected.length < 2} onClick={() => setComparing(true)}>Compare selected experiments</button></div></div> : null}
       {query.isPending ? <p className="panel-body" role="status">Loading experiments…</p> : visible.length ? <div className="experiment-table-scroll"><table className={`experiment-record-table${showGroups ? ' experiment-record-table-grouped' : ''}`} aria-label="Saved experiments"><thead><tr><th scope="col"><span className="sr-only">Select 2–4 experiments to compare</span></th><th scope="col">Role</th><th scope="col">Experiment</th><th scope="col">Status</th><th scope="col">Training</th><th scope="col" className="experiment-result-column" title="Out-of-fold result of the best batch: mean ± SD across training seeds">Result</th><th scope="col">Updated</th><th scope="col">Actions</th></tr></thead>
         {showGroups ? groups.map(groupBody) : <tbody>{visible.map((item) => experimentRow(item))}</tbody>}
-      </table></div> : <EmptyState
+      </table></div> : query.error && !items.length ? <LoadFailed what="Experiments" error={query.error} onRetry={() => void query.refetch()} /> : <EmptyState
       icon="experiments"
-      title={items.length ? 'No records match this view' : 'Create your first experiment'}
-      description={items.length ? 'Adjust the status, search or archive filters to find earlier work.' : 'Start with a name and a question. Choose the dataset, targets and splits and features, design the training folds and hyperparameters, then freeze the design and start it.'}
+      title={items.length ? 'No matching experiments' : 'Create your first experiment'}
+      description={items.length ? 'Try another search or clear the filters.' : 'Start with a name and a question. Choose the dataset, targets and splits and features, design the training folds and hyperparameters, then freeze the design and start it.'}
       action={items.length
         ? <button type="button" className="btn btn-secondary" onClick={() => setFilters(newExperimentLibraryFilters())}>Clear filters</button>
         : <StageCreateButton onClick={() => setCreating(true)}>Create experiment</StageCreateButton>}

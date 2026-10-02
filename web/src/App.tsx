@@ -98,7 +98,7 @@ export function ModulePrerequisites({ module, roadmap }: { module?: Roadmap['mod
 }
 export function Content({ page, workspace, roadmap }: { page: Page; workspace: Workspace; roadmap: Roadmap }) {
   const stage = moduleForPage(page);
-  const stageNames: Partial<Record<Page, string>> = { dataset: 'datasets', cohort: 'targets and splits', features: 'feature bundles', experiments: 'experiments', apply: 'Apply models' };
+  const stageNames: Partial<Record<Page, string>> = { dataset: 'datasets', cohort: 'targets & splits', features: 'feature bundles', experiments: 'experiments', apply: 'Apply models' };
   const stageName = stageNames[stage];
   return <Suspense fallback={<PageLoading name={pages[page]} />}>{workspace.mode === 'local' && stageName
     ? <RecordManagementScope key={`${workspace.project.id}:${stage}`} project={workspace.project.id} backLabel={`Back to ${stageName}`}><StageContent page={page} workspace={workspace} roadmap={roadmap} /></RecordManagementScope>

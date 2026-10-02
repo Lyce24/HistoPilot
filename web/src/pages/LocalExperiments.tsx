@@ -6,7 +6,7 @@ import type { Workspace } from '../api/types';
 import { ApiError, pollDelay } from '../api/client';
 import type { ProtocolPreview, ProtocolSpec } from '../api/scientific';
 import { experiments, experimentStage, experimentStatusLabel, experimentStatusReason, experimentStatusTone, type ModelExperiment } from '../api/experiments';
-import { lifecycleLabel } from '../api/lifecycle';
+import { lifecycleLabel, stateInSentence } from '../api/lifecycle';
 import ExperimentRegistry, { ExperimentFilingEditor, ExperimentMetadata, newExperimentLibraryFilters } from '../components/ExperimentRegistry';
 import { experimentRoleHelp, experimentRoleLabel, objectiveRankLabel, objectives as objectiveRecords } from '../api/objectives';
 import ExperimentLifecycle from '../components/ExperimentLifecycle';
@@ -168,7 +168,7 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
     </p>
     {!planning && experimentStatusReason(record) ? <p className="experiment-detail-reason" role="status">{experimentStatusReason(record)}</p> : null}
     {record.legacy ? <p className="callout">This legacy record retains its original batch or draft identity. Use it as a template from the experiments list to organize new work; historical runs stay here.</p> : null}
-    {record.state !== 'active' ? <p className="callout">This experiment is {lifecycleLabel[record.state].toLowerCase()}. Its saved history remains visible. Restore it to Active to manage it; a started experiment stays locked.</p> : null}
+    {record.state !== 'active' ? <p className="callout">This experiment is {stateInSentence(record.state)}. Its saved history remains visible. Restore it to Active to manage it; a started experiment stays locked.</p> : null}
     <section className="experiment-context" aria-label={dirty && !readOnly ? 'Draft input context' : 'Saved input context'}>
       <div className="experiment-context-heading"><strong>{dirty && !readOnly ? 'Draft inputs' : 'Saved inputs'}</strong><span>{readOnly ? 'Frozen design' : dirty ? 'Check to save' : record.inputs ? 'Shared by all batches' : 'Choose your inputs below'}</span></div>
       <dl><div><dt>Targets &amp; splits</dt><dd>{record.setupDesign ? targetVersion ? versionLabelText(targetVersion, 'Targets & splits') : versionLabelText({ id: record.setupDesign.targetSplitId }, 'Targets & splits') : protocol ? configurationVersionLabel(protocol) : spec.protocolId || 'Not selected'}</dd></div><div><dt>Target</dt><dd>{protocolSpec ? `${protocolSpec.target.field} · ${unitLabel(protocolSpec.target.unit)}` : spec.protocolId ? 'See saved input history' : 'Not selected'}</dd></div><div><dt>{record.setupDesign ? 'Training design' : 'Split strategy'}</dt><dd>{protocolSpec ? `${splitModeLabel(protocolSpec.split.mode)} · ${protocolSpec.split.seeds.length} split seed${protocolSpec.split.seeds.length === 1 ? '' : 's'}` : spec.protocolId ? 'See saved input history' : 'Not selected'}</dd></div><div><dt>Features</dt><dd>{bundle ? versionLabelText(bundle, 'Feature bundle') : spec.featureBundleId || 'Not selected'}</dd></div></dl>

@@ -193,7 +193,7 @@ describe('dataset target and train/test construction', () => {
   });
   it('supports constructing partitions before targets and does not send incomplete labels for live counts', () => {
     const initial = newTargetSplitSpec('saved-dataset');
-    expect(TARGET_SPLIT_STEPS).toEqual(['Dataset & cohort', 'Training & Testing split', 'Prediction Targets', 'Review & Freeze']);
+    expect(TARGET_SPLIT_STEPS).toEqual(['Dataset & cohort', 'Training & testing split', 'Prediction targets', 'Review & freeze']);
     const request = targetSplitPartitionRequest(initial);
     expect(request.datasetId).toBe('saved-dataset');
     expect(request.split).toEqual(initial.split);

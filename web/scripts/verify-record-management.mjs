@@ -220,7 +220,7 @@ try {
 
   await openRecord('dataset:shared-second');
   await evaluate('window.workflow.holdPreview = true');
-  await click('Delete…');
+  await click('Move to Trash…');
   await waitFor('typeof window.releasePreview === "function"');
   await backGuard('Loading a deletion review');
   await evaluate('window.releasePreview()');
@@ -239,7 +239,7 @@ try {
   await waitFor(button('Restore to Active') + ' && !' + button('Back to datasets') + '.disabled');
   assert.equal(await evaluate('window.workflow.records[1].state'), 'trashed');
   assert.equal(await evaluate('window.workflow.records[2].state'), 'trashed');
-  assert.equal(await evaluate(button('Delete…') + ' === undefined'), true, 'Trashed records should offer Restore, not Delete');
+  assert.equal(await evaluate(button('Move to Trash…') + ' === undefined'), true, 'Trashed records should offer Restore, not Move to Trash');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await screenshot('03-trashed-record-mobile');
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true, 'Manage page overflows mobile viewport');

@@ -122,20 +122,24 @@ describe('one experiment from design to results', () => {
       expect(html).toContain('Slide split');
       expect(html).toContain('Every training slide rotates through one assessment fold');
       expect(html).not.toMatch(/patient|group stays intact|development group/i);
-      const freeze = renderToStaticMarkup(<FreezeSetupControl project="p" record={{ ...slide, frozenSetupId: null }} disabledReason={null} onFrozen={() => {}} />);
+      const freeze = renderToStaticMarkup(<QueryClientProvider client={cache}><FreezeSetupControl project="p" record={{ ...slide, frozenSetupId: null }} disabledReason={null} onFrozen={() => {}} /></QueryClientProvider>);
       expect(freeze).toContain('<dt>Split unit</dt><dd>Slide</dd>');
+      // The review names its inputs the way the design steps do, not by record ID.
+      expect(freeze).toContain('<dt>Targets &amp; splits</dt><dd>Targets &amp; splits · targets</dd>');
     } finally { cache.clear(); }
   });
 
   it('reviews actual explicit model configurations and freezes without offering a training action', () => {
     const spec = { version: 1 as const, experimentName: 'Frozen baseline', batchName: 'Explicit models', inputs: ready.inputs!, recipe: defaultRecipe(), mode: 'explicit' as const,
       grid: { learningRates: [0.001], weightDecays: [0], maxEpochs: [10] }, configurations: [{ ...defaultRecipe(), model: 'nnmil' as const }], trainingSeeds: [42], resources: defaultResources(), notes: '' };
-    const html = renderToStaticMarkup(<FreezeSetupControl project="p" record={{ ...ready, frozenSetupId: null, batchPlans: [{ id: 'batch', spec }] }} disabledReason={null} onFrozen={() => {}} />);
+    const cache = client();
+    const html = renderToStaticMarkup(<QueryClientProvider client={cache}><FreezeSetupControl project="p" record={{ ...ready, frozenSetupId: null, batchPlans: [{ id: 'batch', spec }] }} disabledReason={null} onFrozen={() => {}} /></QueryClientProvider>);
     expect(html).toContain('Freeze design');
     expect(html).toContain('nnMIL');
     expect(html).toContain('Training starts when you start the experiment');
     expect(html).not.toContain('Start experiment');
-    const frozen = renderToStaticMarkup(<FreezeSetupControl project="p" record={ready} disabledReason={null} onFrozen={() => {}} />);
+    const frozen = renderToStaticMarkup(<QueryClientProvider client={cache}><FreezeSetupControl project="p" record={ready} disabledReason={null} onFrozen={() => {}} /></QueryClientProvider>);
+    cache.clear();
     expect(frozen).toContain('The design is ready to run');
     expect(frozen).not.toContain('Freeze design');
   });

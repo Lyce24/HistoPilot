@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Page, ProjectInput, ProjectSummary } from '../api/types';
-import { lifecycleLabel } from '../api/lifecycle';
+import { lifecycleLabel, recordsInState, stateInSentence } from '../api/lifecycle';
 import type { LifecycleState } from '../api/lifecycle';
 import ServerFolderPicker from '../components/ServerFolderPicker';
 import { Badge, ErrorNotice, Icon } from '../components/ui';
@@ -398,7 +398,7 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
                   ) : null}
                 </>
               ) : !projects.isPending && !projects.isError ? (
-                <p className="start-list-note">No {lifecycleLabel[projectState].toLowerCase()} projects. Archived projects and Trash can be restored through Manage cleanup.</p>
+                <p className="start-list-note">No {recordsInState(projectState, 'projects')}. Archived projects and Trash can be restored through Manage cleanup.</p>
               ) : null}
             </section>
           </>
@@ -512,7 +512,7 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
             <section className="start-saved card" aria-labelledby="saved-heading">
               <div className="start-section-heading">
                 <h2 id="saved-heading">Saved projects</h2>
-                <Badge>{filteredProjects.length} {lifecycleLabel[projectState].toLowerCase()}</Badge>
+                <Badge>{filteredProjects.length} {stateInSentence(projectState)}</Badge>
               </div>
               {projectFilters}
               {projects.isPending ? (
@@ -524,7 +524,7 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
                 recentList(filteredProjects)
               ) : !projects.isPending && !projects.isError ? (
                 <p className="start-list-note">
-                  No {lifecycleLabel[projectState].toLowerCase()} projects in this view. You can open a saved project folder below.
+                  No {recordsInState(projectState, 'projects')} in this view. You can open a saved project folder below.
                 </p>
               ) : null}
             </section>

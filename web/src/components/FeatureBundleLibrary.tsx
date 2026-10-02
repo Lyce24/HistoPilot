@@ -4,10 +4,11 @@ import type { Configuration, FeatureSpec } from '../api/scientific';
 import { versionLabelText, configurationVersionLabel } from '../lib/versionLabels';
 import VersionLabelEditor from './VersionLabelEditor';
 import { Findings } from './ScientificUI';
-import { Badge, EmptyState, Icon, Panel } from './ui';
+import { Badge, EmptyState, Icon, Panel, LoadFailed } from './ui';
 import { preparationLink, type PreparationContext } from '../lib/preparationRoute';
 import { StageLibrary, StageLibraryToolbar, StageRecordManageButton } from './StageWorkflow';
 import VisualQualityExplorer from './VisualQualityExplorer';
+import { formatDate } from '../lib/dates';
 
 type BundleStatus = '' | 'verified' | 'attention';
 type BundleSort = 'recent' | 'oldest' | 'name';
@@ -33,7 +34,7 @@ export function filterFeatureBundles(items: FeatureBundle[], features: Configura
   });
 }
 
-export default function FeatureBundleLibrary({ project, items, features, selectedId, onSelect, onPrepare, onRefresh, refreshBusy = false, preparationInProgress = false, filters: controlledFilters, onFiltersChange, context = {} }: {
+export default function FeatureBundleLibrary({ project, items, features, selectedId, onSelect, onPrepare, onRefresh, refreshBusy = false, preparationInProgress = false, error = null, filters: controlledFilters, onFiltersChange, context = {} }: {
   project: string;
   items: FeatureBundle[];
   features: Configuration[];
@@ -43,6 +44,8 @@ export default function FeatureBundleLibrary({ project, items, features, selecte
   onRefresh?: () => void;
   refreshBusy?: boolean;
   preparationInProgress?: boolean;
+  /** Why the bundles could not be read, if they could not; onRefresh reads them again. */
+  error?: Error | null;
   filters?: FeatureBundleLibraryFilters;
   onFiltersChange?: (filters: FeatureBundleLibraryFilters) => void;
   context?: PreparationContext;
@@ -67,10 +70,10 @@ export default function FeatureBundleLibrary({ project, items, features, selecte
         <td>{item.manifest.packs.length ? `Features + ${item.manifest.packs.length} pack(s)` : 'Features only'}</td>
         <td>{item.manifest.summary.slideCount.toLocaleString()}</td>
         <td><Badge tone={item.current ? 'green' : 'orange'}>{item.current ? 'Verified inputs' : 'Inputs need attention'}</Badge></td>
-        <td><time dateTime={bundleUpdatedAt(item)}>{new Date(bundleUpdatedAt(item)).toLocaleDateString()}</time></td>
+        <td><time dateTime={bundleUpdatedAt(item)}>{formatDate(bundleUpdatedAt(item))}</time></td>
         <td><StageRecordManageButton type="configuration" id={item.id} name={bundleLabel(item)} /></td>
       </tr>)}
-    </tbody></table></div> : <EmptyState
+    </tbody></table></div> : error && !items.length ? <LoadFailed what="Feature bundles" error={error} onRetry={onRefresh} /> : <EmptyState
       icon="features"
       title={items.length ? 'No matching bundles' : preparationInProgress ? 'Extraction in progress' : 'No feature bundles yet'}
       description={items.length ? 'Try another search or clear the filters.' : preparationInProgress ? 'Your slide features are being prepared. Follow extraction progress above; once the features are ready, inspect them and save a bundle for experiments.' : 'Create a feature bundle to choose features, check their coverage and save them for experiments.'}

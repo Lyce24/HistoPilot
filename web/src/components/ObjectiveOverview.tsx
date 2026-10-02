@@ -8,6 +8,11 @@ import { Badge } from './ui';
 import './ObjectiveScope.css';
 
 const plural = (count: number, one: string, many = `${one}s`) => `${count.toLocaleString()} ${count === 1 ? one : many}`;
+/** A count once its list has loaded; never a zero that only means "not read yet". */
+function counted(query: { isPending: boolean; error: unknown }, count: number, one: string, many?: string) {
+  if (query.isPending) return '…';
+  return query.error ? 'Unavailable' : plural(count, one, many);
+}
 
 /**
  * The project by objective: what each one holds at every stage after Experiments, and the
@@ -34,7 +39,7 @@ export default function ObjectiveOverview({ project }: { project: string }) {
     plural(readyPredictors.filter((item) => !objectiveOf(item.manifest.experimentId)).length, 'ready predictor'),
     plural(activeRuns.filter((item) => !objectiveOf(item.manifest.experimentId)).length, 'run'),
     plural(savedStudies.filter((study) => !objectiveOf(study.experimentId)).length, 'study', 'studies'),
-  ].filter((text) => !text.startsWith('0 '));
+  ].filter((text) => !text.startsWith('0 ') && !models.isPending && !runs.isPending && !studies.isPending);
   return <section className="objective-overview" aria-labelledby="objective-overview-title">
     <div className="objective-overview-heading"><h2 id="objective-overview-title">Objectives</h2><a href="#experiments">Manage in Experiments</a></div>
     <div className="objective-overview-grid">
@@ -49,9 +54,9 @@ export default function ObjectiveOverview({ project }: { project: string }) {
           {objective.description ? <p className="muted">{objective.description}</p> : null}
           <dl>
             <div><dt>Experiments</dt><dd>{plural(experiments.length, 'experiment')}{roles.length ? <small>{roles.map(([role, count]) => `${count} ${experimentRoleLabel[role].toLowerCase()}`).join(' · ')}</small> : null}</dd></div>
-            <div><dt>Predictors</dt><dd>{plural(predictorCount, 'ready predictor')}</dd></div>
-            <div><dt>Apply models</dt><dd>{plural(runCount, 'run')}</dd></div>
-            <div><dt>Interpretation</dt><dd>{plural(studyCount, 'study', 'studies')}</dd></div>
+            <div><dt>Predictors</dt><dd>{counted(models, predictorCount, 'ready predictor')}</dd></div>
+            <div><dt>Apply models</dt><dd>{counted(runs, runCount, 'run')}</dd></div>
+            <div><dt>Interpretation</dt><dd>{counted(studies, studyCount, 'study', 'studies')}</dd></div>
           </dl>
           <div className="objective-card-actions inline-actions">
             <button type="button" className="text-button" onClick={() => open(objective.id, 'experiments')}>Experiments</button>

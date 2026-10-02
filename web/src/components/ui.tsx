@@ -211,6 +211,19 @@ export function Metric({
     </article>
   );
 }
+/** In place of a list that could not be read: what failed, why, and a way to read it again.
+ * An empty state there would claim there is nothing, which a failed read does not show. */
+export function LoadFailed({ what, error, onRetry }: { what: string; error: Error; onRetry?: () => void }) {
+  return (
+    <div className="empty-state" role="alert">
+      <span className="empty-state-icon" aria-hidden="true"><Icon name="alert" size={22} /></span>
+      <h3>{what} could not be loaded</h3>
+      <p>{error.message}</p>
+      {onRetry ? <div className="empty-state-action"><button type="button" className="btn btn-secondary" onClick={onRetry}>Retry</button></div> : null}
+    </div>
+  );
+}
+
 export function ErrorNotice({ error }: { error: Error | null }) {
   return error ? (
     <div className="callout callout-warning" role="alert">

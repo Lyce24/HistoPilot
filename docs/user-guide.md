@@ -76,7 +76,7 @@ Choose **Extract with a PFM**, then:
    Paths are relative to the slide folder. `mpp` is optional; if present, every row needs a positive value. Without it, resolution comes from the slide metadata. An optional dataset filters the source to its slides.
 2. **Stage.** Full pipeline, Segment tissue, Patch coordinates, or Extract features.
 3. **Output.** The TRIDENT output folder defaults to `trident/` in the project and must be empty or already belong to this project. Output names are unique by file name, so narrow the source if two copies of a slide share a name.
-4. **Advanced Options** cover segmentation, readers, patch geometry, MPP keys, caching, workers, GPUs, checkpoints and slide encoders. Options are checked against the installed TRIDENT version.
+4. **Advanced options** cover segmentation, readers, patch geometry, MPP keys, caching, workers, GPUs, checkpoints and slide encoders. Options are checked against the installed TRIDENT version.
 5. **Preview** shows the command, the slide counts, MPP coverage, the disk space estimate and any blockers, such as missing slides, an occupied output folder, a missing slide reader or too little disk space.
 
 **Throughput.** `batch_size` (64) is shared by segmentation and feature extraction unless you set `seg_batch_size` or `feat_batch_size`; these count tiles per model call. Automatic `max_workers` uses up to 8 loaders in total, bounded by the CPUs. Keep patch geometry, encoder, MPP and segmentation settings fixed when comparing speed.
@@ -116,9 +116,9 @@ A frozen bundle pins its sources, packs, precision and validation evidence. Inpu
 **Targets & splits** fixes the prediction target and the training and testing sets. It needs no features, folds or hyperparameters. It has four steps:
 
 1. **Dataset & cohort.** Choose the dataset, the **Split unit** and eligibility conditions. The cohort summary updates as you go.
-2. **Training & Testing split.** Configure training first, then testing. Each filter shows its live count and share of the cohort.
-3. **Prediction Targets.** Map raw values to classes for training. A binary target needs an explicit positive class; HistoPilot never guesses it from value order or frequency.
-4. **Review & Freeze.** Check final membership, label exclusions and distributions, then freeze.
+2. **Training & testing split.** Configure training first, then testing. Each filter shows its live count and share of the cohort.
+3. **Prediction targets.** Map raw values to classes for training. A binary target needs an explicit positive class; HistoPilot never guesses it from value order or frequency.
+4. **Review & freeze.** Check final membership, label exclusions and distributions, then freeze.
 
 **Split unit.** **Slide** (the default) assigns each slide on its own. **Patient** keeps all of a patient's slides in the same set, and scores patients. Slide splits do not keep a patient's slides together; choose **Patient** when patient independence between training and testing matters. See [split units and grouping](methods.md#split-units-and-grouping).
 
@@ -263,7 +263,7 @@ A cohort is a frozen set of slides that predictors are applied to:
 - A **labeled cohort** maps a label column to the predictors' classes, so its runs are scored. Missing or unmapped values can be set to **Keep as unlabeled**: those slides are predicted but never scored.
 - An **unlabeled cohort** reads no labels, so its runs predict only.
 
-Each frozen target/split version already provides its testing set as a cohort. To prepare another one, such as an external cohort, open **Cohorts** and choose **Create labeled cohort** or **Create unlabeled cohort**. The steps are **Slides** (datasets and conditions), **Labels** and **Review and Freeze**. Cohorts do not depend on models or features; compatibility is checked when you apply predictors. A frozen cohort offers **Apply predictors to this cohort** and lists its reference standards.
+Each frozen target/split version already provides its testing set as a cohort. To prepare another one, such as an external cohort, open **Cohorts** and choose **Create labeled cohort** or **Create unlabeled cohort**. The steps are **Slides** (datasets and conditions), **Labels** and **Review & freeze**. Cohorts do not depend on models or features; compatibility is checked when you apply predictors. A frozen cohort offers **Apply predictors to this cohort** and lists its reference standards.
 
 ### Reference standards
 

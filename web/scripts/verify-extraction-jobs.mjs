@@ -123,9 +123,15 @@ async function click(expression, label = expression) {
   await waitFor(expression + ' && !' + expression + '.matches(":disabled")', label);
   await evaluate(expression + '.click()');
 }
+// Each running extraction is listed in Slide features with a View progress link; the job
+// tray shows Task Center tasks, which these jobs from before the Task Center are not.
 async function job(id) {
   const href = '#features?extraction=' + encodeURIComponent(id);
-  await click(visible('.job-tray a[href="' + href + '"]'), 'compute link ' + id);
+  if (!(await evaluate('Boolean(' + visible('.pfm-extraction-runs') + ')'))) {
+    await click(button('Back to feature bundles'), 'back to the extraction library');
+    await waitFor(visible('.pfm-extraction-runs'), 'extraction library');
+  }
+  await click(visible('.pfm-extraction-run a.btn[href="' + href + '"]'), 'View progress ' + id);
   await waitFor(visible('.trident-job-detail') + '?.textContent.includes(' + JSON.stringify(id) + ')', 'progress for ' + id);
   assert.equal(await evaluate('window.location.hash'), href);
 }
@@ -147,7 +153,7 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: pathToFileURL(join(dist, 'index.html')).href + '#features' });
   await waitFor('document.querySelectorAll(".pfm-extraction-run").length === 2', 'active extractions in empty feature library');
-  await waitFor('document.querySelector(".job-tray").innerText.includes("0 running · 0 queued · 2 extractions")');
+  assert.equal(await evaluate('document.querySelectorAll(".pfm-extraction-run a.btn[href^=\\"#features?extraction=\\"]").length'), 2, 'Each running extraction links to its progress');
   assert.equal(await evaluate('document.body.innerText.includes("Create your first feature bundle")'), false, 'Active extraction must replace the first-bundle empty state');
   assert.equal(await evaluate('document.querySelector(".pfm-extraction-runs").innerText.includes("12 of 100 slides processed")'), true, 'Landing page shows extraction progress');
   await screenshot('01-extraction-library');
@@ -155,7 +161,6 @@ try {
   await screenshot('01-extraction-library-mobile');
   assert.equal(await evaluate('document.documentElement.scrollWidth <= window.innerWidth + 1'), true, 'Extraction library overflows mobile viewport');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false });
-  await click(visible('.job-tray-toggle'), 'Compute jobs');
   await job('extract/first');
   assert.equal(await evaluate('document.querySelector(".trident-job-detail").innerText.includes("/slides/first")'), true);
   await job('extract/second');
@@ -181,9 +186,8 @@ try {
   await screenshot('02-selected-extraction');
   const updateAt = await evaluate(`(() => { const item = window.workflow.extractions[0]; item.state = 'succeeded'; item.progress.completed = 100; item.progress.percent = 100; item.progress.label = 'Complete'; item.progress.stages = item.progress.stages.map(stage => ({ ...stage, status: 'complete' })); return performance.now(); })()`);
   await waitFor('document.querySelector(".trident-job-detail").innerText.includes("Extraction complete")', 'polled terminal extraction status');
-  await waitFor('document.querySelector(".job-tray").innerText.includes("0 running · 0 queued · 1 extraction")', 'tray active count refresh');
   const lastPoll = await evaluate('window.workflow.calls.filter(call => call.method === "job" && call.id === "extract/first").at(-1).at');
-  assert.ok(lastPoll > updateAt && lastPoll - updateAt < 5000, 'Job detail automatically refreshes on the three-second timer');
+  assert.ok(lastPoll > updateAt && lastPoll - updateAt < 12000, 'Job detail automatically refreshes on its ten-second timer');
   await screenshot('03-completed-extraction');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await screenshot('04-mobile-extraction');

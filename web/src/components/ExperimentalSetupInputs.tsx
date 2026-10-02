@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { experiments, type ModelExperiment, type SetupInput } from '../api/experiments';
 import { bundles } from '../api/bundles';
 import { targetSplits, targetSplitUnit } from '../api/targetSplits';
-import { type ProtocolSpec } from '../api/scientific';
+import { type ProtocolSpec, type VersionLabelResource } from '../api/scientific';
 import { ApiError } from '../api/client';
 import { newDevelopmentSplit } from '../lib/protocol';
 import { splitSeedsError, trainingDesignIssue, trainingDesignText, TRAINABLE_MODES } from '../lib/split';
@@ -11,7 +11,7 @@ import { sameJSON } from '../lib/json';
 import type { PreparationContext } from '../lib/preparationRoute';
 import { readSessionDraft, sessionDraftKey, useSessionDraftBackup, writeSessionDraft } from '../lib/sessionDraft';
 import { useWorkspaceNavigationGuard } from '../lib/workspaceNavigation';
-import { versionLabelText } from '../lib/versionLabels';
+import { datasetVersionLabel, versionLabelText } from '../lib/versionLabels';
 import { DatasetSelect, Findings, useDatasets } from './ScientificUI';
 import { SplitStrategy } from './SplitStrategy';
 import { Badge, ErrorNotice, Panel } from './ui';
@@ -120,6 +120,12 @@ export function FreezeSetupControl({ project, record, disabledReason, onFrozen, 
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
   const [error, setError] = useState<Error | null>(null);
+  // The review names its inputs as the design steps did (the same cached lists).
+  const datasets = useDatasets(project);
+  const partitions = useQuery({ queryKey: ['scientific', project, 'configurations', 'target-split'], queryFn: () => targetSplits.list(project) });
+  const features = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project) });
+  const datasetName = (id?: string | null) => { const found = datasets.data?.datasets.find((item) => item.id === id); return !id ? '—' : found ? datasetVersionLabel(found) : versionLabelText({ id }, 'Dataset'); };
+  const named = (items: readonly VersionLabelResource[] | undefined, id: string | null | undefined, kind: string) => !id ? '—' : versionLabelText(items?.find((item) => item.id === id) ?? { id }, kind);
   const recoveryKey = sessionDraftKey(project, record.id, 'freeze-setup');
   const [pending, setPending] = useState(() => readSessionDraft(recoveryKey, (value): value is { expectedRevision: number; operationId: string } => Boolean(value && typeof value === 'object' && 'expectedRevision' in value && Number.isSafeInteger(value.expectedRevision) && 'operationId' in value && typeof value.operationId === 'string')));
   useSessionDraftBackup(recoveryKey, record.frozenSetupId ? null : pending);
@@ -138,7 +144,7 @@ export function FreezeSetupControl({ project, record, disabledReason, onFrozen, 
   return <Panel title={record.frozenSetupId ? 'Frozen design' : 'Review & freeze design'} subtitle="Freezing saves the complete design. Training starts when you start the experiment.">
     {record.frozenSetupId ? <><Badge tone="green">Frozen</Badge><p>The design is ready to run. Its inputs, training design, hyperparameters and predictor choices are fixed; to change them, copy the experiment into a new one.</p></> : <>
       <p><strong>{record.name}</strong> · {record.batchPlans?.length ?? 0} saved training batches. Review your inputs, validation design, configurations, training seeds and predictor settings before freezing.</p>
-      {record.setupDesign ? <dl className="science-summary"><div><dt>Dataset</dt><dd>{record.setupDesign.datasetId}</dd></div><div><dt>Targets &amp; splits</dt><dd>{record.setupDesign.targetSplitId}</dd></div><div><dt>Feature bundle</dt><dd>{record.inputs?.featureBundleId}</dd></div><div><dt>Split unit</dt><dd>{record.setupDesign.splitUnit === 'slide' ? record.setupDesign.trainingSplit.groupByPatient ? 'Slide labels · cases kept together in folds' : 'Slide' : 'Patient'}</dd></div><div><dt>Training design</dt><dd>{trainingDesignText(record.setupDesign.trainingSplit)}</dd></div></dl> : null}
+      {record.setupDesign ? <dl className="science-summary"><div><dt>Dataset</dt><dd>{datasetName(record.setupDesign.datasetId)}</dd></div><div><dt>Targets &amp; splits</dt><dd>{named(partitions.data?.configurations, record.setupDesign.targetSplitId, 'Targets & splits')}</dd></div><div><dt>Feature bundle</dt><dd>{named(features.data?.items, record.inputs?.featureBundleId, 'Feature bundle')}</dd></div><div><dt>Split unit</dt><dd>{record.setupDesign.splitUnit === 'slide' ? record.setupDesign.trainingSplit.groupByPatient ? 'Slide labels · cases kept together in folds' : 'Slide' : 'Patient'}</dd></div><div><dt>Training design</dt><dd>{trainingDesignText(record.setupDesign.trainingSplit)}</dd></div></dl> : null}
       {record.batchPlans?.map((plan) => <details key={plan.id}><summary>{plan.spec.batchName} · {plan.spec.trainingSeeds.length} training seeds</summary><BatchPlanSettings spec={plan.spec} fallbackPredictorPolicy={record.predictorPolicy ?? undefined} /></details>)}
       {disabledReason ? <p className="callout">{disabledReason}</p> : null}
       <ErrorNotice error={error} />

@@ -11,6 +11,7 @@ import { Badge, ErrorNotice, Panel } from './ui';
 import LegacyRecordNote, { createdBeforeTaskCenter } from './LegacyRecordNote';
 import { seedEnsembleKey, useSeedEnsembleBuild } from './useSeedEnsembleBuild';
 import './ExperimentPredictors.css';
+import { formatDateTime } from '../lib/dates';
 
 const statusLabel: Record<ExperimentPredictorExecution['status'], string> = {
   queued: 'Queued', waiting: 'Waiting', running: 'Creating predictors', cancelling: 'Cancelling',
@@ -85,7 +86,7 @@ export default function ExperimentPredictors({ project, record, view = 'all' }: 
         {!workItems.length ? <p className="muted">No jobs match this status.</p> : null}
         <Pagination count={workItems.length} page={currentWorkPage} setPage={setWorkPage} label="Predictor jobs" />
       </details> : null}
-      {execution.logPath ? <details><summary>Predictor worker details</summary><code className="record-path">{execution.logPath}</code>{execution.updatedAt ? <p className="muted">Updated {execution.updatedAt}</p> : null}</details> : null}
+      {execution.logPath ? <details><summary>Predictor worker details</summary><code className="record-path">{execution.logPath}</code>{execution.updatedAt ? <p className="muted">Updated {formatDateTime(execution.updatedAt)}</p> : null}</details> : null}
     </div> : execution ? null : !creation ? null : skipped ? <p className="muted">Predictor creation was skipped in every batch. This experiment contains cross-validation results only.</p> : record.submission?.status !== 'submitted' && stage === 'running' ? <p className="callout">Predictor creation waits until experiment submission is complete. Resolve the submission notice above to continue.</p> : !hasPredictorPlan ? <p className="muted">Predictors from this historical experiment are retained here. <a href={`#post-development?${new URLSearchParams({ tab: 'refits', experiment: record.id })}`}>Open historical refit jobs</a></p> : view === 'progress' ? <p className="muted">Predictors are created after each batch’s folds finish. Ready predictors are listed under Predictors.</p> : null}
     {showLibrary ? <>
     <ErrorNotice error={query.error} />

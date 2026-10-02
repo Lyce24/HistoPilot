@@ -194,7 +194,7 @@ function FeaturesWorkspace({ workspace: w, context, extractionRequest, packReque
       {activeView === 'bundles' ? <FeatureExtractionRuns jobs={runs} context={context} isPending={extractionJobs.isPending} project={project} /> : null}
       {configurations.isPending || frozenBundles.isPending ? <p className="muted" role="status">Loading feature sources and bundles…</p> : <>
       {activeView === 'bundles' || activeView === 'detail' ? <section className="pfm-content" aria-label="Frozen feature bundles">
-        <FeatureBundleLibrary project={project} items={bundleItems} features={versions} selectedId={activeView === 'detail' ? selectedBundle : ''} onSelect={(id) => { setSelectedBundle(id); setView('detail'); }} onPrepare={prepareBundle} context={context}
+        <FeatureBundleLibrary project={project} items={bundleItems} error={frozenBundles.error} features={versions} selectedId={activeView === 'detail' ? selectedBundle : ''} onSelect={(id) => { setSelectedBundle(id); setView('detail'); }} onPrepare={prepareBundle} context={context}
           preparationInProgress={activeExtractions.length > 0} filters={libraryFilters} onFiltersChange={setLibraryFilters}
           onRefresh={() => { void Promise.all([frozenBundles.refetch(), configurations.refetch(), extractionJobs.refetch()]); }} refreshBusy={frozenBundles.isFetching || configurations.isFetching || extractionJobs.isFetching} />
       </section> : null}

@@ -273,7 +273,7 @@ export default function TridentExtraction({
               </div>
               <details className="trident-advanced">
                 <summary>
-                  <span><Icon name="system" size={17} /> Advanced Options</span>
+                  <span><Icon name="system" size={17} /> Advanced options</span>
                   <small>{advanced.length} TRIDENT settings</small>
                 </summary>
                 <p className="trident-help">Defaults come from the TRIDENT option catalog. Settings apply to the selected stage; segmentation and patch coordinates can be reused between encoders.</p>

@@ -4,6 +4,7 @@ import { access, approveRequest } from '../api/access';
 import type { AgentRequest, ExposureLevel } from '../api/access';
 import { ErrorNotice, Panel } from './ui';
 import { pollDelay } from '../api/client';
+import { formatDate } from '../lib/dates';
 
 export const exposureMeaning: Record<ExposureLevel, string> = {
   none: 'AI agents see nothing of this project.',
@@ -58,7 +59,7 @@ export default function AgentAccess({ project, projectName }: { project: string;
     </div>}
     {created ? <p className="callout" role="status">Copy this token now; it is not shown again: <code>{created}</code></p> : null}
     <ul className="agent-access-list">{(tokens.data?.tokens ?? []).map((token) => <li key={token.id}>
-      <span>{token.name || token.id} · {token.scopes.join(', ')} · {token.state} · expires {token.expiresAt.slice(0, 10)}</span>
+      <span>{token.name || token.id} · {token.scopes.join(', ')} · {token.state} · expires {formatDate(token.expiresAt)}</span>
       {token.state === 'active' ? <button type="button" className="btn btn-small btn-secondary" disabled={busy} onClick={() => void act(() => access.revokeToken(token.id))}>Revoke</button> : null}
     </li>)}</ul>
     <h3>Requests from AI</h3>
@@ -67,6 +68,6 @@ export default function AgentAccess({ project, projectName }: { project: string;
       <details><summary>Request body</summary><pre>{JSON.stringify(entry.body, null, 2)}</pre></details>
       <button type="button" className="btn btn-small btn-primary" disabled={busy} onClick={() => void approve(entry)}>Approve</button>
       <button type="button" className="btn btn-small btn-secondary" disabled={busy} onClick={() => void act(() => access.resolve(entry.id, 'declined'))}>Decline</button>
-    </li>)}</ul> : <p className="muted">No changes are waiting for approval.</p>}
+    </li>)}</ul> : requests.isPending ? <p className="muted" role="status">Loading requests…</p> : requests.error ? null : <p className="muted">No changes are waiting for approval.</p>}
   </Panel>;
 }

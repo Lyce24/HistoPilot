@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
-import { lifecycle, lifecycleLabel, cleanupPollInterval, cleanupJobActive, cleanupReviewMatches, cleanupApplyRequest } from '../api/lifecycle';
+import { lifecycle, lifecycleLabel, cleanupPollInterval, cleanupJobActive, cleanupReviewMatches, cleanupApplyRequest, recordsInState } from '../api/lifecycle';
 import type { CleanupAction, CleanupItem, CleanupPreview, LifecycleState } from '../api/lifecycle';
 import type { Workspace } from '../api/types';
 import { modelEvaluations } from '../api/predictors';
@@ -9,21 +9,11 @@ import { isInferenceRun } from '../lib/inference';
 import { useHashParameters } from '../lib/hashRoute';
 import { Badge, ErrorNotice, PageHeader, Panel } from '../components/ui';
 import './WorkspaceCleanup.css';
+import { recordKindLabel as kindLabel } from '../lib/recordKinds';
+import { statusLabel } from '../lib/statusLabels';
 
 const actionLabel: Record<CleanupAction, string> = { archive: 'Archive', trash: 'Move to Trash', restore: 'Restore to Active' };
 const recordLabel: Record<CleanupItem['type'], string> = { project: 'Whole project', dataset: 'Dataset', configuration: 'Saved configuration', draft: 'Draft', packing: 'Packing job', extraction: 'Extraction job' };
-const kindLabels: Record<string, string> = {
-  project: 'Whole project', dataset: 'Dataset', protocol: 'Targets & splits', 'analysis-protocol': 'Targets & splits',
-  feature: 'Feature inventory', 'feature-bundle': 'Feature bundle', 'mil-batch': 'Training batch',
-  'development-batch': 'Training batch draft', 'mil-experiment': 'Saved experiment inputs', 'experiment-setup': 'Frozen design',
-  'model-experiment': 'Experiment', 'frozen-predictor': 'Predictor', 'predictor-refit': 'Refit training plan', 'model-evaluation': 'Run · labeled cohort', 'evaluation-batch': 'Batch · labeled cohort',
-  'inference-run': 'Run · unlabeled cohort', 'inference-batch': 'Batch · unlabeled cohort',
-  'clinical-analysis': 'Clinical utility analysis', 'reference-standard': 'Reference standard', 'model-interpretation': 'Model interpretation',
-  'evaluation-cohort': 'Cohort', 'dataset-import': 'Import draft', extraction: 'Feature extraction',
-  'feature-validate': 'Feature validation', 'feature-validation': 'Feature validation',
-  'feature-pack': 'Feature packing', 'feature-packing': 'Feature packing', packing: 'Feature packing',
-};
-const kindLabel = (kind: string) => kindLabels[kind] ?? kind.replaceAll('-', ' ').replace(/^./, (letter) => letter.toUpperCase());
 const retentionNote = 'Delete moves records to recoverable Trash. Source CSV/H5 files, features, packs, model checkpoints and output files stay on disk. This does not free disk space.';
 type Review = { preview: CleanupPreview; operationId: string; uncertain: boolean };
 const readableError = (reason: unknown) => reason instanceof Error ? reason : new Error('The workspace could not be updated.');
@@ -181,8 +171,8 @@ export default function WorkspaceCleanup({ workspace }: { workspace: Workspace }
         <div className="cleanup-selection"><span>{selected.length} selected{selected.some((key) => !visible.some((item) => item.key === key)) ? ' (including records outside this view)' : ''}</span><div className="inline-actions"><button className="text-button" disabled={!editable || !visible.length} onClick={() => select(bulkCleanupSelection(selected, visible))}>Select visible records</button><button className="text-button" disabled={!editable || !selected.length} onClick={() => select([])}>Clear selection</button></div></div>
         {visible.length ? <ul className="cleanup-records">{visible.map((item) => <li key={item.key} className={selectedSet.has(item.key) ? 'cleanup-selected' : ''}>
           <label className="cleanup-record-select"><input type="checkbox" checked={selectedSet.has(item.key)} disabled={!editable} onChange={(event) => select(event.target.checked ? item.type === 'project' ? [item.key] : [...selected.filter((key) => !key.startsWith('project:')), item.key] : selected.filter((key) => key !== item.key))} /><span><strong>{item.name}</strong><small>{recordLabel[item.type]} · {kindLabel(item.kind)}</small>{item.type === 'project' ? <small>Project visibility only; child records keep their states. Select separately from child records.</small> : null}<span className="cleanup-record-id">{item.id}</span></span></label>
-          <div className="cleanup-record-meta"><Badge>{lifecycleLabel[item.state]}</Badge>{item.job ? <Badge tone={cleanupJobActive(item) ? 'warning' : 'neutral'}>{item.job.status}</Badge> : null}<small>{item.usedBy.length} dependent record{item.usedBy.length === 1 ? '' : 's'}</small>{item.job?.cancellable ? <button className="btn btn-secondary btn-small" disabled={!editable} aria-label={`Cancel job: ${item.name}`} onClick={() => void cancel(item)}>Cancel job</button> : null}</div>
-        </li>)}</ul> : <p className="panel-body muted">No {lifecycleLabel[state].toLowerCase()} records match this view.</p>}
+          <div className="cleanup-record-meta"><Badge>{lifecycleLabel[item.state]}</Badge>{item.job ? <Badge tone={cleanupJobActive(item) ? 'warning' : 'neutral'}>{statusLabel(item.job.status)}</Badge> : null}<small>{item.usedBy.length} dependent record{item.usedBy.length === 1 ? '' : 's'}</small>{item.job?.cancellable ? <button className="btn btn-secondary btn-small" disabled={!editable} aria-label={`Cancel job: ${item.name}`} onClick={() => void cancel(item)}>Cancel job</button> : null}</div>
+        </li>)}</ul> : <p className="panel-body muted">No {recordsInState(state, 'records')} match this view.</p>}
       </>}
       <div className="cleanup-actions"><label><span>For selected records</span><select className="field" value={effectiveAction} disabled={!editable} onChange={(event) => { resetReview(); setAction(event.target.value as CleanupAction); }}>{allowedActions.map((value) => <option key={value} value={value}>{actionLabel[value]}</option>)}</select></label><button className="btn btn-primary" disabled={!editable || !selected.length || inventory.isError || !inventory.data} onClick={() => void requestPreview()}>Review selected changes</button></div>
     </section>

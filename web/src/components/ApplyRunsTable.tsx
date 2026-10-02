@@ -15,7 +15,7 @@ import { shortRecordId } from '../lib/recordLabels';
 import { ObjectiveScopeNotice } from './ObjectiveScope';
 import { StageCreateButton } from './StageActions';
 import { StageLibraryToolbar, StageRecordManageButton } from './StageWorkflow';
-import { Badge, EmptyState } from './ui';
+import { Badge, EmptyState, LoadFailed } from './ui';
 import './RunWorkspace.css';
 
 /** `experimentId` and `predictorId` scope the list to one source, as a link from it asks.
@@ -39,7 +39,7 @@ export function RunResult({ run }: { run: ModelEvaluation }) {
 }
 
 /** Every run in one table: the model it applied, the cohort, and what it found. */
-export default function ApplyRunsTable({ runs, predictors, experiments, cohorts, references = [], objectives = [], filings = {}, objectiveScope = '', onClearScope, loading, onOpen, onCreate, filters, onFiltersChange, actions }: {
+export default function ApplyRunsTable({ runs, predictors, experiments, cohorts, references = [], objectives = [], filings = {}, objectiveScope = '', onClearScope, loading, error = null, onRetry, onOpen, onCreate, filters, onFiltersChange, actions }: {
   runs: ModelEvaluation[]; predictors: FrozenPredictor[]; experiments: ModelExperimentSummary[]; cohorts: EvaluationCohort[];
   /** The project's reference standards: labels added to cohorts after they were frozen. */
   references?: ReferenceStandard[];
@@ -48,6 +48,8 @@ export default function ApplyRunsTable({ runs, predictors, experiments, cohorts,
   /** The project-wide objective focus (lib/objectiveScope). */
   objectiveScope?: string; onClearScope?: () => void;
   loading: boolean; onOpen: (id: string) => void; onCreate: () => void;
+  /** Why the runs could not be read, if they could not, and how to read them again. */
+  error?: Error | null; onRetry?: () => void;
   filters?: RunFilters; onFiltersChange?: (filters: RunFilters) => void; actions?: ReactNode;
 }) {
   const [localFilters, setLocalFilters] = useState(newRunFilters);
@@ -115,7 +117,7 @@ export default function ApplyRunsTable({ runs, predictors, experiments, cohorts,
     </StageLibraryToolbar>
     {onClearScope ? <ObjectiveScopeNotice objectives={objectives} scope={objectiveScope} hidden={matching.length - visible.length} noun={matching.length - visible.length === 1 ? 'run' : 'runs'} onClear={onClearScope} /> : null}
     {scope ? <p className="callout apply-runs-scope">Showing the runs of {scope}. <button type="button" className="text-button" onClick={() => update({ experimentId: '', predictorId: '' })}>Show all runs</button></p> : null}
-    {loading ? <p role="status">Loading runs…</p> : !visible.length ? <EmptyState icon="evaluation"
+    {loading ? <p role="status">Loading runs…</p> : error && !runs.length ? <LoadFailed what="Runs" error={error} onRetry={onRetry} /> : !visible.length ? <EmptyState icon="evaluation"
       title={runs.length ? 'No matching runs' : 'No models applied yet'}
       description={runs.length ? 'Try another search or clear the filters.' : 'Apply ready predictors to a cohort: labeled cohorts are scored, unlabeled ones get predictions only.'}
       action={runs.length ? <button type="button" className="btn btn-secondary" onClick={reset}>Clear filters</button> : <StageCreateButton onClick={onCreate}>Apply predictors</StageCreateButton>} />
