@@ -72,6 +72,7 @@ projects the person has marked as shareable.
 | --- | --- |
 | Where the project stands | `project roadmap`: each stage's status and the suggested next one |
 | Summarize experiments | `experiment list`, `experiment show EXP`, `experiment results EXP` |
+| How experiments are organized | `objective list`, `objective show OBJ`: each objective (primary, secondary or exploratory) and its experiments by role; `experiment list --objective OBJ` or `--unfiled`. File one with `experiment assign EXP --objective OBJ --role ROLE` (add `--series NAME --member LABEL` for one of a set); hand over `objective create`, `update` and `remove` |
 | Explain a failure | `tasks list --state history`, `tasks show TASK`, `tasks log TASK --from BYTE` |
 | Wait for work | `tasks wait TASK --timeout 600`, `experiment wait EXP --timeout 600` |
 | Score a run | `run label-sources RUN`, `run metrics RUN`, `run agreement RUN`, `run subgroups RUN --attribute KEY` |

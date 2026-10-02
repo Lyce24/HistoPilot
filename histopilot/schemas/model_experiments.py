@@ -6,6 +6,7 @@ from pydantic import Field, StrictInt, field_validator, model_validator
 
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
+from histopilot.schemas.objectives import ExperimentFiling
 from histopilot.schemas.predictor_policy import ExperimentPredictorPolicy
 from histopilot.schemas.protocols import SplitSpec
 from histopilot.schemas.workspace import RequestModel
@@ -41,7 +42,10 @@ class ExperimentBatchPlan(RequestModel):
     spec: DevelopmentBatchSpec
 
 
-class CreateModelExperiment(ExperimentValues):
+class CreateModelExperiment(ExperimentValues, ExperimentFiling):
+    """A new experiment, optionally filed under an objective from the start. The filing is
+    kept beside the record (histopilot.application.objectives), never in it."""
+
     setupVersion: Literal[1] | None = None
     operationId: str = Field(min_length=1, max_length=200)
     sourceExperimentId: str | None = Field(default=None, min_length=1, max_length=128)

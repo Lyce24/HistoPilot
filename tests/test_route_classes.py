@@ -62,12 +62,14 @@ def test_reads_never_change_state_and_previews_are_named_or_drafts():
         for (method, path), route_class_ in ROUTE_CLASSES.items()
         if route_class_ == PREVIEW and not path.endswith("preview")
     }
-    # Draft saves are preview: an agent may prepare work that a person then freezes.
+    # Draft saves are preview: an agent may prepare work that a person then freezes. Filing
+    # an experiment under an objective is too: like its tags, it changes no science.
     assert unnamed == {
         ("POST", "/drafts"),
         ("PATCH", "/drafts/{draft_id}"),
         ("POST", "/model-experiments"),
         ("PATCH", "/model-experiments/{experiment_id}"),
+        ("PUT", "/model-experiments/{experiment_id}/objective"),
         ("POST", "/model-experiments/{experiment_id}/setup-inputs"),
     }
 

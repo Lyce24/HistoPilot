@@ -13,6 +13,7 @@ from histopilot.schemas.model_experiments import (
     SubmitModelExperiment,
     UpdateModelExperiment,
 )
+from histopilot.schemas.objectives import FileExperiment
 from histopilot.schemas.predictors import PredictorAction
 from histopilot.storage.project_lock import StorageError
 
@@ -59,6 +60,13 @@ def model_experiments_router(projects, filesystem):
     @router.patch("/{experiment_id}")
     def update(identity: str, experiment_id: str, payload: UpdateModelExperiment):
         return service(identity).update(experiment_id, payload)
+
+    @router.put("/{experiment_id}/objective")
+    def file(identity: str, experiment_id: str, payload: FileExperiment):
+        """File the experiment under an objective with a role and a series, if its filing is
+        still `expected`. Started and archived experiments can be filed; the record itself
+        does not change."""
+        return service(identity).file(experiment_id, payload)
 
     @router.post("/{experiment_id}/setup-inputs")
     def setup_inputs(identity: str, experiment_id: str, payload: ConfigureModelExperimentSetup):

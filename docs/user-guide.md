@@ -143,6 +143,24 @@ Freezing also saves the testing set as a **testing cohort** in Apply models: a l
 
 Choose **Create experiment**, or start from an existing one as a template. Until it starts, an experiment is its design, which combines a dataset, a target/split version and a feature bundle in three steps. Links saved by the former Experimental Setup module open the same experiment here.
 
+### Objectives, roles and series
+
+A study asks a few questions, and each takes several experiments to answer. **Objectives** organizes the library around those questions:
+
+- **Objectives** are the questions themselves, such as "KRAS mutant vs wild type" or "Dysplasia grade". Rank each as a protocol does: primary, secondary or exploratory. Add, rename, re-rank or remove them with **Objectives** above the library.
+- **Roles** say what an experiment does for its objective. The library lists them in this order:
+  - **Primary:** answers the objective. It is the model you report and apply.
+  - **Comparison:** the same data with another method: model, encoder, clinical inputs, fusion or pooling.
+  - **Variant:** the same method with another label definition or population.
+  - **Generalization:** trained on some cohorts and tested on held-out ones.
+  - **Control:** a negative or matched control.
+  - **Tuning:** pilots, hyperparameter rounds and earlier versions. They are folded into one row per objective.
+- **Series** gather experiments that differ in one factor, such as the held-out cohort of leave-one-cohort-out arms or the draw of matched controls. A series shows as one row, with the range of its members' results, until you open it. Each member is named by what sets it apart, such as the cohort it holds out.
+
+Seeds and hyperparameter grids stay inside each experiment, where Runs and Results show them, so they never need filing. A change after an experiment has started means a copy, so file the copy as **Tuning**, or as the new **Primary** when it replaces the old one; a copy remembers the experiment it came from.
+
+File an experiment from its **Manage experiment** section, from the create form, or with `histopilot experiment assign`. Filing never changes the experiment, so started and archived ones can be filed too, and their revisions, results and update times stay as they were. **Group by objective** switches the library between sections per objective and a single table; a search or status filter opens every series and tuning row so that matches stay visible.
+
 ### Inputs & training design
 
 Choose the three inputs and the training design:

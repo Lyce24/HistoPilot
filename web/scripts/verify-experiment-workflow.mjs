@@ -28,6 +28,7 @@ import {bundles} from ${source('api/bundles.ts')};
 import {development} from ${source('api/development.ts')};
 import {predictors} from ${source('api/predictors.ts')};
 import {experimentHeadlines} from ${source('api/experimentResults.ts')};
+import {objectives} from ${source('api/objectives.ts')};
 import {taskCenter} from ${source('api/taskCenter.ts')};
 import {mil} from ${source('api/mil.ts')};
 import {lifecycle} from ${source('api/lifecycle.ts')};
@@ -48,6 +49,7 @@ const resolved = {canPlan:true,findings:[],resolvedLoadingPolicy:'native',packAr
 const record = (id,name,status='draft',stage='planning',frozen=false) => ({id,key:'draft:'+id,name,notes:'Browser fixture for one experiment from design to start',tags:[],revision:1,state:'active',status,stage,legacy:false,setupVersion:1,setupStatus:frozen?'frozen':'draft',frozenSetupId:frozen?'frozen-'+id:null,configurationLocked:frozen,createdAt:'2026-09-25T00:00:00Z',updatedAt:'2026-09-25T00:00:00Z',inputs:null,setupDesign:null,batches:[],drafts:[],batchPlans:[],predictorId:null,executionImplemented:true});
 const state = window.workflow = {calls:[],errors:[],records:[record('setup-main','Bladder training study')],execution:null};
 experimentHeadlines.list = async () => ({items:[]});
+objectives.list = async () => ({revision:0,items:[]});
 window.fetch = async (...args) => { if (String(args[0]).endsWith('/api/v1/session')) return new Response(JSON.stringify({token:'fixture-token'}),{status:200,headers:{'Content-Type':'application/json'}}); const message='Unexpected request '+args[0];state.errors.push(message);throw new Error(message); };
 const replace = value => { state.records=state.records.map(item=>item.id===value.id?value:item);return copy(value); };
 experiments.summaries = async () => ({items:copy(state.records)});

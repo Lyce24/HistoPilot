@@ -9,6 +9,7 @@ from . import (
     confirm,
     experiments,
     login,
+    objectives,
     operations,
     projects,
     records,
@@ -27,6 +28,7 @@ def register_commands(app: typer.Typer) -> None:
     login.register(app)
     projects.register(app)
     experiment = experiments.register(app)
+    objectives.register(app)
     groups = records.register(app)
     runs.register(groups["run"])
     authoring.register(groups)

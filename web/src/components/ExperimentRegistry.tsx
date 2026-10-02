@@ -1,17 +1,19 @@
 import { StageBackButton, StageCreateButton } from './StageActions';
 import { shortRecordId } from '../lib/recordLabels';
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { flushSync } from 'react-dom';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { experimentHeadlines } from '../api/experimentResults';
-import ExperimentHeadline from './ExperimentHeadline';
+import ExperimentHeadline, { SeriesHeadline } from './ExperimentHeadline';
 import { ApiError } from '../api/client';
 import { experiments, experimentExecutionStatus, experimentPollInterval, experimentStatusReason, experimentStage, experimentStageLabel, experimentStatusFilters, experimentStatusLabel, experimentStatusTone } from '../api/experiments';
-import type { CreateExperimentInput, ModelExperiment } from '../api/experiments';
+import type { CreateExperimentInput, ModelExperiment, ModelExperimentSummary } from '../api/experiments';
+import { experimentRoleHelp, experimentRoleLabel, experimentRoles, filingOf, objectiveRankLabel, objectiveRanks, objectives as objectiveRecords, sameFiling, type ExperimentFiling, type ExperimentRole, type Objective, type ObjectiveRank } from '../api/objectives';
 import type { LifecycleState } from '../api/lifecycle';
 import { lifecycleLabel } from '../api/lifecycle';
 import { sameJSON } from '../lib/json';
-import { Badge, EmptyState, ErrorNotice, PageHeader, Panel } from './ui';
+import { groupExperiments, memberSummary, type LibraryEntry, type LibraryGroup } from '../lib/experimentLibrary';
+import { Badge, EmptyState, ErrorNotice, Icon, PageHeader, Panel } from './ui';
 import { RecordManageButton } from './RecordManagement';
 import { StageLibrary, StageLibraryToolbar, StagePage, StageSteps, useStageLibrary } from './StageWorkflow';
 import './ExperimentRegistry.css';
@@ -20,10 +22,11 @@ import { confirmWorkspaceNavigation, useWorkspaceNavigationGuard } from '../lib/
 import { isCreateExperimentDraft, isExperimentMetadataDraft, type CreateExperimentDraft, type ExperimentMetadataBaseline, type ExperimentMetadataDraft } from '../lib/experimentEditorDraft';
 import { stageEyebrow } from '../lib/roadmap';
 
-export function filterExperiments<T extends Pick<ModelExperiment, 'id' | 'name' | 'notes' | 'tags' | 'state' | 'status' | 'createdAt' | 'updatedAt' | 'stage' | 'configurationLocked'>>(items: T[], state: LifecycleState | 'all', status: string, search: string, sort: string) {
+export function filterExperiments<T extends Pick<ModelExperiment, 'id' | 'name' | 'notes' | 'tags' | 'state' | 'status' | 'createdAt' | 'updatedAt' | 'stage' | 'configurationLocked' | 'objective' | 'role' | 'series' | 'seriesMember'>>(items: T[], state: LifecycleState | 'all', status: string, search: string, sort: string) {
   const query = search.trim().toLocaleLowerCase();
+  // Search reads where an experiment is filed too: its objective, role, series and member.
   return items.filter((item) => (state === 'all' || item.state === state) && (!status || (['planning', 'running', 'finished'].includes(status) ? experimentStage(item) === status : item.status === status))
-    && (!query || [item.name, item.id, item.notes, ...item.tags].join(' ').toLocaleLowerCase().includes(query)))
+    && (!query || [item.name, item.id, item.notes, ...item.tags, item.objective?.name, item.role, item.series, item.seriesMember].join(' ').toLocaleLowerCase().includes(query)))
     .sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
       : sort === 'oldest' ? a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
         : b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
@@ -95,8 +98,10 @@ export function ExperimentComparison({ items }: { items: ModelExperiment[] }) {
   </Panel>;
 }
 
-export function CreateExperiment({ project, copy, templates = [], onCreated, onClose }: {
-  project: string; copy?: ModelExperiment; templates?: Pick<ModelExperiment, 'id' | 'name' | 'notes' | 'tags' | 'state' | 'stage' | 'status' | 'configurationLocked'>[];
+export function CreateExperiment({ project, copy, templates = [], objectives = [], onCreated, onClose }: {
+  project: string; copy?: ModelExperiment; templates?: Pick<ModelExperiment, 'id' | 'name' | 'notes' | 'tags' | 'state' | 'stage' | 'status' | 'configurationLocked' | 'objectiveId'>[];
+  /** The project's objectives, to file the new experiment under one from the start. */
+  objectives?: Objective[];
   onCreated: (item: ModelExperiment) => void; onClose: () => void;
 }) {
   const sources = templates.filter((item) => item.state !== 'trashed');
@@ -106,12 +111,15 @@ export function CreateExperiment({ project, copy, templates = [], onCreated, onC
   const [name, setName] = useState(recovered?.name ?? (copy ? `${copy.name.slice(0, 100)} copy` : ''));
   const [notes, setNotes] = useState(recovered?.notes ?? copy?.notes ?? '');
   const [tags, setTags] = useState(recovered?.tags ?? copy?.tags.join(', ') ?? '');
+  // A copy answers its source's objective, usually as the next tuning round.
+  const [objectiveId, setObjectiveId] = useState(recovered?.objectiveId ?? copy?.objectiveId ?? '');
+  const [role, setRole] = useState<ExperimentRole | ''>(recovered?.role ?? (copy ? 'tuning' : ''));
   const [busy, setBusy] = useState(false);
   const [complete, setComplete] = useState(false);
   const creating = useRef(false);
   const [error, setError] = useState<Error | null>(null);
   const [pending, setPending] = useState<CreateExperimentInput | null>(recovered?.pending ?? null);
-  const draft: CreateExperimentDraft | null = !complete && (name || notes || tags || sourceId || pending) ? { version: 1, sourceId, name, notes, tags, pending } : null;
+  const draft: CreateExperimentDraft | null = !complete && (name || notes || tags || sourceId || pending) ? { version: 1, sourceId, name, notes, tags, objectiveId, role, pending } : null;
   const backup = useSessionDraftBackup(recoveryKey, draft, isCreateExperimentDraft);
   useWorkspaceNavigationGuard(busy ? 'An experiment creation request is in progress. Its response may arrive after you leave.' : draft && backup.error ? 'Unsaved experiment details cannot be recovered in this browser.' : null);
   function close() { if (!creating.current && confirmWorkspaceNavigation()) onClose(); }
@@ -124,17 +132,19 @@ export function CreateExperiment({ project, copy, templates = [], onCreated, onC
       setName(`${chosen.name.slice(0, 100)} copy`);
       setNotes(chosen.notes);
       setTags(chosen.tags.join(', '));
+      setObjectiveId(chosen.objectiveId && objectives.some((item) => item.id === chosen.objectiveId) ? chosen.objectiveId : '');
+      setRole('tuning');
     }
   }
   async function create() {
     if (creating.current || complete || !name.trim()) return;
     creating.current = true;
     setBusy(true); setError(null);
-    const input = pending ?? { name: name.trim(), notes: notes.trim(), tags: [...new Set(tags.split(',').map((value) => value.trim()).filter(Boolean))], ...(sourceId ? { sourceExperimentId: sourceId } : {}), setupVersion: 1 as const, operationId: crypto.randomUUID() };
+    const input = pending ?? { name: name.trim(), notes: notes.trim(), tags: [...new Set(tags.split(',').map((value) => value.trim()).filter(Boolean))], ...(sourceId ? { sourceExperimentId: sourceId } : {}), ...(objectiveId ? { objectiveId } : {}), ...(role ? { role } : {}), setupVersion: 1 as const, operationId: crypto.randomUUID() };
     // Persist the exact operation before starting I/O so a reload can retry the
     // accepted request rather than creating a second experiment.
     setPending(input);
-    writeSessionDraft(recoveryKey, { version: 1, sourceId, name, notes, tags, pending: input } satisfies CreateExperimentDraft);
+    writeSessionDraft(recoveryKey, { version: 1, sourceId, name, notes, tags, objectiveId, role, pending: input } satisfies CreateExperimentDraft);
     try {
       const result = await experiments.create(project, input);
       writeSessionDraft(recoveryKey, null);
@@ -165,6 +175,8 @@ export function CreateExperiment({ project, copy, templates = [], onCreated, onC
       </select><small>{source ? `Copies the saved inputs and batch recipes from “${source.name}” into an editable plan. Runs and results stay with the source experiment.` : 'Use an existing experiment as a template to reuse its inputs and batch recipes.'}</small></label>
       <label className="label">Experiment name<input autoFocus required className="field" value={name} maxLength={120} onChange={(event) => setName(event.target.value)} /></label>
       <label className="label">Tags<input className="field" value={tags} maxLength={20000} onChange={(event) => setTags(event.target.value)} placeholder="baseline, abmil, comparison" /><small>Comma-separated labels for filtering and organization.</small></label>
+      <label className="label">Objective<select className="field" value={objectiveId} onChange={(event) => setObjectiveId(event.target.value)}><option value="">No objective</option>{objectiveId && !objectives.some((item) => item.id === objectiveId) ? <option value={objectiveId} disabled>Objective unavailable</option> : null}{objectives.map((item) => <option key={item.id} value={item.id}>{item.name} · {objectiveRankLabel[item.rank]}</option>)}</select><small>{objectives.length ? 'The question this experiment answers. You can file it later.' : 'Add objectives from the experiments list to file experiments under them.'}</small></label>
+      <label className="label">Role<select className="field" value={role} onChange={(event) => setRole(event.target.value as ExperimentRole | '')}><option value="">No role</option>{experimentRoles.map((value) => <option key={value} value={value}>{experimentRoleLabel[value]}</option>)}</select><small>{role ? experimentRoleHelp[role] : 'What it does for its objective.'}</small></label>
       <label className="label">Notes<textarea className="field" value={notes} maxLength={10000} onChange={(event) => setNotes(event.target.value)} placeholder="What are you testing in this experiment?" /></label>
     </fieldset>
     <ErrorNotice error={error} />{pending && !busy ? <p className="callout" role="status">The creation response is not confirmed. Retry sends the same creation request and cannot create a second record.</p> : null}
@@ -237,10 +249,172 @@ export function ExperimentMetadata({ project, record }: { project: string; recor
   </form>;
 }
 
+/**
+ * Where the experiment is filed: its objective, its role there, and its series and member.
+ * Filing never changes the experiment, so started, frozen and archived ones can be filed.
+ */
+export function ExperimentFilingEditor({ project, record, objectives, seriesNames = [] }: {
+  project: string; record: ModelExperiment; objectives: Objective[];
+  /** Series already used in this project, offered as suggestions. */
+  seriesNames?: string[];
+}) {
+  const client = useQueryClient();
+  const saved = filingOf(record);
+  const [baseline, setBaseline] = useState(saved);
+  const [draft, setDraft] = useState(saved);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [notice, setNotice] = useState('');
+  const suggestions = useId();
+  const dirty = !sameFiling(draft, baseline);
+  const readOnly = record.state === 'trashed';
+  useEffect(() => {
+    // Another tab or the command line filed it: follow, unless the person is editing.
+    if (!sameFiling(saved, baseline) && !dirty) { setBaseline(saved); setDraft(saved); }
+  }, [saved, baseline, dirty]);
+  const change = (values: Partial<ExperimentFiling>) => { setNotice(''); setDraft((current) => ({ ...current, ...values })); };
+  async function save() {
+    if (busy || !dirty || readOnly) return;
+    setBusy(true); setError(null); setNotice('');
+    const series = draft.series?.trim() || null;
+    const wanted: ExperimentFiling = { ...draft, series, seriesMember: series ? draft.seriesMember?.trim() || null : null };
+    try {
+      const result = await objectiveRecords.file(project, record.id, wanted, baseline);
+      client.setQueryData(['model-experiment', project, record.id], result);
+      setBaseline(filingOf(result)); setDraft(filingOf(result));
+      setNotice('Filing saved. The experiment and its results are unchanged.');
+      await client.invalidateQueries({ queryKey: ['model-experiments', project] });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason : new Error('The filing could not be saved.'));
+      if (reason instanceof ApiError && reason.status === 409) void client.invalidateQueries({ queryKey: ['model-experiment', project, record.id] });
+    } finally { setBusy(false); }
+  }
+  const unknownObjective = draft.objectiveId && !objectives.some((item) => item.id === draft.objectiveId);
+  return <form className="stack experiment-filing-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+    <fieldset className="experiment-filing-fields" disabled={busy || readOnly}><legend className="sr-only">Objective and role</legend>
+      <label className="label">Objective<select className="field" value={draft.objectiveId ?? ''} onChange={(event) => change({ objectiveId: event.target.value || null })}><option value="">No objective</option>{unknownObjective ? <option value={draft.objectiveId ?? ''} disabled>Objective unavailable</option> : null}{objectives.map((item) => <option key={item.id} value={item.id}>{item.name} · {objectiveRankLabel[item.rank]}</option>)}</select><small>{objectives.length ? 'The scientific question this experiment answers.' : 'Add objectives from the experiments list first.'}</small></label>
+      <label className="label">Role<select className="field" value={draft.role ?? ''} onChange={(event) => change({ role: (event.target.value || null) as ExperimentRole | null })}><option value="">No role</option>{experimentRoles.map((value) => <option key={value} value={value}>{experimentRoleLabel[value]}</option>)}</select><small>{draft.role ? experimentRoleHelp[draft.role] : 'What it does for its objective.'}</small></label>
+      <label className="label">Series<input className="field" list={suggestions} value={draft.series ?? ''} maxLength={80} placeholder="Leave one cohort out" onChange={(event) => change({ series: event.target.value || null })} /><datalist id={suggestions}>{seriesNames.map((name) => <option key={name} value={name} />)}</datalist><small>Experiments that differ in one factor share a series and show as one row.</small></label>
+      <label className="label">Member<input className="field" value={draft.seriesMember ?? ''} maxLength={80} disabled={!draft.series?.trim()} placeholder="The held-out cohort" onChange={(event) => change({ seriesMember: event.target.value || null })} /><small>What sets it apart in its series.</small></label>
+    </fieldset>
+    <ErrorNotice error={error} />{notice ? <p role="status" className="muted">{notice}</p> : null}
+    {record.copiedFrom ? <p className="muted">Copied from {record.copiedFrom.name || record.copiedFrom.id}.</p> : null}
+    <button className="btn btn-secondary" disabled={busy || readOnly || !dirty} type="submit">{busy ? 'Saving…' : 'Save filing'}</button>
+  </form>;
+}
+
+interface ObjectiveValues { name: string; rank: ObjectiveRank; description: string }
+function ObjectiveForm({ initial, submitLabel, busy, onSubmit, onCancel }: {
+  initial: ObjectiveValues; submitLabel: string; busy: boolean;
+  onSubmit: (values: ObjectiveValues) => Promise<boolean>; onCancel?: () => void;
+}) {
+  const [name, setName] = useState(initial.name);
+  const [rank, setRank] = useState(initial.rank);
+  const [description, setDescription] = useState(initial.description);
+  return <form className="objective-form" onSubmit={(event) => {
+    event.preventDefault();
+    void onSubmit({ name: name.trim(), rank, description: description.trim() }).then((saved) => { if (saved && !onCancel) { setName(''); setDescription(''); } });
+  }}>
+    <fieldset className="experiment-create-fields" disabled={busy}><legend className="sr-only">{submitLabel}</legend>
+      <label className="label">Name<input required className="field" value={name} maxLength={120} placeholder="Aim 1 · KRAS mutant vs wild type" onChange={(event) => setName(event.target.value)} /></label>
+      <label className="label">Rank<select className="field" value={rank} onChange={(event) => setRank(event.target.value as ObjectiveRank)}>{objectiveRanks.map((value) => <option key={value} value={value}>{objectiveRankLabel[value]}</option>)}</select><small>As a study protocol ranks its objectives.</small></label>
+      <label className="label">Description<textarea className="field" value={description} maxLength={2000} placeholder="The question, its endpoint and its population." onChange={(event) => setDescription(event.target.value)} /></label>
+    </fieldset>
+    <div className="inline-actions"><button className="btn btn-secondary btn-small" type="submit" disabled={busy || !name.trim()}>{busy ? 'Saving…' : submitLabel}</button>{onCancel ? <button type="button" className="text-button" disabled={busy} onClick={onCancel}>Cancel</button> : null}</div>
+  </form>;
+}
+
+/** The project's objectives: add, rename, re-rank, describe or remove one. */
+export function ObjectivesManager({ project, items, experiments: filed, focus }: {
+  project: string; items: Objective[];
+  experiments: Pick<ModelExperimentSummary, 'objectiveId' | 'state'>[];
+  /** The objective to open for editing. */
+  focus?: string;
+}) {
+  const client = useQueryClient();
+  const [editing, setEditing] = useState(focus ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [notice, setNotice] = useState('');
+  // A creation whose answer was lost retries under the same operation, never twice.
+  const pendingCreate = useRef<string | null>(null);
+  const counts = new Map<string, number>();
+  for (const item of filed) if (item.objectiveId && item.state !== 'trashed') counts.set(item.objectiveId, (counts.get(item.objectiveId) ?? 0) + 1);
+  async function run(work: () => Promise<string>) {
+    setBusy(true); setError(null); setNotice('');
+    try {
+      const done = await work();
+      // Say it once the lists show it, so the page never reports a change it does not show yet.
+      await Promise.all([client.invalidateQueries({ queryKey: ['objectives', project] }), client.invalidateQueries({ queryKey: ['model-experiments', project] })]);
+      setNotice(done);
+      return true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason : new Error('The objectives could not be saved.'));
+      return false;
+    } finally { setBusy(false); }
+  }
+  const create = (values: ObjectiveValues) => run(async () => {
+    const operationId = pendingCreate.current ?? crypto.randomUUID();
+    pendingCreate.current = operationId;
+    try { await objectiveRecords.create(project, { ...values, operationId }); }
+    catch (reason) {
+      if (reason instanceof ApiError && reason.status < 500 && reason.status !== 408) pendingCreate.current = null;
+      throw reason;
+    }
+    pendingCreate.current = null;
+    return `Added “${values.name}”.`;
+  });
+  const update = (item: Objective, values: ObjectiveValues) => run(async () => {
+    await objectiveRecords.update(project, item.id, { expectedRevision: item.revision, ...values });
+    setEditing('');
+    return `Saved “${values.name}”.`;
+  });
+  function remove(item: Objective) {
+    const count = counts.get(item.id) ?? 0;
+    if (!window.confirm(`Remove the objective “${item.name}”? ${count ? `Its ${count} experiment${count === 1 ? '' : 's'} move to No objective; experiments and results do not change.` : 'No experiment is filed under it.'}`)) return;
+    void run(async () => {
+      const removed = await objectiveRecords.remove(project, item.id, { expectedRevision: item.revision, operationId: crypto.randomUUID() });
+      return `Removed “${removed.name}”.${removed.unfiled ? ` ${removed.unfiled} experiment${removed.unfiled === 1 ? '' : 's'} moved to No objective.` : ''}`;
+    });
+  }
+  const hasPrimary = items.some((item) => item.rank === 'primary');
+  return <>
+    <Panel title="Objectives" subtitle="The scientific questions this project's experiments answer. The library lists primary objectives first, then secondary, then exploratory.">
+      {items.length ? <div className="experiment-table-scroll"><table className="objective-table" aria-label="Objectives"><thead><tr><th scope="col">Objective</th><th scope="col">Rank</th><th scope="col">Experiments</th><th scope="col">Actions</th></tr></thead><tbody>
+        {items.map((item) => editing === item.id
+          ? <tr key={item.id}><td colSpan={4}><ObjectiveForm initial={item} submitLabel="Save objective" busy={busy} onSubmit={(values) => update(item, values)} onCancel={() => setEditing('')} /></td></tr>
+          : <tr key={item.id}><th scope="row"><strong>{item.name}</strong>{item.description ? <small>{item.description}</small> : null}</th><td><Badge tone={item.rank === 'primary' ? 'purple' : 'neutral'}>{objectiveRankLabel[item.rank]}</Badge></td><td>{counts.get(item.id) ?? 0}</td><td><div className="inline-actions"><button type="button" className="text-button" disabled={busy} onClick={() => setEditing(item.id)}>Edit</button><button type="button" className="text-button" disabled={busy} onClick={() => remove(item)}>Remove</button></div></td></tr>)}
+      </tbody></table></div> : <p className="muted">No objectives yet. Add the questions the experiments answer, the primary one first.</p>}
+      <ErrorNotice error={error} />{notice ? <p role="status" className="muted">{notice}</p> : null}
+    </Panel>
+    <Panel title="Add an objective" subtitle="File experiments under it from their Manage experiment section or with histopilot experiment assign.">
+      <ObjectiveForm initial={{ name: '', rank: hasPrimary ? 'secondary' : 'primary', description: '' }} submitLabel="Add objective" busy={busy} onSubmit={create} />
+    </Panel>
+    <Panel title="Roles" subtitle="What an experiment does for its objective, in the order the library lists them. Seeds and hyperparameter grids stay inside each experiment.">
+      <dl className="objective-roles">{experimentRoles.map((value) => <div key={value}><dt>{experimentRoleLabel[value]}</dt><dd>{experimentRoleHelp[value]}</dd></div>)}</dl>
+    </Panel>
+  </>;
+}
+
+const statusOrder = ['needs-attention', 'running', 'queued', 'waiting', 'held', 'draft', 'ready', 'planned', 'created', 'cancelled', 'completed'];
+/** The statuses of several experiments in one line, live work first: "2 running · 7 queued". */
+export function statusSummary(items: Pick<ModelExperiment, 'status' | 'stage' | 'configurationLocked' | 'frozenSetupId'>[]) {
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const item of items) {
+    const key = experimentDraft(item) ? 'draft' : experimentExecutionStatus(item.status);
+    const label = key === 'draft' ? 'draft' : experimentStatusLabel(item.status).toLocaleLowerCase();
+    counts.set(key, { label, count: (counts.get(key)?.count ?? 0) + 1 });
+  }
+  const rank = (key: string) => statusOrder.includes(key) ? statusOrder.indexOf(key) : statusOrder.length;
+  return [...counts].sort(([a], [b]) => rank(a) - rank(b)).map(([, value]) => `${value.count} ${value.label}`).join(' · ');
+}
+
 export interface ExperimentLibraryFilters {
   state: LifecycleState | 'all'; status: string; search: string; sort: string; selected: string[];
+  /** One section per objective, roles in order and series folded; off lists one table. */
+  grouped: boolean;
 }
-export const newExperimentLibraryFilters = (): ExperimentLibraryFilters => ({ state: 'active', status: '', search: '', sort: 'recent', selected: [] });
+export const newExperimentLibraryFilters = (): ExperimentLibraryFilters => ({ state: 'active', status: '', search: '', sort: 'recent', selected: [], grouped: true });
 
 /**
  * The experiments the library lists: designs, frozen designs and started experiments. A legacy
@@ -253,6 +427,11 @@ export function libraryExperiments<T extends Pick<ModelExperiment, 'legacy' | 's
 /** A design still being edited; every other experiment has an execution status. */
 export const experimentDraft = (item: Pick<ModelExperiment, 'stage' | 'status' | 'configurationLocked' | 'frozenSetupId'>) => experimentStage(item) === 'planning' && !item.frozenSetupId;
 const libraryStatusFilters: Record<string, string> = { draft: 'Draft', ...experimentStatusFilters };
+const COLUMNS = 8;
+const itemsOf = <T extends ModelExperimentSummary>(entries: LibraryEntry<T>[]) => entries.flatMap((entry) => entry.kind === 'series' ? entry.items : [entry.item]);
+const roleCell = (role?: ExperimentRole | null) => role
+  ? <span className={`experiment-role experiment-role-${role}`} title={experimentRoleHelp[role]}>{experimentRoleLabel[role]}</span>
+  : <span className="muted" title="No role">—</span>;
 
 export default function ExperimentRegistry({ project, onOpen, filters, onFiltersChange }: {
   project: string; onOpen: (id: string) => void;
@@ -260,19 +439,32 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
 }) {
   const client = useQueryClient();
   const query = useQuery({ queryKey: ['model-experiments', project, 'summary'], queryFn: () => experiments.summaries(project), refetchInterval: (value) => experimentPollInterval(value.state.data) });
+  const objectiveQuery = useQuery({ queryKey: ['objectives', project], queryFn: () => objectiveRecords.list(project) });
   const [localFilters, setLocalFilters] = useState(newExperimentLibraryFilters);
   const { state, status, search, sort, selected } = filters ?? localFilters;
+  const grouped = (filters ?? localFilters).grouped ?? true;
   const setFilters = onFiltersChange ?? setLocalFilters;
   const setState = (value: LifecycleState | 'all') => setFilters((current) => ({ ...current, state: value }));
   const setStatus = (value: string) => setFilters((current) => ({ ...current, status: value }));
   const setSearch = (value: string) => setFilters((current) => ({ ...current, search: value }));
   const setSort = (value: string) => setFilters((current) => ({ ...current, sort: value }));
+  const setGrouped = (value: boolean) => setFilters((current) => ({ ...current, grouped: value }));
   const setSelected = (value: SetStateAction<string[]>) => setFilters((current) => ({ ...current, selected: typeof value === 'function' ? value(current.selected) : value }));
   const [creating, setCreating] = useState(false);
   const [comparing, setComparing] = useState(false);
-  useStageLibrary(() => { if (!creating) setComparing(false); });
+  // The objectives page: null when closed, '' when open, an objective's ID to edit it.
+  const [managing, setManaging] = useState<string | null>(null);
+  const [folded, setFolded] = useState<Set<string>>(() => new Set());
+  const [opened, setOpened] = useState<Set<string>>(() => new Set());
+  const toggle = (setter: Dispatch<SetStateAction<Set<string>>>, key: string) => setter((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  useStageLibrary(() => { if (!creating) { setComparing(false); setManaging(null); } });
   const allItems = query.data?.items ?? [];
   const items = libraryExperiments(allItems);
+  const objectiveItems = objectiveQuery.data?.items ?? [];
   const title = 'Experiments';
   const visible = filterExperiments(items, state, '', search, sort)
     .filter((item) => !status || (status === 'draft' ? experimentDraft(item) : !experimentDraft(item) && experimentExecutionStatus(item.status) === status));
@@ -282,36 +474,101 @@ export default function ExperimentRegistry({ project, onOpen, filters, onFilters
     refetchInterval: allItems.some((item) => experimentStage(item) === 'running') ? 30000 : false });
   const headlineOf = new Map((headlines.data?.items ?? []).map((row) => [row.experimentId, row.batches]));
   const compared = comparisonQueries.flatMap((value) => value.data ? [value.data] : []);
-  return <div className="clinical-workspace experiment-registry">
-    {!creating ? <PageHeader eyebrow={stageEyebrow('experiments')} title={comparing ? 'Compare saved designs' : title} description={comparing ? 'Compare saved inputs and training settings.' : 'Design training on frozen targets, splits and features, freeze the design and start it, then follow its runs, results and predictors.'} actions={comparing ? <StageBackButton onClick={() => setComparing(false)}>Back to experiments</StageBackButton> : <StageCreateButton onClick={() => setCreating(true)}>Create experiment</StageCreateButton>} /> : null}
+  // A search or status filter shows every match: series and tuning open, objectives too.
+  const filtering = Boolean(search.trim() || status);
+  const isOpen = (key: string) => filtering || opened.has(key);
+  const showGroups = grouped && (objectiveItems.length > 0 || items.some((item) => item.objectiveId || item.role || item.series));
+  const groups = showGroups ? groupExperiments(visible, objectiveItems, { showEmpty: !filtering && (state === 'active' || state === 'all') }) : [];
 
-    <StagePage pageKey={creating ? 'create' : comparing ? 'comparison' : 'library'}>
-    {creating ? <CreateExperiment project={project} templates={allItems} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); void client.invalidateQueries({ queryKey: ['scientific', project, 'drafts'] }); onOpen(item.id); }} /> : comparing ? <>
+  function trainingCell(item: ModelExperimentSummary) {
+    const count = item.batches.length + (experimentStage(item) === 'planning' ? item.batchPlans?.length ?? 0 : 0);
+    return <td>{`${count} ${count === 1 ? 'batch' : 'batches'}`}<small>{item.batches.length ? `${item.batches.reduce((total, batch) => total + batch.manifest.summary.runCount, 0)} planned runs` : item.batchPlans?.length ? item.frozenSetupId ? 'Frozen recipes' : 'Editable recipes' : item.inputs ? 'Inputs selected' : 'Inputs not set'}</small></td>;
+  }
+  function experimentRow(item: ModelExperimentSummary, member = false) {
+    // A series member is named by its place in the series; its full name follows.
+    const label = member && item.seriesMember ? item.seriesMember : item.name;
+    return <tr key={item.id} className={member ? 'experiment-series-member' : undefined}>
+      <td><input aria-label={`Compare ${item.name} ${item.id}`} type="checkbox" checked={selected.includes(item.id)} disabled={selected.length >= 4 && !selected.includes(item.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} /></td>
+      <td className="experiment-role-cell">{member ? null : roleCell(item.role)}</td>
+      <th scope="row"><button className="text-button stage-record-name experiment-name" title={`Open ${item.name}`} onClick={() => onOpen(item.id)}>{label}</button><small title={item.id}>{label !== item.name ? `${item.name} · ` : ''}{shortRecordId(item.id)}</small>{!showGroups && item.objective ? <small className="experiment-filed-under">{item.objective.name}</small> : null}{!member && item.series ? <small>Series {item.series}{item.seriesMember ? ` › ${item.seriesMember}` : ''}</small> : null}{item.tags.length || item.legacy ? <div className="experiment-tags">{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}{item.legacy ? <Badge>Legacy record</Badge> : null}</div> : null}</th>
+      {/* A draft design is still being edited; a frozen one is ready to run; then execution. */}
+      <td><Badge tone={experimentStage(item) === 'planning' ? 'neutral' : experimentStatusTone(item.status)}>{experimentDraft(item) ? 'Draft' : experimentStatusLabel(item.status)}</Badge>{(() => { const reason = experimentStatusReason(item); return reason ? <small title={reason}>{reason}</small> : null; })()}{item.state !== 'active' ? <small>{lifecycleLabel[item.state]}</small> : null}</td>
+      {trainingCell(item)}
+      <td><ExperimentHeadline batches={headlineOf.get(item.id)} /></td>
+      <td><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString()}</time></td>
+      <td><RecordManageButton recordKey={item.key} name={item.name} /></td>
+    </tr>;
+  }
+  function seriesRows(entry: Extract<LibraryEntry<ModelExperimentSummary>, { kind: 'series' }>) {
+    const expanded = isOpen(entry.key);
+    const latest = entry.items.reduce((value, item) => item.updatedAt > value ? item.updatedAt : value, '');
+    const batches = entry.items.reduce((total, item) => total + item.batches.length, 0);
+    const runs = entry.items.reduce((total, item) => total + item.batches.reduce((sum, batch) => sum + batch.manifest.summary.runCount, 0), 0);
+    return [<tr key={entry.key} className="experiment-series-row">
+      <td />
+      <td className="experiment-role-cell">{roleCell(entry.role)}</td>
+      <th scope="row"><button type="button" className="text-button experiment-fold-toggle" aria-expanded={expanded} onClick={() => toggle(setOpened, entry.key)}><Icon name="chevron" size={14} /><span>{entry.series}</span></button><small>{entry.items.length} experiments · {memberSummary(entry.items)}</small></th>
+      <td><span className="experiment-series-status">{statusSummary(entry.items)}</span></td>
+      <td>{batches} {batches === 1 ? 'batch' : 'batches'}<small>{runs ? `${runs} planned runs` : 'Not started'}</small></td>
+      <td><SeriesHeadline members={entry.items.map((item) => headlineOf.get(item.id))} /></td>
+      <td>{latest ? <time dateTime={latest}>{new Date(latest).toLocaleDateString()}</time> : null}</td>
+      <td />
+    </tr>, ...(expanded ? entry.items.map((item) => experimentRow(item, true)) : [])];
+  }
+  const entryRows = (entry: LibraryEntry<ModelExperimentSummary>) => entry.kind === 'series' ? seriesRows(entry) : [experimentRow(entry.item)];
+  function groupBody(group: LibraryGroup<ModelExperimentSummary>) {
+    const collapsed = folded.has(group.key) && !filtering;
+    const tuningKey = `${group.key}\u0000tuning`;
+    const tuning = itemsOf(group.tuning);
+    const members = [...itemsOf(group.entries), ...tuning];
+    return <tbody key={group.key} className="experiment-group">
+      <tr className="experiment-objective-row"><th scope="rowgroup" colSpan={COLUMNS}>
+        <div className="experiment-objective-heading">
+          <button type="button" className="text-button experiment-fold-toggle experiment-objective-toggle" aria-expanded={!collapsed} onClick={() => toggle(setFolded, group.key)}><Icon name="chevron" size={16} /><span>{group.objective?.name ?? 'No objective'}</span></button>
+          {group.objective ? <Badge tone={group.objective.rank === 'primary' ? 'purple' : 'neutral'}>{objectiveRankLabel[group.objective.rank]}</Badge> : null}
+          <span className="experiment-objective-counts">{group.count} {group.count === 1 ? 'experiment' : 'experiments'}{members.length ? ` · ${statusSummary(members)}` : ''}</span>
+          {group.objective ? <button type="button" className="text-button experiment-objective-edit" onClick={() => setManaging(group.objective!.id)}>Edit objective</button> : null}
+        </div>
+        {group.objective?.description ? <p className="experiment-objective-description">{group.objective.description}</p> : null}
+        {!group.objective ? <p className="experiment-objective-description">Not filed under an objective. File one from its Manage experiment section.</p> : null}
+      </th></tr>
+      {collapsed ? null : <>
+        {group.entries.flatMap(entryRows)}
+        {tuning.length ? <tr className="experiment-tuning-row"><td /><td className="experiment-role-cell">{roleCell('tuning')}</td><th scope="row" colSpan={COLUMNS - 2}><button type="button" className="text-button experiment-fold-toggle" aria-expanded={isOpen(tuningKey)} onClick={() => toggle(setOpened, tuningKey)}><Icon name="chevron" size={14} /><span>{tuning.length} {tuning.length === 1 ? 'experiment' : 'experiments'}</span></button><small>Pilots, hyperparameter rounds and earlier versions: {memberSummary(tuning.map((item) => ({ ...item, seriesMember: null })))}</small></th></tr> : null}
+        {tuning.length && isOpen(tuningKey) ? group.tuning.flatMap(entryRows) : null}
+        {!group.count ? <tr className="experiment-objective-empty"><td colSpan={COLUMNS}>No experiments filed here yet. Choose this objective in an experiment's Manage experiment section.</td></tr> : null}
+      </>}
+    </tbody>;
+  }
+  const page = creating ? 'create' : comparing ? 'comparison' : managing !== null ? 'objectives' : 'library';
+  return <div className="clinical-workspace experiment-registry">
+    {!creating ? <PageHeader eyebrow={stageEyebrow('experiments')} title={comparing ? 'Compare saved designs' : managing !== null ? 'Objectives' : title} description={comparing ? 'Compare saved inputs and training settings.' : managing !== null ? 'The questions experiments answer, ranked as a protocol ranks them. Experiments are filed under an objective with a role.' : 'Design training on frozen targets, splits and features, freeze the design and start it, then follow its runs, results and predictors.'} actions={comparing ? <StageBackButton onClick={() => setComparing(false)}>Back to experiments</StageBackButton> : managing !== null ? <StageBackButton onClick={() => setManaging(null)}>Back to experiments</StageBackButton> : <StageCreateButton onClick={() => setCreating(true)}>Create experiment</StageCreateButton>} /> : null}
+
+    <StagePage pageKey={page}>
+    {creating ? <CreateExperiment project={project} templates={allItems} objectives={objectiveItems} onClose={() => setCreating(false)} onCreated={(item) => { client.setQueryData(['model-experiment', project, item.id], item); void client.invalidateQueries({ queryKey: ['model-experiments', project] }); void client.invalidateQueries({ queryKey: ['scientific', project, 'drafts'] }); onOpen(item.id); }} /> : comparing ? <>
       <ErrorNotice error={comparisonQueries.find((value) => value.error)?.error ?? null} />
       {compared.length !== selected.length ? <p role="status">Loading selected experiment snapshots…</p> : compared.length >= 2 ? <ExperimentComparison items={compared} /> : <p>Select at least two experiments from the library to compare.</p>}
       <div className="stage-actions"><StageBackButton type="button" onClick={() => setComparing(false)}>Back to experiment selection</StageBackButton></div>
+    </> : managing !== null ? <>
+      <ErrorNotice error={objectiveQuery.error} />
+      {objectiveQuery.isPending ? <p role="status">Loading objectives…</p> : <ObjectivesManager project={project} items={objectiveItems} experiments={allItems} focus={managing || undefined} />}
+      <div className="stage-actions"><StageBackButton type="button" onClick={() => setManaging(null)}>Back to experiments</StageBackButton></div>
     </> : <>
     <ErrorNotice error={query.error} />
+    {query.data?.objectivesError ? <p className="callout callout-warning" role="alert">Experiments are listed without their objectives: {query.data.objectivesError}</p> : null}
     <StageLibrary project={project} title={title}>
-      <StageLibraryToolbar search={search} onSearch={setSearch} searchLabel="Search experiments" placeholder="Name, ID, notes or tag" count={query.isPending ? undefined : visible.length} total={items.length}
+      <StageLibraryToolbar search={search} onSearch={setSearch} searchLabel="Search experiments" placeholder="Name, ID, notes, tag, objective or series" count={query.isPending ? undefined : visible.length} total={items.length}
         onReset={search || status || state !== 'active' || sort !== 'recent' ? () => { setSearch(''); setStatus(''); setState('active'); setSort('recent'); } : undefined}
-        actions={<button type="button" className="btn btn-secondary btn-small" disabled={query.isFetching} onClick={() => void query.refetch()}>{query.isFetching ? 'Refreshing…' : 'Refresh'}</button>}>
+        actions={<><button type="button" className="btn btn-secondary btn-small" onClick={() => setManaging('')}>Objectives</button><button type="button" className="btn btn-secondary btn-small" disabled={query.isFetching} onClick={() => void query.refetch()}>{query.isFetching ? 'Refreshing…' : 'Refresh'}</button></>}>
         <label className="label">State<select className="field" aria-label="Experiment state" value={state} onChange={(event) => setState(event.target.value as LifecycleState | 'all')}>{(['active', 'archived', 'trashed', 'all'] as const).map((value) => <option key={value} value={value}>{value === 'all' ? 'All records' : lifecycleLabel[value]} ({items.filter((item) => value === 'all' || item.state === value).length})</option>)}</select></label>
         <label className="label">Status<select className="field" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{Object.entries(libraryStatusFilters).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="label">Sort<select className="field" value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">Last updated</option><option value="oldest">Oldest first</option><option value="name">Name</option></select></label>
+        <label className="development-check experiment-group-toggle"><input type="checkbox" checked={grouped} onChange={(event) => setGrouped(event.target.checked)} /> Group by objective</label>
       </StageLibraryToolbar>
       {selected.length ? <div className="experiment-selection"><span>{selected.length} selected <span className="muted">· Choose 2–4 to compare</span></span><div className="inline-actions"><button type="button" className="text-button" onClick={() => setSelected([])}>Clear comparison</button><button type="button" className="btn btn-secondary btn-small" disabled={selected.length < 2} onClick={() => setComparing(true)}>Compare selected experiments</button></div></div> : null}
-      {query.isPending ? <p className="panel-body" role="status">Loading experiments…</p> : visible.length ? <div className="experiment-table-scroll"><table className="experiment-record-table" aria-label="Saved experiments"><thead><tr><th scope="col"><span className="sr-only">Select 2–4 experiments to compare</span></th><th scope="col">Experiment</th><th scope="col">Status</th><th scope="col">Training</th><th scope="col" className="experiment-result-column" title="Out-of-fold result of the best batch: mean ± SD across training seeds">Result</th><th scope="col">Updated</th><th scope="col">Actions</th></tr></thead><tbody>{visible.map((item) => <tr key={item.id}>
-        <td><input aria-label={`Compare ${item.name} ${item.id}`} type="checkbox" checked={selected.includes(item.id)} disabled={selected.length >= 4 && !selected.includes(item.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} /></td>
-        <th scope="row"><button className="text-button stage-record-name experiment-name" title={`Open ${item.name}`} onClick={() => onOpen(item.id)}>{item.name}</button><small title={item.id}>{shortRecordId(item.id)}</small>{item.tags.length || item.legacy ? <div className="experiment-tags">{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}{item.legacy ? <Badge>Legacy record</Badge> : null}</div> : null}</th>
-        {/* A draft design is still being edited; a frozen one is ready to run; then execution. */}
-        <td><Badge tone={experimentStage(item) === 'planning' ? 'neutral' : experimentStatusTone(item.status)}>{experimentDraft(item) ? 'Draft' : experimentStatusLabel(item.status)}</Badge>{(() => { const reason = experimentStatusReason(item); return reason ? <small title={reason}>{reason}</small> : null; })()}{item.state !== 'active' ? <small>{lifecycleLabel[item.state]}</small> : null}</td>
-        <td>{(() => { const count = item.batches.length + (experimentStage(item) === 'planning' ? item.batchPlans?.length ?? 0 : 0); return `${count} ${count === 1 ? 'batch' : 'batches'}`; })()}<small>{item.batches.length ? `${item.batches.reduce((total, batch) => total + batch.manifest.summary.runCount, 0)} planned runs` : item.batchPlans?.length ? item.frozenSetupId ? 'Frozen recipes' : 'Editable recipes' : item.inputs ? 'Inputs selected' : 'Inputs not set'}</small></td>
-
-        <td><ExperimentHeadline batches={headlineOf.get(item.id)} /></td>
-        <td><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleDateString()}</time></td>
-        <td><RecordManageButton recordKey={item.key} name={item.name} /></td>
-      </tr>)}</tbody></table></div> : <EmptyState
+      {query.isPending ? <p className="panel-body" role="status">Loading experiments…</p> : visible.length ? <div className="experiment-table-scroll"><table className={`experiment-record-table${showGroups ? ' experiment-record-table-grouped' : ''}`} aria-label="Saved experiments"><thead><tr><th scope="col"><span className="sr-only">Select 2–4 experiments to compare</span></th><th scope="col">Role</th><th scope="col">Experiment</th><th scope="col">Status</th><th scope="col">Training</th><th scope="col" className="experiment-result-column" title="Out-of-fold result of the best batch: mean ± SD across training seeds">Result</th><th scope="col">Updated</th><th scope="col">Actions</th></tr></thead>
+        {showGroups ? groups.map(groupBody) : <tbody>{visible.map((item) => experimentRow(item))}</tbody>}
+      </table></div> : <EmptyState
       icon="experiments"
       title={items.length ? 'No records match this view' : 'Create your first experiment'}
       description={items.length ? 'Adjust the status, search or archive filters to find earlier work.' : 'Start with a name and a question. Choose the dataset, targets and splits and features, design the training folds and hyperparameters, then freeze the design and start it.'}

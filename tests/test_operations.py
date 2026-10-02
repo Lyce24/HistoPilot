@@ -12,6 +12,7 @@ from support.task_center import begin, conclude, task_environment
 from support.workers import run_archive
 
 from histopilot.api import create_app
+from histopilot.application.objectives import ObjectiveService
 from histopilot.application.operations import (
     MANIFEST,
     StudyPortability,
@@ -24,6 +25,7 @@ from histopilot.application.operations import (
 from histopilot.application.portability_jobs import PortabilityJobs
 from histopilot.archive_cli import launch_archive_recovery
 from histopilot.config import Settings
+from histopilot.schemas.objectives import CreateObjective
 from histopilot.schemas.operations import PortabilityRequest, RelinkSource
 from histopilot.storage.io import write_json_atomic
 from histopilot.storage.project_lock import StorageError
@@ -56,6 +58,8 @@ def project(tmp_path):
 def test_archive_roundtrip_preserves_scientific_data_and_reviews(project):
     store, projects, _, data = project
     draft = store.create_draft(kind="import", name="Import", payload={"source": "A"})
+    objectives = ObjectiveService(store)
+    aim = objectives.create(CreateObjective(name="Aim 1", rank="primary", operationId="aim-1"))
     reviews = store.folder / "slide-reviews"
     reviews.mkdir()
     (reviews / "case.json").write_text('{"decision":"accept","note":"Tumor present"}')
@@ -72,6 +76,9 @@ def test_archive_roundtrip_preserves_scientific_data_and_reviews(project):
     restored = restore_archive(str(archive), str(destination), projects.storage)
     assert restored["verified"] and restored["relocated"]
     assert ScientificStore(destination, store.project_id).get_draft(draft["id"]) == draft
+    # Objectives and filings travel with the project.
+    restored_store = ScientificStore(destination, store.project_id)
+    assert ObjectiveService(restored_store).list()["items"] == [aim]
     assert (destination / "slide-reviews/case.json").read_bytes() == (
         reviews / "case.json"
     ).read_bytes()

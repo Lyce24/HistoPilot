@@ -32,7 +32,8 @@ A scoped agent token (`hpt_…`) goes in the same header and reaches one project
 | `…/configurations` | Frozen configurations of any kind |
 | `…/features`, `…/feature-bundles`, `…/feature-packs`, `…/extractions` | Feature attachment, bundles, packing and TRIDENT extraction |
 | `…/mil-experiments` | Development batches: preview, freeze, launch, resume, cancel, results, histories, OOF exports |
-| `…/model-experiments` | Experiments: inputs, batch plans, freeze, submit, results |
+| `…/model-experiments` | Experiments: inputs, batch plans, freeze, submit, results, and where each is filed |
+| `…/objectives` | Objectives: the scientific questions experiments are filed under |
 | `…/predictors` | Predictor registry, builds and refits |
 | `…/evaluation-cohorts`, `…/drafts/{id}/evaluation-preview`, `…/evaluation-freeze` | Cohorts of Apply models, labeled or unlabeled |
 | `…/evaluation-runs` | Runs of predictors on cohorts, single and in batches, with performance breakdowns, case review, prediction summaries and exports |
@@ -146,13 +147,17 @@ Historical protocol records from before Targets & splits (split versions 1–3) 
 
 | Method and path | Behaviour |
 | --- | --- |
-| `GET model-experiments?state=active&summary=…`, `POST model-experiments` | List (`state` is `active`, `archived`, `trashed` or `all`) or create an experiment (201). A new experiment states `setupVersion`: `1` for an experiment design, `null` for the legacy form; omitting it returns 422 `SETUP_VERSION_REQUIRED`. |
+| `GET model-experiments?state=active&summary=…`, `POST model-experiments` | List (`state` is `active`, `archived`, `trashed` or `all`) or create an experiment (201). A new experiment states `setupVersion`: `1` for an experiment design, `null` for the legacy form; omitting it returns 422 `SETUP_VERSION_REQUIRED`. It may be filed from the start with `objectiveId`, `role`, `series` and `seriesMember`; a copy (`sourceExperimentId`) records `copiedFrom`. Every listed experiment carries its filing: `objectiveId`, `objective` (`id`, `name`, `rank`), `role`, `series`, `seriesMember` and `copiedFrom`. If the objectives file cannot be read, experiments are listed unfiled and `objectivesError` says why. |
 | `GET model-experiments/headlines` | One seed-mean headline per batch, for the list page. |
 | `GET, PATCH model-experiments/{experiment_id}` | Read or update an experiment's editable fields, including its whole list of batch plans under `expectedRevision`. |
 | `POST model-experiments/{experiment_id}/setup-inputs`, `/freeze-setup` | Save and check setup inputs, then freeze the setup (201). |
 | `POST model-experiments/{experiment_id}/submit` | Start the frozen experiment (202): enqueue its fold, collection and predictor tasks. |
 | `GET model-experiments/{experiment_id}/results` | The Results summary: per fold, per seed, seed average with intervals, seed ensemble and batch comparisons. See [methods](methods.md#cross-validated-results). |
 | `POST model-experiments/{experiment_id}/predictors/resume`, `/predictors/cancel` | Resume or cancel automatic predictor work (202). |
+| `PUT model-experiments/{experiment_id}/objective` | File the experiment: `{objectiveId, role, series, seriesMember, expected}` replaces its whole filing if the saved one still equals `expected`, else 409 `EXPERIMENT_FILING_CONFLICT`. Sending the saved filing again changes nothing. `role` is `primary`, `comparison`, `variant`, `generalization`, `control` or `tuning`; a `seriesMember` needs its `series`. Started, frozen, archived and legacy experiments can be filed: the record, its revision and its update time do not change. |
+| `GET, POST objectives` | The project's objectives, primary first, then secondary, then exploratory, by name; or add one (201): `{name, rank, description, operationId}`. Names are unique without regard to case (`OBJECTIVE_EXISTS`); a project holds at most 100. |
+| `GET, PATCH objectives/{objective_id}` | Read one, or rename, re-rank or describe it under `expectedRevision`. Sending the saved values again changes nothing. |
+| `POST objectives/{objective_id}/remove` | `{expectedRevision, operationId}`: remove the objective. Its experiments are unfiled from it and keep their roles and series; the answer counts them (`unfiled`). |
 | `POST mil-experiments/preview`, `GET mil-experiments/runtime` | Model input compatibility and the training runtime probe. |
 | `GET mil-experiments/clinical-fields?protocolId=` | Dataset columns a batch may use as clinical inputs: owner, type, suggested kind, and why a field is refused (the target, the testing target, or a field that defines the split). |
 | `POST mil-experiments/batches/preview`, `/batches/freeze`, `GET mil-experiments/batches` | Development batches. A batch may declare a `comparison` (reference arm and primary metric); review blocks arms that differ in more than the model and its inputs. |

@@ -4,6 +4,7 @@ import type { LifecycleState } from './lifecycle';
 import type { MILExperimentSpec } from './mil';
 import type { Configuration, ProtocolSpec, ScientificDraft } from './scientific';
 import type { ComputeExecution, PredictorManifest, PredictorMethod } from './predictors';
+import type { ExperimentFiling, ObjectiveRank } from './objectives';
 
 export interface ExperimentBatch extends FrozenBatch {
   key: string; name: string; state: LifecycleState; status: string;
@@ -83,6 +84,12 @@ export interface ModelExperiment {
   predictorPolicy?: ExperimentPredictorPolicy | null;
   predictorPolicies?: Record<string, ExperimentPredictorPolicy> | null;
   predictorExecution?: ExperimentPredictorExecution | null;
+  /** Where the experiment is filed, kept beside its record (see api/objectives); absent from
+   * older services. `objective` names `objectiveId` when that objective still exists. */
+  objectiveId?: string | null; objective?: { id: string; name: string; rank: ObjectiveRank } | null;
+  role?: ExperimentFiling['role']; series?: string | null; seriesMember?: string | null;
+  /** The experiment this one was copied from, as named when it was copied. */
+  copiedFrom?: { id: string; name: string } | null;
 }
 export interface ExperimentBatchSummary extends Omit<ExperimentBatch, 'manifest' | 'inputSnapshot' | 'execution'> {
   manifest: Pick<BatchManifest, 'kind' | 'version' | 'summary'> & {
@@ -97,12 +104,14 @@ export interface ExperimentInput {
   name: string; notes?: string; tags?: string[]; inputs?: MILExperimentSpec | null;
   predictorPolicy?: ExperimentPredictorPolicy;
 }
-/** A new experiment states its setup version: 1 for an experiment design, null for the legacy form. */
-export interface CreateExperimentInput extends ExperimentInput { setupVersion: 1 | null; sourceExperimentId?: string; operationId: string }
+/** A new experiment states its setup version: 1 for an experiment design, null for the legacy form.
+ * It may be filed under an objective from the start. */
+export interface CreateExperimentInput extends ExperimentInput, Partial<ExperimentFiling> { setupVersion: 1 | null; sourceExperimentId?: string; operationId: string }
 export interface UpdateExperimentInput extends ExperimentInput { expectedRevision: number; batchPlans?: ExperimentBatchPlan[] }
 const prefix = (project: string) => `/projects/${encodeURIComponent(project)}/model-experiments`;
 export const experiments = {
-  summaries: (project: string) => request<{ items: ModelExperimentSummary[] }>(`${prefix(project)}?summary=true`),
+  /** `objectivesError` says why the experiments are listed unfiled, when the objectives cannot be read. */
+  summaries: (project: string) => request<{ items: ModelExperimentSummary[]; objectivesError?: string }>(`${prefix(project)}?summary=true`),
   get: (project: string, id: string) => request<ModelExperiment>(`${prefix(project)}/${encodeURIComponent(id)}`),
   create: (project: string, input: CreateExperimentInput) =>
     request<ModelExperiment>(prefix(project), { method: 'POST', body: JSON.stringify(input) }),

@@ -27,6 +27,7 @@ PROTECTED_PROJECT_ENTRIES = (
     ".histopilot-lifecycle.lock",
     "histopilot-lifecycle.json",
     "histopilot-project.json",
+    "histopilot-objectives.json",
     "histopilot-state.sqlite",
     "histopilot-state.sqlite-wal",
     "histopilot-state.sqlite-shm",

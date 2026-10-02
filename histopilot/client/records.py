@@ -298,6 +298,10 @@ def resolve(client: Client, project: str, noun: str, name: str) -> str:
     ``configuration:protocol``) looks among the configurations of that kind only."""
     if not name.startswith("@"):
         return name
+    if noun == "objective":
+        from .objectives import objective_id
+
+        return objective_id(client, project, name[1:])
     noun, _, configuration = noun.partition(":")
     kind = KINDS[noun]
     if not kind.tagged:

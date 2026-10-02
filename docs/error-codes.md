@@ -311,6 +311,9 @@ A code's kind groups codes by what the caller should do next, and the CLI turns 
 | `MORPHOLOGY_SCOPE_REQUIRED` | refused | 422 | The feature inventory has no explicit dataset or store scope. |
 | `MORPHOLOGY_SOURCE_CHANGED` | refused | 409 | Feature verification changed. Revalidate the selected bundle. |
 | `NESTED_SELECTION_REQUIRED` | refused | 422 | Nested CV requires a separate search and selected refit inside each outer fold. Batch planning for that dependency is not connected yet. |
+| `OBJECTIVES_CORRUPT` | refused | 409 | The project's objectives file is invalid; restore its last intact copy. |
+| `OBJECTIVE_EXISTS` | refused | 409 | An objective named … already exists. Choose another name. |
+| `OBJECTIVE_LIMIT` | refused | 409 | A project holds at most 100 objectives. Remove one before adding another. |
 | `OPERATION_CONFLICT` | refused | 409 | This operation ID was already used for a different request. |
 | `OUTPUT_IMMUTABLE` | refused | 422 | An extraction output cannot be inside an existing feature pack. |
 | `PACKING_CORRUPT` | refused | 409 | Packing metadata is invalid. |
@@ -466,6 +469,7 @@ A code's kind groups codes by what the caller should do next, and the CLI turns 
 | `COMPUTE_LAUNCH_UNCERTAIN` | conflict | 409 | Launch acknowledgement was lost. Check execution status before retrying. |
 | `EVALUATION_COHORT_STALE` | conflict | 409 | The test dataset or target membership changed. Review and freeze the cohort again. |
 | `EVALUATION_NOT_COMPLETED` | conflict | 409 | Evaluation results are available after the job finishes. |
+| `EXPERIMENT_FILING_CONFLICT` | conflict | 409 | The experiment was filed differently since it was read. Reload it, then file it again. |
 | `EXPERIMENT_PREDICTORS_LAUNCH_UNCERTAIN` | conflict | 409 | Predictor launch acknowledgement was lost. Inspect its status before retrying. |
 | `EXPOSURE_CONFLICT` | conflict | 409 | The AI-exposure level is now …; review it before changing it. |
 | `FEATURE_JOB_BUSY` | conflict | 409 | This feature version already has an active job for this action. |
@@ -529,6 +533,7 @@ A code's kind groups codes by what the caller should do next, and the CLI turns 
 | `INTERPRETATION_SLIDE_NOT_FOUND` | not-found | 404 | Selected slide not found. |
 | `JOB_NOT_FOUND` | not-found | 404 | Select an existing compute job or launched training batch. |
 | `MODEL_EVALUATION_NOT_FOUND` | not-found | 404 | Evaluation record not found. |
+| `OBJECTIVE_NOT_FOUND` | not-found | 404 | This objective does not exist in this project. |
 | `PACKING_NOT_FOUND` | not-found | 404 | Packing job not found. |
 | `PACK_NOT_FOUND` | not-found | 404 | The existing pack folder is unavailable. |
 | `PATH_NOT_FOUND` | not-found | 404 | The metadata file cannot be resolved. |

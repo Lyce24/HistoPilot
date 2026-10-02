@@ -1,6 +1,7 @@
 """Experiments from a design file, the way the browser builds them.
 
-A design holds the experiment's name, notes, tags and predictor policy; its inputs (dataset,
+A design holds the experiment's name, notes, tags and predictor policy; optionally its filing
+(the objective it answers, its role there, its series and member); its inputs (dataset,
 Targets & splits, feature bundle and the version 4 training design); and its batches. The
 steps: create the experiment and save its inputs and batch plans (all preview class, so
 nothing is frozen), preview every plan, freeze the setup, then start it (both commits).
@@ -14,11 +15,13 @@ from histopilot import resolvers, templates
 from . import specs
 from .api import Client
 from .errors import ClientError
+from .objectives import FILING_FIELDS, file_experiment, filing
 from .resources import experiment, experiment_path, project_path
 
 KIND = "experiment"
 # The experiment's own values; the rest of a design is its inputs and batches.
 VALUE_FIELDS = ("name", "notes", "tags", "predictorPolicy")
+# Where the experiment is filed. Optional: a design without them leaves the filing as it is.
 # Filled by the service from the experiment itself; a design never states them.
 FILLED = ("experimentId", "experimentRevision", "experimentName", "inputs")
 INPUT_FIELDS = (
@@ -61,6 +64,8 @@ def template(
         "notes": "",
         "tags": [],
         "predictorPolicy": described["predictorPolicy"],
+        # The objective it answers (an ID or `@name`), its role there, and its series.
+        **dict.fromkeys(FILING_FIELDS),
         "inputs": {
             "datasetId": "@dataset-tag",
             "targetSplitId": "@targets-tag",
@@ -123,7 +128,7 @@ def prepare(design: dict, resolve=None) -> tuple[dict, list[dict]]:
 
 
 def _check_explicit(design: dict) -> None:
-    unknown = set(design) - {*VALUE_FIELDS, "inputs", "batches"}
+    unknown = set(design) - {*VALUE_FIELDS, *FILING_FIELDS, "inputs", "batches"}
     if unknown:
         raise specs.spec_error(f"Unknown design keys: {', '.join(sorted(unknown))}.")
     inputs = design.get("inputs")
@@ -170,6 +175,7 @@ def _validate(design: dict) -> dict:
         ConfigureModelExperimentSetup,
         ExperimentValues,
     )
+    from histopilot.schemas.objectives import ExperimentFiling
 
     found: list[dict] = []
 
@@ -181,6 +187,7 @@ def _validate(design: dict) -> dict:
 
     values = {key: design[key] for key in VALUE_FIELDS if design.get(key) is not None}
     validate(ExperimentValues, values, "experiment")
+    validate(ExperimentFiling, _filing(design) or {}, "experiment")
     validate(ConfigureModelExperimentSetup, {**design["inputs"], "expectedRevision": 1}, "inputs")
     if not found:
         found = _batch_findings(design["batches"], name=design.get("name") or "x")
@@ -232,6 +239,7 @@ def export(record: dict) -> dict:
         "notes": record.get("notes") or "",
         "tags": record.get("tags") or [],
         "predictorPolicy": record.get("predictorPolicy"),
+        **filing(record),
         "inputs": {
             "datasetId": setup.get("datasetId"),
             "targetSplitId": setup.get("targetSplitId"),
@@ -248,15 +256,24 @@ def _values(design: dict) -> dict:
     return {key: design[key] for key in VALUE_FIELDS if key in design}
 
 
+def _filing(design: dict) -> dict | None:
+    """The design's filing, all four fields, or None when it states none of them."""
+    if not any(key in design for key in FILING_FIELDS):
+        return None
+    return {key: design.get(key) for key in FILING_FIELDS}
+
+
 def create(client: Client, project: str, design: dict) -> dict:
-    """Create the experiment and save its inputs and batch plans; nothing is frozen.
+    """Create the experiment, filed as the design says, and save its inputs and batch
+    plans; nothing is frozen.
 
     Rerunning with the same design replays the creation and skips steps already done.
     """
+    wanted = {key: value for key, value in (_filing(design) or {}).items() if value is not None}
     record = client.operation(
         "POST",
         experiment_path(project),
-        {**_values(design), "setupVersion": 1},
+        {**_values(design), **wanted, "setupVersion": 1},
         prefix="experiment-create",
     )
     return _save(client, project, record, design)
@@ -279,6 +296,9 @@ def revise(client: Client, project: str, identity: str, design: dict) -> dict:
             experiment_path(project, identity),
             body={"expectedRevision": record["revision"], **values},
         )
+    wanted = _filing(design)
+    if wanted is not None and filing(record) != wanted:
+        record = file_experiment(client, project, record, wanted)
     return _save(client, project, record, design)
 
 

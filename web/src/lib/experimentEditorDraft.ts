@@ -1,7 +1,10 @@
 import type { CreateExperimentInput } from '../api/experiments';
+import { experimentRoles, type ExperimentRole } from '../api/objectives';
 
 export interface CreateExperimentDraft {
   version: 1; sourceId: string; name: string; notes: string; tags: string;
+  /** Saved by builds that file new experiments; older drafts have neither. */
+  objectiveId?: string; role?: ExperimentRole | '';
   pending: CreateExperimentInput | null;
 }
 export interface ExperimentMetadataBaseline { revision: number; name: string; notes: string; tags: string[] }
@@ -12,8 +15,10 @@ const object = (value: unknown): value is Record<string, unknown> => Boolean(val
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max;
 const tags = (value: unknown): value is string[] => Array.isArray(value) && value.length <= 128 && value.every((tag) => text(tag, 200));
 function fields(value: Record<string, unknown>) { return text(value.name, 120) && text(value.notes, 10000) && text(value.tags, 20000); }
+const role = (value: unknown) => value === undefined || value === '' || experimentRoles.includes(value as ExperimentRole);
 export function isCreateExperimentDraft(value: unknown): value is CreateExperimentDraft {
   if (!object(value) || value.version !== 1 || !fields(value) || !text(value.sourceId, 256)) return false;
+  if ((value.objectiveId !== undefined && !text(value.objectiveId, 256)) || !role(value.role)) return false;
   if (value.pending === null) return true;
   const pending = value.pending;
   return object(pending) && text(pending.name, 120) && Boolean(pending.name.trim())

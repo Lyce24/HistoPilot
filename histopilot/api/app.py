@@ -394,6 +394,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from histopilot.api.mil import mil_router
     from histopilot.api.model_experiments import model_experiments_router
     from histopilot.api.morphology import morphology_router
+    from histopilot.api.objectives import objectives_router
     from histopilot.api.operations import operations_router
     from histopilot.api.performance import performance_router
     from histopilot.api.predictors import evaluation_run_router, predictor_router
@@ -409,6 +410,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(mil_router(projects, filesystem))
     app.include_router(evaluation_router(projects, filesystem))
     app.include_router(model_experiments_router(projects, filesystem))
+    app.include_router(objectives_router(projects, filesystem))
     app.include_router(predictor_router(projects, filesystem))
     app.include_router(evaluation_run_router(projects, filesystem))
     app.include_router(clinical_router(projects, filesystem))

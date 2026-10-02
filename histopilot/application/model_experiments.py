@@ -18,10 +18,12 @@ from histopilot.application.experiment_policy import (
     submission_policies,
 )
 from histopilot.application.feature_bundles import FeatureBundleService
+from histopilot.application.objectives import FILING_FIELDS, ObjectiveService
 from histopilot.application.task_records import TaskCenterAccess
 from histopilot.schemas.development import DevelopmentBatchSpec
 from histopilot.schemas.mil import MILInputSpec
 from histopilot.schemas.model_experiments import ExperimentPredictorPolicy
+from histopilot.schemas.objectives import ExperimentFiling
 from histopilot.storage.io import content_hash, utc_now
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
@@ -505,7 +507,17 @@ class ModelExperimentService:
             values.pop("setupVersion", None)
         if values.get("sourceExperimentId") is None:
             values.pop("sourceExperimentId", None)
+        # A filing belongs to the request, so a replay must ask for the same one, but not to
+        # the record: it is kept in the project's objectives file.
+        for key in FILING_FIELDS:
+            if values.get(key) is None:
+                values.pop(key, None)
+        filing = ExperimentFiling.model_validate(
+            {key: getattr(request, key) for key in FILING_FIELDS}
+        )
+        filed = filing if any(values.get(key) for key in FILING_FIELDS) else None
         digest = content_hash(values)
+        objectives = ObjectiveService(self.store)
         with lifecycle_guard(self.store.folder):
             for record in self.store.list_drafts(include_inactive=True):
                 payload = record["payload"]
@@ -519,7 +531,17 @@ class ModelExperimentService:
                             "OPERATION_CONFLICT",
                             409,
                         )
+                    try:
+                        # Finish a first attempt that stopped after saving the record.
+                        objectives.file_new(
+                            record["id"], filed, self._lineage(request.sourceExperimentId)
+                        )
+                    except StorageError:
+                        pass  # The experiment exists; it stays unfiled.
                     return self.get(record["id"])
+            if filed is not None:
+                # Refuse an unknown objective, or an unreadable file, before saving anything.
+                objectives.require_objective(filing.objectiveId)
             source = None
             if request.sourceExperimentId:
                 source = self.get(request.sourceExperimentId)
@@ -604,14 +626,38 @@ class ModelExperimentService:
                     **{
                         key: value
                         for key, value in values.items()
-                        if key not in {"name", "sourceExperimentId"}
+                        if key not in {"name", "sourceExperimentId", *FILING_FIELDS}
                     },
                     "batchPlans": plans,
                     "creationOperationId": request.operationId,
                     "creationRequestHash": digest,
                 },
             )
+            lineage = {"id": source["id"], "name": source["name"]} if source else None
+            if filed is not None:
+                objectives.file_new(record["id"], filed, lineage)
+            else:
+                try:
+                    objectives.file_new(record["id"], None, lineage)
+                except StorageError:
+                    pass  # Lineage is a note: a copy never fails for want of it.
             return self.get(record["id"])
+
+    def _lineage(self, source_id):
+        if not source_id:
+            return None
+        try:
+            name = self.get(source_id)["name"]
+        except StorageError:
+            name = ""
+        return {"id": source_id, "name": name}
+
+    def file(self, identity, request):
+        """File the experiment under an objective, with a role and a series; its record,
+        revision and update time stay as they were."""
+        self.get(identity)
+        ObjectiveService(self.store).file(identity, request)
+        return self.get(identity)
 
     def update(self, identity, request):
         with lifecycle_guard(self.store.folder):
@@ -1633,12 +1679,12 @@ class ModelExperimentService:
             for record in records
             if _identity is None or record["id"] == _identity
         ] + legacy
+        listed = [item for item in items if state == "all" or item["state"] == state]
+        # Each experiment's objective, role, series and lineage, from beside the records.
+        problem = ObjectiveService(self.store).annotate(listed)
         return {
-            "items": sorted(
-                [item for item in items if state == "all" or item["state"] == state],
-                key=lambda item: (item["createdAt"], item["id"]),
-                reverse=True,
-            )
+            "items": sorted(listed, key=lambda item: (item["createdAt"], item["id"]), reverse=True),
+            **({"objectivesError": problem} if problem else {}),
         }
 
     def get(self, identity):

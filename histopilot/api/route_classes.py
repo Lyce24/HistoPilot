@@ -142,6 +142,14 @@ _TABLE = {
     ("GET", "{P}/model-experiments/{experiment_id}/results"): READ,
     ("POST", "{P}/model-experiments/{experiment_id}/setup-inputs"): PREVIEW,
     ("POST", "{P}/model-experiments/{experiment_id}/submit"): COMMIT,
+    # Filing an experiment organizes it, as its tags do, without changing what it is.
+    ("PUT", "{P}/model-experiments/{experiment_id}/objective"): PREVIEW,
+    # Objectives are the study's own structure: a person settles them.
+    ("GET", "{P}/objectives"): READ,
+    ("POST", "{P}/objectives"): COMMIT,
+    ("GET", "{P}/objectives/{objective_id}"): READ,
+    ("PATCH", "{P}/objectives/{objective_id}"): COMMIT,
+    ("POST", "{P}/objectives/{objective_id}/remove"): COMMIT,
     # Predictors
     ("GET", "{P}/predictors"): READ,
     ("POST", "{P}/predictors/builds"): COMMIT,

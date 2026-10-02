@@ -7,7 +7,8 @@ import { ApiError } from '../api/client';
 import type { ProtocolPreview, ProtocolSpec } from '../api/scientific';
 import { experiments, experimentStage, experimentStatusLabel, experimentStatusReason, experimentStatusTone, type ModelExperiment } from '../api/experiments';
 import { lifecycleLabel } from '../api/lifecycle';
-import ExperimentRegistry, { ExperimentMetadata, newExperimentLibraryFilters } from '../components/ExperimentRegistry';
+import ExperimentRegistry, { ExperimentFilingEditor, ExperimentMetadata, newExperimentLibraryFilters } from '../components/ExperimentRegistry';
+import { experimentRoleHelp, experimentRoleLabel, objectiveRankLabel, objectives as objectiveRecords } from '../api/objectives';
 import ExperimentLifecycle from '../components/ExperimentLifecycle';
 import { targetSplits } from '../api/targetSplits';
 import { bundles } from '../api/bundles';
@@ -104,6 +105,15 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
   const targetVersion = targetVersions.data?.configurations.find((item) => item.id === record.setupDesign?.targetSplitId);
   const featureBundles = useQuery({ queryKey: ['feature-bundles', project], queryFn: () => bundles.list(project) });
   const client = useQueryClient();
+  const objectiveList = useQuery({ queryKey: ['objectives', project], queryFn: () => objectiveRecords.list(project) });
+  const library = useQuery({ queryKey: ['model-experiments', project, 'summary'], queryFn: () => experiments.summaries(project) });
+  const seriesNames = [...new Set((library.data?.items ?? []).flatMap((item) => item.series ? [item.series] : []))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const management = useRef<HTMLDetailsElement>(null);
+  function openFiling() {
+    if (!management.current) return;
+    management.current.open = true;
+    management.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
   const [planDirty, setPlanDirty] = useState(false);
   const [designDirty, setDesignDirty] = useState(false);
   const [planBusy, setPlanBusy] = useState(false);
@@ -149,6 +159,13 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
   return <div className="clinical-workspace mil-workspace">
     <PageHeader eyebrow={stageEyebrow('experiments')} title={name} description={record.notes || (planning ? 'Design the experiment, freeze the design, then start it.' : 'Follow its runs, then review the results and the predictors it created.')} actions={<StageBackButton disabled={busy || planBusy || submitting} onClick={backToExperiments}>Back to experiments</StageBackButton>} />
     <div className="experiment-detail-heading"><Badge tone={planning ? 'neutral' : experimentStatusTone(record.status)}>{planning ? frozen ? 'Ready to run' : 'Draft' : experimentStatusLabel(record.status)}</Badge><Badge>{lifecycleLabel[record.state]}</Badge>{record.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}<span className="experiment-detail-id">{record.id} · revision {record.revision}</span></div>
+    <p className="experiment-filing-summary">
+      {record.objective ? <><span className="muted">Objective</span> <strong>{record.objective.name}</strong> <Badge tone={record.objective.rank === 'primary' ? 'purple' : 'neutral'}>{objectiveRankLabel[record.objective.rank]}</Badge></> : <span className="muted">Not filed under an objective.</span>}
+      {record.role ? <><span className="experiment-filing-separator" aria-hidden="true">·</span><span className="muted">Role</span> <strong title={experimentRoleHelp[record.role]}>{experimentRoleLabel[record.role]}</strong></> : null}
+      {record.series ? <><span className="experiment-filing-separator" aria-hidden="true">·</span><span className="muted">Series</span> <strong>{record.series}{record.seriesMember ? ` › ${record.seriesMember}` : ''}</strong></> : null}
+      {record.copiedFrom ? <><span className="experiment-filing-separator" aria-hidden="true">·</span><span className="muted">Copied from</span> <a href={preparationLink('experiments', context, { experiment: record.copiedFrom.id })}>{record.copiedFrom.name || record.copiedFrom.id}</a></> : null}
+      {record.state !== 'trashed' ? <button type="button" className="text-button" onClick={openFiling}>{record.objective || record.role || record.series ? 'Change' : 'File it'}</button> : null}
+    </p>
     {!planning && experimentStatusReason(record) ? <p className="experiment-detail-reason" role="status">{experimentStatusReason(record)}</p> : null}
     {record.legacy ? <p className="callout">This legacy record retains its original batch or draft identity. Use it as a template from the experiments list to organize new work; historical runs stay here.</p> : null}
     {record.state !== 'active' ? <p className="callout">This experiment is {lifecycleLabel[record.state].toLowerCase()}. Its saved history remains visible. Restore it to Active to manage it; a started experiment stays locked.</p> : null}
@@ -177,7 +194,12 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
     {(tab === 'review' && planning && frozen) || (tab === 'runs' && stage === 'running') ? <ExperimentSubmissionControl initialReview={tab === 'review'} project={project} record={record} protocol={protocolSpec} evaluationPlanCount={evaluationPlanCount} onSubmissionPendingChange={setSubmitting} disabledReason={!record.inputs ? 'Check the inputs before starting.' : dirty || planDirty ? 'Save or discard your input and batch edits before starting.' : !hasBatches ? 'Add at least one batch before starting.' : null} onSubmitted={() => { setTab('runs'); if (typeof window !== 'undefined') window.history.replaceState(null, '', preparationLink('experiments', context, { experiment: record.id, tab: 'runs' })); rememberWorkspaceLocation(); }} /> : null}
     {tab === 'review' && planning ? <div className="stage-actions"><StageBackButton disabled={busy || planBusy || submitting} onClick={() => changeTab('batches')}>Back to hyperparameters</StageBackButton></div> : null}
     </StagePage>
-    <details className="setup-details experiment-management"><summary>Manage experiment</summary><ExperimentMetadata project={project} record={record} /><ExperimentLifecycle key={record.id} project={project} recordKey={record.key} state={record.state} name={name} /></details>
+    <details ref={management} className="setup-details experiment-management"><summary>Manage experiment</summary>
+      <h3>Objective &amp; role</h3>
+      <p className="muted">Where the experiment sits in the study. Filing it changes neither its design nor its results.</p>
+      <ExperimentFilingEditor key={record.id} project={project} record={record} objectives={objectiveList.data?.items ?? []} seriesNames={seriesNames} />
+      <h3>Details</h3>
+      <ExperimentMetadata project={project} record={record} /><ExperimentLifecycle key={record.id} project={project} recordKey={record.key} state={record.state} name={name} /></details>
     <details className="setup-details"><summary>Exact input history &amp; configuration snapshots</summary>
       <p className="muted">These saved values belong to this experiment and its batches. Archived inputs remain inspectable; current project defaults are never substituted.</p>
       <h3>Saved experiment inputs</h3><pre className="experiment-snapshot">{JSON.stringify(record.inputSnapshot ?? record.inputs, null, 2)}</pre>

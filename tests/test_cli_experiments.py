@@ -322,3 +322,50 @@ def test_comparisons_take_catalog_names_and_errors_list_them(study):
         refused = service.cli("experiment", "template", option, value, "--json")
         error = refused.envelope["error"]
         assert refused.code == 2 and error["code"] == "SPEC_INVALID" and named in error["message"]
+
+
+def test_designs_file_the_experiment_under_an_objective_named_by_name(study, tmp_path):
+    service, ids = study
+    project = service.cli("use", "--json").envelope["data"]["project"]
+    made = service.http.post(
+        f"/api/v1/projects/{project}/objectives",
+        json={"name": "Aim 1 · Validity", "rank": "primary", "operationId": "aim-1"},
+    )
+    assert made.status_code == 201, made.text
+    aim = made.json()["id"]
+    path = tmp_path / "design.yaml"
+    design = design_file(service, ids, path)
+    assert {key: design[key] for key in ("objectiveId", "role", "series", "seriesMember")} == {
+        "objectiveId": None,
+        "role": None,
+        "series": None,
+        "seriesMember": None,
+    }
+    design.update(objectiveId="@Aim 1 · Validity", role="primary")
+    path.write_text(yaml.safe_dump({"kind": "experiment", "specVersion": 1, **design}))
+    created = service.cli("experiment", "create", "--from", str(path), "--json")
+    assert created.code == 0, created.stdout
+    notes = [item["message"] for item in created.envelope["warnings"]]
+    assert f"objectiveId: @Aim 1 · Validity is {aim}." in notes
+    experiment = created.envelope["data"]["experimentId"]
+    exported = service.cli("experiment", "export-design", experiment, "--json")
+    spec = exported.envelope["data"]["spec"]
+    assert (spec["objectiveId"], spec["role"], spec["series"]) == (aim, "primary", None)
+
+    # Saving the design again with another role refiles the draft; a design without
+    # filing keys leaves its filing alone.
+    design.update(objectiveId=aim, role="comparison")
+    path.write_text(yaml.safe_dump({"kind": "experiment", "specVersion": 1, **design}))
+    assert service.cli("experiment", "update", experiment, "--from", str(path)).code == 0
+    shown = service.cli("experiment", "show", experiment, "--json").envelope["data"]
+    assert shown["role"] == "comparison"
+    for key in ("objectiveId", "role", "series", "seriesMember"):
+        del design[key]
+    path.write_text(yaml.safe_dump({"kind": "experiment", "specVersion": 1, **design}))
+    assert service.cli("experiment", "update", experiment, "--from", str(path)).code == 0
+    shown = service.cli("experiment", "show", experiment, "--json").envelope["data"]
+    assert (shown["objectiveId"], shown["role"]) == (aim, "comparison")
+    unknown = dict(design, objectiveId="@No such aim")
+    path.write_text(yaml.safe_dump({"kind": "experiment", "specVersion": 1, **unknown}))
+    refused = service.cli("experiment", "create", "--from", str(path), "--json")
+    assert refused.code == 5 and refused.envelope["error"]["code"] == "OBJECTIVE_NOT_FOUND"

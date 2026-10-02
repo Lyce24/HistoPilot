@@ -82,6 +82,8 @@ TAGGED_FIELDS = {
     "protocolId": "configuration:protocol",
     "cohortId": "cohort",
     "referenceId": "configuration:reference-standard",
+    # Objectives carry names, not version tags: `@name` names one.
+    "objectiveId": "objective",
 }
 
 

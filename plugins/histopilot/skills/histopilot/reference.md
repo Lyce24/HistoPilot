@@ -65,6 +65,7 @@ Every command takes `--json`, `--url`, `--project` and `--timeout SECONDS`. Comm
 | `histopilot draft list` | List unfrozen drafts. |
 | `histopilot draft show RECORD` | Show one record. |
 | `histopilot experiment apply-config EXPERIMENT` | Apply one configuration, as Results' "Apply this configuration" does. |
+| `histopilot experiment assign EXPERIMENT` | File an experiment under an objective, with its role and series there. |
 | `histopilot experiment batches add EXPERIMENT` | Add a design file's batches to an experiment's plans, then preview them. |
 | `histopilot experiment batches list EXPERIMENT` | List an experiment's batch plans: name, model, mode and training seeds. |
 | `histopilot experiment batches remove EXPERIMENT PLAN` | Remove one batch plan from an experiment whose setup is not frozen. |
@@ -73,7 +74,7 @@ Every command takes `--json`, `--url`, `--project` and `--timeout SECONDS`. Comm
 | `histopilot experiment export-design EXPERIMENT` | Write an experiment's design file; `experiment create --from` accepts it back. |
 | `histopilot experiment export-results EXPERIMENT` | Save every seed's out-of-fold result and every test fold as CSV, byte for byte the |
 | `histopilot experiment freeze EXPERIMENT` | Freeze the experiment's inputs and batch plans after reviewing them. |
-| `histopilot experiment list` | List experiments, newest first. |
+| `histopilot experiment list` | List experiments, newest first, with the objective and role each is filed under. |
 | `histopilot experiment preview EXPERIMENT` | Review every batch plan: findings, run counts, and whether the setup can freeze. |
 | `histopilot experiment results EXPERIMENT` | Show cross-validated results: each configuration's seed-averaged AUROC and interval. |
 | `histopilot experiment resume-predictors EXPERIMENT` | Resume an experiment's automatic predictor work. |
@@ -106,6 +107,11 @@ Every command takes `--json`, `--url`, `--project` and `--timeout SECONDS`. Comm
 | `histopilot interpretation template` | Write a starting spec file with every science field written out. |
 | `histopilot login rotate` | Replace the secret: every browser must open the new link to sign in again. |
 | `histopilot login url` | Print the link that signs a browser in; only this OS user can read it. |
+| `histopilot objective create` | Add an objective that experiments can be filed under. |
+| `histopilot objective list` | List objectives: primary first, then secondary, then exploratory. |
+| `histopilot objective remove OBJECTIVE` | Remove an objective. Its experiments stay as they are, unfiled from it. |
+| `histopilot objective show OBJECTIVE` | Show an objective and the experiments filed under it, by role. |
+| `histopilot objective update OBJECTIVE` | Rename, re-rank or describe an objective; experiments stay filed under it. |
 | `histopilot pack cancel RECORD` | Cancel this record's unfinished work. |
 | `histopilot pack create` | Preview a packing job spec, then queue it. |
 | `histopilot pack list` | List feature validation and packing jobs. |

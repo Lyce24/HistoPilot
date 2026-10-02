@@ -2,14 +2,15 @@
 .experiment-selection { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--theme-line); border-radius: 6px; background: var(--theme-soft); font-size: 12px; }
 .experiment-table-scroll { position: relative; overflow-x: auto; max-width: 100%; }
 .experiment-record-table, .experiment-comparison { width: 100%; border-collapse: collapse; font-size: 13px; white-space: normal; }
-.experiment-record-table { table-layout: fixed; min-width: 680px; }
+.experiment-record-table { table-layout: fixed; min-width: 860px; }
 .experiment-record-table th, .experiment-record-table td { overflow-wrap: anywhere; }
-.experiment-record-table th:nth-child(1) { width: 48px; }
-.experiment-record-table th:nth-child(2) { width: 36%; }
-.experiment-record-table th:nth-child(3) { width: 120px; }
-.experiment-record-table th:nth-child(4) { width: 18%; }
-.experiment-record-table th:nth-child(5) { width: 110px; }
-.experiment-record-table th:nth-child(6) { width: 95px; }
+.experiment-record-table thead th:nth-child(1) { width: 48px; }
+.experiment-record-table thead th:nth-child(2) { width: 136px; }
+.experiment-record-table thead th:nth-child(3) { width: 28%; }
+.experiment-record-table thead th:nth-child(4) { width: 120px; }
+.experiment-record-table thead th:nth-child(5) { width: 12%; }
+.experiment-record-table thead th:nth-child(6) { width: 112px; }
+.experiment-record-table thead th:nth-child(7) { width: 92px; }
 .experiment-record-table time { white-space: nowrap; font-size: 12px; }
 .experiment-record-table td, .experiment-record-table th, .experiment-comparison td, .experiment-comparison th { text-align: left; vertical-align: top; padding: 16px 18px; border-top: 1px solid var(--line); }
 .experiment-record-table thead, .experiment-comparison thead { background: var(--canvas, var(--theme-soft)); }
@@ -48,3 +49,53 @@
 .experiment-headline-value span { color: var(--theme-muted); }
 .experiment-headline small { display: block; color: var(--theme-muted); font-size: .76rem; font-weight: 400; }
 .experiment-result-column { min-width: 11rem; }
+
+/* Objectives: a section per objective, roles in order, series and tuning folded. */
+.experiment-group-toggle { align-self: end; min-height: 38px; font-size: 13px; white-space: nowrap; }
+.experiment-role { display: inline-block; font-size: 10.5px; font-weight: 650; letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; color: var(--theme-muted); }
+.experiment-record-table .experiment-role-cell { padding-left: 12px; padding-right: 8px; }
+.experiment-role-primary { color: var(--brand-primary); }
+.experiment-record-table .experiment-objective-row th { padding: 14px 18px 12px; background: var(--theme-soft); border-top: 1px solid var(--theme-line); text-transform: none; letter-spacing: normal; font-size: inherit; font-weight: 400; }
+.experiment-group + .experiment-group .experiment-objective-row th { border-top: 10px solid var(--theme-surface); box-shadow: inset 0 1px 0 var(--theme-line); }
+.experiment-objective-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.experiment-objective-toggle { font-size: 15px; font-weight: 650; color: var(--theme-ink); }
+.experiment-objective-counts { color: var(--theme-muted); font-size: 12px; }
+.experiment-objective-edit { margin-left: auto; font-size: 12px; }
+.experiment-objective-description { margin: 6px 0 0 24px; max-width: 760px; color: var(--theme-muted); font-size: 12.5px; }
+.experiment-fold-toggle { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; text-align: left; font-weight: 650; }
+.experiment-fold-toggle svg { flex: 0 0 auto; transition: transform .15s ease; }
+.experiment-fold-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .experiment-fold-toggle svg { transition: none; } }
+.experiment-series-row th[scope="row"], .experiment-series-row td { background: color-mix(in srgb, var(--theme-soft) 45%, transparent); }
+.experiment-series-status { font-size: 12px; color: var(--theme-ink); }
+.experiment-record-table .experiment-series-member th[scope="row"] { padding-left: 38px; }
+.experiment-record-table .experiment-series-member th[scope="row"], .experiment-record-table .experiment-series-member td { border-top-style: dashed; }
+.experiment-tuning-row th[scope="row"] { color: var(--theme-muted); }
+.experiment-tuning-row .experiment-fold-toggle { font-weight: 600; }
+.experiment-objective-empty td { color: var(--theme-muted); font-style: italic; }
+.experiment-filed-under { color: var(--theme-ink) !important; }
+
+/* The experiment's own page: where it is filed, and the form that files it. */
+.experiment-filing-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 0; font-size: 13px; }
+.experiment-filing-separator { color: var(--theme-line); padding: 0 2px; }
+.experiment-filing-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; border: 0; padding: 0; margin: 0 0 6px; min-width: 0; }
+.experiment-management h3 { margin: 18px 0 4px; font-size: 14px; }
+.experiment-management h3:first-of-type { margin-top: 8px; }
+@media (max-width: 760px) { .experiment-filing-fields { grid-template-columns: 1fr; } }
+
+/* The objectives page. */
+.objective-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; min-width: 640px; }
+.objective-table th, .objective-table td { text-align: left; vertical-align: top; padding: 14px 16px; border-top: 1px solid var(--line); white-space: normal; overflow-wrap: anywhere; }
+.objective-table thead th:nth-child(2) { width: 210px; }
+.objective-table thead th:nth-child(3) { width: 130px; }
+.objective-table thead th:nth-child(4) { width: 150px; }
+.objective-table thead { background: var(--canvas, var(--theme-soft)); }
+.objective-table thead th { white-space: nowrap; overflow-wrap: normal; }
+.objective-table tbody th, .objective-table tbody td { border-bottom: 0; }
+.objective-table tbody th { font-weight: 400; text-transform: none; letter-spacing: normal; font-size: inherit; background: transparent; color: var(--theme-ink); }
+.objective-table tbody th small { display: block; margin-top: 6px; color: var(--muted); max-width: 640px; }
+.objective-form .inline-actions { margin-top: 4px; }
+.objective-roles { display: grid; grid-template-columns: max-content 1fr; gap: 10px 22px; margin: 0; font-size: 13px; }
+.objective-roles > div { display: contents; }
+.objective-roles dt { font-weight: 650; }
+.objective-roles dd { margin: 0; color: var(--theme-muted); }

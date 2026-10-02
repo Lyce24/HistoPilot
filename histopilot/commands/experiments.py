@@ -7,15 +7,39 @@ import typer
 from histopilot import templates
 from histopilot.client import ClientError, authoring, records, resolve, resources, specs
 from histopilot.client import experiments as designs
+from histopilot.client import objectives as goals
 from histopilot.client.errors import usage_error
 from histopilot.client.paging import page
 from histopilot.client.states import run_state
 from histopilot.client.wait import wait
+from histopilot.schemas.objectives import EXPERIMENT_ROLES
 
 from . import output
 from .common import FORCE, OUTPUT, Result, command, spec_result
 
 STATES = ("active", "archived", "trashed", "all")
+ROLES = ", ".join(EXPERIMENT_ROLES)
+CLEARABLE = ("objective", "role", "series")
+
+
+def _role(value: str | None) -> str | None:
+    if value is not None and value not in EXPERIMENT_ROLES:
+        raise usage_error(f"Choose --role from: {ROLES}.")
+    return value
+
+
+def filing_text(record: dict) -> str:
+    """Where an experiment is filed, in one line: objective (rank), role, series › member."""
+    objective = record.get("objective")
+    parts = [
+        f"{objective['name']} ({objective['rank']} objective)" if objective else "no objective"
+    ]
+    if record.get("role"):
+        parts.append(f"role {record['role']}")
+    if record.get("series"):
+        member = record.get("seriesMember")
+        parts.append(f"series {record['series']}" + (f" › {member}" if member else ""))
+    return " · ".join(parts)
 
 
 def _score(summary: dict | None) -> str | None:
@@ -132,15 +156,30 @@ def register(app: typer.Typer) -> typer.Typer:
     def list_(
         ctx,
         state: str = typer.Option("active", "--state", help="active, archived, trashed or all."),
+        objective: str | None = typer.Option(
+            None, "--objective", help="Only those filed under this objective (ID or name)."
+        ),
+        unfiled: bool = typer.Option(False, "--unfiled", help="Only those under no objective."),
+        role: str | None = typer.Option(None, "--role", help=f"Only this role: {ROLES}."),
     ):
-        """List experiments, newest first."""
+        """List experiments, newest first, with the objective and role each is filed under."""
         if state not in STATES:
             raise usage_error(f"Choose --state from: {', '.join(STATES)}.")
-        items = resources.experiments(ctx.client, ctx.project(), state=state)
+        if objective is not None and unfiled:
+            raise usage_error("Give --objective or --unfiled, not both.")
+        project = ctx.project()
+        items = resources.experiments(ctx.client, project, state=state)
+        if objective is not None or unfiled:
+            wanted = goals.objective_id(ctx.client, project, objective) if objective else None
+            items = [item for item in items if item.get("objectiveId") == wanted]
+        if _role(role) is not None:
+            items = [item for item in items if item.get("role") == role]
         rows, bounds = page(items, offset=ctx.offset, limit=ctx.limit)
         columns = [
             ("ID", "id"),
             ("NAME", "name"),
+            ("OBJECTIVE", lambda row: (row.get("objective") or {}).get("name")),
+            ("ROLE", "role"),
             ("RUN STATE", "runState"),
             ("STAGE", "stage"),
             ("BATCHES", lambda row: len(row.get("batches") or [])),
@@ -154,9 +193,24 @@ def register(app: typer.Typer) -> typer.Typer:
         data = resources.experiment(ctx.client, ctx.project(), ctx.experiment(experiment))
 
         def text():
+            copied = data.get("copiedFrom")
+            objective = data.get("objective")
+            member = data.get("seriesMember")
             lines = output.fields(
                 [
                     ("Experiment", f"{data.get('name')} ({data.get('id')})"),
+                    (
+                        "Objective",
+                        f"{objective['name']} ({objective['rank']})" if objective else "none",
+                    ),
+                    ("Role", data.get("role")),
+                    (
+                        "Series",
+                        f"{data['series']}" + (f" › {member}" if member else "")
+                        if data.get("series")
+                        else None,
+                    ),
+                    ("Copied from", f"{copied['name']} ({copied['id']})" if copied else None),
                     ("Stage", data.get("stage")),
                     ("Run state", data.get("runState") or "not started"),
                     ("Status", data.get("status")),
@@ -182,6 +236,63 @@ def register(app: typer.Typer) -> typer.Typer:
             return f"{lines}\n\n{table}"
 
         return Result(data, text=text)
+
+    @command(group, "assign")
+    def assign(
+        ctx,
+        experiment: str = typer.Argument(..., help="Experiment ID or name."),
+        objective: str | None = typer.Option(
+            None, "--objective", help="The objective it answers (ID or name)."
+        ),
+        role: str | None = typer.Option(None, "--role", help=f"Its role there: {ROLES}."),
+        series: str | None = typer.Option(
+            None, "--series", help="The series it belongs to, such as LOCO."
+        ),
+        member: str | None = typer.Option(
+            None, "--member", help="Its place in the series, such as the held-out cohort."
+        ),
+        clear: list[str] = typer.Option(
+            [], "--clear", help="Remove objective, role or series (with its member); repeatable."
+        ),
+    ):
+        """File an experiment under an objective, with its role and series there.
+
+        Options left out keep their saved values. Started and archived experiments can be
+        filed too: the experiment, its revision and its results do not change."""
+        unknown = sorted(set(clear) - set(CLEARABLE))
+        if unknown:
+            raise usage_error(f"--clear takes {', '.join(CLEARABLE)}, not {', '.join(unknown)}.")
+        given = {"objective": objective, "role": role, "series": series}
+        both = [name for name in clear if given.get(name) is not None]
+        if both or ("series" in clear and member is not None):
+            raise usage_error(f"Set or clear {', '.join(both) or 'the member'}, not both.")
+        project = ctx.project()
+        record = resources.experiment(ctx.client, project, ctx.experiment(experiment))
+        wanted = goals.filing(record)
+        if objective is not None:
+            wanted["objectiveId"] = goals.objective_id(ctx.client, project, objective)
+        if _role(role) is not None:
+            wanted["role"] = role
+        if series is not None:
+            wanted["series"] = series
+        if member is not None:
+            wanted["seriesMember"] = member
+        for name in clear:
+            if name == "series":
+                wanted.update(series=None, seriesMember=None)
+            else:
+                wanted["objectiveId" if name == "objective" else name] = None
+        if wanted["seriesMember"] and not wanted["series"]:
+            raise usage_error("Give --series with --member: a member belongs to a series.")
+        saved = (
+            record
+            if wanted == goals.filing(record)
+            else goals.file_experiment(ctx.client, project, record, wanted)
+        )
+        keys = ("id", "name", *goals.FILING_FIELDS, "objective", "copiedFrom")
+        data = {key: saved.get(key) for key in keys}
+        verb = "Filed" if saved is not record else "Unchanged:"
+        return Result(data, text=lambda: f"{verb} {saved['name']} — {filing_text(saved)}.")
 
     @command(group, "results")
     def results(ctx, experiment: str = typer.Argument(..., help="Experiment ID or name.")):
