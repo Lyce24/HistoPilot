@@ -131,6 +131,10 @@ Patch features stay in their HDF5 files. Optional verified packs are memory-mapp
 
 Drafts and labels carry revisions, and stale updates are refused. All SQLite databases use WAL. Every connection disables the close-time checkpoint, and connections open and close under one process-wide lock (`storage/sqlite_connections.py`): SQLite 3.51.0 can deadlock when one thread closes the last connection to a WAL database while another opens or closes one. `kill -USR1` on the service or runner writes every thread's stack to a log in the Task Center state directory.
 
+Lists that read many records run in a read session (`storage/read_sessions.py`): one read connection per store and thread for the whole request, and values that cannot change within it, such as a job's status or a dataset's verified checksums, worked out once. Read sessions also take turns, two at a time: the service computes under one interpreter lock, so lists read side by side wait on each other at every file and database call, and a large project's first page load took three times as long that way. A session that has waited two minutes reads anyway.
+
+Some results are kept across requests because their inputs cannot change unseen: a plan file's hash and the record IDs it names (by file identity), a frozen cohort's review without a development protocol (until any record's lifecycle changes), training evidence checked for NaN (by file identity) and the Task Center's advisory capacity suggestion (for a minute). Source files, slides and features are still checked on every request that reports their freshness. The browser paces its polls by the service: each waits at least three times the slowest read of the last 30 seconds (`pollDelay` in `web/src/api/client.ts`).
+
 ## Filesystem and backups
 
 Storage requires POSIX file locks, directory fsync, same-filesystem atomic rename and SQLite WAL, and fails explicitly when they are missing. Tests run on local POSIX folders; network filesystems are not certified. Power-loss durability ultimately depends on the filesystem and hardware honouring syncs.
