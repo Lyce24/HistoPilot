@@ -350,6 +350,11 @@ class ScientificStore:
             self._initialize_locked()
         self._remember_ready()
 
+    def ensure_ready(self) -> None:
+        """Initialize when the project is free; a busy project whose database is
+        already current is usable as it is, so opening it never waits for a writer."""
+        self._prepare_read()
+
     def _database_identity(self, connection: sqlite3.Connection) -> tuple | None:
         try:
             info = os.stat(self.path, follow_symlinks=False)

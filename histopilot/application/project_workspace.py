@@ -360,7 +360,8 @@ class ProjectWorkspace:
                             409,
                             code="PROJECT_ALREADY_REGISTERED",
                         )
-            ScientificStore(path, document["id"]).initialize()
+            # Opening must not fail while training, Apply or publication holds the project.
+            ScientificStore(path, document["id"]).ensure_ready()
             summary = self._summary(document, path)
             self._register(summary)
             return summary

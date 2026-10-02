@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 from histopilot.api import create_app
 from histopilot.application.project_workspace import DESCRIPTOR
 from histopilot.config import Settings
+from histopilot.storage.lifecycle import lifecycle_guard
+from histopilot.storage.project_lock import writer_lock
 
 API = "/api/v1"
 
@@ -103,6 +105,17 @@ def test_create_optional_setup_is_folder_backed_and_survives_restart(settings):
         )
         projects = second.get(f"{API}/projects").json()["projects"]
         assert [item for item in projects if item["mode"] == "local"] == [created]
+
+
+def test_opening_a_busy_project_does_not_wait_for_its_writer(client, settings):
+    """Training publication or an Apply submission can hold a project for minutes; the
+    Start page still opens it (it used to fail with PROJECT_BUSY after five seconds)."""
+    created = create(client, settings)
+    folder = settings.workspace / "Bladder"
+    with lifecycle_guard(folder), writer_lock(folder):
+        opened = client.post(f"{API}/projects/open", json={"path": str(folder)})
+    assert opened.status_code == 200, opened.text
+    assert opened.json() == created
 
 
 def test_create_with_only_prerequisites_and_update_settings_later(client, settings):
