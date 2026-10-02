@@ -60,3 +60,6 @@
 .target-split-unit-option small { color: var(--theme-muted); }
 .target-split-unit-control p { margin-bottom: 0; font-size: 13px; }
 @media (max-width: 560px) { .target-split-unit-options { grid-template-columns: minmax(0, 1fr); } }
+/* Target names are often long identifiers without spaces (ctrl_g12c_in_g12_wt20260825);
+   they wrap so the library fits the page instead of scrolling sideways. */
+.target-split-library td { overflow-wrap: anywhere; }

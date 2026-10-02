@@ -88,7 +88,10 @@
 .exp-interval-row th, .exp-interval-row td { color: var(--theme-muted); font-size: .8rem; }
 .exp-takeaway { margin: 0; padding: .7rem .9rem; border-left: 3px solid var(--brand-primary); background: var(--theme-accent-soft); border-radius: 0 10px 10px 0; font-size: .92rem; line-height: 1.5; color: var(--theme-ink); }
 .exp-footnote { margin: .5rem 0 0; color: var(--theme-muted); font-size: .8rem; line-height: 1.45; }
-.exp-overview tbody th { min-width: 12rem; }
+.exp-overview tbody th { min-width: 12rem; max-width: 14rem; white-space: normal; }
+/* The headline table fits a desktop page: batch names and column titles wrap. */
+.exp-overview thead th { white-space: normal; }
+.exp-overview th, .exp-overview td { padding-left: .55rem; padding-right: .55rem; }
 .exp-seeds th, .exp-seeds td { padding: .5rem .55rem; }
 .exp-table thead th small { display: block; margin-top: .1rem; font-size: .66rem; font-weight: 500; text-transform: none; letter-spacing: normal; }
 .exp-confusion { width: auto; min-width: 26rem; }
