@@ -45,6 +45,14 @@ EXECUTION_NOTE = (
     "using the frozen aggregation rule. "
     "Feature vectors and coordinates must describe the same patches in the same row order."
 )
+POOLED_NOTE = (
+    "Pooled attention combines several models patch by patch: each model's normalized map "
+    "(an ensemble's maps averaged across its members) is pooled with the chosen function "
+    "(mean, median, maximum, minimum or geometric mean) and renormalized over the slide. "
+    "The pooled prediction is the equal-weight mean of the models' class probabilities. "
+    "Pooling attention is class-independent and describes relative patch weighting within a slide. "
+    "Feature vectors and coordinates must describe the same patches in the same row order."
+)
 MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
 # Historical JSON-only writers were bounded to 64 MiB. Larger current studies
 # use the verified mmap sidecar; raw JSON exports retain their 512 MiB limit.
@@ -78,6 +86,8 @@ def _attention_scientific_inputs(manifest):
             "featureContract",
             "slides",
             "attentionKind",
+            "pooling",
+            "predictors",
         )
     }
 
@@ -275,8 +285,14 @@ class InterpretationService:
                         height=request.patchHeightLevel0,
                     )
                     selection = InterpretationSelection(
-                        name=f"Attention · {row['slideId']}"[:120],
+                        name=(
+                            f"Pooled attention · {row['slideId']}"
+                            if request.predictorIds
+                            else f"Attention · {row['slideId']}"
+                        )[:120],
                         predictorId=request.predictorId,
+                        predictorIds=request.predictorIds,
+                        pooling=request.pooling,
                         evaluationId=request.evaluationId,
                         clinicalAnalysisId=request.clinicalAnalysisId,
                         featureBundleId=request.featureBundleId,
@@ -466,8 +482,9 @@ class InterpretationService:
             references.append(reference(evaluation))
         return evaluation_id, references
 
-    def _prepare(self, selection, *, gallery_context=None, check_resources=True):
-        predictor = self.predictors.get(selection.predictorId)
+    def _attention_model(self, predictor_id, encoder_id):
+        """One frozen ABMIL/nnMIL predictor whose checkpoints attention can run."""
+        predictor = self.predictors.get(predictor_id)
         model = predictor["manifest"]
         if model.get("recipe", {}).get("inputMode") == "clinical":
             raise StorageError(
@@ -494,14 +511,59 @@ class InterpretationService:
                 422,
             )
         contract = model["inputs"]["features"]
-        if not contract.get("encoderId") or selection.encoderId != contract["encoderId"]:
+        if not contract.get("encoderId") or encoder_id != contract["encoderId"]:
             raise StorageError(
                 "Features require an explicit encoder identity matching the frozen predictor.",
                 "INTERPRETATION_ENCODER_MISMATCH",
                 422,
             )
+        return predictor, model, checkpoints, method, contract
+
+    def _pooled_models(self, selection, predictor, model, checkpoints, method, contract):
+        """Every pooled model reads the same features and predicts the same classes."""
+        pooled = []
+        for identity in selection.predictorIds or []:
+            entry = (
+                (predictor, model, checkpoints, method, contract)
+                if identity == predictor["id"]
+                else self._attention_model(identity, selection.encoderId)
+            )
+            other, other_model, _, _, other_contract = entry
+            if other_model.get("recipe", {}).get("inputMode") == "multimodal":
+                raise StorageError(
+                    "Pooled attention supports image-only models.",
+                    "INTERPRETATION_MODEL_UNSUPPORTED",
+                    422,
+                )
+            if other_model["target"] != model["target"]:
+                raise StorageError(
+                    "Pooled models must predict the same classes in the same order.",
+                    "INTERPRETATION_POOL_MISMATCH",
+                    422,
+                )
+            if any(
+                other_contract.get(key) != contract.get(key)
+                for key in ("encoderId", "dimensions", "dtype")
+            ):
+                raise StorageError(
+                    "Pooled models must read the same features: encoder, dimensions and dtype.",
+                    "INTERPRETATION_POOL_MISMATCH",
+                    422,
+                )
+            pooled.append(entry)
+        return pooled
+
+    def _prepare(self, selection, *, gallery_context=None, check_resources=True):
+        predictor, model, checkpoints, method, contract = self._attention_model(
+            selection.predictorId, selection.encoderId
+        )
+        pooled = self._pooled_models(selection, predictor, model, checkpoints, method, contract)
         evaluation_id, references = self._lineage(selection, predictor)
         self.predictors.verify_checkpoints(predictor)
+        for other, *_ in pooled:
+            if other["id"] != predictor["id"]:
+                references.append(reference(other))
+                self.predictors.verify_checkpoints(other)
         if selection.featureBundleId:
             requests, source_references, slide_folder = self.gallery.bind(
                 selection, context=gallery_context
@@ -581,13 +643,17 @@ class InterpretationService:
         # Whole-bag attention retains exact normalization. Refuse clearly undersized
         # host reservations rather than quietly sampling patches to fit memory.
         peak = max(row["patchCount"] for row in slides)
-        recipe = model.get("recipe", {})
+        recipes = [entry[1].get("recipe", {}) for entry in pooled] or [model.get("recipe", {})]
         estimated = (
             peak
             * (
                 contract["dimensions"] * 12
                 + 512
-                + (recipe.get("embedDim", 512) + recipe.get("attentionDim", 384) * 3) * 8
+                + (
+                    max(recipe.get("embedDim", 512) for recipe in recipes)
+                    + max(recipe.get("attentionDim", 384) for recipe in recipes) * 3
+                )
+                * 8
             )
             + 256 * 1024**2
         )
@@ -597,7 +663,7 @@ class InterpretationService:
                 "INTERPRETATION_MEMORY_INSUFFICIENT",
                 422,
             )
-        return {
+        manifest = {
             "kind": "model-interpretation",
             "schemaVersion": 1,
             "datasetId": model["datasetId"],
@@ -624,6 +690,27 @@ class InterpretationService:
             "executionEnabled": True,
             "executionNote": EXECUTION_NOTE,
         }
+        if pooled:
+            # Members of a pooled study are its models; each model's map is its own
+            # frozen ensemble mean, and the study's map pools them patch by patch.
+            manifest.update(
+                method="pooled",
+                memberCount=len(pooled),
+                pooling=selection.pooling,
+                predictors=[
+                    {
+                        **reference(other),
+                        "name": other_model.get("name"),
+                        "method": other_method,
+                        "model": other_model.get("recipe", {}).get("model"),
+                        "checkpointCount": len(other_checkpoints),
+                        "experimentId": other_model.get("experimentId"),
+                    }
+                    for other, other_model, other_checkpoints, other_method, _ in pooled
+                ],
+                executionNote=POOLED_NOTE,
+            )
+        return manifest
 
     def preview(self, selection, *, gallery_context=None, check_resources=True):
         try:
@@ -718,12 +805,53 @@ class InterpretationService:
             "slides",
             "resources",
         )
-        if any(reviewed[key] != manifest[key] for key in scientific_keys):
+        if any(reviewed[key] != manifest[key] for key in scientific_keys) or any(
+            reviewed.get(key) != manifest.get(key) for key in ("pooling", "predictors")
+        ):
             raise StorageError(
                 "Interpretation evidence changed. Create a new reviewed interpretation.",
                 "INTERPRETATION_INPUTS_CHANGED",
                 409,
             )
+        if manifest.get("method") == "pooled":
+            models = []
+            for entry in manifest["predictors"]:
+                source = self.predictors.get(entry["id"])["manifest"]
+                models.append(
+                    {
+                        "predictorId": entry["id"],
+                        "name": entry.get("name"),
+                        "method": source.get("method", "ensemble"),
+                        "aggregation": (
+                            "mean_logit"
+                            if source.get("aggregation") == "mean_logit"
+                            else "mean_probability"
+                        ),
+                        "checkpoints": source["checkpoints"],
+                    }
+                )
+            return {
+                "kind": "interpretation",
+                "runId": identity,
+                "method": "pooled",
+                "pooling": manifest["pooling"],
+                "models": models,
+                "target": manifest["target"],
+                "resources": manifest["resources"],
+                "checkpoints": [
+                    checkpoint for model in models for checkpoint in model["checkpoints"]
+                ],
+                "references": manifest["references"],
+                "slides": manifest["slides"],
+                "featureContract": manifest["featureContract"],
+                "data": {
+                    "sourceStamps": {
+                        path: stamp
+                        for slide in manifest["slides"]
+                        for path, stamp in slide["sourceStamps"].items()
+                    }
+                },
+            }
         predictor = self.predictors.get(manifest["predictorId"])
         return {
             "kind": "interpretation",
@@ -1024,7 +1152,7 @@ class InterpretationService:
             "patchHeightLevel0": row["patchHeightLevel0"],
             "coordinateSpace": "level0",
             "attentionKind": "class_independent_pooling",
-            "attentionNote": EXECUTION_NOTE,
+            "attentionNote": document["manifest"].get("executionNote") or EXECUTION_NOTE,
             "classOrder": document["manifest"]["target"]["classes"],
             "member": member,
             "probabilities": source["probabilities"],

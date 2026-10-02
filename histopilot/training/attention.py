@@ -23,6 +23,22 @@ ATTENTION_NOTE = (
     "The ensemble mean averages each member's attention. Percentiles are "
     "within-slide midranks for display, not calibrated probabilities or class-specific attribution."
 )
+POOLED_ATTENTION_NOTE = (
+    "Pooled attention: each selected model's normalized map (an ensemble's maps averaged across "
+    "its members) is combined patch by patch with the chosen function, then renormalized over "
+    "all patches in this slide. The pooled prediction is the equal-weight mean of the models' "
+    "class probabilities. Percentiles are within-slide midranks for display, not calibrated "
+    "probabilities or class-specific attribution."
+)
+# Each function maps a (models × patches) stack of normalized maps to one nonnegative map.
+POOLING_FUNCTIONS = {
+    "mean": lambda maps: maps.mean(axis=0),
+    "median": lambda maps: np.median(maps, axis=0),
+    "max": lambda maps: maps.max(axis=0),
+    "min": lambda maps: maps.min(axis=0),
+    # Consensus: a patch ranks high only where every model attends to it.
+    "geometric_mean": lambda maps: np.exp(np.log(np.clip(maps, 1e-300, None)).mean(axis=0)),
+}
 MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
 
 
@@ -92,6 +108,7 @@ def _map(
     member,
     log_probabilities=None,
     window_uncertainty=None,
+    note=ATTENTION_NOTE,
 ):
     ranks = _percentiles(weights)
     return {
@@ -103,7 +120,7 @@ def _map(
         "height": slide["height"],
         "coordinateSpace": "level0",
         "attentionKind": "class_independent_pooling",
-        "attentionNote": ATTENTION_NOTE,
+        "attentionNote": note,
         "classOrder": plan["target"]["classes"],
         "member": member,
         "probabilities": probabilities.tolist(),
@@ -161,6 +178,8 @@ def interpret(plan, output_dir):
     """
     folder = Path(output_dir)
     ensure_managed_directory(folder)
+    if plan["method"] == "pooled":
+        return _interpret_pooled(plan, folder)
     method, checkpoints = plan["method"], plan["checkpoints"]
     aggregation = plan.get("aggregation", "mean_probability")
     if aggregation not in {"mean_probability", "mean_logit", "single_model"}:
@@ -385,6 +404,254 @@ def interpret(plan, output_dir):
         "attentionKind": "class_independent_pooling",
         "attentionNote": ATTENTION_NOTE,
         **({"ensembleAggregation": aggregation} if aggregation == "mean_logit" else {}),
+        "slides": summaries,
+        "artifacts": artifacts,
+    }
+
+
+def _checkpoint_attention(checkpoint, plan, tensor, slide, device, mean_logit):
+    """One checkpoint's whole-bag attention and class probabilities, as in interpret()."""
+    model = MILTrainModule.load_from_checkpoint(
+        checkpoint["path"], map_location="cpu", weights_only=True
+    )
+    if (
+        model.target != plan["target"]
+        or model.hparams.feature_dim != plan["featureContract"]["dimensions"]
+        or not catalog.supports_attention(
+            model.recipe.get("model"), model.recipe.get("inputMode", "image")
+        )
+    ):
+        raise ValueError(
+            "Checkpoint architecture, target or feature dimensions differ from the predictor."
+        )
+    model.eval().to(device)
+    with torch.inference_mode():
+        output = model.prediction_output(
+            tensor,
+            return_attention=True,
+            **({"clinical": [slide["clinical"]]} if "clinical" in slide else {}),
+        )
+        weights = output["attention"][0].double().cpu().numpy()
+        logits = class_logits(output["logits"], model.target)[0].double()
+        probabilities = torch.softmax(logits, dim=-1).cpu().numpy()
+        log_probabilities = torch.log_softmax(logits, dim=-1).cpu().numpy() if mean_logit else None
+    del output, model
+    return weights / weights.sum(), probabilities, log_probabilities
+
+
+def _interpret_pooled(plan, folder):
+    """Several models' maps pooled patch by patch; each model's own map stays a member.
+
+    A model's map is the equal-weight mean of its checkpoints' normalized attention and its
+    probabilities follow its frozen ensemble rule. Interrupted model maps recompute whole.
+    """
+    models, pooling = plan["models"], plan.get("pooling")
+    if (
+        pooling not in POOLING_FUNCTIONS
+        or len(models) < 2
+        or any(
+            not model["checkpoints"]
+            or model["method"] not in {"refit", "ensemble", "seed_ensemble"}
+            or (model["method"] == "refit" and len(model["checkpoints"]) != 1)
+            for model in models
+        )
+        or plan["checkpoints"] != [c for model in models for c in model["checkpoints"]]
+    ):
+        raise ValueError(
+            "Pooled attention needs two or more complete models and a pooling function."
+        )
+    if not plan["slides"] or len({row["slideId"] for row in plan["slides"]}) != len(plan["slides"]):
+        raise ValueError("Select distinct nonempty slide identities.")
+    verify_sources(plan["slides"])
+    for checkpoint in plan["checkpoints"]:
+        current = checkpoint_snapshot(checkpoint["path"], Path(checkpoint["path"]).parent)
+        if any(current[key] != checkpoint[key] for key in ("path", "sha256", "bytes")):
+            raise ValueError("A frozen predictor checkpoint changed.")
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    torch.set_num_threads(plan["resources"]["cpuThreadsPerRun"])
+    torch.use_deterministic_algorithms(True)
+    device = torch.device(plan.get("device", "cpu"))
+    input_hash = content_hash(
+        {
+            key: plan.get(key)
+            for key in (
+                "method",
+                "pooling",
+                "models",
+                "target",
+                "featureContract",
+                "slides",
+                "code",
+            )
+        }
+    )
+    classes = len(plan["target"]["classes"])
+    total_passes = len(plan["slides"]) * len(plan["checkpoints"])
+    passes = 0
+
+    def progress(slide_index, slide, model_index):
+        write_json_atomic(
+            folder / "progress.json",
+            {
+                "completedPairs": passes,
+                "totalPairs": total_passes,
+                "currentSlide": slide["slideId"],
+                "completedSlides": slide_index,
+                "totalSlides": len(plan["slides"]),
+                "completedModels": model_index,
+                "totalModels": len(models),
+            },
+        )
+
+    artifacts, summaries = {}, []
+    for slide_index, slide in enumerate(plan["slides"]):
+        if (folder / "cancel.requested").exists():
+            raise KeyboardInterrupt("Interpretation cancelled.")
+        evidence, features, coords = inspect_inputs(
+            slide, slide, plan["featureContract"], load=True
+        )
+        if any(slide.get(key) != value for key, value in evidence.items()):
+            raise ValueError(
+                "Feature vectors, coordinates, or geometry differ from reviewed evidence."
+            )
+        tensor = torch.from_numpy(features).unsqueeze(0).to(device)
+        maps, model_probabilities, members = [], [], []
+        for model_index, entry in enumerate(models):
+            filename = f"slide-{slide_index}-member-{model_index}.json"
+            path = folder / filename
+            receipt = folder / f".slide-{slide_index}-member-{model_index}.receipt.json"
+            weights = probabilities = None
+            if receipt.exists() and path.exists():
+                cached = json.loads(read_file_bounded(receipt, 4096))
+                if cached.get("inputHash") == input_hash and cached.get("artifact") == _receipt(
+                    path
+                ):
+                    value = json.loads(read_file_bounded(path, MAX_ARTIFACT_BYTES))
+                    if (
+                        value.get("slideId") == slide["slideId"]
+                        and value.get("member") == str(model_index)
+                        and len(value.get("patches", [])) == len(coords)
+                    ):
+                        weights = np.asarray(
+                            [patch["weight"] for patch in value["patches"]], dtype=np.float64
+                        )
+                        probabilities = np.asarray(value["probabilities"], dtype=np.float64)
+                        passes += len(entry["checkpoints"])
+            if weights is None:
+                mean_logit = entry.get("aggregation") == "mean_logit"
+                count = len(entry["checkpoints"])
+                weights = np.zeros(len(coords), dtype=np.float64)
+                probabilities = np.zeros(classes, dtype=np.float64)
+                log_probabilities = np.zeros(classes, dtype=np.float64)
+                for checkpoint in entry["checkpoints"]:
+                    if (folder / "cancel.requested").exists():
+                        raise KeyboardInterrupt("Interpretation cancelled.")
+                    w, p, log_p = _checkpoint_attention(
+                        checkpoint, plan, tensor, slide, device, mean_logit
+                    )
+                    weights += w / count
+                    probabilities += p / count
+                    if mean_logit:
+                        log_probabilities += log_p / count
+                    passes += 1
+                    progress(slide_index, slide, model_index)
+                if mean_logit:
+                    log_probabilities -= np.logaddexp.reduce(log_probabilities)
+                    probabilities = np.exp(log_probabilities)
+                weights = weights / weights.sum()
+                _validate(weights, probabilities, len(coords), classes)
+                _write_attention_json(
+                    path,
+                    _map(
+                        slide,
+                        coords,
+                        weights,
+                        probabilities,
+                        plan,
+                        member=str(model_index),
+                        note=POOLED_ATTENTION_NOTE,
+                    ),
+                )
+                write_json_atomic(receipt, {"inputHash": input_hash, "artifact": _receipt(path)})
+            _validate(weights, probabilities, len(coords), classes)
+            artifacts[filename] = _receipt(path)
+            array_name = f"slide-{slide_index}-member-{model_index}.npy"
+            _write_attention_array(folder / array_name, coords, weights)
+            artifacts[array_name] = _receipt(folder / array_name)
+            maps.append(weights)
+            model_probabilities.append(probabilities)
+            members.append(
+                {
+                    "index": model_index,
+                    "predictorId": entry["predictorId"],
+                    "name": entry.get("name"),
+                    "method": entry["method"],
+                    "checkpointCount": len(entry["checkpoints"]),
+                    "probabilities": probabilities.tolist(),
+                    "attentionArtifact": filename,
+                    "attentionArray": array_name,
+                }
+            )
+            progress(slide_index, slide, model_index + 1)
+        del tensor, features
+        pooled = POOLING_FUNCTIONS[pooling](np.stack(maps))
+        pooled = pooled / pooled.sum()
+        probabilities = np.mean(model_probabilities, axis=0)
+        probabilities = probabilities / probabilities.sum()
+        _validate(pooled, probabilities, len(coords), classes)
+        filename = f"slide-{slide_index}.json"
+        _write_attention_json(
+            folder / filename,
+            _map(
+                slide,
+                coords,
+                pooled,
+                probabilities,
+                plan,
+                member="mean",
+                note=POOLED_ATTENTION_NOTE,
+            ),
+        )
+        artifacts[filename] = _receipt(folder / filename)
+        array_name = f"slide-{slide_index}.npy"
+        _write_attention_array(folder / array_name, coords, pooled)
+        artifacts[array_name] = _receipt(folder / array_name)
+        summaries.append(
+            {
+                "slideId": slide["slideId"],
+                "patchCount": len(coords),
+                "probabilities": probabilities.tolist(),
+                "attentionArtifact": filename,
+                "attentionArray": array_name,
+                "pooling": pooling,
+                "members": members,
+            }
+        )
+    verify_sources(plan["slides"])
+    write_json_atomic(
+        folder / "attention.json",
+        {
+            "runId": plan["runId"],
+            "method": "pooled",
+            "pooling": pooling,
+            "classOrder": plan["target"]["classes"],
+            "attentionKind": "class_independent_pooling",
+            "attentionNote": POOLED_ATTENTION_NOTE,
+            "slides": summaries,
+        },
+    )
+    artifacts["attention.json"] = _receipt(folder / "attention.json")
+    return {
+        "state": "succeeded",
+        "runId": plan["runId"],
+        "method": "pooled",
+        "pooling": pooling,
+        "slideCount": len(summaries),
+        "memberCount": len(models),
+        "checkpointCount": len(plan["checkpoints"]),
+        "classOrder": plan["target"]["classes"],
+        "attentionKind": "class_independent_pooling",
+        "attentionNote": POOLED_ATTENTION_NOTE,
         "slides": summaries,
         "artifacts": artifacts,
     }

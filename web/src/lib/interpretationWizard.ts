@@ -1,5 +1,5 @@
 import { templates } from './templates';
-import type { GallerySlide, Interpretation, InterpretationExecution, InterpretationSlideResult, VisualizeItem, VisualizeSelection } from '../api/interpretation';
+import { isPoolingFunction, type GallerySlide, type Interpretation, type InterpretationExecution, type InterpretationSlideResult, type PoolingFunction, type VisualizeItem, type VisualizeSelection } from '../api/interpretation';
 import type { ResourcePolicy } from '../api/development';
 import { computeActive } from '../api/predictors';
 /** Set up model weights, features and slides; then review attention like Datasets visual QC. */
@@ -11,7 +11,11 @@ export interface InterpretationWizardDraft {
   /** datasetId null follows the bundle's own dataset, or the only usable one. */
   version: 1; predictorId: string; datasetId: string | null; bundleId: string | null; packChoice: string | null;
   selected: GallerySlide[]; search: string; offset: number; resources: ResourceDraft; batch: InterpretationBatch | null;
+  /** More models whose attention pools with the primary model's; empty for one model. */
+  pooledPredictorIds: string[]; pooling: PoolingFunction;
 }
+/** Pooled attention combines at most this many models, the primary included. */
+export const MAX_POOLED_MODELS = 16;
 const interpretation = templates.resources.interpretation;
 export const defaultResourceDraft = (): ResourceDraft => ({ device: interpretation.device as ResourceDraft['device'], gpu: String(interpretation.gpu),
   threads: String(interpretation.cpuThreadsPerRun), ram: String(interpretation.ramGbPerRun), width: '', height: '' });
@@ -22,7 +26,7 @@ export function wizardStage(parameters: URLSearchParams): InterpretationStage {
   return value === 'select' ? 'select' : parameters.get('interpretation') ? 'review' : 'select';
 }
 export function initialWizardDraft(parameters: URLSearchParams): InterpretationWizardDraft {
-  return { version: 1, predictorId: parameters.get('predictor') ?? '', datasetId: null, bundleId: null, packChoice: null, selected: [], search: (parameters.get('search') ?? '').slice(0, 200), offset: 0, resources: defaultResourceDraft(), batch: null };
+  return { version: 1, predictorId: parameters.get('predictor') ?? '', datasetId: null, bundleId: null, packChoice: null, selected: [], search: (parameters.get('search') ?? '').slice(0, 200), offset: 0, resources: defaultResourceDraft(), batch: null, pooledPredictorIds: [], pooling: 'mean' };
 }
 const storageKey = (project: string) => `histopilot:interpretation-wizard:v1:${project}`;
 const objectValue = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -53,7 +57,9 @@ export function restoreWizardDraft(project: string, parameters: URLSearchParams)
     for (const key of ['gpu', 'threads', 'ram', 'width', 'height'] as const) if (typeof storedResources[key] === 'string') resources[key] = storedResources[key];
     const restored: InterpretationWizardDraft = { ...fallback, predictorId: value.predictorId, selected: value.selected, search: value.search, offset: value.offset as number, resources, batch: value.batch as InterpretationBatch | null ?? null,
       datasetId: typeof value.datasetId === 'string' ? value.datasetId : null,
-      bundleId: typeof value.bundleId === 'string' ? value.bundleId : null, packChoice: typeof value.packChoice === 'string' ? value.packChoice : null };
+      bundleId: typeof value.bundleId === 'string' ? value.bundleId : null, packChoice: typeof value.packChoice === 'string' ? value.packChoice : null,
+      pooledPredictorIds: Array.isArray(value.pooledPredictorIds) && value.pooledPredictorIds.every(nonemptyString) ? [...new Set(value.pooledPredictorIds)].filter((id) => id !== value.predictorId).slice(0, MAX_POOLED_MODELS - 1) : [],
+      pooling: isPoolingFunction(value.pooling) ? value.pooling : 'mean' };
     if (restored.batch?.pending) restored.batch.uncertain = true;
     else if (fallback.predictorId && fallback.predictorId !== restored.predictorId) return fallback;
     else if (parameters.has('search') && fallback.search !== restored.search) return { ...restored, search: fallback.search, offset: 0 };
@@ -88,7 +94,9 @@ export function adoptSavedInterpretation(current: InterpretationWizardDraft, rec
   const commonOverride = objectValue(first) && typeof first.patchWidthLevel0 === 'number' && Number.isFinite(first.patchWidthLevel0) && first.patchWidthLevel0 > 0
     && typeof first.patchHeightLevel0 === 'number' && Number.isFinite(first.patchHeightLevel0) && first.patchHeightLevel0 > 0
     && inputs.every((input) => objectValue(input) && input.patchWidthLevel0 === first.patchWidthLevel0 && input.patchHeightLevel0 === first.patchHeightLevel0);
+  const pooledIds = objectValue(selection) && Array.isArray(selection.predictorIds) ? selection.predictorIds.filter(nonemptyString).slice(1) : [];
   return { ...current, predictorId: record.manifest.predictorId, datasetId: null, bundleId, packChoice,
+    pooledPredictorIds: pooledIds, pooling: objectValue(selection) && isPoolingFunction(selection.pooling) ? selection.pooling : 'mean',
     selected: bundleId ? selected : [], search: '', offset: 0,
     resources: { ...current.resources, width: commonOverride ? String(first.patchWidthLevel0) : '', height: commonOverride ? String(first.patchHeightLevel0) : '' },
     batch: { id: `saved-${record.id}`, selected, request: null, pending: null, items: selected.map((slide) => ({ slidePath: slide.slidePath, slideId: slide.slideId, interpretationId: record.id, interpretation: record, status: record.execution?.status ?? 'not_started', reused: true })) } };

@@ -143,13 +143,37 @@ def verify_plan_inputs(plan):
             ):
                 raise ValueError("The test feature loading contract changed.")
         elif plan["kind"] == "interpretation":
-            predictor = store.get_configuration(manifest["predictorId"])
+            if manifest.get("method") == "pooled":
+                # Each pooled model must still be exactly its frozen predictor.
+                entries, models = manifest.get("predictors") or [], plan.get("models") or []
+                sources = [store.get_configuration(entry["id"]) for entry in entries]
+                predictors_match = (
+                    plan["method"] == "pooled"
+                    and plan.get("pooling") == manifest.get("pooling")
+                    and len(entries) >= 2
+                    and len(models) == len(entries)
+                    and all(
+                        model["predictorId"] == entry["id"]
+                        and source["contentHash"] == entry["contentHash"]
+                        and model["checkpoints"] == source["manifest"]["checkpoints"]
+                        and model["method"] == source["manifest"].get("method", "ensemble")
+                        and source["manifest"]["target"] == manifest["target"]
+                        for model, entry, source in zip(models, entries, sources, strict=True)
+                    )
+                    and plan["checkpoints"]
+                    == [checkpoint for model in models for checkpoint in model["checkpoints"]]
+                )
+            else:
+                predictor = store.get_configuration(manifest["predictorId"])
+                predictors_match = (
+                    plan["checkpoints"] == predictor["manifest"]["checkpoints"]
+                    and plan["target"] == predictor["manifest"]["target"]
+                    and plan["method"] == predictor["manifest"].get("method", "ensemble")
+                )
             if (
                 manifest.get("kind") != "model-interpretation"
-                or plan["checkpoints"] != predictor["manifest"]["checkpoints"]
-                or plan["target"] != predictor["manifest"]["target"]
+                or not predictors_match
                 or plan["target"] != manifest["target"]
-                or plan["method"] != predictor["manifest"].get("method", "ensemble")
                 or any(
                     plan.get(key) != manifest.get(key)
                     for key in ("slides", "featureContract", "references", "resources")

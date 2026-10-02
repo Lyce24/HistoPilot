@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { interpretations, type GallerySlide, type GallerySource, type Interpretation, type InterpretationDatasetSource, type InterpretationSource, type VisualizeSelection } from '../api/interpretation';
+import { interpretations, poolingFunctions, poolingLabel, type GallerySlide, type GallerySource, type Interpretation, type InterpretationDatasetSource, type InterpretationSource, type PoolingFunction, type VisualizeSelection } from '../api/interpretation';
 import { computeActive, predictorMethodLabel, predictors, type FrozenPredictor } from '../api/predictors';
 import type { Workspace } from '../api/types';
 import { ErrorNotice, PageHeader, Panel } from '../components/ui';
@@ -11,7 +11,7 @@ import InterpretationReview from '../components/InterpretationReview';
 import { useInterpretationBatch } from '../components/useInterpretationBatch';
 import RunStatusChip from '../components/RunStatusChip';
 import { defaultRepresentation, representationCompatible, sourceCompatible, validInterpretationResources } from '../lib/interpretationGallery';
-import { adoptSavedInterpretation, adoptSavedStudy, completedSlideResult, replaceWizardContext, persistWizardDraft, restoreWizardDraft, wizardResources, wizardRoute, wizardStage, type InterpretationStage, type InterpretationWizardDraft } from '../lib/interpretationWizard';
+import { adoptSavedInterpretation, adoptSavedStudy, completedSlideResult, replaceWizardContext, persistWizardDraft, restoreWizardDraft, wizardResources, wizardRoute, wizardStage, MAX_POOLED_MODELS, type InterpretationStage, type InterpretationWizardDraft } from '../lib/interpretationWizard';
 import { useHashParameters } from '../lib/hashRoute';
 import { modelLabel, supportsAttention } from '../lib/modelCapabilities';
 import { experimentRoleLabel, objectiveRankLabel, objectives as objectiveRecords, type ExperimentFiling, type Objective } from '../api/objectives';
@@ -31,6 +31,15 @@ import { stageEyebrow } from '../lib/roadmap';
 const MAX_SLIDES = 128;
 const PAGE_SIZE = 24;
 const dtypeLabel = (value: unknown) => Array.isArray(value) ? `mixed (${value.join(', ')})` : typeof value === 'string' ? value : 'unknown dtype';
+/** JSON with object keys sorted, so frozen targets compare by content. */
+const canonical = (value: unknown) => JSON.stringify(value, (_key, inner: unknown) => inner && typeof inner === 'object' && !Array.isArray(inner) ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => a.localeCompare(b))) : inner);
+/** A model can pool with the primary when it predicts the same classes from the same features. */
+function poolCompatible(primary: FrozenPredictor, item: FrozenPredictor) {
+  const a = primary.manifest.inputs?.features, b = item.manifest.inputs?.features;
+  return supportsAttention(item.manifest.recipe.model, item.manifest.recipe.inputMode) && item.manifest.recipe.inputMode !== 'multimodal'
+    && canonical(item.manifest.target) === canonical(primary.manifest.target)
+    && Boolean(a?.encoderId) && a?.encoderId === b?.encoderId && a?.dimensions === b?.dimensions && canonical(a?.dtype) === canonical(b?.dtype);
+}
 
 export default function LocalInterpretation({ workspace }: { workspace: Workspace }) {
   return <InterpretationWorkspace key={workspace.project.id} workspace={workspace} />;
@@ -62,6 +71,13 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
   const linkedRecord = useQuery({ queryKey: ['interpretation', project, linkedId], queryFn: () => interpretations.get(project, linkedId), enabled: Boolean(linkedId) });
   const batch = useInterpretationBatch(project, draft, setDraft);
   const predictor = registry.data?.items.find((item) => item.id === draft.predictorId && item.lifecycleState !== 'trashed');
+  // Models whose attention can pool with the primary model's, in the same objective focus.
+  const registryItems = registry.data?.items ?? [];
+  const poolable = Boolean(predictor && predictor.manifest.recipe.inputMode !== 'multimodal');
+  const poolCandidates = predictor && poolable ? registryItems.filter((item) => item.id !== predictor.id && poolCompatible(predictor, item)
+    && (item.lifecycleState === 'active' || item.lifecycleState === 'archived' && draft.pooledPredictorIds.includes(item.id))
+    && (draft.pooledPredictorIds.includes(item.id) || inObjectiveScope(objectiveScope, filings[item.manifest.experimentId]?.objectiveId))) : [];
+  const pooledModels = draft.pooledPredictorIds.map((id) => poolCandidates.find((item) => item.id === id)).filter((item): item is FrozenPredictor => Boolean(item));
   const contract = predictor?.manifest.inputs.features;
   const bundleId = draft.bundleId ?? contract?.bundle.id ?? '';
   const source = sources.data?.items.find((item) => item.id === bundleId);
@@ -106,9 +122,14 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
     replaceWizardContext(project, next, parameters, 'select');
   }
   function selectSlides(slides: GallerySlide[]) { if (batch.locked) return; setDraft((current) => ({ ...current, selected: slides, batch: null })); }
+  function changePool(patch: Partial<Pick<InterpretationWizardDraft, 'pooledPredictorIds' | 'pooling'>>) {
+    if (batch.locked) return;
+    setDraft((current) => ({ ...current, ...patch, batch: null }));
+  }
   function selection(paths: string[], original = draft.batch?.request): VisualizeSelection {
     if (original) return { ...original, slidePaths: paths, resources };
-    return { ...gallerySource, slidePaths: paths, resources, patchWidthLevel0: draft.resources.width ? Number(draft.resources.width) : undefined, patchHeightLevel0: draft.resources.height ? Number(draft.resources.height) : undefined };
+    const pooled = pooledModels.length ? { predictorIds: [draft.predictorId, ...pooledModels.map((item) => item.id)], pooling: draft.pooling } : {};
+    return { ...gallerySource, ...pooled, slidePaths: paths, resources, patchWidthLevel0: draft.resources.width ? Number(draft.resources.width) : undefined, patchHeightLevel0: draft.resources.height ? Number(draft.resources.height) : undefined };
   }
   function startReview() {
     if (!ready || !draft.selected.length || !resourcesValid || batch.locked) return;
@@ -137,14 +158,14 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
   }
   const readyCount = draft.batch ? draft.batch.selected.filter((slide) => completedSlideResult(slide, batch.states.get(slide.slidePath))).length : 0;
   const steps = [
-    { id: 'model', title: 'Model & features', description: predictor ? predictor.manifest.name : 'Load trained weights', complete: ready },
+    { id: 'model', title: 'Model & features', description: predictor ? `${predictor.manifest.name}${pooledModels.length ? ` + ${pooledModels.length} pooled (${poolingLabel(draft.pooling).toLocaleLowerCase()})` : ''}` : 'Load trained weights', complete: ready },
     { id: 'slides', title: 'Slides', description: draft.selected.length ? `${draft.selected.length} selected` : 'Choose slides', complete: draft.selected.length > 0, disabled: !ready },
     { id: 'review', title: 'Attention review', description: draft.batch ? `${readyCount} / ${draft.batch.selected.length} ready` : 'Attention & predictions', complete: batch.ready, disabled: !draft.batch },
   ];
   const stepper = <StageSteps label="Interpretation steps" current={stage === 'review' ? 'review' : ready ? 'slides' : 'model'} steps={steps} disabled={batch.locked && stage !== 'review'} onChange={(id) => navigate(id === 'review' ? 'review' : 'select')} />;
 
   if (stage === 'review') return <div className="clinical-workspace model-chains clinical-insights interpretation-wizard">
-    <PageHeader eyebrow={stageEyebrow('interpretation')} title="Attention review" description={predictor ? `${predictor.manifest.name} · ${modelLabel(predictor.manifest.recipe.model)} · ${predictorMethodLabel(predictor.manifest.method)}. Select a slide to see where the model attends, its highest-attention patches and its predicted label.` : 'Select a slide to see where the model attends, its highest-attention patches and its predicted label.'} actions={<StageBackButton onClick={() => navigate('select')}>Back to slide selection</StageBackButton>} />
+    <PageHeader eyebrow={stageEyebrow('interpretation')} title="Attention review" description={predictor && draft.pooledPredictorIds.length ? `Pooled attention (${poolingLabel(draft.pooling).toLocaleLowerCase()}) of ${draft.pooledPredictorIds.length + 1} models, led by ${predictor.manifest.name}. Each slide's map pools the models' maps patch by patch; choose a single model under Attention map to compare.` : predictor ? `${predictor.manifest.name} · ${modelLabel(predictor.manifest.recipe.model)} · ${predictorMethodLabel(predictor.manifest.method)}. Select a slide to see where the model attends, its highest-attention patches and its predicted label.` : 'Select a slide to see where the model attends, its highest-attention patches and its predicted label.'} actions={<StageBackButton onClick={() => navigate('select')}>Back to slide selection</StageBackButton>} />
     {stepper}
     <ErrorNotice error={linkedRecord.error ?? (draft.batch?.error ? new Error(draft.batch.error) : null)} />
     {draft.batch?.uncertain ? <p className="callout" role="alert">The attention request response was lost, so some jobs may already exist. <button className="btn btn-secondary" disabled={batch.busy} onClick={batch.retryExact}>Retry the same attention request</button></p> : null}
@@ -160,12 +181,13 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
     <ErrorNotice error={registry.error ?? sources.error ?? records.error} />
     <Panel title="Load model weights and features" subtitle="Slides come from the chosen frozen dataset. Attention runs the model weights on the feature bundle's features or its frozen pack.">
       <fieldset className="interpretation-sources" disabled={batch.locked}><legend className="sr-only">Model weights and features</legend>
-        <label className="label">Trained model (weights)<select className="field" value={draft.predictorId} onChange={(event) => changeSource({ predictorId: event.target.value, bundleId: null, packChoice: null })}><option value="">Choose a frozen ABMIL or nnMIL predictor</option>{draft.predictorId && !predictor ? <option value={draft.predictorId} disabled>Linked predictor unavailable</option> : null}{predictorOptionGroups((registry.data?.items ?? []).filter((item) => (item.lifecycleState === 'active' || item.id === draft.predictorId && item.lifecycleState === 'archived') && (item.id === draft.predictorId || inObjectiveScope(objectiveScope, filings[item.manifest.experimentId]?.objectiveId))), filings, objectiveItems).map((group) => <optgroup key={group.key} label={group.label}>{group.items.map((item) => <option key={item.id} value={item.id} disabled={!supportsAttention(item.manifest.recipe.model, item.manifest.recipe.inputMode)}>{item.manifest.name} · {modelLabel(item.manifest.recipe.model)} · {predictorMethodLabel(item.manifest.method)}{!supportsAttention(item.manifest.recipe.model, item.manifest.recipe.inputMode) ? ' · attention unsupported' : ''}</option>)}</optgroup>)}</select>{objectiveScope ? <small>Showing the models of the focused objective. <button type="button" className="text-button" onClick={() => setObjectiveScope('')}>Show all objectives</button></small> : null}</label>
+        <label className="label">Trained model (weights)<select className="field" value={draft.predictorId} onChange={(event) => changeSource({ predictorId: event.target.value, bundleId: null, packChoice: null, pooledPredictorIds: [] })}><option value="">Choose a frozen ABMIL or nnMIL predictor</option>{draft.predictorId && !predictor ? <option value={draft.predictorId} disabled>Linked predictor unavailable</option> : null}{predictorOptionGroups((registry.data?.items ?? []).filter((item) => (item.lifecycleState === 'active' || item.id === draft.predictorId && item.lifecycleState === 'archived') && (item.id === draft.predictorId || inObjectiveScope(objectiveScope, filings[item.manifest.experimentId]?.objectiveId))), filings, objectiveItems).map((group) => <optgroup key={group.key} label={group.label}>{group.items.map((item) => <option key={item.id} value={item.id} disabled={!supportsAttention(item.manifest.recipe.model, item.manifest.recipe.inputMode)}>{item.manifest.name} · {modelLabel(item.manifest.recipe.model)} · {predictorMethodLabel(item.manifest.method)}{!supportsAttention(item.manifest.recipe.model, item.manifest.recipe.inputMode) ? ' · attention unsupported' : ''}</option>)}</optgroup>)}</select>{objectiveScope ? <small>Showing the models of the focused objective. <button type="button" className="text-button" onClick={() => setObjectiveScope('')}>Show all objectives</button></small> : null}</label>
         <label className="label">Dataset (slides)<select className="field" value={datasetId} disabled={datasets.isPending && !datasets.isError} onChange={(event) => changeSource({ datasetId: event.target.value || null })}><option value="">{datasets.isError ? 'Use the feature bundle’s dataset' : 'Choose a frozen dataset'}</option>{datasetItems.map((item) => <option key={item.datasetId} value={item.datasetId} disabled={!usableDataset(item)}>{item.datasetName}{item.slideCount != null ? ` · ${item.slideCount.toLocaleString()} slides` : ''}{!usableDataset(item) ? ' · slide folder unavailable' : ''}</option>)}</select></label>
         <label className="label">Feature bundle<select className="field" value={bundleId} disabled={!predictor || sources.isPending} onChange={(event) => changeSource({ bundleId: event.target.value, packChoice: null })}><option value="">Choose a frozen feature bundle</option>{bundleId && !source ? <option value={bundleId} disabled>Predictor’s feature bundle unavailable</option> : null}{(sources.data?.items ?? []).map((item) => <option key={item.id} value={item.id} disabled={!sourceCompatible(item, contract?.encoderId, contract?.dimensions, contract?.dtype)}>{item.name} · {item.slideCount.toLocaleString()} slides{!sourceCompatible(item, contract?.encoderId, contract?.dimensions, contract?.dtype) ? ' · incompatible or needs verification' : ''}</option>)}</select></label>
         <label className="label">Feature representation<select className="field" value={packId ?? '__unavailable__'} disabled={!source} onChange={(event) => changeSource({ packChoice: event.target.value })}>{packId === null ? <option value="__unavailable__" disabled>Choose a compatible feature representation</option> : null}<option value="" disabled={!representationCompatible(source?.dtype, contract?.dtype)}>Original slide features{source ? ` · ${dtypeLabel(source.dtype)}${!representationCompatible(source.dtype, contract?.dtype) ? ` · requires ${dtypeLabel(contract?.dtype)}` : ''}` : ''}</option>{source?.packs.map((item) => <option key={item.id} value={item.id} disabled={!representationCompatible(item.outputDtype, contract?.dtype)}>{item.name} · {item.outputDtype}{!representationCompatible(item.outputDtype, contract?.dtype) ? ` · requires ${dtypeLabel(contract?.dtype)}` : ''}</option>)}</select></label>
+        {predictor && poolable ? <PoolChooser candidates={poolCandidates} selectedIds={pooledModels.map((item) => item.id)} pooling={draft.pooling} classes={predictor.manifest.target?.classes ?? []} filings={filings} objectives={objectiveItems} onChange={changePool} /> : null}
       </fieldset>
-      {predictor ? <LoadedInputs predictor={predictor} slides={slideSource} slideFolder={slideFolder} source={source} pack={pack} sourceMatches={sourceMatches} representationMatches={representationMatches} /> : null}
+      {predictor ? <LoadedInputs predictor={predictor} pooled={pooledModels} pooling={draft.pooling} slides={slideSource} slideFolder={slideFolder} source={source} pack={pack} sourceMatches={sourceMatches} representationMatches={representationMatches} /> : null}
       {predictor && !slideFolder ? <p className="callout">{slideSource?.slideFolderFinding?.message ?? (datasets.data ? 'Choose the frozen dataset whose slides you want to interpret.' : datasets.isError ? 'This running HistoPilot service predates dataset selection. Restart it to choose the dataset whose slides you want to interpret.' : source?.slideFolderFinding?.message ?? 'The frozen dataset does not identify a usable slide location. Correct its slide mapping in Datasets.')}</p> : null}
       {source && !representationMatches ? <p className="callout">This model requires {dtypeLabel(contract?.dtype)} features. Choose a compatible original source or frozen pack.</p> : null}
       <InterpretationResources value={draft.resources} disabled={batch.locked} onChange={(value) => setDraft((current) => ({ ...current, resources: value, batch: value.width !== current.resources.width || value.height !== current.resources.height ? null : current.batch }))} />
@@ -177,8 +199,34 @@ function InterpretationWorkspace({ workspace }: { workspace: Workspace }) {
   </div>;
 }
 
+/**
+ * More models whose attention pools with the primary model's. Each model's map is computed as
+ * usual (an ensemble's as its member mean); the study's map combines them patch by patch.
+ */
+function PoolChooser({ candidates, selectedIds, pooling, classes, filings, objectives, onChange }: {
+  candidates: FrozenPredictor[]; selectedIds: string[]; pooling: PoolingFunction; classes: readonly string[];
+  filings: Record<string, ExperimentFiling>; objectives: readonly Objective[];
+  onChange: (patch: Partial<Pick<InterpretationWizardDraft, 'pooledPredictorIds' | 'pooling'>>) => void;
+}) {
+  const chosen = new Set(selectedIds);
+  const full = selectedIds.length >= MAX_POOLED_MODELS - 1;
+  return <details className="interpretation-pool" open={selectedIds.length > 0 || undefined}>
+    <summary>Pool attention across more models <span className="muted">{selectedIds.length ? `${selectedIds.length + 1} models · ${poolingLabel(pooling)}` : 'optional'}</span></summary>
+    <p className="muted">Each selected model's attention map is computed as usual, then the maps are pooled patch by patch into one map. The pooled prediction is the mean of the models' probabilities. Listed: models that predict {classes.length ? classes.join(' / ') : 'the same classes'} from the same features.</p>
+    <label className="label">Pooling function<select className="field" value={pooling} onChange={(event) => onChange({ pooling: event.target.value as PoolingFunction })}>{poolingFunctions.map((item) => <option key={item.value} value={item.value}>{item.label} — {item.help}</option>)}</select></label>
+    {candidates.length ? <div className="interpretation-pool-list" role="group" aria-label="Models to pool with the primary model">
+      {predictorOptionGroups(candidates, filings, objectives).map((group) => <fieldset key={group.key}><legend>{group.label}</legend>
+        {group.items.map((item) => <label key={item.id} className="interpretation-pool-model"><input type="checkbox" checked={chosen.has(item.id)} disabled={!chosen.has(item.id) && full}
+          onChange={(event) => onChange({ pooledPredictorIds: event.target.checked ? [...selectedIds, item.id] : selectedIds.filter((id) => id !== item.id) })} />
+          <span>{item.manifest.name} · {modelLabel(item.manifest.recipe.model)} · {predictorMethodLabel(item.manifest.method)}</span></label>)}
+      </fieldset>)}
+    </div> : <p className="muted">No other model predicts the same classes from the same features.</p>}
+    {selectedIds.length ? <p className="interpretation-pool-actions">{full ? <span className="muted">At most {MAX_POOLED_MODELS} models pool together. </span> : null}<button type="button" className="text-button" onClick={() => onChange({ pooledPredictorIds: [] })}>Clear pooled models</button></p> : null}
+  </details>;
+}
+
 /** What the attention jobs will load: exact model weights, the dataset's slides and matching features. */
-function LoadedInputs({ predictor, slides, slideFolder, source, pack, sourceMatches, representationMatches }: { predictor: FrozenPredictor; slides?: InterpretationDatasetSource; slideFolder: string; source?: InterpretationSource; pack?: InterpretationSource['packs'][number]; sourceMatches: boolean; representationMatches: boolean }) {
+function LoadedInputs({ predictor, pooled, pooling, slides, slideFolder, source, pack, sourceMatches, representationMatches }: { predictor: FrozenPredictor; pooled: FrozenPredictor[]; pooling: PoolingFunction; slides?: InterpretationDatasetSource; slideFolder: string; source?: InterpretationSource; pack?: InterpretationSource['packs'][number]; sourceMatches: boolean; representationMatches: boolean }) {
   const manifest = predictor.manifest;
   const checkpoints = manifest.checkpoints?.length ?? 0;
   const classes = manifest.target?.classes ?? [];
@@ -188,6 +236,7 @@ function LoadedInputs({ predictor, slides, slideFolder, source, pack, sourceMatc
     {row(true, 'Model weights', `${modelLabel(manifest.recipe.model)} · ${manifest.method === 'refit' ? 'refit model, 1 checkpoint' : `${manifest.method === 'seed_ensemble' ? 'seed ensemble' : 'fold ensemble'}, ${checkpoints} checkpoints`}${classes.length ? ` · predicts ${classes.join(' / ')}` : ''}`)}
     {row(Boolean(slideFolder), 'Dataset slides', slides ? `${slides.datasetName}${slides.slideCount != null ? ` · ${slides.slideCount.toLocaleString()} slides` : ''}${slideFolder ? ` · ${slideFolder}` : ''}` : 'Choose the dataset whose slides you want to interpret')}
     {row(featuresReady, 'Features', `${source ? `${source.encoderId ?? 'unknown encoder'} · ${source.dimensions ?? '?'}-d · ${pack ? `pack ${pack.name} (${pack.outputDtype})` : `original feature files (${dtypeLabel(source.dtype)})`} · ` : ''}Predictor requires ${dtypeLabel(manifest.inputs.features?.dtype)}`)}
+    {pooled.length ? <li className="is-ready is-pooled"><span aria-hidden="true">✓</span><div><strong>Pooled attention<span className="sr-only"> ready</span></strong><small>{`${poolingLabel(pooling)} of ${pooled.length + 1} models (${[predictor, ...pooled].reduce((total, item) => total + (item.manifest.checkpoints?.length ?? 0), 0)} checkpoints): ${[predictor, ...pooled].map((item) => `${item.manifest.name} · ${modelLabel(item.manifest.recipe.model)}`).join('; ')}`}</small></div></li> : null}
   </ul>;
 }
 
@@ -230,9 +279,9 @@ function SavedStudies({ records, loading, predictors: models, objectives, filing
       : <div className="table-wrap"><table className="chain-table interpretation-studies"><thead><tr><th scope="col">Study</th><th scope="col">Model</th><th scope="col">Experiment</th><th scope="col">Slides</th><th scope="col">Actions</th></tr></thead><tbody>
         {sections.map((section) => <Fragment key={section.key}>
           {objectives.length ? <tr className="run-group run-objective-group"><th colSpan={5}>{section.objective?.name ?? 'No objective'}{section.objective ? <Badge tone={section.objective.rank === 'primary' ? 'purple' : 'neutral'}>{objectiveRankLabel[section.objective.rank]}</Badge> : null}<small>{section.items.length} {section.items.length === 1 ? 'study' : 'studies'}</small></th></tr> : null}
-          {section.items.map((study) => { const source = model.get(study.predictorId)?.manifest; const filing = filings[study.experimentId]; return <tr key={study.key}>
+          {section.items.map((study) => { const source = model.get(study.predictorId)?.manifest; const filing = filings[study.experimentId]; const first = study.records[0].manifest; const pooledStudy = first.method === 'pooled'; return <tr key={study.key}>
             <th scope="row">{new Date(study.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}<small>{study.records.length === 1 ? study.records[0].manifest.name : `${study.records[0].manifest.name} and ${study.records.length - 1} more`}</small></th>
-            <td>{source ? `${source.name} · ${modelLabel(source.recipe.model)}` : 'Predictor unavailable'}<small>{source ? predictorMethodLabel(source.method) : null}</small></td>
+            <td>{pooledStudy ? `Pooled · ${poolingLabel(first.pooling)} of ${first.memberCount} models` : source ? `${source.name} · ${modelLabel(source.recipe.model)}` : 'Predictor unavailable'}<small>{pooledStudy ? (first.predictors ?? []).map((item) => item.name ?? item.id).join(' · ') : source ? predictorMethodLabel(source.method) : null}</small></td>
             <td>{source?.experiment?.name ?? study.experimentId}{filing?.role ? <small><span className={`experiment-role experiment-role-${filing.role}`}>{experimentRoleLabel[filing.role]}</span>{filing.seriesMember ? ` · ${filing.series} › ${filing.seriesMember}` : ''}</small> : null}</td>
             <td>{study.slides.toLocaleString()}</td>
             <td><button type="button" className="btn btn-secondary btn-small" disabled={disabled} onClick={() => onOpen(study.records)}>Open study</button></td>

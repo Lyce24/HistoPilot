@@ -18,7 +18,7 @@ export function PredictionChip({ prediction, classOrder, large = false }: { pred
 }
 
 /** Class probabilities in frozen class order, with the model's decision highlighted. */
-export function PredictionDetail({ result, classOrder, memberCount }: { result: InterpretationSlideResult; classOrder: readonly string[]; memberCount: number }) {
+export function PredictionDetail({ result, classOrder, memberCount, pooled = false }: { result: InterpretationSlideResult; classOrder: readonly string[]; memberCount: number; pooled?: boolean }) {
   const prediction = result.prediction;
   const agreement = prediction?.memberAgreement;
   return <div className="interpretation-prediction" aria-label="Predicted label and class probabilities">
@@ -30,7 +30,7 @@ export function PredictionDetail({ result, classOrder, memberCount }: { result: 
       </div>;
     })}</div>
     <p className="muted">{prediction ? `Predicted ${prediction.predictedLabel} · decision margin ${prediction.margin.toFixed(2)}` : 'Prediction pending.'}
-      {agreement ? ` · ${agreement.agree} of ${agreement.total} fold models agree` : memberCount > 1 ? '' : ' · single refit model'}.</p>
+      {agreement ? ` · ${agreement.agree} of ${agreement.total} ${pooled ? 'pooled models' : 'fold models'} agree` : memberCount > 1 ? '' : ' · single refit model'}{pooled ? ' · mean of the pooled models’ probabilities' : ''}.</p>
   </div>;
 }
 
@@ -142,7 +142,7 @@ function SlideAttention({ project, slide, state, item, record, classOrder, canCo
       {result?.prediction ? <PredictionChip prediction={result.prediction} classOrder={order} large /> : null}
     </header>
     {result && record && recordSlide ? <>
-      <PredictionDetail result={result} classOrder={order} memberCount={record.manifest.memberCount} />
+      <PredictionDetail result={result} classOrder={order} memberCount={record.manifest.memberCount} pooled={record.manifest.method === 'pooled'} />
       <AttentionSlideViewer project={project} record={record} slide={recordSlide} result={result} />
     </> : <div className="interpretation-slide-progress" role="status">
       <p><strong>{result ? 'Loading this slide…' : execution ? computeStatusLabel(execution) : item?.error ? 'Could not start' : 'Waiting for its attention job'}</strong>

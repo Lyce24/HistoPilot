@@ -13,9 +13,24 @@ export interface InterpretationSlide extends InterpretationSlideInput, SlideGeom
   patchCount: number; dimensions: number; dtype: string; patchWidthLevel0: number; patchHeightLevel0: number;
   alignment: 'embedded_verified' | 'user_confirmed';
 }
+/** How several models' normalized attention maps combine, patch by patch, into one map. */
+export type PoolingFunction = 'mean' | 'median' | 'max' | 'min' | 'geometric_mean';
+export const poolingFunctions: readonly { value: PoolingFunction; label: string; help: string }[] = [
+  { value: 'mean', label: 'Mean', help: 'average weight across models' },
+  { value: 'median', label: 'Median', help: 'the middle model per patch; resists one outlying model' },
+  { value: 'max', label: 'Maximum', help: 'where any model attends' },
+  { value: 'min', label: 'Minimum', help: 'where every model attends' },
+  { value: 'geometric_mean', label: 'Geometric mean', help: 'consensus; penalizes disagreement' },
+];
+export const isPoolingFunction = (value: unknown): value is PoolingFunction => poolingFunctions.some((item) => item.value === value);
+export const poolingLabel = (value: unknown) => poolingFunctions.find((item) => item.value === value)?.label ?? 'Pooled';
+/** One model of a pooled study, as frozen in its manifest. */
+export interface PooledModel { id: string; contentHash: string; name?: string | null; method?: string; model?: string; checkpointCount?: number; experimentId?: string }
 export interface InterpretationSelection {
   name: string; predictorId: string; evaluationId?: string | null; clinicalAnalysisId?: string | null;
   encoderId: string; slides: InterpretationSlideInput[]; resources?: ResourcePolicy;
+  /** Two or more models, the primary first, pooled with `pooling`. */
+  predictorIds?: string[]; pooling?: PoolingFunction;
 }
 /** The predictor's frozen decision for one slide, attached by the service when a job completes. */
 export interface SlidePrediction {
@@ -24,7 +39,7 @@ export interface SlidePrediction {
 }
 export interface InterpretationSlideResult {
   slideId: string; patchCount: number; probabilities: number[]; attentionArtifact: string;
-  members: { index: number; checkpointSha256: string; probabilities: number[] }[];
+  members: { index: number; checkpointSha256?: string; probabilities: number[]; predictorId?: string; name?: string | null; checkpointCount?: number }[];
   prediction?: SlidePrediction;
 }
 export interface InterpretationExecution extends ComputeExecution {
@@ -32,7 +47,7 @@ export interface InterpretationExecution extends ComputeExecution {
 }
 export interface Interpretation {
   id: string; createdAt: string; contentHash: string; lifecycleState?: LifecycleState;
-  manifest: Omit<InterpretationSelection, 'slides'> & { kind: 'model-interpretation'; experimentId: string; slides: InterpretationSlide[]; method: 'ensemble' | 'refit'; memberCount: number; [key: string]: unknown };
+  manifest: Omit<InterpretationSelection, 'slides'> & { kind: 'model-interpretation'; experimentId: string; slides: InterpretationSlide[]; method: 'ensemble' | 'refit' | 'seed_ensemble' | 'pooled'; memberCount: number; pooling?: PoolingFunction; predictors?: PooledModel[]; [key: string]: unknown };
   execution?: InterpretationExecution;
 }
 export interface InterpretationPreview { canSave: boolean; previewHash: string | null; findings: Finding[]; manifest: Interpretation['manifest'] | null }
@@ -65,6 +80,8 @@ export interface SlideGallery {
 export interface VisualizeSelection extends GallerySource {
   slidePaths: string[]; evaluationId?: string | null; clinicalAnalysisId?: string | null; resources?: ResourcePolicy;
   patchWidthLevel0?: number; patchHeightLevel0?: number;
+  /** Two or more models, the primary (`predictorId`) first, pooled with `pooling`. */
+  predictorIds?: string[]; pooling?: PoolingFunction;
 }
 export interface VisualizeItem { slidePath: string; slideId: string; interpretationId?: string | null; status: string; reused: boolean; error?: { code: string; message: string } | null; interpretation?: Interpretation }
 export interface VisualizeResult { items: VisualizeItem[]; interpretations: Interpretation[] }

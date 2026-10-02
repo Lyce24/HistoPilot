@@ -17,7 +17,9 @@ export function interpretationStudies(records: readonly Interpretation[], gapMin
   const open = new Map<string, InterpretationStudy>();
   for (const record of sorted) {
     const manifest = record.manifest;
-    const signature = [manifest.predictorId, manifest.featureBundleId, manifest.packArtifactId ?? '', manifest.slideFolder].join('\u0000');
+    // Pooled studies differ from the primary model's own studies by their models and function.
+    const pooled = (manifest.predictors ?? []).map((item) => item.id).join(',');
+    const signature = [manifest.predictorId, manifest.featureBundleId, manifest.packArtifactId ?? '', manifest.slideFolder, pooled, manifest.pooling ?? ''].join('\u0000');
     const current = open.get(signature);
     const last = current?.records.at(-1);
     if (current && last && Date.parse(record.createdAt) - Date.parse(last.createdAt) <= gapMinutes * 60000) {

@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field, StrictInt, field_validator, model_validator
+from pydantic import Field, StrictInt, field_validator, model_serializer, model_validator
 
 from histopilot.schemas.development import ResourcePolicy
 from histopilot.schemas.evaluations import ConfigurationId
@@ -11,6 +11,32 @@ from histopilot.schemas.workspace import RequestModel
 PathText = Annotated[str, Field(min_length=1, max_length=4096)]
 DatasetKey = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")]
 Dimension = Annotated[float, Field(gt=0, le=1000000, allow_inf_nan=False, strict=True)]
+# Per-patch functions that pool several models' normalized attention maps into one map.
+PoolingFunction = Literal["mean", "median", "max", "min", "geometric_mean"]
+MAX_POOLED_MODELS = 16
+PooledModels = Annotated[list[ConfigurationId], Field(min_length=2, max_length=MAX_POOLED_MODELS)]
+
+
+def _check_pooled(predictor_id, predictor_ids, pooling):
+    """Several models pool under one function; the first is the study's primary model."""
+    if predictor_ids is None:
+        if pooling is not None:
+            raise ValueError("Choose at least two models to pool attention.")
+        return
+    if len(set(predictor_ids)) != len(predictor_ids):
+        raise ValueError("Select each pooled model once.")
+    if predictor_ids[0] != predictor_id:
+        raise ValueError("The first pooled model must be the primary model.")
+    if pooling is None:
+        raise ValueError("Choose how to pool the models' attention.")
+
+
+def _single_model_dump(data):
+    """Single-model selections serialize exactly as before pooling existed."""
+    if isinstance(data, dict) and data.get("predictorIds") is None:
+        data.pop("predictorIds", None)
+        data.pop("pooling", None)
+    return data
 
 
 class InterpretationSlide(RequestModel):
@@ -67,6 +93,8 @@ class InterpretationSlide(RequestModel):
 class InterpretationSelection(RequestModel):
     name: str = Field(min_length=1, max_length=120)
     predictorId: ConfigurationId
+    predictorIds: PooledModels | None = None
+    pooling: PoolingFunction | None = None
     evaluationId: ConfigurationId | None = None
     clinicalAnalysisId: ConfigurationId | None = None
     featureBundleId: ConfigurationId | None = None
@@ -106,7 +134,16 @@ class InterpretationSelection(RequestModel):
             raise ValueError("A selected bundle requires its slide folder.")
         if self.packArtifactId and not self.featureBundleId:
             raise ValueError("Select a frozen bundle for this pack artifact.")
+        _check_pooled(self.predictorId, self.predictorIds, self.pooling)
+        if self.predictorIds and (self.evaluationId or self.clinicalAnalysisId):
+            raise ValueError(
+                "Pooled attention cannot link one model's evaluation or clinical analysis."
+            )
         return self
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        return _single_model_dump(handler(self))
 
 
 class SaveInterpretation(InterpretationSelection):
@@ -133,6 +170,8 @@ class InterpretationGalleryQuery(InterpretationGallerySource):
 
 class VisualizeInterpretation(InterpretationGallerySource):
     predictorId: ConfigurationId
+    predictorIds: PooledModels | None = None
+    pooling: PoolingFunction | None = None
     evaluationId: ConfigurationId | None = None
     clinicalAnalysisId: ConfigurationId | None = None
     slidePaths: list[PathText] = Field(min_length=1, max_length=128)
@@ -154,4 +193,13 @@ class VisualizeInterpretation(InterpretationGallerySource):
     def paired_geometry(self):
         if (self.patchWidthLevel0 is None) != (self.patchHeightLevel0 is None):
             raise ValueError("Provide both patch width and height in level-0 pixels.")
+        _check_pooled(self.predictorId, self.predictorIds, self.pooling)
+        if self.predictorIds and (self.evaluationId or self.clinicalAnalysisId):
+            raise ValueError(
+                "Pooled attention cannot link one model's evaluation or clinical analysis."
+            )
         return self
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        return _single_model_dump(handler(self))
