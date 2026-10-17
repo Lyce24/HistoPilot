@@ -284,7 +284,7 @@ def test_repeat_fits_are_bit_identical(tmp_path, name):
 def test_pooled_attention_combines_maps_of_different_architectures(tmp_path):
     h5py = pytest.importorskip("h5py")
     pytest.importorskip("PIL.Image")
-    from histopilot.training.attention import interpret
+    from histopilot.training.attention import POOLED_ATTENTION_NOTE, attention_note, interpret
 
     attention = runpy.run_path(str(HERE / "test_attention_execution.py"))
     plan = attention["attention_plan"](tmp_path)
@@ -338,6 +338,11 @@ def test_pooled_attention_combines_maps_of_different_architectures(tmp_path):
     # NumPy's median averages the two middle maps of four, as the pooling does.
     expected = np.median(np.stack([m / m.sum() for m in maps]), axis=0)
     np.testing.assert_allclose(weights, expected / expected.sum(), rtol=1e-6, atol=1e-12)
+    # Each member's map says how its own architecture forms it; the pooled map, how it pools.
+    for member in summary["members"]:
+        saved = json.loads((tmp_path / "pooled" / member["attentionArtifact"]).read_text())
+        assert saved["attentionNote"] == attention_note(member["name"])
+    assert written["attentionNote"] == result["attentionNote"] == POOLED_ATTENTION_NOTE
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")

@@ -428,7 +428,8 @@ def interpret(plan, output_dir):
 
 
 def _checkpoint_attention(checkpoint, plan, tensor, slide, device, mean_logit):
-    """One checkpoint's whole-bag attention and class probabilities, as in interpret()."""
+    """One checkpoint's whole-bag attention and class probabilities, as in interpret(), and
+    the note that says how its architecture's map is formed."""
     model = MILTrainModule.load_from_checkpoint(
         checkpoint["path"], map_location="cpu", weights_only=True
     )
@@ -453,8 +454,9 @@ def _checkpoint_attention(checkpoint, plan, tensor, slide, device, mean_logit):
         logits = class_logits(output["logits"], model.target)[0].double()
         probabilities = torch.softmax(logits, dim=-1).cpu().numpy()
         log_probabilities = torch.log_softmax(logits, dim=-1).cpu().numpy() if mean_logit else None
+    note = attention_note(model.recipe.get("model"))
     del output, model
-    return weights / weights.sum(), probabilities, log_probabilities
+    return weights / weights.sum(), probabilities, log_probabilities, note
 
 
 def _interpret_pooled(plan, folder):
@@ -564,7 +566,7 @@ def _interpret_pooled(plan, folder):
                 for checkpoint in entry["checkpoints"]:
                     if (folder / "cancel.requested").exists():
                         raise KeyboardInterrupt("Interpretation cancelled.")
-                    w, p, log_p = _checkpoint_attention(
+                    w, p, log_p, note = _checkpoint_attention(
                         checkpoint, plan, tensor, slide, device, mean_logit
                     )
                     weights += w / count
@@ -578,6 +580,8 @@ def _interpret_pooled(plan, folder):
                     probabilities = np.exp(log_probabilities)
                 weights = weights / weights.sum()
                 _validate(weights, probabilities, len(coords), classes)
+                # A member's map is that model's own, so its architecture describes it; the
+                # pooled map below carries the pooling note.
                 _write_attention_json(
                     path,
                     _map(
@@ -587,7 +591,7 @@ def _interpret_pooled(plan, folder):
                         probabilities,
                         plan,
                         member=str(model_index),
-                        note=POOLED_ATTENTION_NOTE,
+                        note=note,
                     ),
                 )
                 write_json_atomic(receipt, {"inputHash": input_hash, "artifact": _receipt(path)})
