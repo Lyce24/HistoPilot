@@ -33,7 +33,7 @@ def system_report() -> dict:
         },
         "note": (
             "This report inspects control-service package metadata only. Isolated workers "
-            "implement extraction, packing, ABMIL training, evaluation and attention. "
+            "implement extraction, packing, MIL training, evaluation and attention. "
             "Check runtime readiness in each module; package presence here does not establish "
             "worker dependencies, GPU availability or checkpoint access."
         ),

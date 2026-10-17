@@ -22,6 +22,7 @@ from histopilot.application.predictors import (
     reference,
 )
 from histopilot.inference_summary import describe
+from histopilot.models import catalog
 from histopilot.schemas.interpretation import InterpretationSelection, SaveInterpretation
 from histopilot.storage import read_sessions
 from histopilot.storage.attention_inputs import (
@@ -483,7 +484,7 @@ class InterpretationService:
         return evaluation_id, references
 
     def _attention_model(self, predictor_id, encoder_id):
-        """One frozen ABMIL/nnMIL predictor whose checkpoints attention can run."""
+        """One frozen predictor whose architecture has attention its checkpoints can run."""
         predictor = self.predictors.get(predictor_id)
         model = predictor["manifest"]
         if model.get("recipe", {}).get("inputMode") == "clinical":
@@ -492,9 +493,10 @@ class InterpretationService:
                 "INTERPRETATION_MODEL_UNSUPPORTED",
                 422,
             )
-        if model.get("recipe", {}).get("model", "abmil").lower() not in {"abmil", "nnmil"}:
+        if not catalog.supports_attention(model.get("recipe", {}).get("model")):
             raise StorageError(
-                "Select a native ABMIL or nnMIL predictor for attention overlay.",
+                "Select a predictor whose model has attention for the overlay: "
+                f"{catalog.attention_choices()}.",
                 "INTERPRETATION_MODEL_UNSUPPORTED",
                 422,
             )

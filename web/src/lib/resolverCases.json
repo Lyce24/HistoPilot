@@ -1427,6 +1427,66 @@
         "nnmilCheckpointSelection": "best_validation",
         "nnmilWindowSeedFromTraining": false
       }
+    },
+    {
+      "base": {
+        "model": "abmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": []
+      },
+      "model": "transmil",
+      "expected": {
+        "model": "transmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [],
+        "nnmilCheckpointSelection": "best_validation",
+        "nnmilWindowSeedFromTraining": false
+      }
+    },
+    {
+      "base": {
+        "model": "transmil",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [],
+        "transmilLayers": 4,
+        "transmilHeads": 4,
+        "clamBagWeight": 0.5
+      },
+      "model": "clam_mb",
+      "expected": {
+        "model": "clam_mb",
+        "inputMode": "image",
+        "attentionDim": 384,
+        "gatedAttention": true,
+        "learningRate": 0.0002,
+        "bagSizeMode": "fixed",
+        "bagSize": 4096,
+        "nnmilBatchSampler": "patient_weighted",
+        "clinicalFields": [],
+        "transmilLayers": 2,
+        "transmilHeads": 8,
+        "clamBagWeight": 0.5,
+        "nnmilCheckpointSelection": "best_validation",
+        "nnmilWindowSeedFromTraining": false
+      }
     }
   ],
   "ablationArms": [

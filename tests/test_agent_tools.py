@@ -186,8 +186,16 @@ def test_status_and_instructions_name_the_one_project_the_token_reaches(session)
 
 def test_models_and_comparisons_use_the_catalog_names(session):
     agent, _ = session
-    names = [item["name"] for item in tools.models(agent)["models"]]
-    assert {"abmil", "nnmil", "mean_pool"} <= set(names)
+    described = {item["name"]: item for item in tools.models(agent)["models"]}
+    assert {"abmil", "nnmil", "mean_pool", "clam_sb", "transmil"} <= set(described)
+    layers = next(
+        option for option in described["transmil"]["options"] if option["key"] == "transmilLayers"
+    )
+    assert layers["default"] == 2 and layers["kind"] == "integer" and layers["maximum"] == 12
+    assert "options" not in described["abmil"]
+    design = tools.template(agent, "experiment", "baseline", compare_models=["transmil", "clam_mb"])
+    arms = design["batches"][0]["configurations"]
+    assert [arm["model"] for arm in arms] == ["abmil", "transmil", "clam_mb"]
     design = tools.template(agent, "experiment", "baseline", compare_models=["mean_pool"])
     configurations = design["batches"][0]["configurations"]
     assert [arm["model"] for arm in configurations] == ["abmil", "mean_pool"]

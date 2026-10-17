@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { defaultRecipe } from '../api/development';
 import type { ComparisonMetric, DevelopmentBatchSpec, TrainingRecipe } from '../api/development';
 import type { Finding } from '../api/scientific';
-import { featureKindOf, modelLabel, modelsForFeatureKind, type FeatureKind } from '../lib/modelCapabilities';
+import { featureKindOf, modelLabel, modelsForFeatureKind, withoutForeignOptions, type FeatureKind } from '../lib/modelCapabilities';
 import { clinicalOnlyRecipe, matchedInputRecipes } from './ClinicalInputFields';
 import { StageCreateButton } from './StageActions';
 import { Findings } from './ScientificUI';
@@ -42,8 +42,10 @@ const nnmilOff = coupling.comparisonArm.nnmilOff;
 /**
  * The base recipe with another model. Only settings that model owns change: nnMIL gets its
  * attention width and a new feature-window order per training seed, ABMIL its standard
- * attention, and non-nnMIL models drop nnMIL-only choices. Optimisation, bags, epochs and
- * batch size stay the base recipe's, so the comparison measures the model alone.
+ * attention, non-nnMIL models drop nnMIL-only choices, and other architectures' options
+ * that the base sets (TransMIL's layers on a CLAM arm) return to their defaults.
+ * Optimisation, bags, epochs and batch size stay the base recipe's, so the comparison
+ * measures the model alone.
  */
 export function withArmModel(base: TrainingRecipe, model: string): TrainingRecipe {
   if (model === base.model) return base;
@@ -53,7 +55,7 @@ export function withArmModel(base: TrainingRecipe, model: string): TrainingRecip
   // A slide embedding has no patch bag; this only applies when the base recipe is clinical only.
   const slide = featureKindOf(model) === 'slide' && featureKindOf(base.model) !== 'slide'
     ? coupling.modelSelect.slide : {};
-  return { ...base, model, ...own, ...slide };
+  return withoutForeignOptions({ ...base, model, ...own, ...slide }, model);
 }
 
 /**

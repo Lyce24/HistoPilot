@@ -156,7 +156,7 @@ TanStack Query owns cached server state, scoped by project and record identity. 
 | `histopilot/taskcenter/` | Task store, runner, wrapper, capacity, estimator, launcher, leases and per-kind adapters |
 | `histopilot/workers/` | Isolated worker entry points and the compute archive |
 | `histopilot/training/` | Lightning fold training, refit, inference and attention |
-| `histopilot/models/` | ABMIL, nnMIL, pooling and clinical models, and the model catalog |
+| `histopilot/models/` | ABMIL, nnMIL, CLAM, TransMIL, DSMIL, DTFD-MIL, ACMIL, pooling and clinical models, and the model catalog with each architecture's options |
 | `histopilot/datasets/` | MIL data module and sampling |
 | `histopilot/adapters/` | Training runtime discovery (`native/`) and the TRIDENT integration (`trident/`) |
 | `histopilot/viewer/` | Isolated slide readers, image cache and attention arrays |

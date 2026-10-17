@@ -179,3 +179,4 @@
   .clinical-field-row, .batch-ablation-choices { grid-template-columns: minmax(0, 1fr); }
   .clinical-field-reason { padding-left: 0; }
 }
+.configuration-model-options { display: block; color: var(--muted); font-size: .75rem; line-height: 1.5; }

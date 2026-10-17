@@ -1,7 +1,8 @@
 import type { TrainingRecipe } from '../api/development';
 import { withRecipeDefaults } from '../api/development';
 import NumericField from './NumericField';
-import { usesPatchFeatures } from '../lib/modelCapabilities';
+import { modelLabel, modelOptions, modelSpec, usesPatchFeatures } from '../lib/modelCapabilities';
+import { modelOptionSummary } from './ModelOptionFields';
 
 type RecipeProps = { value: TrainingRecipe; onChange: (value: TrainingRecipe) => void };
 export const lossLabels = { ce: 'Cross entropy', bce: 'Binary cross entropy', focal: 'Focal loss' };
@@ -129,6 +130,7 @@ export function ExperimentalRecipeSummary({ recipe }: { recipe: TrainingRecipe }
       <div><dt>nnMIL sampler</dt><dd>{value.nnmilBatchSampler === 'class_balanced' ? 'Class-balanced batches' : value.nnmilBatchSampler === 'auc_stratified' ? 'AUC-stratified batches' : 'HistoPilot record sampling'}</dd></div>
       <div><dt>nnMIL evaluation checkpoint</dt><dd>{value.nnmilCheckpointSelection === 'latest' ? 'Latest completed epoch' : 'Best validation checkpoint'}</dd></div>
     </> : null}
+    {value.inputMode !== 'clinical' && modelOptions(value.model).length ? <div><dt>{modelLabel(value.model)} settings</dt><dd>{modelOptionSummary(value, 'all').join(' · ')}{modelSpec(value.model)?.auxiliaryLoss ? <small>Training adds the architecture’s own loss terms to the slide loss.</small> : null}</dd></div> : null}
     <div><dt>Optimizer protocol</dt><dd>Weight decay on {value.weightDecayPolicy === 'weights_only' ? 'weights only; biases and vectors excluded' : 'all trainable parameters'}{value.lrScheduler === 'cosine' ? ` · Cosine schedule every ${value.lrScheduleInterval === 'step' ? 'optimizer update' : 'epoch'}` : ''}</dd></div>
     {value.lrScheduler === 'plateau' ? <div><dt>Refit schedule</dt><dd>Constant learning rate; refits do not use validation.</dd></div> : null}
     <div><dt>Training loss</dt><dd>{lossLabels[value.lossType!]} · {value.classWeights ? `Weights ${value.classWeights.join(', ')}` : value.classWeighting === 'inverse_prevalence' ? 'Inverse training-fold prevalence weights' : 'Equal class weights'}{value.lossType === 'focal' ? ` · Gamma ${value.focalGamma}` : value.labelSmoothing ? ` · Label smoothing ${value.labelSmoothing}` : ''}</dd></div>

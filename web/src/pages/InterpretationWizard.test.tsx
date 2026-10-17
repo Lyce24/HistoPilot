@@ -153,7 +153,7 @@ describe('interpretation stages and resumable context', () => {
 describe('focused interpretation screens', () => {
   it('allows a frozen nnMIL predictor to use attention interpretation', () => {
     const html = render('stage=select', draft(), [], 'nnmil').html;
-    expect(html).toContain('Choose a frozen ABMIL or nnMIL predictor');
+    expect(html).toContain('Choose a frozen predictor with attention');
     expect(html).toContain('<option value="predictor" selected="">Selected refit');
     expect(html).not.toContain('attention unsupported');
     expect(render('stage=select', draft(), [], 'mean_pool').html).toContain('attention unsupported');

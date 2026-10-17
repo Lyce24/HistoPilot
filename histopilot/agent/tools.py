@@ -638,11 +638,29 @@ def features_from_extraction(session: AgentSession, extraction: str) -> dict:
 
 def models(session: AgentSession) -> dict:
     """The models HistoPilot trains: each name, what it is, which features it reads (patch
-    or slide) and whether it has attention to show."""
+    or slide), whether it has attention to show, and the recipe settings it owns (such as
+    TransMIL's `transmilLayers`), with their defaults, ranges or choices."""
     from histopilot.models import catalog
 
     keep = ("name", "label", "summary", "featureKind", "supportsAttention")
-    return {"models": [{key: item[key] for key in keep} for item in catalog.describe()]}
+    settings = ("key", "label", "kind", "default", "minimum", "maximum", "choices", "help")
+    return {
+        "models": [
+            {
+                **{key: item[key] for key in keep},
+                **(
+                    {
+                        "options": [
+                            {key: option[key] for key in settings} for option in item["options"]
+                        ]
+                    }
+                    if item["options"]
+                    else {}
+                ),
+            }
+            for item in catalog.describe()
+        ]
+    }
 
 
 def comparison_arms(

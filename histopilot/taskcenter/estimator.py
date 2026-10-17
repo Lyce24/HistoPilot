@@ -101,12 +101,17 @@ def _reject_constant(value):
 
 
 def workload_key(workload: dict) -> str:
-    """Identity of a memory class: memory fields, feature dimension and loading policy."""
+    """Identity of a memory class: memory fields, feature dimension and loading policy.
+
+    Architectures with their own shape-changing options (TransMIL layers, CLAM attention
+    width) add them as ``modelOptions``; workloads without any keep their earlier keys.
+    """
     identity = {
         "version": KEY_VERSION,
         **{field: workload.get(field) for field in MEMORY_FIELDS},
         "featureDimension": workload.get("featureDimension"),
         "loadingPolicy": workload.get("loadingPolicy"),
+        **({"modelOptions": workload["modelOptions"]} if workload.get("modelOptions") else {}),
     }
     return hashlib.sha256(_canonical(identity).encode()).hexdigest()[:24]
 
@@ -165,8 +170,12 @@ def fold_workloads(recipe: dict, rows: list[dict], files: dict, loading_policy: 
     evaluation = max(counts["val"] + counts["test"])
     if effective["evalBagSize"]:
         evaluation = min(evaluation, effective["evalBagSize"])
+    from histopilot.models import catalog
+
+    options = {key: values[key] for key in catalog.memory_options(values["model"])}
     workload = {
         **{field: values[field] for field in MEMORY_FIELDS},
+        **({"modelOptions": options} if options else {}),
         "featureDimension": next(iter(dimensions)),
         "trainingPatches": training,
         "evaluationPatches": evaluation,
@@ -189,15 +198,42 @@ def gpu_estimate(workload: dict, *, evaluation_only: bool = False) -> float:
     )
     activation_bytes = 4 if workload["precision"] == "32-true" else 2
     layers = workload["numFcLayers"]
-    if workload["model"] == "nnmil":
+    model = workload["model"]
+    options = {**_model_option_defaults(model), **(workload.get("modelOptions") or {})}
+    if model == "dsmil" and not options["dsmilProjection"]:
+        # DSMIL as published reads the features themselves.
+        embed, layers = dim, 0
+    elif model in {"dtfd", "acmil"}:
+        # One bias-free layer, plus DTFD-MIL's two-layer residual blocks.
+        layers = 1 + 2 * options.get("dtfdResidualBlocks", 0)
+    projection = dim * embed + embed * embed * layers if layers else 0
+    if model == "nnmil":
         train_width, eval_width = 8 * attention, 4 * attention
         parameters = 2 * dim * attention
-    elif workload["model"] == "abmil":
-        train_width, eval_width = 4 * embed * layers + 8 * attention, 2 * embed + 4 * attention
-        parameters = dim * embed + embed * embed * layers + 2 * embed * attention
+    elif model in {"abmil", "clam_sb", "clam_mb", "dtfd", "acmil"}:
+        width = {
+            "abmil": attention,
+            "clam_sb": options.get("clamAttentionDim"),
+            "clam_mb": options.get("clamAttentionDim"),
+            "dtfd": options.get("dtfdAttentionDim"),
+            "acmil": options.get("acmilAttentionDim"),
+        }[model]
+        train_width, eval_width = 4 * embed * layers + 8 * width, 2 * embed + 4 * width
+        parameters = projection + 2 * embed * width
+    elif model == "transmil":
+        # The Nyström kernels (heads x landmarks per token) are float32 even under AMP.
+        kernels = 3 * options["transmilHeads"] * options["transmilLandmarks"] * 4 / activation_bytes
+        depth = options["transmilLayers"]
+        train_width = 4 * embed * layers + depth * (8 * embed + kernels)
+        eval_width = 6 * embed + kernels
+        parameters = projection + depth * 4 * embed * embed
+    elif model == "dsmil":
+        query = options["dsmilQueryDim"]
+        train_width, eval_width = 4 * embed * layers + 4 * query, 2 * embed + 2 * query
+        parameters = projection + embed * query + query * query
     else:
         train_width, eval_width = 4 * embed * layers, 2 * embed
-        parameters = dim * embed + embed * embed * layers
+        parameters = projection
     train = (
         workload["batchSize"]
         * workload["trainingPatches"]
@@ -211,6 +247,13 @@ def gpu_estimate(workload: dict, *, evaluation_only: bool = False) -> float:
     # Adam state, gradients, allocator fragmentation, context and kernels.
     largest = evaluation if evaluation_only else max(train, evaluation)
     return 1.0 + 1.25 * (largest + parameters * 20) / _GIB
+
+
+def _model_option_defaults(model: str) -> dict:
+    """Catalog defaults for workloads recorded before their architecture's options."""
+    from histopilot.models import catalog
+
+    return catalog.option_defaults(model) if catalog.is_supported(model) else {}
 
 
 def ram_formula(workload: dict, workers: int = DEFAULT_WORKERS) -> float:

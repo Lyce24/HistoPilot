@@ -6,7 +6,22 @@ is imported only by training workers. A new architecture needs one catalog entry
 and one builder here; no other layer should branch on a model name.
 """
 
-from histopilot.models.catalog import normalize
+from histopilot.models.catalog import OPTIONS, normalize
+
+
+def _option(recipe, key):
+    """A catalogued architecture option, defaulting to the catalog's value."""
+    return recipe.get(key, OPTIONS[key].default)
+
+
+def _projection(recipe, layers=True):
+    """The shared input-layer options of architectures without their own dropout there."""
+    return {
+        "embed_dim": recipe.get("embedDim", 512),
+        **({"num_fc_layers": recipe.get("numFcLayers", 1)} if layers else {}),
+        "input_dropout": recipe.get("inputDropout", 0.0),
+        "gradient_checkpointing": recipe.get("gradientCheckpointing", False),
+    }
 
 
 def _shared(recipe):
@@ -51,6 +66,93 @@ def _nnmil(feature_dim, output_dim, recipe):
     )
 
 
+def _clam(multi_branch):
+    def build(feature_dim, output_dim, recipe):
+        from histopilot.models.clam import CLAM
+
+        return CLAM(
+            feature_dim,
+            output_dim,
+            multi_branch=multi_branch,
+            **_shared(recipe),
+            recipe_attention_dropout=_option(recipe, "clamRecipeAttentionDropout"),
+            attention_dim=_option(recipe, "clamAttentionDim"),
+            gated_attention=_option(recipe, "clamGatedAttention"),
+            instance_samples=_option(recipe, "clamInstanceSamples"),
+            bag_weight=_option(recipe, "clamBagWeight"),
+            instance_loss=_option(recipe, "clamInstanceLoss"),
+            subtyping=_option(recipe, "clamSubtyping"),
+        )
+
+    return build
+
+
+def _transmil(feature_dim, output_dim, recipe):
+    from histopilot.models.transmil import TransMIL
+
+    return TransMIL(
+        feature_dim,
+        output_dim,
+        **_projection(recipe),
+        layers=_option(recipe, "transmilLayers"),
+        heads=_option(recipe, "transmilHeads"),
+        landmarks=_option(recipe, "transmilLandmarks"),
+        pinv_iterations=_option(recipe, "transmilPinvIterations"),
+        dropout=_option(recipe, "transmilDropout"),
+        position_encoding=_option(recipe, "transmilPositionEncoding"),
+        residual_conv=_option(recipe, "transmilResidualConv"),
+    )
+
+
+def _dsmil(feature_dim, output_dim, recipe):
+    from histopilot.models.dsmil import DSMIL
+
+    return DSMIL(
+        feature_dim,
+        output_dim,
+        **_projection(recipe),
+        projection=_option(recipe, "dsmilProjection"),
+        query_dim=_option(recipe, "dsmilQueryDim"),
+        nonlinear_query=_option(recipe, "dsmilNonlinearQuery"),
+        passing_value=_option(recipe, "dsmilPassingValue"),
+        value_dropout=_option(recipe, "dsmilValueDropout"),
+        max_loss_weight=_option(recipe, "dsmilMaxLossWeight"),
+        average_prediction=_option(recipe, "dsmilAveragePrediction"),
+    )
+
+
+def _dtfd(feature_dim, output_dim, recipe):
+    from histopilot.models.dtfd import DTFDMIL
+
+    return DTFDMIL(
+        feature_dim,
+        output_dim,
+        **_projection(recipe, layers=False),
+        residual_blocks=_option(recipe, "dtfdResidualBlocks"),
+        pseudo_bags=_option(recipe, "dtfdPseudoBags"),
+        test_splits=_option(recipe, "dtfdTestSplits"),
+        distill=_option(recipe, "dtfdDistill"),
+        distill_patches=_option(recipe, "dtfdDistillPatches"),
+        attention_dim=_option(recipe, "dtfdAttentionDim"),
+        dropout=_option(recipe, "dtfdDropout"),
+    )
+
+
+def _acmil(feature_dim, output_dim, recipe):
+    from histopilot.models.acmil import ACMIL
+
+    return ACMIL(
+        feature_dim,
+        output_dim,
+        **_projection(recipe, layers=False),
+        branches=_option(recipe, "acmilBranches"),
+        masked_patches=_option(recipe, "acmilMaskedPatches"),
+        mask_drop=_option(recipe, "acmilMaskDrop"),
+        attention_dim=_option(recipe, "acmilAttentionDim"),
+        dropout=_option(recipe, "acmilDropout"),
+    )
+
+
 def _pooling(pooling):
     def build(feature_dim, output_dim, recipe):
         from histopilot.models.pooling import PoolingMIL
@@ -78,6 +180,12 @@ def _slide_probe(hidden):
 BUILDERS = {
     "abmil": _abmil,
     "nnmil": _nnmil,
+    "clam_sb": _clam(multi_branch=False),
+    "clam_mb": _clam(multi_branch=True),
+    "transmil": _transmil,
+    "dsmil": _dsmil,
+    "dtfd": _dtfd,
+    "acmil": _acmil,
     "mean_pool": _pooling("mean"),
     "max_pool": _pooling("max"),
     "slide_linear": _slide_probe(hidden=False),

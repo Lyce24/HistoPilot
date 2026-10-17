@@ -9,6 +9,8 @@ so an omitted field can never change the science. Pure data: no Pydantic, no Tor
 
 from copy import deepcopy
 
+from histopilot.models import catalog
+
 VERSION = 1
 
 ANALYSIS = {
@@ -91,6 +93,8 @@ EXPERIMENTAL_DEFAULTS = {
     "nnmilCheckpointSelection": "best_validation",
     "weightDecayPolicy": "all",
     "lrScheduleInterval": "epoch",
+    # Each architecture's own options (CLAM, TransMIL, DSMIL, DTFD-MIL, ACMIL).
+    **catalog.option_defaults(),
 }
 
 # A preset is its base recipes merged in order, then its own values.

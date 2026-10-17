@@ -372,7 +372,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if extraction_ready
                     else "TRIDENT extraction requires runtime setup or tmux. "
                 )
-                + "ABMIL and nnMIL training, refitting, evaluation and attention are implemented; "
+                + "MIL training (ABMIL, nnMIL, CLAM, TransMIL, DSMIL, DTFD-MIL, ACMIL and "
+                "pooling), refitting, evaluation and attention are implemented; "
                 "check runtime readiness in their modules.",
                 "trident": trident,
             },

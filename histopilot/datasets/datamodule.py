@@ -18,6 +18,7 @@ from histopilot.datasets.mil import (
     validate_memberships,
 )
 from histopilot.datasets.sampling import make_training_batch_sampler, make_training_sampler
+from histopilot.models import catalog
 
 
 def _worker_init(_worker_id):
@@ -47,6 +48,12 @@ def training_objective(target, recipe):
             objective = f"class_sampled_{objective}"
     if recipe.get("classWeighting", "none") != "none" or recipe.get("classWeights") is not None:
         objective = f"class_weighted_{objective}"
+    if recipe.get("inputMode", "image") != "clinical" and catalog.auxiliary_loss(
+        recipe.get("model")
+    ):
+        # CLAM's instance clustering, DSMIL's max-instance stream, DTFD-MIL's first tier
+        # and ACMIL's branches add their own terms to the slide loss.
+        objective = f"{objective}+{catalog.normalize(recipe.get('model'))}_auxiliary_losses"
     return objective
 
 

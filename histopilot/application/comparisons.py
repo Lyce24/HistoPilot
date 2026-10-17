@@ -12,14 +12,25 @@ from histopilot.schemas.development import EXPERIMENTAL_DEFAULTS
 FACTOR_KEYS = frozenset({"model", "inputMode", "clinicalFields"})
 
 # Architecture hyperparameters that only the named model reads. Keys under a model's
-# catalog option prefix (for example nnmil*) are owned by that model as well.
+# catalog option prefix (for example nnmil* or transmil*) are owned by that model as well.
 MODEL_OPTIONS = {
     "abmil": frozenset({"attentionDim", "gatedAttention"}),
     "nnmil": frozenset({"attentionDim", "gatedAttention"}),
-    "mean_pool": frozenset(),
-    "max_pool": frozenset(),
-    "slide_linear": frozenset(),
-    "slide_mlp": frozenset(),
+    **{
+        name: frozenset()
+        for name in (
+            "clam_sb",
+            "clam_mb",
+            "transmil",
+            "dsmil",
+            "dtfd",
+            "acmil",
+            "mean_pool",
+            "max_pool",
+            "slide_linear",
+            "slide_mlp",
+        )
+    },
 }
 
 # Settings of the image path that a clinical-only arm never reads.
@@ -62,7 +73,9 @@ def confounders(reference, arm):
     ignored = set(FACTOR_KEYS) | _owned(left) | _owned(right)
     if "clinical" in {left.get("inputMode", "image"), right.get("inputMode", "image")}:
         ignored |= IMAGE_KEYS
-        ignored |= {key for key in set(left) | set(right) if key.startswith("nnmil")}
+        ignored |= {
+            key for key in set(left) | set(right) if key.startswith(tuple(catalog.OPTION_PREFIXES))
+        }
     keys = (set(left) | set(right)) - ignored
     return sorted(key for key in keys if left.get(key) != right.get(key))
 

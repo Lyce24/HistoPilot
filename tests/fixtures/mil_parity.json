@@ -1,0 +1,4118 @@
+{
+ "cases": [
+  {
+   "eval": {
+    "attention": [
+     0.017527181655168533,
+     0.014796750620007515,
+     0.008948910981416702,
+     0.014704929664731026,
+     0.01954072155058384,
+     0.012418980710208416,
+     0.01204595621675253,
+     0.020352700725197792,
+     0.016678011044859886,
+     0.0136642437428236,
+     0.012782440520823002,
+     0.018845848739147186,
+     0.012252768501639366,
+     0.013884466141462326,
+     0.013921543024480343,
+     0.019512489438056946,
+     0.006520282942801714,
+     0.01526640448719263,
+     0.017441395670175552,
+     0.018367988988757133,
+     0.01858832687139511,
+     0.011701647192239761,
+     0.014918966218829155,
+     0.019573809579014778,
+     0.020533278584480286,
+     0.008468215353786945,
+     0.01930701918900013,
+     0.013844921253621578,
+     0.01664404757320881,
+     0.012349873781204224,
+     0.013830992393195629,
+     0.019960476085543633,
+     0.017255539074540138,
+     0.02113446220755577,
+     0.013902639038860798,
+     0.01351392176002264,
+     0.022419387474656105,
+     0.021228410303592682,
+     0.021411629393696785,
+     0.015586769208312035,
+     0.010913204401731491,
+     0.013571115210652351,
+     0.015200103633105755,
+     0.01581970602273941,
+     0.015956522896885872,
+     0.010516785085201263,
+     0.014409786090254784,
+     0.01089369598776102,
+     0.014723039232194424,
+     0.016570458188652992,
+     0.019308358430862427,
+     0.024935880675911903,
+     0.01530928909778595,
+     0.018252016976475716,
+     0.0095864562317729,
+     0.01216876320540905,
+     0.010807120241224766,
+     0.014000174589455128,
+     0.026415368542075157,
+     0.01608322747051716,
+     0.011503967456519604,
+     0.01315105240792036,
+     0.018854347988963127,
+     0.01540121529251337
+    ],
+    "logits": [
+     -1.3517149686813354,
+     0.37635374069213867
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "attention_a.0.bias": 0.0019012041994061052,
+     "attention_a.0.weight": 0.06462924030412716,
+     "attention_b.0.bias": 0.001129933297764364,
+     "attention_b.0.weight": 0.020893693706493653,
+     "attention_c.bias": 4.6566128730773926e-09,
+     "attention_c.weight": 0.04653653082099868,
+     "classifier.bias": 0.14931879267177622,
+     "classifier.weight": 1.4200345466961186,
+     "instance_classifiers.1.bias": 0.09953410281044862,
+     "instance_classifiers.1.weight": 1.7467801732473287,
+     "patch_embed.0.bias": 0.09705571513778737,
+     "patch_embed.0.weight": 0.3409927069090763
+    },
+    "loss": 0.5759363174438477
+   },
+   "id": "clam_sb-2-svm",
+   "inputSeed": 101,
+   "label": 1,
+   "loss": "ce",
+   "model": "clam_sb",
+   "outputs": 2,
+   "patches": 64,
+   "recipe": {
+    "clamAttentionDim": 256,
+    "clamBagWeight": 0.7,
+    "clamGatedAttention": true,
+    "clamInstanceLoss": "svm",
+    "clamInstanceSamples": 8,
+    "clamSubtyping": false,
+    "dropout": 0.25,
+    "embedDim": 512
+   },
+   "source": "CLAM",
+   "tensors": [
+    [
+     "attention_net.0.weight",
+     "patch_embed.0.weight",
+     [
+      512,
+      24
+     ]
+    ],
+    [
+     "attention_net.0.bias",
+     "patch_embed.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_a.0.weight",
+     "attention_a.0.weight",
+     [
+      256,
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_a.0.bias",
+     "attention_a.0.bias",
+     [
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_b.0.weight",
+     "attention_b.0.weight",
+     [
+      256,
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_b.0.bias",
+     "attention_b.0.bias",
+     [
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_c.weight",
+     "attention_c.weight",
+     [
+      1,
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_c.bias",
+     "attention_c.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "classifiers.weight",
+     "classifier.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "classifiers.bias",
+     "classifier.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "instance_classifiers.0.weight",
+     "instance_classifiers.0.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.0.bias",
+     "instance_classifiers.0.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "instance_classifiers.1.weight",
+     "instance_classifiers.1.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.1.bias",
+     "instance_classifiers.1.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 1
+  },
+  {
+   "eval": {
+    "attention": [
+     0.026307420805096626,
+     0.01760721206665039,
+     0.023098204284906387,
+     0.02406112663447857,
+     0.025526506826281548,
+     0.02466997317969799,
+     0.01961551234126091,
+     0.02701842412352562,
+     0.03609800711274147,
+     0.022437097504734993,
+     0.02648886851966381,
+     0.028690071776509285,
+     0.023764025419950485,
+     0.024594556540250778,
+     0.03221071511507034,
+     0.025385499000549316,
+     0.017094766721129417,
+     0.03108852356672287,
+     0.022162673994898796,
+     0.027628805488348007,
+     0.02565710060298443,
+     0.024203773587942123,
+     0.02177022397518158,
+     0.026848183944821358,
+     0.021935151889920235,
+     0.03017302043735981,
+     0.01906517706811428,
+     0.026516996324062347,
+     0.019943276420235634,
+     0.02276664227247238,
+     0.027250993996858597,
+     0.0189406406134367,
+     0.03559047356247902,
+     0.026486610993742943,
+     0.0228798296302557,
+     0.02780190110206604,
+     0.02611302211880684,
+     0.02579501084983349,
+     0.02293418161571026,
+     0.02177979238331318
+    ],
+    "logits": [
+     -0.9434710144996643,
+     -0.1466546505689621,
+     0.28920286893844604
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "attention_a.0.bias": 0.007891881731387327,
+     "attention_a.0.weight": 0.3150322700293804,
+     "attention_b.0.bias": 0.005075411576307502,
+     "attention_b.0.weight": 0.08987554180166889,
+     "attention_c.bias": 4.6566128730773926e-09,
+     "attention_c.weight": 0.1732089704139901,
+     "classifier.bias": 0.42479550201750904,
+     "classifier.weight": 3.831943908706673,
+     "instance_classifiers.0.bias": 0.10669531598778313,
+     "instance_classifiers.0.weight": 0.9602153911957028,
+     "instance_classifiers.1.bias": 0.08976577514628344,
+     "instance_classifiers.1.weight": 0.8153360225915396,
+     "instance_classifiers.2.bias": 0.017123760763427653,
+     "instance_classifiers.2.weight": 0.5201949838024709,
+     "patch_embed.0.bias": 0.22714426660659615,
+     "patch_embed.0.weight": 0.3340674707343298
+    },
+    "loss": 0.8636189699172974
+   },
+   "id": "clam_sb-3-svm-subtyping",
+   "inputSeed": 102,
+   "label": 2,
+   "loss": "ce",
+   "model": "clam_sb",
+   "outputs": 3,
+   "patches": 40,
+   "recipe": {
+    "clamAttentionDim": 256,
+    "clamBagWeight": 0.7,
+    "clamGatedAttention": true,
+    "clamInstanceLoss": "svm",
+    "clamInstanceSamples": 8,
+    "clamSubtyping": true,
+    "dropout": 0.25,
+    "embedDim": 512
+   },
+   "source": "CLAM",
+   "tensors": [
+    [
+     "attention_net.0.weight",
+     "patch_embed.0.weight",
+     [
+      512,
+      24
+     ]
+    ],
+    [
+     "attention_net.0.bias",
+     "patch_embed.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_a.0.weight",
+     "attention_a.0.weight",
+     [
+      256,
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_a.0.bias",
+     "attention_a.0.bias",
+     [
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_b.0.weight",
+     "attention_b.0.weight",
+     [
+      256,
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_b.0.bias",
+     "attention_b.0.bias",
+     [
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_c.weight",
+     "attention_c.weight",
+     [
+      1,
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_c.bias",
+     "attention_c.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "classifiers.weight",
+     "classifier.weight",
+     [
+      3,
+      512
+     ]
+    ],
+    [
+     "classifiers.bias",
+     "classifier.bias",
+     [
+      3
+     ]
+    ],
+    [
+     "instance_classifiers.0.weight",
+     "instance_classifiers.0.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.0.bias",
+     "instance_classifiers.0.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "instance_classifiers.1.weight",
+     "instance_classifiers.1.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.1.bias",
+     "instance_classifiers.1.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "instance_classifiers.2.weight",
+     "instance_classifiers.2.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.2.bias",
+     "instance_classifiers.2.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 2
+  },
+  {
+   "eval": {
+    "attention": [
+     0.03929929807782173,
+     0.027322234585881233,
+     0.018196729943156242,
+     0.03331352025270462,
+     0.07001561671495438,
+     0.027051329612731934,
+     0.03616253659129143,
+     0.03735478222370148,
+     0.024635067209601402,
+     0.037376951426267624,
+     0.02410212717950344,
+     0.018673280254006386,
+     0.05153149738907814,
+     0.017649421468377113,
+     0.031955040991306305,
+     0.012207269668579102,
+     0.029903298243880272,
+     0.03234515339136124,
+     0.06384990364313126,
+     0.03716659173369408,
+     0.02205563522875309,
+     0.027761155739426613,
+     0.026458609849214554,
+     0.03745036572217941,
+     0.019236497581005096,
+     0.03424253687262535,
+     0.038526564836502075,
+     0.048456139862537384,
+     0.038598354905843735,
+     0.03710245341062546
+    ],
+    "logits": [
+     0.13417495787143707,
+     0.24492159485816956
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "attention_a.0.bias": 0.02353800746929125,
+     "attention_a.0.weight": 1.1869278790917157,
+     "attention_c.bias": 1.862645149230957e-09,
+     "attention_c.weight": 0.7677816411669723,
+     "classifier.bias": 0.5223551435083763,
+     "classifier.weight": 5.029424502814537,
+     "instance_classifiers.0.bias": 0.007201654066298753,
+     "instance_classifiers.0.weight": 0.7272602092245891,
+     "patch_embed.0.bias": 0.2596331218127313,
+     "patch_embed.0.weight": 0.5464661567610074
+    },
+    "loss": 0.726697564125061
+   },
+   "id": "clam_sb-2-ce-ungated",
+   "inputSeed": 103,
+   "label": 0,
+   "loss": "ce",
+   "model": "clam_sb",
+   "outputs": 2,
+   "patches": 30,
+   "recipe": {
+    "clamAttentionDim": 256,
+    "clamBagWeight": 0.7,
+    "clamGatedAttention": false,
+    "clamInstanceLoss": "ce",
+    "clamInstanceSamples": 8,
+    "clamSubtyping": false,
+    "dropout": 0.25,
+    "embedDim": 512
+   },
+   "source": "CLAM",
+   "tensors": [
+    [
+     "attention_net.0.weight",
+     "patch_embed.0.weight",
+     [
+      512,
+      24
+     ]
+    ],
+    [
+     "attention_net.0.bias",
+     "patch_embed.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "attention_net.3.module.0.weight",
+     "attention_a.0.weight",
+     [
+      256,
+      512
+     ]
+    ],
+    [
+     "attention_net.3.module.0.bias",
+     "attention_a.0.bias",
+     [
+      256
+     ]
+    ],
+    [
+     "attention_net.3.module.3.weight",
+     "attention_c.weight",
+     [
+      1,
+      256
+     ]
+    ],
+    [
+     "attention_net.3.module.3.bias",
+     "attention_c.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "classifiers.weight",
+     "classifier.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "classifiers.bias",
+     "classifier.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "instance_classifiers.0.weight",
+     "instance_classifiers.0.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.0.bias",
+     "instance_classifiers.0.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "instance_classifiers.1.weight",
+     "instance_classifiers.1.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.1.bias",
+     "instance_classifiers.1.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 3
+  },
+  {
+   "eval": {
+    "attention": [
+     0.020925307646393776,
+     0.017484813928604126,
+     0.020545823499560356,
+     0.021331923082470894,
+     0.018141373991966248,
+     0.027900556102395058,
+     0.02154308371245861,
+     0.02578696608543396,
+     0.01969514787197113,
+     0.01983817294239998,
+     0.02116476558148861,
+     0.02358611300587654,
+     0.020675180479884148,
+     0.015166801400482655,
+     0.019056376069784164,
+     0.021624084562063217,
+     0.02311946637928486,
+     0.014970796182751656,
+     0.02177494578063488,
+     0.018543777987360954,
+     0.02284608967602253,
+     0.022492295131087303,
+     0.025362329557538033,
+     0.016776084899902344,
+     0.01794212870299816,
+     0.01549453567713499,
+     0.024012545123696327,
+     0.01944308914244175,
+     0.01636255905032158,
+     0.015151415020227432,
+     0.02726312167942524,
+     0.018374675884842873,
+     0.012361221015453339,
+     0.016483426094055176,
+     0.014783046208322048,
+     0.010649737901985645,
+     0.02042282372713089,
+     0.02170017920434475,
+     0.023538466542959213,
+     0.02786220982670784,
+     0.015194125473499298,
+     0.01570672169327736,
+     0.02608758956193924,
+     0.017667876556515694,
+     0.014732674695551395,
+     0.020554542541503906,
+     0.013877914287149906,
+     0.027051657438278198,
+     0.023884257301688194,
+     0.0230451300740242
+    ],
+    "logits": [
+     0.87138432264328,
+     0.04087948799133301,
+     -0.2723434567451477
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "attention_a.0.bias": 0.010378212423337788,
+     "attention_a.0.weight": 0.37799301982282657,
+     "attention_b.0.bias": 0.007580227142607608,
+     "attention_b.0.weight": 0.11962889878526814,
+     "attention_c.bias": 1.6465258978528104e-08,
+     "attention_c.weight": 0.2562102435600418,
+     "classifier.0.bias": 0.39898359775543213,
+     "classifier.0.weight": 3.580577770709713,
+     "classifier.1.bias": 0.5261113047599792,
+     "classifier.1.weight": 4.768706136427233,
+     "classifier.2.bias": 0.1271277666091919,
+     "classifier.2.weight": 1.149835510376342,
+     "instance_classifiers.1.bias": 0.017977714524719756,
+     "instance_classifiers.1.weight": 1.2933802749408059,
+     "patch_embed.0.bias": 0.336635646535822,
+     "patch_embed.0.weight": 0.5029297247856055
+    },
+    "loss": 1.3600280284881592
+   },
+   "id": "clam_mb-3-svm",
+   "inputSeed": 104,
+   "label": 1,
+   "loss": "ce",
+   "model": "clam_mb",
+   "outputs": 3,
+   "patches": 50,
+   "recipe": {
+    "clamAttentionDim": 256,
+    "clamBagWeight": 0.7,
+    "clamGatedAttention": true,
+    "clamInstanceLoss": "svm",
+    "clamInstanceSamples": 8,
+    "clamSubtyping": false,
+    "dropout": 0.25,
+    "embedDim": 512
+   },
+   "source": "CLAM",
+   "tensors": [
+    [
+     "attention_net.0.weight",
+     "patch_embed.0.weight",
+     [
+      512,
+      24
+     ]
+    ],
+    [
+     "attention_net.0.bias",
+     "patch_embed.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_a.0.weight",
+     "attention_a.0.weight",
+     [
+      256,
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_a.0.bias",
+     "attention_a.0.bias",
+     [
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_b.0.weight",
+     "attention_b.0.weight",
+     [
+      256,
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_b.0.bias",
+     "attention_b.0.bias",
+     [
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_c.weight",
+     "attention_c.weight",
+     [
+      3,
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_c.bias",
+     "attention_c.bias",
+     [
+      3
+     ]
+    ],
+    [
+     "classifiers.0.weight",
+     "classifier.0.weight",
+     [
+      1,
+      512
+     ]
+    ],
+    [
+     "classifiers.0.bias",
+     "classifier.0.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "classifiers.1.weight",
+     "classifier.1.weight",
+     [
+      1,
+      512
+     ]
+    ],
+    [
+     "classifiers.1.bias",
+     "classifier.1.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "classifiers.2.weight",
+     "classifier.2.weight",
+     [
+      1,
+      512
+     ]
+    ],
+    [
+     "classifiers.2.bias",
+     "classifier.2.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "instance_classifiers.0.weight",
+     "instance_classifiers.0.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.0.bias",
+     "instance_classifiers.0.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "instance_classifiers.1.weight",
+     "instance_classifiers.1.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.1.bias",
+     "instance_classifiers.1.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "instance_classifiers.2.weight",
+     "instance_classifiers.2.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.2.bias",
+     "instance_classifiers.2.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 4
+  },
+  {
+   "eval": {
+    "attention": [
+     0.029862523078918457,
+     0.023667389526963234,
+     0.03383343666791916,
+     0.030472824349999428,
+     0.021458396688103676,
+     0.025303998962044716,
+     0.039193715900182724,
+     0.029167309403419495,
+     0.023919591680169106,
+     0.03180989623069763,
+     0.03751484304666519,
+     0.029274463653564453,
+     0.01758795790374279,
+     0.027100084349513054,
+     0.04034042730927467,
+     0.027620119974017143,
+     0.029937611892819405,
+     0.03203972801566124,
+     0.025400612503290176,
+     0.023757824674248695,
+     0.04483288154006004,
+     0.03707430884242058,
+     0.03810160234570503,
+     0.032739024609327316,
+     0.027693169191479683,
+     0.03112727403640747,
+     0.021143918856978416,
+     0.01872236095368862,
+     0.03685497120022774,
+     0.030232073739171028,
+     0.043485142290592194,
+     0.020996173843741417,
+     0.03773437440395355
+    ],
+    "logits": [
+     0.4943443238735199,
+     0.3800109624862671,
+     0.429031103849411
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "attention_a.0.bias": 0.008842826439060971,
+     "attention_a.0.weight": 0.31980844140129333,
+     "attention_b.0.bias": 0.0057829679263693805,
+     "attention_b.0.weight": 0.10308960517177652,
+     "attention_c.bias": 8.835301716351079e-09,
+     "attention_c.weight": 0.21723007321823004,
+     "classifier.0.bias": 0.45253950357437134,
+     "classifier.0.weight": 4.43719918577809,
+     "classifier.1.bias": 0.22072497010231018,
+     "classifier.1.weight": 2.1483952030041844,
+     "classifier.2.bias": 0.23181453347206116,
+     "classifier.2.weight": 2.2948479223313663,
+     "instance_classifiers.0.bias": 0.005640452150118253,
+     "instance_classifiers.0.weight": 0.34354081875197734,
+     "instance_classifiers.1.bias": 0.07159353447643972,
+     "instance_classifiers.1.weight": 0.7308480524255925,
+     "instance_classifiers.2.bias": 0.09856790738176063,
+     "instance_classifiers.2.weight": 1.1212497745495376,
+     "patch_embed.0.bias": 0.29401731840830897,
+     "patch_embed.0.weight": 0.4807811793132985
+    },
+    "loss": 1.0196020603179932
+   },
+   "id": "clam_mb-3-ce-subtyping",
+   "inputSeed": 105,
+   "label": 0,
+   "loss": "ce",
+   "model": "clam_mb",
+   "outputs": 3,
+   "patches": 33,
+   "recipe": {
+    "clamAttentionDim": 256,
+    "clamBagWeight": 0.7,
+    "clamGatedAttention": true,
+    "clamInstanceLoss": "ce",
+    "clamInstanceSamples": 8,
+    "clamSubtyping": true,
+    "dropout": 0.25,
+    "embedDim": 512
+   },
+   "source": "CLAM",
+   "tensors": [
+    [
+     "attention_net.0.weight",
+     "patch_embed.0.weight",
+     [
+      512,
+      24
+     ]
+    ],
+    [
+     "attention_net.0.bias",
+     "patch_embed.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_a.0.weight",
+     "attention_a.0.weight",
+     [
+      256,
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_a.0.bias",
+     "attention_a.0.bias",
+     [
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_b.0.weight",
+     "attention_b.0.weight",
+     [
+      256,
+      512
+     ]
+    ],
+    [
+     "attention_net.3.attention_b.0.bias",
+     "attention_b.0.bias",
+     [
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_c.weight",
+     "attention_c.weight",
+     [
+      3,
+      256
+     ]
+    ],
+    [
+     "attention_net.3.attention_c.bias",
+     "attention_c.bias",
+     [
+      3
+     ]
+    ],
+    [
+     "classifiers.0.weight",
+     "classifier.0.weight",
+     [
+      1,
+      512
+     ]
+    ],
+    [
+     "classifiers.0.bias",
+     "classifier.0.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "classifiers.1.weight",
+     "classifier.1.weight",
+     [
+      1,
+      512
+     ]
+    ],
+    [
+     "classifiers.1.bias",
+     "classifier.1.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "classifiers.2.weight",
+     "classifier.2.weight",
+     [
+      1,
+      512
+     ]
+    ],
+    [
+     "classifiers.2.bias",
+     "classifier.2.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "instance_classifiers.0.weight",
+     "instance_classifiers.0.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.0.bias",
+     "instance_classifiers.0.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "instance_classifiers.1.weight",
+     "instance_classifiers.1.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.1.bias",
+     "instance_classifiers.1.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "instance_classifiers.2.weight",
+     "instance_classifiers.2.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "instance_classifiers.2.bias",
+     "instance_classifiers.2.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 5
+  },
+  {
+   "eval": {
+    "logits": [
+     0.4488614797592163,
+     0.7909051179885864
+    ]
+   },
+   "featureDim": 1024,
+   "fit": {
+    "gradNorms": {
+     "class_token": 4.425718460323205,
+     "classifier.bias": 0.5873414745944454,
+     "classifier.weight": 13.377868015244319,
+     "layers.0.attention.residual.weight": 2.784101083346198,
+     "layers.0.attention.to_out.0.bias": 0.8306728987772615,
+     "layers.0.attention.to_out.0.weight": 12.069269566882221,
+     "layers.0.attention.to_qkv.weight": 11.824941310266466,
+     "layers.0.norm.bias": 0.4485609956195662,
+     "layers.0.norm.weight": 0.5273278925289643,
+     "layers.1.attention.residual.weight": 2.0695223223097177,
+     "layers.1.attention.to_out.0.bias": 0.7306355858575193,
+     "layers.1.attention.to_out.0.weight": 8.507925731504635,
+     "layers.1.attention.to_qkv.weight": 7.917168212751803,
+     "layers.1.norm.bias": 0.3774702902097836,
+     "layers.1.norm.weight": 0.3523706611226164,
+     "norm.bias": 0.6171441957382866,
+     "norm.weight": 0.6321260384514138,
+     "patch_embed.0.bias": 0.5902432657875966,
+     "patch_embed.0.weight": 20.528681516807247,
+     "position.proj.bias": 0.2182696210145807,
+     "position.proj.weight": 0.7082578892479573,
+     "position.proj1.bias": 0.2182696210145807,
+     "position.proj1.weight": 0.7082578892479571,
+     "position.proj2.bias": 0.21826962301415415,
+     "position.proj2.weight": 0.5288527023163252
+    },
+    "loss": 0.5366787910461426
+   },
+   "id": "transmil-5-2",
+   "inputSeed": 106,
+   "label": 1,
+   "loss": "ce",
+   "model": "transmil",
+   "outputs": 2,
+   "patches": 5,
+   "recipe": {},
+   "source": "TransMIL + nystrom-attention",
+   "tensors": [
+    [
+     "cls_token",
+     "class_token",
+     [
+      1,
+      1,
+      512
+     ]
+    ],
+    [
+     "pos_layer.proj.weight",
+     "position.proj.weight",
+     [
+      512,
+      1,
+      7,
+      7
+     ]
+    ],
+    [
+     "pos_layer.proj.bias",
+     "position.proj.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "pos_layer.proj1.weight",
+     "position.proj1.weight",
+     [
+      512,
+      1,
+      5,
+      5
+     ]
+    ],
+    [
+     "pos_layer.proj1.bias",
+     "position.proj1.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "pos_layer.proj2.weight",
+     "position.proj2.weight",
+     [
+      512,
+      1,
+      3,
+      3
+     ]
+    ],
+    [
+     "pos_layer.proj2.bias",
+     "position.proj2.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "_fc1.0.weight",
+     "patch_embed.0.weight",
+     [
+      512,
+      1024
+     ]
+    ],
+    [
+     "_fc1.0.bias",
+     "patch_embed.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.norm.weight",
+     "layers.0.norm.weight",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.norm.bias",
+     "layers.0.norm.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.attn.to_qkv.weight",
+     "layers.0.attention.to_qkv.weight",
+     [
+      1536,
+      512
+     ]
+    ],
+    [
+     "layer1.attn.to_out.0.weight",
+     "layers.0.attention.to_out.0.weight",
+     [
+      512,
+      512
+     ]
+    ],
+    [
+     "layer1.attn.to_out.0.bias",
+     "layers.0.attention.to_out.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.attn.res_conv.weight",
+     "layers.0.attention.residual.weight",
+     [
+      8,
+      1,
+      33,
+      1
+     ]
+    ],
+    [
+     "layer2.norm.weight",
+     "layers.1.norm.weight",
+     [
+      512
+     ]
+    ],
+    [
+     "layer2.norm.bias",
+     "layers.1.norm.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer2.attn.to_qkv.weight",
+     "layers.1.attention.to_qkv.weight",
+     [
+      1536,
+      512
+     ]
+    ],
+    [
+     "layer2.attn.to_out.0.weight",
+     "layers.1.attention.to_out.0.weight",
+     [
+      512,
+      512
+     ]
+    ],
+    [
+     "layer2.attn.to_out.0.bias",
+     "layers.1.attention.to_out.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer2.attn.res_conv.weight",
+     "layers.1.attention.residual.weight",
+     [
+      8,
+      1,
+      33,
+      1
+     ]
+    ],
+    [
+     "norm.weight",
+     "norm.weight",
+     [
+      512
+     ]
+    ],
+    [
+     "norm.bias",
+     "norm.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "_fc2.weight",
+     "classifier.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "_fc2.bias",
+     "classifier.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 6
+  },
+  {
+   "eval": {
+    "logits": [
+     -1.2636231184005737,
+     -0.10096633434295654
+    ]
+   },
+   "featureDim": 1024,
+   "fit": {
+    "gradNorms": {
+     "class_token": 6.507237162002234,
+     "classifier.bias": 1.0773692898719684,
+     "classifier.weight": 24.321601290305207,
+     "layers.0.attention.residual.weight": 5.30899101685823,
+     "layers.0.attention.to_out.0.bias": 1.358312619355128,
+     "layers.0.attention.to_out.0.weight": 23.333727227346298,
+     "layers.0.attention.to_qkv.weight": 23.468852774332024,
+     "layers.0.norm.bias": 1.6701817640981789,
+     "layers.0.norm.weight": 1.0514680902009745,
+     "layers.1.attention.residual.weight": 4.680397071814246,
+     "layers.1.attention.to_out.0.bias": 1.0670347815866532,
+     "layers.1.attention.to_out.0.weight": 17.06493045107997,
+     "layers.1.attention.to_qkv.weight": 18.2431667330986,
+     "layers.1.norm.bias": 0.9710721715170972,
+     "layers.1.norm.weight": 0.8463363559691475,
+     "norm.bias": 1.1269514670332514,
+     "norm.weight": 1.121979741785053,
+     "patch_embed.0.bias": 1.6229733093696888,
+     "patch_embed.0.weight": 40.3675423165539,
+     "position.proj.bias": 0.4313010868531883,
+     "position.proj.weight": 2.436751513689644,
+     "position.proj1.bias": 0.4313010868531883,
+     "position.proj1.weight": 1.7937177060221667,
+     "position.proj2.bias": 0.4313010722241037,
+     "position.proj2.weight": 1.125484929129314
+    },
+    "loss": 1.4347082376480103
+   },
+   "id": "transmil-300-2",
+   "inputSeed": 107,
+   "label": 0,
+   "loss": "ce",
+   "model": "transmil",
+   "outputs": 2,
+   "patches": 300,
+   "recipe": {},
+   "source": "TransMIL + nystrom-attention",
+   "tensors": [
+    [
+     "cls_token",
+     "class_token",
+     [
+      1,
+      1,
+      512
+     ]
+    ],
+    [
+     "pos_layer.proj.weight",
+     "position.proj.weight",
+     [
+      512,
+      1,
+      7,
+      7
+     ]
+    ],
+    [
+     "pos_layer.proj.bias",
+     "position.proj.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "pos_layer.proj1.weight",
+     "position.proj1.weight",
+     [
+      512,
+      1,
+      5,
+      5
+     ]
+    ],
+    [
+     "pos_layer.proj1.bias",
+     "position.proj1.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "pos_layer.proj2.weight",
+     "position.proj2.weight",
+     [
+      512,
+      1,
+      3,
+      3
+     ]
+    ],
+    [
+     "pos_layer.proj2.bias",
+     "position.proj2.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "_fc1.0.weight",
+     "patch_embed.0.weight",
+     [
+      512,
+      1024
+     ]
+    ],
+    [
+     "_fc1.0.bias",
+     "patch_embed.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.norm.weight",
+     "layers.0.norm.weight",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.norm.bias",
+     "layers.0.norm.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.attn.to_qkv.weight",
+     "layers.0.attention.to_qkv.weight",
+     [
+      1536,
+      512
+     ]
+    ],
+    [
+     "layer1.attn.to_out.0.weight",
+     "layers.0.attention.to_out.0.weight",
+     [
+      512,
+      512
+     ]
+    ],
+    [
+     "layer1.attn.to_out.0.bias",
+     "layers.0.attention.to_out.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.attn.res_conv.weight",
+     "layers.0.attention.residual.weight",
+     [
+      8,
+      1,
+      33,
+      1
+     ]
+    ],
+    [
+     "layer2.norm.weight",
+     "layers.1.norm.weight",
+     [
+      512
+     ]
+    ],
+    [
+     "layer2.norm.bias",
+     "layers.1.norm.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer2.attn.to_qkv.weight",
+     "layers.1.attention.to_qkv.weight",
+     [
+      1536,
+      512
+     ]
+    ],
+    [
+     "layer2.attn.to_out.0.weight",
+     "layers.1.attention.to_out.0.weight",
+     [
+      512,
+      512
+     ]
+    ],
+    [
+     "layer2.attn.to_out.0.bias",
+     "layers.1.attention.to_out.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer2.attn.res_conv.weight",
+     "layers.1.attention.residual.weight",
+     [
+      8,
+      1,
+      33,
+      1
+     ]
+    ],
+    [
+     "norm.weight",
+     "norm.weight",
+     [
+      512
+     ]
+    ],
+    [
+     "norm.bias",
+     "norm.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "_fc2.weight",
+     "classifier.weight",
+     [
+      2,
+      512
+     ]
+    ],
+    [
+     "_fc2.bias",
+     "classifier.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 7
+  },
+  {
+   "eval": {
+    "logits": [
+     -0.43340563774108887,
+     0.8945361971855164,
+     -0.2078232765197754
+    ]
+   },
+   "featureDim": 1024,
+   "fit": {
+    "gradNorms": {
+     "class_token": 3.753690073623594,
+     "classifier.bias": 1.0232064312500178,
+     "classifier.weight": 23.43269113243109,
+     "layers.0.attention.residual.weight": 4.7630785199905,
+     "layers.0.attention.to_out.0.bias": 1.4452096268909438,
+     "layers.0.attention.to_out.0.weight": 17.723660300764234,
+     "layers.0.attention.to_qkv.weight": 18.688957421618944,
+     "layers.0.norm.bias": 1.4702457713188697,
+     "layers.0.norm.weight": 0.7810404580093111,
+     "layers.1.attention.residual.weight": 3.612268997991489,
+     "layers.1.attention.to_out.0.bias": 0.8512324835187666,
+     "layers.1.attention.to_out.0.weight": 16.92311130817844,
+     "layers.1.attention.to_qkv.weight": 16.733691192134774,
+     "layers.1.norm.bias": 1.4245345206374722,
+     "layers.1.norm.weight": 0.7601430788750096,
+     "norm.bias": 0.9985596464705845,
+     "norm.weight": 0.9705268520992433,
+     "patch_embed.0.bias": 1.6312716823532054,
+     "patch_embed.0.weight": 32.770873363829736,
+     "position.proj.bias": 0.7129448633865041,
+     "position.proj.weight": 2.44168376236047,
+     "position.proj1.bias": 0.7129448633865041,
+     "position.proj1.weight": 1.815563385631509,
+     "position.proj2.bias": 0.7129448155758594,
+     "position.proj2.weight": 1.1625862235779085
+    },
+    "loss": 1.570554494857788
+   },
+   "id": "transmil-1100-3",
+   "inputSeed": 108,
+   "label": 2,
+   "loss": "ce",
+   "model": "transmil",
+   "outputs": 3,
+   "patches": 1100,
+   "recipe": {},
+   "source": "TransMIL + nystrom-attention",
+   "tensors": [
+    [
+     "cls_token",
+     "class_token",
+     [
+      1,
+      1,
+      512
+     ]
+    ],
+    [
+     "pos_layer.proj.weight",
+     "position.proj.weight",
+     [
+      512,
+      1,
+      7,
+      7
+     ]
+    ],
+    [
+     "pos_layer.proj.bias",
+     "position.proj.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "pos_layer.proj1.weight",
+     "position.proj1.weight",
+     [
+      512,
+      1,
+      5,
+      5
+     ]
+    ],
+    [
+     "pos_layer.proj1.bias",
+     "position.proj1.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "pos_layer.proj2.weight",
+     "position.proj2.weight",
+     [
+      512,
+      1,
+      3,
+      3
+     ]
+    ],
+    [
+     "pos_layer.proj2.bias",
+     "position.proj2.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "_fc1.0.weight",
+     "patch_embed.0.weight",
+     [
+      512,
+      1024
+     ]
+    ],
+    [
+     "_fc1.0.bias",
+     "patch_embed.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.norm.weight",
+     "layers.0.norm.weight",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.norm.bias",
+     "layers.0.norm.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.attn.to_qkv.weight",
+     "layers.0.attention.to_qkv.weight",
+     [
+      1536,
+      512
+     ]
+    ],
+    [
+     "layer1.attn.to_out.0.weight",
+     "layers.0.attention.to_out.0.weight",
+     [
+      512,
+      512
+     ]
+    ],
+    [
+     "layer1.attn.to_out.0.bias",
+     "layers.0.attention.to_out.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer1.attn.res_conv.weight",
+     "layers.0.attention.residual.weight",
+     [
+      8,
+      1,
+      33,
+      1
+     ]
+    ],
+    [
+     "layer2.norm.weight",
+     "layers.1.norm.weight",
+     [
+      512
+     ]
+    ],
+    [
+     "layer2.norm.bias",
+     "layers.1.norm.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer2.attn.to_qkv.weight",
+     "layers.1.attention.to_qkv.weight",
+     [
+      1536,
+      512
+     ]
+    ],
+    [
+     "layer2.attn.to_out.0.weight",
+     "layers.1.attention.to_out.0.weight",
+     [
+      512,
+      512
+     ]
+    ],
+    [
+     "layer2.attn.to_out.0.bias",
+     "layers.1.attention.to_out.0.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "layer2.attn.res_conv.weight",
+     "layers.1.attention.residual.weight",
+     [
+      8,
+      1,
+      33,
+      1
+     ]
+    ],
+    [
+     "norm.weight",
+     "norm.weight",
+     [
+      512
+     ]
+    ],
+    [
+     "norm.bias",
+     "norm.bias",
+     [
+      512
+     ]
+    ],
+    [
+     "_fc2.weight",
+     "classifier.weight",
+     [
+      3,
+      512
+     ]
+    ],
+    [
+     "_fc2.bias",
+     "classifier.bias",
+     [
+      3
+     ]
+    ]
+   ],
+   "weightSeed": 8
+  },
+  {
+   "eval": {
+    "attention": [
+     0.012543921358883381,
+     0.006524130702018738,
+     0.012185885570943356,
+     0.012677837163209915,
+     0.008467599749565125,
+     0.010851211845874786,
+     0.012237914837896824,
+     0.007034836336970329,
+     0.007252028211951256,
+     0.007751883938908577,
+     0.014896929264068604,
+     0.009361435659229755,
+     0.015454892069101334,
+     0.013447094708681107,
+     0.008768334053456783,
+     0.014866071753203869,
+     0.20811320841312408,
+     0.014388523064553738,
+     0.027037296444177628,
+     0.01228388212621212,
+     0.016997873783111572,
+     0.01766517572104931,
+     0.011575072072446346,
+     0.013617109507322311,
+     0.007935519330203533,
+     0.009678593836724758,
+     0.012244177982211113,
+     0.0038602822460234165,
+     0.007044116500765085,
+     0.010584700852632523,
+     0.018680814653635025,
+     0.010141084901988506,
+     0.0060492828488349915,
+     0.006155309267342091,
+     0.015101931057870388,
+     0.012699952349066734,
+     0.012632413767278194,
+     0.005581758916378021,
+     0.013648890890181065,
+     0.018819067627191544,
+     0.010851902887225151,
+     0.013102690689265728,
+     0.01430142018944025,
+     0.0230550654232502,
+     0.016851680353283882,
+     0.035786986351013184,
+     0.025654057040810585,
+     0.016013504937291145,
+     0.019880546256899834,
+     0.008045289665460587,
+     0.01622004620730877,
+     0.0076669966802001,
+     0.026486849412322044,
+     0.01120259240269661,
+     0.017614107578992844,
+     0.010550028644502163,
+     0.017192771658301353,
+     0.012269294820725918,
+     0.018469316884875298,
+     0.011926968581974506
+    ],
+    "logits": [
+     0.23650136590003967
+    ]
+   },
+   "featureDim": 32,
+   "fit": {
+    "gradNorms": {
+     "classifier.bias": 0.22057434916496277,
+     "classifier.weight": 0.38626265991121567,
+     "instance_classifier.bias": 0.066592276096344,
+     "instance_classifier.weight": 0.4297222552834854,
+     "query.0.bias": 0.012020342121278017,
+     "query.0.weight": 0.0980897104979124,
+     "query.2.bias": 0.009160914236485558,
+     "query.2.weight": 0.12492253700172457
+    },
+    "loss": 0.36240053176879883
+   },
+   "id": "dsmil-1",
+   "inputSeed": 109,
+   "label": 1,
+   "loss": "bce",
+   "model": "dsmil",
+   "outputs": 1,
+   "patches": 60,
+   "recipe": {
+    "dsmilNonlinearQuery": true,
+    "dsmilPassingValue": false
+   },
+   "source": "dsmil-wsi",
+   "tensors": [
+    [
+     "i_classifier.fc.0.weight",
+     "instance_classifier.weight",
+     [
+      1,
+      32
+     ]
+    ],
+    [
+     "i_classifier.fc.0.bias",
+     "instance_classifier.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "b_classifier.q.0.weight",
+     "query.0.weight",
+     [
+      128,
+      32
+     ]
+    ],
+    [
+     "b_classifier.q.0.bias",
+     "query.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "b_classifier.q.2.weight",
+     "query.2.weight",
+     [
+      128,
+      128
+     ]
+    ],
+    [
+     "b_classifier.q.2.bias",
+     "query.2.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "b_classifier.fcc.weight",
+     "classifier.weight",
+     [
+      1,
+      1,
+      32
+     ]
+    ],
+    [
+     "b_classifier.fcc.bias",
+     "classifier.bias",
+     [
+      1
+     ]
+    ]
+   ],
+   "weightSeed": 9
+  },
+  {
+   "eval": {
+    "attention": [
+     0.02266349457204342,
+     0.012788332998752594,
+     0.024135395884513855,
+     0.14417563378810883,
+     0.017476975917816162,
+     0.017921827733516693,
+     0.04199899733066559,
+     0.01349985133856535,
+     0.01863173395395279,
+     0.028086543083190918,
+     0.01773243397474289,
+     0.02264503762125969,
+     0.013376226648688316,
+     0.013043968938291073,
+     0.021815882995724678,
+     0.011877455748617649,
+     0.026807351037859917,
+     0.01004712376743555,
+     0.01944999024271965,
+     0.013569808565080166,
+     0.019954293966293335,
+     0.018719352781772614,
+     0.02907724864780903,
+     0.009857629425823689,
+     0.009838403202593327,
+     0.016707368195056915,
+     0.02181747741997242,
+     0.029308073222637177,
+     0.018662607297301292,
+     0.01897960901260376,
+     0.016099264845252037,
+     0.017764678224921227,
+     0.014098873361945152,
+     0.02153048850595951,
+     0.015318678691983223,
+     0.008482282981276512,
+     0.022550176829099655,
+     0.01416312251240015,
+     0.017731234431266785,
+     0.029079463332891464,
+     0.009638957679271698,
+     0.03230931609869003,
+     0.022114066407084465,
+     0.03683917969465256,
+     0.017614047974348068
+    ],
+    "logits": [
+     -0.17152199149131775,
+     -0.5392648577690125,
+     0.16836991906166077
+    ]
+   },
+   "featureDim": 32,
+   "id": "dsmil-3-value",
+   "inputSeed": 110,
+   "label": 1,
+   "loss": "bce",
+   "model": "dsmil",
+   "outputs": 3,
+   "patches": 45,
+   "recipe": {
+    "dsmilNonlinearQuery": true,
+    "dsmilPassingValue": true
+   },
+   "source": "dsmil-wsi",
+   "tensors": [
+    [
+     "i_classifier.fc.0.weight",
+     "instance_classifier.weight",
+     [
+      3,
+      32
+     ]
+    ],
+    [
+     "i_classifier.fc.0.bias",
+     "instance_classifier.bias",
+     [
+      3
+     ]
+    ],
+    [
+     "b_classifier.q.0.weight",
+     "query.0.weight",
+     [
+      128,
+      32
+     ]
+    ],
+    [
+     "b_classifier.q.0.bias",
+     "query.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "b_classifier.q.2.weight",
+     "query.2.weight",
+     [
+      128,
+      128
+     ]
+    ],
+    [
+     "b_classifier.q.2.bias",
+     "query.2.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "b_classifier.v.1.weight",
+     "value.1.weight",
+     [
+      32,
+      32
+     ]
+    ],
+    [
+     "b_classifier.v.1.bias",
+     "value.1.bias",
+     [
+      32
+     ]
+    ],
+    [
+     "b_classifier.fcc.weight",
+     "classifier.weight",
+     [
+      3,
+      3,
+      32
+     ]
+    ],
+    [
+     "b_classifier.fcc.bias",
+     "classifier.bias",
+     [
+      3
+     ]
+    ]
+   ],
+   "weightSeed": 10
+  },
+  {
+   "eval": {
+    "attention": [
+     9.60523266257951e-06,
+     8.149802499524128e-10,
+     8.468855128285213e-08,
+     6.816854636326752e-08,
+     4.4520587039187376e-07,
+     3.6562168848064402e-09,
+     2.111919172875787e-07,
+     2.2101792183093494e-06,
+     1.8049227890060138e-08,
+     4.688333632429931e-08,
+     1.5093471361637967e-08,
+     0.9999839067459106,
+     4.449623958180382e-08,
+     7.996143125410526e-08,
+     1.9135187656615926e-08,
+     7.807170909757133e-09,
+     1.7004715857638075e-08,
+     1.3452903431243612e-06,
+     3.024930528283676e-09,
+     1.8889994635173935e-06
+    ],
+    "logits": [
+     2.4640796184539795
+    ]
+   },
+   "featureDim": 32,
+   "fit": {
+    "gradNorms": {
+     "classifier.bias": 0.03920748829841614,
+     "classifier.weight": 0.1686791293288632,
+     "instance_classifier.bias": 0.1310957968235016,
+     "instance_classifier.weight": 0.8898146094011052,
+     "query.bias": 1.1220669636034995e-06,
+     "query.weight": 1.502428740952393e-05,
+     "value.1.bias": 0.026980415377860577,
+     "value.1.weight": 0.18312879712177157
+    },
+    "loss": 0.19286565482616425
+   },
+   "id": "dsmil-1-linear-value",
+   "inputSeed": 111,
+   "label": 1,
+   "loss": "bce",
+   "model": "dsmil",
+   "outputs": 1,
+   "patches": 20,
+   "recipe": {
+    "dsmilNonlinearQuery": false,
+    "dsmilPassingValue": true
+   },
+   "source": "dsmil-wsi",
+   "tensors": [
+    [
+     "i_classifier.fc.0.weight",
+     "instance_classifier.weight",
+     [
+      1,
+      32
+     ]
+    ],
+    [
+     "i_classifier.fc.0.bias",
+     "instance_classifier.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "b_classifier.q.weight",
+     "query.weight",
+     [
+      128,
+      32
+     ]
+    ],
+    [
+     "b_classifier.q.bias",
+     "query.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "b_classifier.v.1.weight",
+     "value.1.weight",
+     [
+      32,
+      32
+     ]
+    ],
+    [
+     "b_classifier.v.1.bias",
+     "value.1.bias",
+     [
+      32
+     ]
+    ],
+    [
+     "b_classifier.fcc.weight",
+     "classifier.weight",
+     [
+      1,
+      1,
+      32
+     ]
+    ],
+    [
+     "b_classifier.fcc.bias",
+     "classifier.bias",
+     [
+      1
+     ]
+    ]
+   ],
+   "weightSeed": 11
+  },
+  {
+   "eval": {
+    "logits": [
+     -0.3702898323535919,
+     -0.4268776774406433
+    ],
+    "probabilities": [
+     0.514143168926239,
+     0.4858568012714386
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "classifier.fc.bias": 0.7271082846438182,
+     "classifier.fc.weight": 2.385375775514979,
+     "patch_embed.fc1.weight": 0.31391548258098173,
+     "tier1_attention.attention_u.0.bias": 0.005131361333901796,
+     "tier1_attention.attention_u.0.weight": 0.035966457084723055,
+     "tier1_attention.attention_v.0.bias": 0.00973622587030814,
+     "tier1_attention.attention_v.0.weight": 0.13041360735111424,
+     "tier1_attention.attention_w.bias": 4.6566128730773926e-09,
+     "tier1_attention.attention_w.weight": 0.16434717600283935,
+     "tier1_classifier.fc.bias": 0.5613024140145674,
+     "tier1_classifier.fc.weight": 1.8286844425384174,
+     "tier2_attention.attention_u.0.bias": 0.002662562256463045,
+     "tier2_attention.attention_u.0.weight": 0.015074305968570477,
+     "tier2_attention.attention_v.0.bias": 0.003333454135045413,
+     "tier2_attention.attention_v.0.weight": 0.05442742937919917,
+     "tier2_attention.attention_w.bias": 1.862645149230957e-09,
+     "tier2_attention.attention_w.weight": 0.08079657257012852
+    },
+    "loss": 1.2307411432266235
+   },
+   "id": "dtfd-afs-2-4x1-res0-splits1",
+   "inputSeed": 112,
+   "label": 1,
+   "loss": "ce",
+   "model": "dtfd",
+   "orders": [
+    [
+     9,
+     1,
+     47,
+     35,
+     13,
+     22,
+     45,
+     28,
+     21,
+     20,
+     43,
+     18,
+     33,
+     23,
+     0,
+     3,
+     19,
+     16,
+     42,
+     30,
+     29,
+     40,
+     5,
+     7,
+     15,
+     12,
+     11,
+     4,
+     37,
+     32,
+     31,
+     38,
+     27,
+     49,
+     10,
+     17,
+     46,
+     44,
+     24,
+     14,
+     41,
+     8,
+     6,
+     36,
+     39,
+     25,
+     26,
+     48,
+     34,
+     2
+    ]
+   ],
+   "outputs": 2,
+   "patches": 50,
+   "recipe": {
+    "dtfdAttentionDim": 128,
+    "dtfdDistill": "afs",
+    "dtfdDistillPatches": 1,
+    "dtfdPseudoBags": 4,
+    "dtfdResidualBlocks": 0,
+    "dtfdTestSplits": 1,
+    "embedDim": 64
+   },
+   "source": "DTFD-MIL",
+   "tensors": [
+    [
+     "classifier.fc.weight",
+     "tier1_classifier.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.fc.bias",
+     "tier1_classifier.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "attention.attention_V.0.weight",
+     "tier1_attention.attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_V.0.bias",
+     "tier1_attention.attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_U.0.weight",
+     "tier1_attention.attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_U.0.bias",
+     "tier1_attention.attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.weight",
+     "tier1_attention.attention_w.weight",
+     [
+      1,
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.bias",
+     "tier1_attention.attention_w.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "dimReduction.fc1.weight",
+     "patch_embed.fc1.weight",
+     [
+      64,
+      24
+     ]
+    ],
+    [
+     "attCls.attention.attention_V.0.weight",
+     "tier2_attention.attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attCls.attention.attention_V.0.bias",
+     "tier2_attention.attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_U.0.weight",
+     "tier2_attention.attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attCls.attention.attention_U.0.bias",
+     "tier2_attention.attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_weights.weight",
+     "tier2_attention.attention_w.weight",
+     [
+      1,
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_weights.bias",
+     "tier2_attention.attention_w.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "attCls.classifier.fc.weight",
+     "classifier.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "attCls.classifier.fc.bias",
+     "classifier.fc.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 12
+  },
+  {
+   "eval": {
+    "logits": [
+     2.501471519470215,
+     -0.7326531410217285
+    ],
+    "probabilities": [
+     0.9620984792709351,
+     0.03790155425667763
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "classifier.fc.bias": 1.3606126755766386,
+     "classifier.fc.weight": 10.584255165656627,
+     "patch_embed.fc1.weight": 0.6896020072977919,
+     "patch_embed.resBlocks.0.block.0.weight": 0.9668666853932213,
+     "patch_embed.resBlocks.0.block.2.weight": 1.4541426846602816,
+     "patch_embed.resBlocks.1.block.0.weight": 1.4299428861901977,
+     "patch_embed.resBlocks.1.block.2.weight": 1.83581868034287,
+     "tier1_attention.attention_u.0.bias": 0.007759495743740392,
+     "tier1_attention.attention_u.0.weight": 0.08011294780046889,
+     "tier1_attention.attention_v.0.bias": 0.01669073942945173,
+     "tier1_attention.attention_v.0.weight": 0.20349078381392022,
+     "tier1_attention.attention_w.bias": 2.9802322387695312e-08,
+     "tier1_attention.attention_w.weight": 0.25654467765396827,
+     "tier1_classifier.fc.bias": 0.8340434794198999,
+     "tier1_classifier.fc.weight": 5.620301516933254,
+     "tier2_attention.attention_u.0.bias": 0.04110504322459025,
+     "tier2_attention.attention_u.0.weight": 0.4869530671127202,
+     "tier2_attention.attention_v.0.bias": 0.07551693980513785,
+     "tier2_attention.attention_v.0.weight": 1.1305405956433165,
+     "tier2_attention.attention_w.bias": 6.705522537231445e-08,
+     "tier2_attention.attention_w.weight": 1.198867410830277
+    },
+    "loss": 4.166330814361572
+   },
+   "id": "dtfd-maxmins-2-4x1-res2-splits1",
+   "inputSeed": 113,
+   "label": 1,
+   "loss": "ce",
+   "model": "dtfd",
+   "orders": [
+    [
+     3,
+     22,
+     21,
+     18,
+     8,
+     11,
+     34,
+     16,
+     15,
+     33,
+     36,
+     35,
+     26,
+     2,
+     27,
+     7,
+     5,
+     4,
+     28,
+     13,
+     14,
+     6,
+     29,
+     25,
+     32,
+     9,
+     24,
+     19,
+     1,
+     23,
+     12,
+     17,
+     20,
+     10,
+     31,
+     30,
+     0
+    ]
+   ],
+   "outputs": 2,
+   "patches": 37,
+   "recipe": {
+    "dtfdAttentionDim": 128,
+    "dtfdDistill": "maxmins",
+    "dtfdDistillPatches": 1,
+    "dtfdPseudoBags": 4,
+    "dtfdResidualBlocks": 2,
+    "dtfdTestSplits": 1,
+    "embedDim": 64
+   },
+   "source": "DTFD-MIL",
+   "tensors": [
+    [
+     "classifier.fc.weight",
+     "tier1_classifier.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.fc.bias",
+     "tier1_classifier.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "attention.attention_V.0.weight",
+     "tier1_attention.attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_V.0.bias",
+     "tier1_attention.attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_U.0.weight",
+     "tier1_attention.attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_U.0.bias",
+     "tier1_attention.attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.weight",
+     "tier1_attention.attention_w.weight",
+     [
+      1,
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.bias",
+     "tier1_attention.attention_w.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "dimReduction.fc1.weight",
+     "patch_embed.fc1.weight",
+     [
+      64,
+      24
+     ]
+    ],
+    [
+     "dimReduction.resBlocks.0.block.0.weight",
+     "patch_embed.resBlocks.0.block.0.weight",
+     [
+      64,
+      64
+     ]
+    ],
+    [
+     "dimReduction.resBlocks.0.block.2.weight",
+     "patch_embed.resBlocks.0.block.2.weight",
+     [
+      64,
+      64
+     ]
+    ],
+    [
+     "dimReduction.resBlocks.1.block.0.weight",
+     "patch_embed.resBlocks.1.block.0.weight",
+     [
+      64,
+      64
+     ]
+    ],
+    [
+     "dimReduction.resBlocks.1.block.2.weight",
+     "patch_embed.resBlocks.1.block.2.weight",
+     [
+      64,
+      64
+     ]
+    ],
+    [
+     "attCls.attention.attention_V.0.weight",
+     "tier2_attention.attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attCls.attention.attention_V.0.bias",
+     "tier2_attention.attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_U.0.weight",
+     "tier2_attention.attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attCls.attention.attention_U.0.bias",
+     "tier2_attention.attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_weights.weight",
+     "tier2_attention.attention_w.weight",
+     [
+      1,
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_weights.bias",
+     "tier2_attention.attention_w.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "attCls.classifier.fc.weight",
+     "classifier.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "attCls.classifier.fc.bias",
+     "classifier.fc.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 13
+  },
+  {
+   "eval": {
+    "logits": [
+     0.3500896692276001,
+     0.4198397099971771,
+     0.3740729093551636
+    ],
+    "probabilities": [
+     0.32294386625289917,
+     0.34627336263656616,
+     0.3307827115058899
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "classifier.fc.bias": 0.819786412208335,
+     "classifier.fc.weight": 3.1288373048498075,
+     "patch_embed.fc1.weight": 0.5311673896241401,
+     "tier1_attention.attention_u.0.bias": 0.011214369331137092,
+     "tier1_attention.attention_u.0.weight": 0.07209654588676143,
+     "tier1_attention.attention_v.0.bias": 0.018141459742791813,
+     "tier1_attention.attention_v.0.weight": 0.2174969986638444,
+     "tier1_attention.attention_w.bias": 0.0,
+     "tier1_attention.attention_w.weight": 0.3439678403333971,
+     "tier1_classifier.fc.bias": 0.8132927991358413,
+     "tier1_classifier.fc.weight": 2.586092162862944,
+     "tier2_attention.attention_u.0.bias": 0.026152397906685696,
+     "tier2_attention.attention_u.0.weight": 0.20351552161463332,
+     "tier2_attention.attention_v.0.bias": 0.050101251931281426,
+     "tier2_attention.attention_v.0.weight": 0.6009718199547502,
+     "tier2_attention.attention_w.bias": 2.9802322387695312e-08,
+     "tier2_attention.attention_w.weight": 0.6415364465578324
+    },
+    "loss": 2.2041726112365723
+   },
+   "id": "dtfd-maxs-3-5x2-res0-splits1",
+   "inputSeed": 114,
+   "label": 2,
+   "loss": "ce",
+   "model": "dtfd",
+   "orders": [
+    [
+     12,
+     5,
+     27,
+     28,
+     17,
+     36,
+     0,
+     23,
+     38,
+     18,
+     16,
+     29,
+     34,
+     26,
+     14,
+     40,
+     4,
+     33,
+     10,
+     13,
+     35,
+     22,
+     37,
+     39,
+     7,
+     6,
+     24,
+     15,
+     11,
+     25,
+     20,
+     9,
+     30,
+     3,
+     32,
+     19,
+     1,
+     31,
+     8,
+     21,
+     2
+    ]
+   ],
+   "outputs": 3,
+   "patches": 41,
+   "recipe": {
+    "dtfdAttentionDim": 128,
+    "dtfdDistill": "maxs",
+    "dtfdDistillPatches": 2,
+    "dtfdPseudoBags": 5,
+    "dtfdResidualBlocks": 0,
+    "dtfdTestSplits": 1,
+    "embedDim": 64
+   },
+   "source": "DTFD-MIL",
+   "tensors": [
+    [
+     "classifier.fc.weight",
+     "tier1_classifier.fc.weight",
+     [
+      3,
+      64
+     ]
+    ],
+    [
+     "classifier.fc.bias",
+     "tier1_classifier.fc.bias",
+     [
+      3
+     ]
+    ],
+    [
+     "attention.attention_V.0.weight",
+     "tier1_attention.attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_V.0.bias",
+     "tier1_attention.attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_U.0.weight",
+     "tier1_attention.attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_U.0.bias",
+     "tier1_attention.attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.weight",
+     "tier1_attention.attention_w.weight",
+     [
+      1,
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.bias",
+     "tier1_attention.attention_w.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "dimReduction.fc1.weight",
+     "patch_embed.fc1.weight",
+     [
+      64,
+      24
+     ]
+    ],
+    [
+     "attCls.attention.attention_V.0.weight",
+     "tier2_attention.attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attCls.attention.attention_V.0.bias",
+     "tier2_attention.attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_U.0.weight",
+     "tier2_attention.attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attCls.attention.attention_U.0.bias",
+     "tier2_attention.attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_weights.weight",
+     "tier2_attention.attention_w.weight",
+     [
+      1,
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_weights.bias",
+     "tier2_attention.attention_w.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "attCls.classifier.fc.weight",
+     "classifier.fc.weight",
+     [
+      3,
+      64
+     ]
+    ],
+    [
+     "attCls.classifier.fc.bias",
+     "classifier.fc.bias",
+     [
+      3
+     ]
+    ]
+   ],
+   "weightSeed": 14
+  },
+  {
+   "eval": {
+    "probabilities": [
+     0.44450053572654724,
+     0.5554994940757751
+    ]
+   },
+   "featureDim": 24,
+   "id": "dtfd-afs-2-4x1-res0-splits3",
+   "inputSeed": 115,
+   "label": 1,
+   "loss": "ce",
+   "model": "dtfd",
+   "orders": [
+    [
+     24,
+     1,
+     37,
+     30,
+     7,
+     0,
+     2,
+     25,
+     4,
+     28,
+     5,
+     18,
+     46,
+     27,
+     3,
+     36,
+     42,
+     29,
+     9,
+     48,
+     23,
+     8,
+     40,
+     45,
+     38,
+     49,
+     22,
+     11,
+     17,
+     41,
+     20,
+     33,
+     32,
+     13,
+     19,
+     39,
+     35,
+     14,
+     6,
+     31,
+     21,
+     43,
+     34,
+     15,
+     44,
+     16,
+     12,
+     10,
+     26,
+     47
+    ],
+    [
+     10,
+     13,
+     30,
+     46,
+     18,
+     0,
+     40,
+     12,
+     29,
+     8,
+     21,
+     47,
+     11,
+     41,
+     5,
+     1,
+     6,
+     27,
+     49,
+     24,
+     31,
+     15,
+     35,
+     26,
+     7,
+     20,
+     48,
+     3,
+     23,
+     44,
+     4,
+     16,
+     36,
+     14,
+     43,
+     25,
+     37,
+     39,
+     9,
+     32,
+     33,
+     22,
+     42,
+     19,
+     17,
+     38,
+     34,
+     28,
+     2,
+     45
+    ],
+    [
+     15,
+     38,
+     35,
+     6,
+     26,
+     12,
+     40,
+     29,
+     31,
+     3,
+     37,
+     22,
+     42,
+     32,
+     16,
+     23,
+     5,
+     46,
+     25,
+     8,
+     19,
+     24,
+     4,
+     10,
+     44,
+     11,
+     13,
+     33,
+     1,
+     47,
+     18,
+     45,
+     43,
+     34,
+     36,
+     30,
+     9,
+     27,
+     39,
+     21,
+     49,
+     48,
+     20,
+     0,
+     41,
+     2,
+     7,
+     17,
+     28,
+     14
+    ]
+   ],
+   "outputs": 2,
+   "patches": 50,
+   "recipe": {
+    "dtfdAttentionDim": 128,
+    "dtfdDistill": "afs",
+    "dtfdDistillPatches": 1,
+    "dtfdPseudoBags": 4,
+    "dtfdResidualBlocks": 0,
+    "dtfdTestSplits": 3,
+    "embedDim": 64
+   },
+   "source": "DTFD-MIL",
+   "tensors": [
+    [
+     "classifier.fc.weight",
+     "tier1_classifier.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.fc.bias",
+     "tier1_classifier.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "attention.attention_V.0.weight",
+     "tier1_attention.attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_V.0.bias",
+     "tier1_attention.attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_U.0.weight",
+     "tier1_attention.attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_U.0.bias",
+     "tier1_attention.attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.weight",
+     "tier1_attention.attention_w.weight",
+     [
+      1,
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.bias",
+     "tier1_attention.attention_w.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "dimReduction.fc1.weight",
+     "patch_embed.fc1.weight",
+     [
+      64,
+      24
+     ]
+    ],
+    [
+     "attCls.attention.attention_V.0.weight",
+     "tier2_attention.attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attCls.attention.attention_V.0.bias",
+     "tier2_attention.attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_U.0.weight",
+     "tier2_attention.attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attCls.attention.attention_U.0.bias",
+     "tier2_attention.attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_weights.weight",
+     "tier2_attention.attention_w.weight",
+     [
+      1,
+      128
+     ]
+    ],
+    [
+     "attCls.attention.attention_weights.bias",
+     "tier2_attention.attention_w.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "attCls.classifier.fc.weight",
+     "classifier.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "attCls.classifier.fc.bias",
+     "classifier.fc.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 15
+  },
+  {
+   "eval": {
+    "attention": [
+     0.010783541947603226,
+     0.010896092280745506,
+     0.012128330767154694,
+     0.011333181522786617,
+     0.012038230895996094,
+     0.013275517150759697,
+     0.011768731288611889,
+     0.014954701066017151,
+     0.01205962710082531,
+     0.011798079125583172,
+     0.012042364105582237,
+     0.013062703423202038,
+     0.012129140086472034,
+     0.012530279345810413,
+     0.013259795494377613,
+     0.013441512361168861,
+     0.01445920579135418,
+     0.010893421247601509,
+     0.014616720378398895,
+     0.012779203243553638,
+     0.01048677321523428,
+     0.01079891063272953,
+     0.013852749951183796,
+     0.012823355384171009,
+     0.012839749455451965,
+     0.013300642371177673,
+     0.011607243679463863,
+     0.011926748789846897,
+     0.009980791248381138,
+     0.012419571168720722,
+     0.013016213662922382,
+     0.013454312458634377,
+     0.014437776990234852,
+     0.013213224709033966,
+     0.01320558600127697,
+     0.012994324788451195,
+     0.012563916854560375,
+     0.012436633929610252,
+     0.01291308831423521,
+     0.012492885813117027,
+     0.014547583647072315,
+     0.01092161051928997,
+     0.012392199598252773,
+     0.011928717605769634,
+     0.011546410620212555,
+     0.01275901310145855,
+     0.012454130686819553,
+     0.012585898861289024,
+     0.01312229223549366,
+     0.01094355620443821,
+     0.012864348478615284,
+     0.01150408573448658,
+     0.012334135361015797,
+     0.012526745907962322,
+     0.012240474112331867,
+     0.012053589336574078,
+     0.013689430430531502,
+     0.013681977987289429,
+     0.012816431932151318,
+     0.012229150161147118,
+     0.011372225359082222,
+     0.012239230796694756,
+     0.013551449403166771,
+     0.014113834127783775,
+     0.011872528120875359,
+     0.012508584186434746,
+     0.011743452399969101,
+     0.01261986792087555,
+     0.013310233131051064,
+     0.012116670608520508,
+     0.011691245250403881,
+     0.012235157191753387,
+     0.011302375234663486,
+     0.013046038337051868,
+     0.013476215302944183,
+     0.012028740718960762,
+     0.011886794120073318,
+     0.012563103809952736,
+     0.014012846164405346,
+     0.012152689509093761
+    ],
+    "logits": [
+     -0.006149802356958389,
+     -0.7190728187561035
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "attention_u.0.bias": 0.010062388515349475,
+     "attention_u.0.weight": 0.050815109361606096,
+     "attention_v.0.bias": 0.014426705285846903,
+     "attention_v.0.weight": 0.16573673409416345,
+     "attention_w.bias": 2.653554410447826e-08,
+     "attention_w.weight": 0.22308769212395171,
+     "branch_classifiers.0.fc.bias": 0.1547967239398569,
+     "branch_classifiers.0.fc.weight": 0.5198055911786875,
+     "branch_classifiers.1.fc.bias": 0.16077346316006585,
+     "branch_classifiers.1.fc.weight": 0.5355473764494172,
+     "branch_classifiers.2.fc.bias": 0.13247658536874554,
+     "branch_classifiers.2.fc.weight": 0.4475575716823269,
+     "branch_classifiers.3.fc.bias": 0.16114056221059575,
+     "branch_classifiers.3.fc.weight": 0.537735410893978,
+     "branch_classifiers.4.fc.bias": 0.15127883186177388,
+     "branch_classifiers.4.fc.weight": 0.5020915321498455,
+     "classifier.fc.bias": 0.9490033920056085,
+     "classifier.fc.weight": 3.16605899997758,
+     "patch_embed.fc1.weight": 0.5836046087647189
+    },
+    "loss": 2.829803228378296
+   },
+   "id": "acmil-5-2-mask10",
+   "inputSeed": 116,
+   "label": 1,
+   "loss": "ce",
+   "model": "acmil",
+   "outputs": 2,
+   "patches": 80,
+   "recipe": {
+    "acmilAttentionDim": 128,
+    "acmilBranches": 5,
+    "acmilMaskDrop": 0.6,
+    "acmilMaskedPatches": 10,
+    "embedDim": 64
+   },
+   "source": "ACMIL",
+   "tensors": [
+    [
+     "dimreduction.fc1.weight",
+     "patch_embed.fc1.weight",
+     [
+      64,
+      24
+     ]
+    ],
+    [
+     "attention.attention_V.0.weight",
+     "attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_V.0.bias",
+     "attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_U.0.weight",
+     "attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_U.0.bias",
+     "attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.weight",
+     "attention_w.weight",
+     [
+      5,
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.bias",
+     "attention_w.bias",
+     [
+      5
+     ]
+    ],
+    [
+     "classifier.0.fc.weight",
+     "branch_classifiers.0.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.0.fc.bias",
+     "branch_classifiers.0.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "classifier.1.fc.weight",
+     "branch_classifiers.1.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.1.fc.bias",
+     "branch_classifiers.1.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "classifier.2.fc.weight",
+     "branch_classifiers.2.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.2.fc.bias",
+     "branch_classifiers.2.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "classifier.3.fc.weight",
+     "branch_classifiers.3.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.3.fc.bias",
+     "branch_classifiers.3.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "classifier.4.fc.weight",
+     "branch_classifiers.4.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.4.fc.bias",
+     "branch_classifiers.4.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "Slide_classifier.fc.weight",
+     "classifier.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "Slide_classifier.fc.bias",
+     "classifier.fc.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 16
+  },
+  {
+   "eval": {
+    "attention": [
+     0.027568349614739418,
+     0.036960531026124954,
+     0.031094377860426903,
+     0.04861528426408768,
+     0.027352355420589447,
+     0.038713205605745316,
+     0.050748560577631,
+     0.033622365444898605,
+     0.020831266418099403,
+     0.02354237250983715,
+     0.017661841586232185,
+     0.051006920635700226,
+     0.042378030717372894,
+     0.03659806400537491,
+     0.03431474789977074,
+     0.04037042334675789,
+     0.033804792910814285,
+     0.03816252946853638,
+     0.027134915813803673,
+     0.02092423290014267,
+     0.04542592167854309,
+     0.02768128179013729,
+     0.02242523990571499,
+     0.046833671629428864,
+     0.021790122613310814,
+     0.033517248928546906,
+     0.02372145839035511,
+     0.03278075531125069,
+     0.026490766555070877,
+     0.037928346544504166
+    ],
+    "logits": [
+     -0.14849600195884705,
+     0.10237443447113037,
+     -0.3552652597427368
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "attention_u.0.bias": 0.012723313398141329,
+     "attention_u.0.weight": 0.08172161850560317,
+     "attention_v.0.bias": 0.018014954332410855,
+     "attention_v.0.weight": 0.2602334452604284,
+     "attention_w.bias": 1.6763806343078613e-08,
+     "attention_w.weight": 0.37810593742111226,
+     "classifier.fc.bias": 0.9056338526448238,
+     "classifier.fc.weight": 3.092003808071462,
+     "patch_embed.fc1.weight": 0.7353495276107137
+    },
+    "loss": 1.337639331817627
+   },
+   "id": "acmil-1-3-mask0",
+   "inputSeed": 117,
+   "label": 2,
+   "loss": "ce",
+   "model": "acmil",
+   "outputs": 3,
+   "patches": 30,
+   "recipe": {
+    "acmilAttentionDim": 128,
+    "acmilBranches": 1,
+    "acmilMaskDrop": 0.0,
+    "acmilMaskedPatches": 0,
+    "embedDim": 64
+   },
+   "source": "ACMIL",
+   "tensors": [
+    [
+     "dimreduction.fc1.weight",
+     "patch_embed.fc1.weight",
+     [
+      64,
+      24
+     ]
+    ],
+    [
+     "attention.attention_V.0.weight",
+     "attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_V.0.bias",
+     "attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_U.0.weight",
+     "attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_U.0.bias",
+     "attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.weight",
+     "attention_w.weight",
+     [
+      1,
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.bias",
+     "attention_w.bias",
+     [
+      1
+     ]
+    ],
+    [
+     "classifier.0.fc.weight",
+     "branch_classifiers.0.fc.weight",
+     [
+      3,
+      64
+     ]
+    ],
+    [
+     "classifier.0.fc.bias",
+     "branch_classifiers.0.fc.bias",
+     [
+      3
+     ]
+    ],
+    [
+     "Slide_classifier.fc.weight",
+     "classifier.fc.weight",
+     [
+      3,
+      64
+     ]
+    ],
+    [
+     "Slide_classifier.fc.bias",
+     "classifier.fc.bias",
+     [
+      3
+     ]
+    ]
+   ],
+   "weightSeed": 17
+  },
+  {
+   "eval": {
+    "attention": [
+     0.019179940223693848,
+     0.019750608131289482,
+     0.01848367229104042,
+     0.016647739335894585,
+     0.015283063985407352,
+     0.020160406827926636,
+     0.01682181842625141,
+     0.018329622223973274,
+     0.019948141649365425,
+     0.016820671036839485,
+     0.016010239720344543,
+     0.018190985545516014,
+     0.015457671135663986,
+     0.017866482958197594,
+     0.01686553843319416,
+     0.01927778869867325,
+     0.018437210470438004,
+     0.019065173342823982,
+     0.015584881417453289,
+     0.016255125403404236,
+     0.024086683988571167,
+     0.017597923055291176,
+     0.02241402678191662,
+     0.019932838156819344,
+     0.0172136053442955,
+     0.018238704651594162,
+     0.01792939193546772,
+     0.018417609855532646,
+     0.015751056373119354,
+     0.020378345623612404,
+     0.015105314552783966,
+     0.017426276579499245,
+     0.018582431599497795,
+     0.01579744555056095,
+     0.01816747896373272,
+     0.016089020296931267,
+     0.016497032716870308,
+     0.014425371773540974,
+     0.01396105159074068,
+     0.01775551401078701,
+     0.017016204074025154,
+     0.022285765036940575,
+     0.020106494426727295,
+     0.016971390694379807,
+     0.016577741131186485,
+     0.014614482410252094,
+     0.018472380936145782,
+     0.020510606467723846,
+     0.020666910335421562,
+     0.020197490230202675,
+     0.01620747335255146,
+     0.01896001398563385,
+     0.026641326025128365,
+     0.021608686074614525,
+     0.018959110602736473
+    ],
+    "logits": [
+     -0.06808306276798248,
+     0.11133711040019989
+    ]
+   },
+   "featureDim": 24,
+   "fit": {
+    "gradNorms": {
+     "attention_u.0.bias": 0.01125800425086951,
+     "attention_u.0.weight": 0.07042790026111513,
+     "attention_v.0.bias": 0.017091207256833493,
+     "attention_v.0.weight": 0.22437074206161453,
+     "attention_w.bias": 9.723293137653312e-09,
+     "attention_w.weight": 0.3447130971780894,
+     "branch_classifiers.0.fc.bias": 0.20153521871492205,
+     "branch_classifiers.0.fc.weight": 0.7025048322199176,
+     "branch_classifiers.1.fc.bias": 0.20276187113069497,
+     "branch_classifiers.1.fc.weight": 0.7227247403584329,
+     "branch_classifiers.2.fc.bias": 0.23497736269902747,
+     "branch_classifiers.2.fc.weight": 0.8231732557759395,
+     "classifier.fc.bias": 0.6438417906139378,
+     "classifier.fc.weight": 2.2620486833925275,
+     "patch_embed.fc1.weight": 0.4884264131331358
+    },
+    "loss": 2.172306776046753
+   },
+   "id": "acmil-3-2-mask10",
+   "inputSeed": 118,
+   "label": 1,
+   "loss": "ce",
+   "model": "acmil",
+   "outputs": 2,
+   "patches": 55,
+   "recipe": {
+    "acmilAttentionDim": 128,
+    "acmilBranches": 3,
+    "acmilMaskDrop": 0.6,
+    "acmilMaskedPatches": 10,
+    "embedDim": 64
+   },
+   "source": "ACMIL",
+   "tensors": [
+    [
+     "dimreduction.fc1.weight",
+     "patch_embed.fc1.weight",
+     [
+      64,
+      24
+     ]
+    ],
+    [
+     "attention.attention_V.0.weight",
+     "attention_v.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_V.0.bias",
+     "attention_v.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_U.0.weight",
+     "attention_u.0.weight",
+     [
+      128,
+      64
+     ]
+    ],
+    [
+     "attention.attention_U.0.bias",
+     "attention_u.0.bias",
+     [
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.weight",
+     "attention_w.weight",
+     [
+      3,
+      128
+     ]
+    ],
+    [
+     "attention.attention_weights.bias",
+     "attention_w.bias",
+     [
+      3
+     ]
+    ],
+    [
+     "classifier.0.fc.weight",
+     "branch_classifiers.0.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.0.fc.bias",
+     "branch_classifiers.0.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "classifier.1.fc.weight",
+     "branch_classifiers.1.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.1.fc.bias",
+     "branch_classifiers.1.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "classifier.2.fc.weight",
+     "branch_classifiers.2.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "classifier.2.fc.bias",
+     "branch_classifiers.2.fc.bias",
+     [
+      2
+     ]
+    ],
+    [
+     "Slide_classifier.fc.weight",
+     "classifier.fc.weight",
+     [
+      2,
+      64
+     ]
+    ],
+    [
+     "Slide_classifier.fc.bias",
+     "classifier.fc.bias",
+     [
+      2
+     ]
+    ]
+   ],
+   "weightSeed": 18
+  }
+ ],
+ "generator": "scripts/mil_parity_fixtures.py",
+ "sources": {
+  "ACMIL": "https://github.com/dazhangyu123/ACMIL e53d19c",
+  "CLAM": "https://github.com/mahmoodlab/CLAM 53e2409",
+  "DTFD-MIL": "https://github.com/hrzhang1123/DTFD-MIL 10964f4",
+  "TransMIL": "https://github.com/szc19990412/TransMIL 9d6aee5",
+  "dsmil-wsi": "https://github.com/binli123/dsmil-wsi 80465ed",
+  "nystrom-attention": "https://github.com/lucidrains/nystrom-attention fbe9eba",
+  "smooth-topk": "https://github.com/oval-group/smooth-topk 12c1645"
+ },
+ "svm": {
+  "gradient": [
+   -0.010728401131927967,
+   0.010728401131927967,
+   -0.011536898091435432,
+   0.011536898091435432,
+   -0.011661304160952568,
+   0.011661303229629993,
+   -0.010862741619348526,
+   0.010862741619348526,
+   0.011549701914191246,
+   -0.011549701914191246,
+   -0.011560754850506783,
+   0.011560754850506783,
+   -0.01118314079940319,
+   0.01118314079940319,
+   0.011784113943576813,
+   -0.011784113943576813,
+   0.011553780175745487,
+   -0.011553780175745487,
+   0.011952586472034454,
+   -0.011952586472034454,
+   0.011866319924592972,
+   -0.011866319924592972,
+   -0.012122595682740211,
+   0.012122595682740211,
+   0.011840262450277805,
+   -0.011840262450277805,
+   0.011975600384175777,
+   -0.011975600384175777,
+   0.011857609264552593,
+   -0.011857609264552593,
+   -0.011956528760492802,
+   0.011956528760492802,
+   -0.015005051158368587,
+   0.015005051158368587,
+   0.006262040231376886,
+   -0.006262039765715599,
+   0.0024833139032125473,
+   -0.0024833139032125473,
+   0.014948591589927673,
+   -0.014948591589927673,
+   -0.00773156713694334,
+   0.007731566671282053,
+   -0.00656963512301445,
+   0.00656963512301445,
+   0.011707451194524765,
+   -0.011707451194524765,
+   0.004631337709724903,
+   -0.004631337709724903,
+   0.013397171162068844,
+   -0.013397171162068844,
+   0.014617471024394035,
+   -0.014617471024394035,
+   0.01094261184334755,
+   -0.01094261184334755,
+   -0.010857058688998222,
+   0.010857059620320797,
+   -0.014837902039289474,
+   0.014837902039289474,
+   -0.014185416512191296,
+   0.014185416512191296,
+   0.014480199664831161,
+   -0.014480198733508587,
+   -0.014728589914739132,
+   0.014728589914739132,
+   -0.0027761971578001976,
+   0.0027761973906308413,
+   0.008907296694815159,
+   -0.008907297626137733,
+   -0.0005051335319876671,
+   0.000505133590195328,
+   0.0,
+   0.0,
+   -0.01561755035072565,
+   0.01561755035072565,
+   0.0,
+   0.0,
+   0.00415548961609602,
+   -0.00415548961609602,
+   0.015625,
+   -0.015625,
+   -0.01406391803175211,
+   0.01406391803175211,
+   -5.2354298532009125e-05,
+   5.235434582573362e-05,
+   -0.004283455200493336,
+   0.004283455200493336,
+   0.0,
+   0.0,
+   0.015547456219792366,
+   -0.015547456219792366,
+   -0.01308524888008833,
+   0.01308524888008833,
+   -0.010381003841757774,
+   0.010381003841757774,
+   0.001721585402265191,
+   -0.0017215851694345474,
+   0.0,
+   0.0,
+   -6.420165300369263e-05,
+   6.420157296815887e-05,
+   -0.015625,
+   0.015625,
+   0.0,
+   0.0,
+   0.015625,
+   -0.015625,
+   0.0,
+   0.0,
+   0.015625,
+   -0.015625,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   -0.015625,
+   0.015625,
+   0.015625,
+   -0.015625,
+   -0.015625,
+   0.015625,
+   0.015625,
+   -0.015625,
+   0.0,
+   0.0,
+   -0.015625,
+   0.015625,
+   0.015614679083228111,
+   -0.015614679083228111
+  ],
+  "id": "smooth-top1-svm",
+  "inputSeed": 7,
+  "loss": 9.318460464477539,
+  "rows": 64,
+  "scales": [
+   0.1,
+   1.0,
+   5.0,
+   50.0
+  ]
+ },
+ "torch": "2.10.0",
+ "version": 1
+}

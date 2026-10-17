@@ -190,8 +190,11 @@ Add one or more **batches**. Each batch is a single configuration, a **Parameter
 | Model | Input | Attention maps |
 | --- | --- | --- |
 | ABMIL, nnMIL | Patch bags | Yes |
+| CLAM-SB, CLAM-MB, TransMIL, DSMIL, DTFD-MIL, ACMIL | Patch bags | Yes |
 | Mean pooling MIL, Max pooling MIL | Patch bags | No |
 | Slide-embedding linear probe, MLP probe | One embedding per slide | No |
+
+**Architecture settings.** Choosing CLAM-SB, CLAM-MB, TransMIL, DSMIL, DTFD-MIL or ACMIL as the **Image model** adds a settings section for it, with the defaults of the published method. The architectures follow the authors' code, checked against it by golden-output tests; adapted forms, such as DSMIL's **Shared input layer** or CLAM's **Attention dropout follows Dropout**, stay off unless you turn them on. Examples are TransMIL's layers, heads, Nyström landmarks and position encoding, CLAM's attention width, sampled patches (B), slide-loss weight, instance loss and subtyping, DSMIL's query width and stream weighting, DTFD-MIL's pseudo-bags and distillation, and ACMIL's branches and masking. Each field explains its effect; **Restore defaults** returns the section to the method's values. **Model architecture** shows only the shared settings the chosen model reads, such as the patch projection's embedding dimensions and layers. Changing the model returns the previous model's own settings to their defaults. Optimizer, schedule, epochs and bags stay the recipe's for every model; set them as the paper did if you want its full protocol. CLAM, DSMIL, DTFD-MIL and ACMIL add their own loss terms during training (instance clustering, the max-instance stream, the first tier, the branches), weighted like the slide loss by class and patient weights. DTFD-MIL predictions repeat exactly; raise **Test-time pseudo-bag splits** to about 8 to average out the arbitrary split. CLAM-MB needs one logit per class, so it cannot use binary cross entropy. See [model architectures](methods.md#model-architectures).
 
 A standard recipe uses AdamW, learning rate 3e-4, weight decay 1e-4, at most 40 epochs, early stopping with patience 8, the checkpoint with the highest validation AUROC, FP32, 4,096 sampled patches per training bag, equal class weights, averaged slide probabilities for patients and a 0.5 decision threshold. Templates include an ABMIL baseline, nnMIL, a quick check and a learning-rate comparison. Advanced controls include precision, schedulers and warmup, gradient accumulation and clipping, class weighting, sampling, and the small-validation fallback. Validation and assessment use whole bags by default. nnMIL has its own feature-window sampling and checkpoint policy. New nnMIL recipes turn on **New feature-window order for each training seed**, so the spread across seeds includes the variation from that order; recipes saved earlier keep one fixed order.
 
@@ -318,7 +321,7 @@ An **Operating threshold** you enter is labeled as a descriptive override. Choos
 
 **Model interpretation** shows where a predictor's attention falls on the slides. It needs no runs from Apply models.
 
-1. **Model & features.** Choose an ABMIL or nnMIL ensemble or refit predictor and a compatible feature bundle, with original files or a verified pack. Predictors are grouped by objective, experiment and role. The slide folder comes from the bundle's dataset.
+1. **Model & features.** Choose an ensemble or refit predictor of a model with attention maps (see the model table under [Hyperparameters](#hyperparameters)) and a compatible feature bundle, with original files or a verified pack. Predictors are grouped by objective, experiment and role. The slide folder comes from the bundle's dataset.
 2. **Slides.** Browse the dataset's slide folder with thumbnails and search, and select up to 128 slides. Selecting starts nothing.
 3. **Attention review.** HistoPilot reuses finished or running attention and queues the rest as Task Center tasks. Each slide shows its own status; failed slides can be retried without losing the others. Open a slide for the focused viewer.
 

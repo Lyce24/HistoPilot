@@ -21,6 +21,20 @@ def patch_projection(in_dim, embed_dim, num_fc_layers, dropout):
     return nn.Sequential(*layers)
 
 
+def mean_probability_logits(*logits):
+    """Logits whose probabilities are the mean of several heads' probabilities.
+
+    Several class logits average softmax probabilities; one logit averages sigmoids.
+    """
+    stacked = torch.stack([value.double() for value in logits])
+    count = torch.log(torch.tensor(float(len(logits)), dtype=torch.float64))
+    if stacked.shape[-1] == 1:
+        positive = torch.logsumexp(torch.nn.functional.logsigmoid(stacked), dim=0)
+        negative = torch.logsumexp(torch.nn.functional.logsigmoid(-stacked), dim=0)
+        return (positive - negative).float()
+    return (torch.logsumexp(torch.log_softmax(stacked, dim=-1), dim=0) - count).float()
+
+
 def prepare_bags(features, mask, in_dim):
     if features.ndim != 3 or features.shape[-1] != in_dim or features.shape[1] == 0:
         raise ValueError("Features must have shape [bags, nonempty patches, input dimensions].")

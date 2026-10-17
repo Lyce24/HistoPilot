@@ -62,6 +62,8 @@ EXPERIMENTAL_DEFAULTS = {
     "lrScheduleInterval": "epoch",
     "inputMode": "image",
     "clinicalFields": [],
+    # Architecture options (models/catalog.py); tests/test_model_options.py keeps them equal.
+    **catalog.option_defaults(),
 }
 
 
@@ -119,6 +121,40 @@ class TrainingRecipe(RequestModel):
         "patient_weighted"
     )
     nnmilCheckpointSelection: Literal["best_validation", "latest"] = "best_validation"
+    # Architecture options, described for people in models/catalog.py.
+    clamAttentionDim: Annotated[StrictInt, Field(ge=1, le=8192)] = 256
+    clamGatedAttention: bool = True
+    clamRecipeAttentionDropout: bool = False
+    clamInstanceSamples: Annotated[StrictInt, Field(ge=1, le=4096)] = 8
+    clamBagWeight: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] = 0.7
+    clamInstanceLoss: Literal["svm", "ce"] = "svm"
+    clamSubtyping: bool = False
+    transmilLayers: Annotated[StrictInt, Field(ge=1, le=12)] = 2
+    transmilHeads: Annotated[StrictInt, Field(ge=1, le=64)] = 8
+    transmilLandmarks: Annotated[StrictInt, Field(ge=1, le=4096)] = 256
+    transmilPinvIterations: Annotated[StrictInt, Field(ge=1, le=32)] = 6
+    transmilDropout: Probability = 0.1
+    transmilPositionEncoding: bool = True
+    transmilResidualConv: bool = True
+    dsmilProjection: bool = False
+    dsmilQueryDim: Annotated[StrictInt, Field(ge=1, le=8192)] = 128
+    dsmilNonlinearQuery: bool = True
+    dsmilPassingValue: bool = False
+    dsmilValueDropout: Probability = 0.0
+    dsmilMaxLossWeight: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] = 0.5
+    dsmilAveragePrediction: bool = False
+    dtfdPseudoBags: Annotated[StrictInt, Field(ge=1, le=256)] = 4
+    dtfdTestSplits: Annotated[StrictInt, Field(ge=1, le=64)] = 1
+    dtfdDistill: Literal["afs", "maxmins", "maxs"] = "afs"
+    dtfdDistillPatches: Annotated[StrictInt, Field(ge=1, le=1024)] = 1
+    dtfdResidualBlocks: Annotated[StrictInt, Field(ge=0, le=8)] = 0
+    dtfdAttentionDim: Annotated[StrictInt, Field(ge=1, le=8192)] = 128
+    dtfdDropout: Probability = 0.0
+    acmilBranches: Annotated[StrictInt, Field(ge=1, le=64)] = 5
+    acmilMaskedPatches: Annotated[StrictInt, Field(ge=0, le=100000)] = 10
+    acmilMaskDrop: Probability = 0.6
+    acmilAttentionDim: Annotated[StrictInt, Field(ge=1, le=8192)] = 128
+    acmilDropout: Probability = 0.0
     classWeighting: Literal["none", "inverse_prevalence"] = "none"
     classWeights: list[PositiveFloat] | None = Field(default=None, min_length=2, max_length=50)
     focalGamma: NonnegativeFloat = 2
@@ -180,6 +216,16 @@ class TrainingRecipe(RequestModel):
         if self.inputMode == "clinical" and self.model != "abmil":
             raise ValueError(
                 "Clinical-only uses a linear clinical head; retain the default model setting."
+            )
+        architecture = catalog.spec(self.model)
+        if architecture and architecture.requires_class_logits and self.lossType == "bce":
+            raise ValueError(
+                f"{architecture.label} has one attention branch per class; use cross entropy or "
+                "focal loss instead of one-logit BCE."
+            )
+        if catalog.normalize(self.model) == "transmil" and self.embedDim % self.transmilHeads:
+            raise ValueError(
+                "TransMIL needs embedding dimensions that divide evenly by its attention heads."
             )
         if self.minEpochs > self.maxEpochs:
             raise ValueError("Minimum epochs cannot exceed maximum epochs.")

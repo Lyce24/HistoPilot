@@ -3,6 +3,7 @@ import type { ExperimentPredictorPolicy } from '../api/experiments';
 import type { MILExperimentSpec } from '../api/mil';
 import type { NumericDrafts } from '../components/NumericFieldDrafts';
 import type { ComparisonDraft } from '../components/ControlledComparison';
+import { MODEL_OPTIONS } from './modelCapabilities';
 
 /** An editing recovery copy, never a reviewed or submitted scientific record. */
 export interface BatchEditorDraft {
@@ -60,6 +61,8 @@ function recipe(value: unknown): value is TrainingRecipe {
     bagSizeMode: ['fixed', 'training_median'], nnmilWindowAggregation: ['mean_logits', 'mean_probabilities'],
     nnmilBatchSampler: ['patient_weighted', 'class_balanced', 'auc_stratified'], nnmilCheckpointSelection: ['best_validation', 'latest'],
     weightDecayPolicy: ['all', 'weights_only'], lrScheduleInterval: ['epoch', 'step'],
+    // Each architecture's own choices, such as CLAM's instance loss.
+    ...Object.fromEntries(MODEL_OPTIONS.filter((option) => option.kind === 'choice').map((option) => [option.key, option.choices.map((choice) => choice.value)])),
   };
   return Object.entries(experimentalRecipeDefaults).every(([key, sample]) => {
     const item = value[key];

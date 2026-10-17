@@ -490,7 +490,9 @@ def matched_input_recipes(recipe: dict) -> list[dict]:
 
 def with_arm_model(base: dict, model: str) -> dict:
     """`withArmModel` (web/src/components/ControlledComparison.tsx): the base recipe with
-    another model. Only settings the model owns change, so the comparison measures it alone."""
+    another model. Only settings the model owns change, so the comparison measures it alone.
+    Options of other architectures that the base sets (TransMIL's layers on a CLAM arm)
+    return to their defaults."""
     if model == base.get("model"):
         return base
     reference = templates.recipe()
@@ -503,13 +505,15 @@ def with_arm_model(base: dict, model: str) -> dict:
             own.update(
                 attentionDim=reference["attentionDim"], gatedAttention=reference["gatedAttention"]
             )
+    defaults = catalog.option_defaults()
+    foreign = {key: defaults[key] for key in catalog.foreign_options(model) if key in base}
     slide = (
         deepcopy(templates.COUPLING["modelSelect"]["slide"])
         if catalog.feature_kind(model) == "slide"
         and catalog.feature_kind(base.get("model")) != "slide"
         else {}
     )
-    return {**base, "model": model, **own, **slide}
+    return {**base, "model": model, **own, **foreign, **slide}
 
 
 def ablation_arms(base: dict, models, inputs) -> list[dict]:

@@ -41,6 +41,17 @@ export interface TrainingRecipe {
   nnmilBatchSampler?: 'patient_weighted' | 'class_balanced' | 'auc_stratified';
   nnmilCheckpointSelection?: 'best_validation' | 'latest';
   weightDecayPolicy?: 'all' | 'weights_only'; lrScheduleInterval?: 'epoch' | 'step';
+  // Architecture options; their labels, ranges and help live in lib/modelCatalog.json.
+  clamAttentionDim?: number; clamGatedAttention?: boolean; clamRecipeAttentionDropout?: boolean; clamInstanceSamples?: number;
+  clamBagWeight?: number; clamInstanceLoss?: 'svm' | 'ce'; clamSubtyping?: boolean;
+  transmilLayers?: number; transmilHeads?: number; transmilLandmarks?: number; transmilPinvIterations?: number;
+  transmilDropout?: number; transmilPositionEncoding?: boolean; transmilResidualConv?: boolean;
+  dsmilProjection?: boolean; dsmilQueryDim?: number; dsmilNonlinearQuery?: boolean; dsmilPassingValue?: boolean;
+  dsmilValueDropout?: number; dsmilMaxLossWeight?: number; dsmilAveragePrediction?: boolean;
+  dtfdPseudoBags?: number; dtfdTestSplits?: number; dtfdDistill?: 'afs' | 'maxmins' | 'maxs'; dtfdDistillPatches?: number; dtfdResidualBlocks?: number;
+  dtfdAttentionDim?: number; dtfdDropout?: number;
+  acmilBranches?: number; acmilMaskedPatches?: number; acmilMaskDrop?: number;
+  acmilAttentionDim?: number; acmilDropout?: number;
 }
 export interface ResourcePolicy {
   maxConcurrentRuns: number; gpuIds: number[]; runsPerGpu: number;

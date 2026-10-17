@@ -8,7 +8,21 @@
     "structuredOutput": false,
     "honorsCheckpointSelection": false,
     "windowedSampling": false,
-    "optionPrefix": null
+    "optionPrefix": null,
+    "reads": [
+      "embedDim",
+      "attentionDim",
+      "numFcLayers",
+      "gatedAttention",
+      "dropout",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [],
+    "auxiliaryLoss": false,
+    "requiresClassLogits": false,
+    "attentionNote": null,
+    "reference": "Ilse, Tomczak and Welling, ICML 2018"
   },
   {
     "name": "nnmil",
@@ -19,7 +33,731 @@
     "structuredOutput": true,
     "honorsCheckpointSelection": true,
     "windowedSampling": true,
-    "optionPrefix": "nnmil"
+    "optionPrefix": "nnmil",
+    "reads": [
+      "attentionDim",
+      "dropout",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [],
+    "auxiliaryLoss": false,
+    "requiresClassLogits": false,
+    "attentionNote": "Each member averages normalized attention across its feature windows.",
+    "reference": "Luo et al., arXiv:2511.14907"
+  },
+  {
+    "name": "clam_sb",
+    "label": "CLAM-SB",
+    "summary": "Gated attention with instance-level clustering of the most and least attended patches.",
+    "featureKind": "patch",
+    "supportsAttention": true,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": "clam",
+    "reads": [
+      "embedDim",
+      "numFcLayers",
+      "dropout",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [
+      {
+        "key": "clamAttentionDim",
+        "label": "Attention dimensions",
+        "kind": "integer",
+        "default": 256,
+        "help": "Hidden width of the attention network. CLAM's small model uses 256, its big model 384.",
+        "minimum": 1,
+        "maximum": 8192,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamGatedAttention",
+        "label": "Gated attention",
+        "kind": "boolean",
+        "default": true,
+        "help": "Multiply the attention scores by a sigmoid gate, as CLAM does by default.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamRecipeAttentionDropout",
+        "label": "Attention dropout follows Dropout",
+        "kind": "boolean",
+        "default": false,
+        "help": "Off, as published: the attention branches drop 25% whenever Dropout is above 0, whatever its value. On, they use the Dropout setting.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamInstanceSamples",
+        "label": "Patches per instance class (B)",
+        "kind": "integer",
+        "default": 8,
+        "help": "The B most and B least attended patches of each slide train the instance classifiers. A slide with fewer than 2B patches uses half of them.",
+        "minimum": 1,
+        "maximum": 4096,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamBagWeight",
+        "label": "Slide loss weight",
+        "kind": "number",
+        "default": 0.7,
+        "help": "Weight of the slide-level loss; the instance-clustering loss gets the rest. 1 turns instance clustering off.",
+        "minimum": 0,
+        "maximum": 1,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamInstanceLoss",
+        "label": "Instance loss",
+        "kind": "choice",
+        "default": "svm",
+        "help": "Loss of the instance classifiers. CLAM's published runs use the smooth top-1 SVM (margin 1, temperature 1).",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [
+          {
+            "value": "svm",
+            "label": "Smooth top-1 SVM"
+          },
+          {
+            "value": "ce",
+            "label": "Cross entropy"
+          }
+        ],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamSubtyping",
+        "label": "Mutually exclusive subtypes",
+        "kind": "boolean",
+        "default": false,
+        "help": "Also teach every other class's instance classifier that this slide's most attended patches are negative. CLAM uses this for subtyping tasks.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      }
+    ],
+    "auxiliaryLoss": true,
+    "requiresClassLogits": false,
+    "attentionNote": null,
+    "reference": "Lu et al., Nature Biomedical Engineering 2021"
+  },
+  {
+    "name": "clam_mb",
+    "label": "CLAM-MB",
+    "summary": "One attention branch and slide classifier per class, with instance-level clustering.",
+    "featureKind": "patch",
+    "supportsAttention": true,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": "clam",
+    "reads": [
+      "embedDim",
+      "numFcLayers",
+      "dropout",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [
+      {
+        "key": "clamAttentionDim",
+        "label": "Attention dimensions",
+        "kind": "integer",
+        "default": 256,
+        "help": "Hidden width of the attention network. CLAM's small model uses 256, its big model 384.",
+        "minimum": 1,
+        "maximum": 8192,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamGatedAttention",
+        "label": "Gated attention",
+        "kind": "boolean",
+        "default": true,
+        "help": "Multiply the attention scores by a sigmoid gate, as CLAM does by default.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamRecipeAttentionDropout",
+        "label": "Attention dropout follows Dropout",
+        "kind": "boolean",
+        "default": false,
+        "help": "Off, as published: the attention branches drop 25% whenever Dropout is above 0, whatever its value. On, they use the Dropout setting.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamInstanceSamples",
+        "label": "Patches per instance class (B)",
+        "kind": "integer",
+        "default": 8,
+        "help": "The B most and B least attended patches of each slide train the instance classifiers. A slide with fewer than 2B patches uses half of them.",
+        "minimum": 1,
+        "maximum": 4096,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamBagWeight",
+        "label": "Slide loss weight",
+        "kind": "number",
+        "default": 0.7,
+        "help": "Weight of the slide-level loss; the instance-clustering loss gets the rest. 1 turns instance clustering off.",
+        "minimum": 0,
+        "maximum": 1,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamInstanceLoss",
+        "label": "Instance loss",
+        "kind": "choice",
+        "default": "svm",
+        "help": "Loss of the instance classifiers. CLAM's published runs use the smooth top-1 SVM (margin 1, temperature 1).",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [
+          {
+            "value": "svm",
+            "label": "Smooth top-1 SVM"
+          },
+          {
+            "value": "ce",
+            "label": "Cross entropy"
+          }
+        ],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "clamSubtyping",
+        "label": "Mutually exclusive subtypes",
+        "kind": "boolean",
+        "default": false,
+        "help": "Also teach every other class's instance classifier that this slide's most attended patches are negative. CLAM uses this for subtyping tasks.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      }
+    ],
+    "auxiliaryLoss": true,
+    "requiresClassLogits": true,
+    "attentionNote": "Each member's map is the attention branch of its predicted class, as CLAM's heatmaps use.",
+    "reference": "Lu et al., Nature Biomedical Engineering 2021"
+  },
+  {
+    "name": "transmil",
+    "label": "TransMIL",
+    "summary": "Nyström Transformer over patch tokens with a class token and pyramid position encoding.",
+    "featureKind": "patch",
+    "supportsAttention": true,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": "transmil",
+    "reads": [
+      "embedDim",
+      "numFcLayers",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [
+      {
+        "key": "transmilLayers",
+        "label": "Transformer layers",
+        "kind": "integer",
+        "default": 2,
+        "help": "Nyström self-attention layers. The position encoding follows the first layer, as in TransMIL's two-layer model; a one-layer model encodes positions before its layer.",
+        "minimum": 1,
+        "maximum": 12,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "transmilHeads",
+        "label": "Attention heads",
+        "kind": "integer",
+        "default": 8,
+        "help": "Heads per layer. The embedding dimensions must divide evenly by them.",
+        "minimum": 1,
+        "maximum": 64,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "transmilLandmarks",
+        "label": "Nyström landmarks",
+        "kind": "integer",
+        "default": 256,
+        "help": "Landmark tokens that approximate full self-attention; TransMIL uses half the embedding dimensions.",
+        "minimum": 1,
+        "maximum": 4096,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "transmilPinvIterations",
+        "label": "Pseudo-inverse iterations",
+        "kind": "integer",
+        "default": 6,
+        "help": "Moore-Penrose iterations of the Nyström approximation.",
+        "minimum": 1,
+        "maximum": 32,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "transmilDropout",
+        "label": "Attention dropout",
+        "kind": "number",
+        "default": 0.1,
+        "help": "Dropout on each attention layer's output.",
+        "minimum": 0,
+        "maximum": 1,
+        "maximumExclusive": true,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "transmilPositionEncoding",
+        "label": "Pyramid position encoding (PPEG)",
+        "kind": "boolean",
+        "default": true,
+        "help": "Depthwise 3×3, 5×5 and 7×7 convolutions over the patch tokens laid out on a square grid in bag order.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "transmilResidualConv",
+        "label": "Value residual convolution",
+        "kind": "boolean",
+        "default": true,
+        "help": "Add a depthwise convolution over the attention values along the sequence (kernel 33), as TransMIL's Nyström layers do.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      }
+    ],
+    "auxiliaryLoss": false,
+    "requiresClassLogits": false,
+    "attentionNote": "Each member's map is the class token's softmax attention to the patches in the last layer, computed exactly and averaged over heads; the copies that square the token grid count toward their source patches.",
+    "reference": "Shao et al., NeurIPS 2021"
+  },
+  {
+    "name": "dsmil",
+    "label": "DSMIL",
+    "summary": "A max-instance classifier plus attention to each class's critical patch.",
+    "featureKind": "patch",
+    "supportsAttention": true,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": "dsmil",
+    "reads": [
+      "embedDim",
+      "numFcLayers",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {
+      "embedDim": {
+        "key": "dsmilProjection",
+        "values": [
+          true
+        ]
+      },
+      "numFcLayers": {
+        "key": "dsmilProjection",
+        "values": [
+          true
+        ]
+      }
+    },
+    "options": [
+      {
+        "key": "dsmilProjection",
+        "label": "Shared input layer",
+        "kind": "boolean",
+        "default": false,
+        "help": "Project patches with the input layer under Model architecture before the instance classifier, as standardized benchmark libraries do. Off, as published, DSMIL classifies the patch features directly.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "dsmilQueryDim",
+        "label": "Query dimensions",
+        "kind": "integer",
+        "default": 128,
+        "help": "Width of the query network that compares patches with the critical patch.",
+        "minimum": 1,
+        "maximum": 8192,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "dsmilNonlinearQuery",
+        "label": "Nonlinear query network",
+        "kind": "boolean",
+        "default": true,
+        "help": "Two layers with ReLU and tanh; off, a single linear layer.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "dsmilPassingValue",
+        "label": "Value projection",
+        "kind": "boolean",
+        "default": false,
+        "help": "Project patch embeddings before pooling them; off, they are pooled as they are.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "dsmilValueDropout",
+        "label": "Value dropout",
+        "kind": "number",
+        "default": 0.0,
+        "help": "Dropout before the value projection.",
+        "minimum": 0,
+        "maximum": 1,
+        "maximumExclusive": true,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": {
+          "key": "dsmilPassingValue",
+          "values": [
+            true
+          ]
+        }
+      },
+      {
+        "key": "dsmilMaxLossWeight",
+        "label": "Max-instance loss weight",
+        "kind": "number",
+        "default": 0.5,
+        "help": "Weight of the max-instance classifier's loss; the slide loss gets the rest. DSMIL weights both equally.",
+        "minimum": 0,
+        "maximum": 1,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "dsmilAveragePrediction",
+        "label": "Average both classifiers",
+        "kind": "boolean",
+        "default": false,
+        "help": "Predict with the mean of the slide and max-instance classifiers' probabilities; off, the slide classifier alone.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      }
+    ],
+    "auxiliaryLoss": true,
+    "requiresClassLogits": false,
+    "attentionNote": "Each member's map is the attention to its predicted class's critical patch.",
+    "reference": "Li, Li and Eliceiri, CVPR 2021"
+  },
+  {
+    "name": "dtfd",
+    "label": "DTFD-MIL",
+    "summary": "Attention over random pseudo-bags, distilled into a second attention tier.",
+    "featureKind": "patch",
+    "supportsAttention": true,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": "dtfd",
+    "reads": [
+      "embedDim",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [
+      {
+        "key": "dtfdPseudoBags",
+        "label": "Pseudo-bags per slide",
+        "kind": "integer",
+        "default": 4,
+        "help": "Random groups each slide's patches are split into: 4 in the authors' code, 5 and 8 in the paper's CAMELYON16 and TCGA lung runs. Testing uses one fixed split per slide size, so predictions are reproducible.",
+        "minimum": 1,
+        "maximum": 256,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "dtfdTestSplits",
+        "label": "Test-time pseudo-bag splits",
+        "kind": "integer",
+        "default": 1,
+        "help": "Random splits whose predicted probabilities are averaged when testing, each from a fixed seed, so predictions repeat. The authors' code uses 1; with MaxMinS one split moved a slide's probability by up to 0.33, so 8 gives steadier clinical predictions.",
+        "minimum": 1,
+        "maximum": 64,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "dtfdDistill",
+        "label": "Feature distillation",
+        "kind": "choice",
+        "default": "afs",
+        "help": "What each pseudo-bag passes to the second tier.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [
+          {
+            "value": "afs",
+            "label": "Attention-pooled feature (AFS)"
+          },
+          {
+            "value": "maxmins",
+            "label": "Highest- and lowest-scoring patches (MaxMinS)"
+          },
+          {
+            "value": "maxs",
+            "label": "Highest-scoring patches (MaxS)"
+          }
+        ],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "dtfdDistillPatches",
+        "label": "Patches distilled per pseudo-bag",
+        "kind": "integer",
+        "default": 1,
+        "help": "For MaxMinS and MaxS: patches taken from each end of the pseudo-bag's ranking.",
+        "minimum": 1,
+        "maximum": 1024,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": {
+          "key": "dtfdDistill",
+          "values": [
+            "maxmins",
+            "maxs"
+          ]
+        }
+      },
+      {
+        "key": "dtfdResidualBlocks",
+        "label": "Residual blocks",
+        "kind": "integer",
+        "default": 0,
+        "help": "Residual blocks after the input layer (the authors' numLayer_Res, 0 by default).",
+        "minimum": 0,
+        "maximum": 8,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "dtfdAttentionDim",
+        "label": "Attention dimensions",
+        "kind": "integer",
+        "default": 128,
+        "help": "Hidden width of both tiers' gated attention.",
+        "minimum": 1,
+        "maximum": 8192,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "dtfdDropout",
+        "label": "Classifier dropout",
+        "kind": "number",
+        "default": 0.0,
+        "help": "Dropout before both tiers' classifiers.",
+        "minimum": 0,
+        "maximum": 1,
+        "maximumExclusive": true,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      }
+    ],
+    "auxiliaryLoss": true,
+    "requiresClassLogits": false,
+    "attentionNote": "Each member's map is the weight of each patch in the slide embedding: its attention within its pseudo-bag times the second tier's attention to that pseudo-bag. With MaxMinS or MaxS distillation only the distilled patches carry weight.",
+    "reference": "Zhang et al., CVPR 2022"
+  },
+  {
+    "name": "acmil",
+    "label": "ACMIL",
+    "summary": "Several attention branches with masking of top patches and a diversity penalty.",
+    "featureKind": "patch",
+    "supportsAttention": true,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": "acmil",
+    "reads": [
+      "embedDim",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [
+      {
+        "key": "acmilBranches",
+        "label": "Attention branches",
+        "kind": "integer",
+        "default": 5,
+        "help": "Branches with their own attention and classifier. One branch with no masking is gated ABMIL.",
+        "minimum": 1,
+        "maximum": 64,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "acmilMaskedPatches",
+        "label": "Top patches eligible for masking",
+        "kind": "integer",
+        "default": 10,
+        "help": "While fitting, part of each branch's most attended patches is hidden (stochastic top-k instance masking). 0 turns masking off.",
+        "minimum": 0,
+        "maximum": 100000,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "acmilMaskDrop",
+        "label": "Masked fraction",
+        "kind": "number",
+        "default": 0.6,
+        "help": "Fraction of those top patches hidden at random each step. ACMIL's authors report that 0 is sometimes more stable.",
+        "minimum": 0,
+        "maximum": 1,
+        "maximumExclusive": true,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "acmilAttentionDim",
+        "label": "Attention dimensions",
+        "kind": "integer",
+        "default": 128,
+        "help": "Hidden width of the gated attention.",
+        "minimum": 1,
+        "maximum": 8192,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "acmilDropout",
+        "label": "Classifier dropout",
+        "kind": "number",
+        "default": 0.0,
+        "help": "Dropout before the branch and slide classifiers.",
+        "minimum": 0,
+        "maximum": 1,
+        "maximumExclusive": true,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      }
+    ],
+    "auxiliaryLoss": true,
+    "requiresClassLogits": false,
+    "attentionNote": "Each member's map is the mean of its branches' attention, which is what its slide classifier pools.",
+    "reference": "Zhang et al., ECCV 2024"
   },
   {
     "name": "mean_pool",
@@ -30,7 +768,19 @@
     "structuredOutput": false,
     "honorsCheckpointSelection": false,
     "windowedSampling": false,
-    "optionPrefix": null
+    "optionPrefix": null,
+    "reads": [
+      "embedDim",
+      "numFcLayers",
+      "dropout",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [],
+    "auxiliaryLoss": false,
+    "requiresClassLogits": false,
+    "attentionNote": null,
+    "reference": null
   },
   {
     "name": "max_pool",
@@ -41,7 +791,19 @@
     "structuredOutput": false,
     "honorsCheckpointSelection": false,
     "windowedSampling": false,
-    "optionPrefix": null
+    "optionPrefix": null,
+    "reads": [
+      "embedDim",
+      "numFcLayers",
+      "dropout",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [],
+    "auxiliaryLoss": false,
+    "requiresClassLogits": false,
+    "attentionNote": null,
+    "reference": null
   },
   {
     "name": "slide_linear",
@@ -52,7 +814,16 @@
     "structuredOutput": false,
     "honorsCheckpointSelection": false,
     "windowedSampling": false,
-    "optionPrefix": null
+    "optionPrefix": null,
+    "reads": [
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [],
+    "auxiliaryLoss": false,
+    "requiresClassLogits": false,
+    "attentionNote": null,
+    "reference": null
   },
   {
     "name": "slide_mlp",
@@ -63,6 +834,17 @@
     "structuredOutput": false,
     "honorsCheckpointSelection": false,
     "windowedSampling": false,
-    "optionPrefix": null
+    "optionPrefix": null,
+    "reads": [
+      "embedDim",
+      "dropout",
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [],
+    "auxiliaryLoss": false,
+    "requiresClassLogits": false,
+    "attentionNote": null,
+    "reference": null
   }
 ]

@@ -10,6 +10,7 @@ from pathlib import Path
 from histopilot.application.feature_bundles import FeatureBundleService
 from histopilot.application.imports import SLIDE_EXTENSIONS
 from histopilot.application.predictors import PredictorService, reference
+from histopilot.models import catalog
 from histopilot.schemas.interpretation import InterpretationSlide
 from histopilot.storage import read_sessions
 from histopilot.storage.filesystem import FilesystemError, within
@@ -278,15 +279,15 @@ class InterpretationGalleryService:
                         "severity": "error",
                     }
                 )
-            if (
-                predictor["manifest"].get("recipe", {}).get("model", "abmil").lower()
-                not in {"abmil", "nnmil"}
-                or predictor["manifest"].get("recipe", {}).get("inputMode") == "clinical"
+            recipe = predictor["manifest"].get("recipe", {})
+            if not catalog.supports_attention(
+                recipe.get("model"), recipe.get("inputMode", "image")
             ):
                 findings.append(
                     {
                         "code": "INTERPRETATION_MODEL_UNSUPPORTED",
-                        "message": "Attention visualization requires an ABMIL or nnMIL predictor.",
+                        "message": "Attention visualization requires a predictor whose model "
+                        f"has attention: {catalog.attention_choices()}.",
                         "severity": "error",
                     }
                 )

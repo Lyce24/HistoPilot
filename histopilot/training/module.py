@@ -385,10 +385,31 @@ class MILTrainModule(L.LightningModule):
                 torch.cuda.set_rng_state_all([value.cpu() for value in state["cuda"]])
             self._resume_rng_state = None
 
-    def training_step(self, batch, batch_idx):
-        losses = self.loss(
-            self(batch["features"], batch["mask"], batch.get("clinical")).float(), batch["labels"]
+    def _training_losses(self, batch):
+        """Per-slide fitting losses, including an architecture's own loss terms.
+
+        Such architectures (CLAM, DSMIL, DTFD-MIL, ACMIL) receive the labels and this
+        recipe's loss. They return image logits, the weight of the slide loss on them, and
+        each slide's weighted auxiliary loss; the clinical head joins the slide logits only.
+        """
+        labels = batch["labels"]
+        if self.input_mode == "clinical" or not catalog.auxiliary_loss(self.recipe.get("model")):
+            return self.loss(
+                self(batch["features"], batch["mask"], batch.get("clinical")).float(), labels
+            )
+        output = self.model.training_output(batch["features"], batch["mask"], labels, self.loss)
+        logits = output["logits"]
+        if self.clinical_head is not None:
+            logits = logits + self.clinical_head(
+                self._clinical_tensor(batch.get("clinical"), len(labels))
+            )
+        return (
+            output["bagLossWeight"] * self.loss(logits.float(), labels)
+            + output["auxiliaryLoss"].float()
         )
+
+    def training_step(self, batch, batch_idx):
+        losses = self._training_losses(batch)
         if self.target["unit"] == "patient":
             if "lossWeights" not in batch:
                 raise ValueError("Patient-target fitting requires explicit per-slide loss weights.")

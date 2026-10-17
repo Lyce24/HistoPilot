@@ -15,7 +15,7 @@ import { downloadJSON } from '../lib/download';
 import { sameJSON } from '../lib/json';
 import { useHashParameters } from '../lib/hashRoute';
 import { batchPredictorPolicy, defaultPredictorPolicy, plannedBatchPredictorCount, plannedConfigurationCount, plansPerSeed } from '../lib/experimentPredictors';
-import { featureKindOf, modelLabel, modelSpec, modelsForFeatureKind, usesPatchFeatures, type FeatureKind } from '../lib/modelCapabilities';
+import { featureKindOf, modelLabel, modelSpec, modelsForFeatureKind, readsField, sharedFieldEnabled, usesPatchFeatures, withoutForeignOptions, type FeatureKind } from '../lib/modelCapabilities';
 import './DevelopmentBatches.css';
 import DevelopmentExecution from './DevelopmentExecution';
 import NumericField from './NumericField';
@@ -31,6 +31,7 @@ import { ClinicalInputFields, inputModeLabel, type ClinicalChoices } from './Cli
 import { AblationArms, ComparisonReview, ComparisonSettings, armLabel, comparisonFromArms, comparisonMetricLabel, comparisonSummary, type ComparisonDraft } from './ControlledComparison';
 import { ObjectiveFields, SamplingFields, EvaluationBagFields, OptimizerFields, StoppingPolicyFields, ExperimentalRecipeSummary, lossLabels, samplingLabels, scheduleLabels } from './ExperimentalRecipeFields';
 import { applyNnMILPaperOptimizer, NnMILPlanning, NnMILRecipeFields } from './NnMILRecipeFields';
+import { ModelOptionFields, modelOptionSummary } from './ModelOptionFields';
 import { assessmentPlanNoun } from '../lib/split';
 
 export type DevelopmentTab = 'setup' | 'batches' | 'runs' | 'results';
@@ -70,7 +71,7 @@ export function RecipeFields({ value, onChange, gridMode = false, classes, clini
     <section className="batch-editor-section" aria-label={gridMode ? 'Shared training settings' : 'Training settings'}>
       <div className="batch-section-heading"><h3>{gridMode ? 'Shared training settings' : 'Training settings'}</h3><p>{gridMode ? 'Applied to every combination in the parameter grid.' : 'The model and settings used for each fold.'}</p></div>
       <div className="development-fields batch-primary-fields">
-        {value.inputMode !== 'clinical' ? <label className="label">Image model<select disabled={modelChoicePending} className="field" value={value.model} onChange={(e) => onChange({ ...value, model: e.target.value, ...(e.target.value === 'nnmil' ? coupling.modelSelect.nnmil : coupling.modelSelect.other), ...(featureKindOf(e.target.value) === 'slide' ? coupling.modelSelect.slide : {}) })}>{availableModels.map((item) => <option key={item.name} value={item.name}>{item.label}</option>)}{!availableModels.some((item) => item.name === value.model) ? <option value={value.model} disabled>{modelLabel(value.model) || value.model} (unavailable)</option> : null}</select>{featureKind === 'slide' ? <span className="field-hint">This bundle holds one embedding per slide, so patch architectures cannot read it.</span> : null}{modelChoicePending ? <span role="status">Resolving this bundle’s feature contents…</span> : null}</label> : <p>Clinical-only logistic baseline. Image-model choices do not apply.</p>}
+        {value.inputMode !== 'clinical' ? <label className="label">Image model<select disabled={modelChoicePending} className="field" value={value.model} onChange={(e) => onChange(withoutForeignOptions({ ...value, model: e.target.value, ...(e.target.value === 'nnmil' ? coupling.modelSelect.nnmil : coupling.modelSelect.other), ...(featureKindOf(e.target.value) === 'slide' ? coupling.modelSelect.slide : {}) }, e.target.value))}>{availableModels.map((item) => <option key={item.name} value={item.name}>{item.label}</option>)}{!availableModels.some((item) => item.name === value.model) ? <option value={value.model} disabled>{modelLabel(value.model) || value.model} (unavailable)</option> : null}</select>{featureKind === 'slide' ? <span className="field-hint">This bundle holds one embedding per slide, so patch architectures cannot read it.</span> : null}{modelChoicePending ? <span role="status">Resolving this bundle’s feature contents…</span> : null}</label> : <p>Clinical-only logistic baseline. Image-model choices do not apply.</p>}
         {!gridMode ? <>
           <NumericField label="Learning rate" value={value.learningRate} integer={false} min={0} minExclusive onChange={(learningRate) => onChange({ ...value, learningRate })} />
           <NumericField label="Weight decay" value={value.weightDecay} integer={false} min={0} onChange={(weightDecay) => onChange({ ...value, weightDecay })} />
@@ -92,6 +93,7 @@ export function RecipeFields({ value, onChange, gridMode = false, classes, clini
       </fieldset> : slideFeatures ? <p className="muted">Each training record contains one complete slide embedding. No patch bag is sampled.</p> : null}
     </section>
     {value.model === 'nnmil' ? <NnMILRecipeFields value={value} onChange={onChange} /> : null}
+    <ModelOptionFields value={value} onChange={onChange} />
     <ObjectiveFields value={value} onChange={onChange} classes={classes} />
     <details className="batch-settings-details setup-details"><summary><span>Optimization &amp; stopping</span>{' '}<small>{resolved.optimizer.toUpperCase()} · {scheduleLabels[resolved.lrScheduler!]} · {resolved.earlyStopping ? `Patience ${resolved.patience}` : 'No early stopping'}</small></summary>
       <div className="development-fields">
@@ -117,10 +119,11 @@ export function RecipeFields({ value, onChange, gridMode = false, classes, clini
     </details>
     <details className="batch-settings-details setup-details" hidden={value.inputMode === 'clinical'}><summary><span>Model architecture</span>{' '}<small>{recipeArchitectureSummary(value)}</small></summary>
       <div className="development-fields">
-        {([['embedDim', 'Embedding dimensions', 1], ['attentionDim', 'Attention dimensions', 1], ['numFcLayers', 'Fully connected layers', 1], ['dropout', 'Dropout', 0], ['inputDropout', 'Input dropout', 0]] as const).filter(([key]) => (slideFeatures ? key === 'inputDropout' || value.model === 'slide_mlp' && ['embedDim', 'dropout'].includes(key) : (key !== 'attentionDim' || value.model === 'abmil' || value.model === 'nnmil') && (value.model !== 'nnmil' || !['embedDim', 'numFcLayers'].includes(key)))).map(([key, label, min]) => <NumericField key={key} label={slideFeatures && key === 'embedDim' ? 'Hidden layer dimensions' : label} value={resolved[key]!} min={min} max={key === 'dropout' || key === 'inputDropout' ? 1 : key === 'numFcLayers' ? 8 : 8192} maxExclusive={key === 'dropout' || key === 'inputDropout'} integer={key !== 'dropout' && key !== 'inputDropout'} onChange={(number) => onChange({ ...value, [key]: number })} />)}
-        {value.model === 'abmil' ? <label className="development-check"><input type="checkbox" checked={resolved.gatedAttention} onChange={(e) => onChange({ ...value, gatedAttention: e.target.checked })} /> Gated attention</label> : null}
+        {([['embedDim', 'Embedding dimensions', 1], ['attentionDim', 'Attention dimensions', 1], ['numFcLayers', 'Fully connected layers', 1], ['dropout', 'Dropout', 0], ['inputDropout', 'Input dropout', 0]] as const).filter(([key]) => readsField(value.model, key)).map(([key, label, min]) => <NumericField key={key} label={slideFeatures && key === 'embedDim' ? 'Hidden layer dimensions' : label} value={resolved[key]!} disabled={!sharedFieldEnabled(value, key)} min={min} max={key === 'dropout' || key === 'inputDropout' ? 1 : key === 'numFcLayers' ? 8 : 8192} maxExclusive={key === 'dropout' || key === 'inputDropout'} integer={key !== 'dropout' && key !== 'inputDropout'} onChange={(number) => onChange({ ...value, [key]: number })} />)}
+        {readsField(value.model, 'gatedAttention') ? <label className="development-check"><input type="checkbox" checked={resolved.gatedAttention} onChange={(e) => onChange({ ...value, gatedAttention: e.target.checked })} /> Gated attention</label> : null}
       </div>
       {value.model === 'nnmil' ? <p className="muted">Attention dimensions set the hidden width and maximum feature coordinates per view. Attention always uses gating; the classifier receives pooled features in the bundle’s original dimensions.</p> : null}
+      {modelSpec(value.model)?.options.length ? <p className="muted">{(['embedDim', 'numFcLayers'] as const).some((key) => readsField(value.model, key) && !sharedFieldEnabled(value, key)) ? `As published, ${modelLabel(value.model)} reads the patch features directly; turn on its shared input layer to use the dimensions and layers above.` : `The input layer above feeds ${modelLabel(value.model)}; its own settings are in “${modelLabel(value.model)} settings”.`}</p> : null}
     </details>
     <SamplingFields value={value} onChange={onChange} />
     {value.inputMode !== 'clinical' ? <EvaluationBagFields value={value} onChange={onChange} /> : null}
@@ -158,6 +161,12 @@ export function recipeArchitectureSummary(recipe: TrainingRecipe): string {
   const spec = modelSpec(recipe.model), resolved = withRecipeDefaults(recipe);
   if (spec?.featureKind === 'slide') return `${spec.label}: ${spec.summary}${recipe.model === 'slide_mlp' ? ` Hidden layer: ${resolved.embedDim} units.` : ''}`;
   if (recipe.model === 'nnmil') return `Full-dimensional pooling · ${resolved.attentionDim} attention · Gated attention`;
+  if (spec?.options.length) {
+    const reads = (field: 'embedDim' | 'numFcLayers') => readsField(recipe.model, field) && sharedFieldEnabled(recipe, field);
+    const layers = reads('numFcLayers') ? [`${resolved.numFcLayers} fully connected layer${resolved.numFcLayers === 1 ? '' : 's'}`] : [];
+    const input = reads('embedDim') ? [`${resolved.embedDim} embedding`, ...layers] : ['Patch features read directly'];
+    return [spec.label, ...input, ...modelOptionSummary(recipe)].join(' · ');
+  }
   return `${modelLabel(recipe.model)} · ${resolved.embedDim} embedding · ${resolved.numFcLayers} fully connected layers${spec?.supportsAttention ? ` · ${resolved.attentionDim} attention · ${resolved.gatedAttention ? 'Gated attention' : 'Ungated attention'}` : ''}`;
 }
 
@@ -538,7 +547,7 @@ export default function DevelopmentBatches({ project, inputs, experimentName, ex
 }
 
 export function ConfigurationTable({ batch, reference }: { batch: Pick<BatchPreview, 'configurations'>; reference?: number }) {
-  return <div className="development-table"><table><thead><tr><th>Configuration</th><th>Model</th><th>Inputs</th><th>LR</th><th>WD</th><th>Max epochs</th><th>Training bag</th></tr></thead><tbody>{batch.configurations.map((item) => <tr key={item.id}><td>{item.number}{item.number === reference ? <> <Badge>Reference</Badge></> : null}</td><td>{item.recipe.inputMode === 'clinical' ? '—' : modelLabel(item.recipe.model) || item.recipe.model}</td><td>{inputModeLabel(item.recipe.inputMode)}</td><td>{item.recipe.learningRate}</td><td>{item.recipe.weightDecay}</td><td>{item.recipe.maxEpochs}</td><td>{item.recipe.inputMode === 'clinical' ? 'Clinical variables only' : item.recipe.bagSizeMode === 'training_median' ? `${item.recipe.bagSizeFraction ?? 0.5} × fitting-fold median` : item.recipe.bagSize === null ? 'Whole bag (all patches)' : `${item.recipe.bagSize} patches maximum`}</td></tr>)}</tbody></table></div>;
+  return <div className="development-table"><table><thead><tr><th>Configuration</th><th>Model</th><th>Inputs</th><th>LR</th><th>WD</th><th>Max epochs</th><th>Training bag</th></tr></thead><tbody>{batch.configurations.map((item) => <tr key={item.id}><td>{item.number}{item.number === reference ? <> <Badge>Reference</Badge></> : null}</td><td>{item.recipe.inputMode === 'clinical' ? '—' : modelLabel(item.recipe.model) || item.recipe.model}{item.recipe.inputMode !== 'clinical' && modelOptionSummary(item.recipe, 'changed').length ? <small className="configuration-model-options">{modelOptionSummary(item.recipe, 'changed').join(' · ')}</small> : null}</td><td>{inputModeLabel(item.recipe.inputMode)}</td><td>{item.recipe.learningRate}</td><td>{item.recipe.weightDecay}</td><td>{item.recipe.maxEpochs}</td><td>{item.recipe.inputMode === 'clinical' ? 'Clinical variables only' : item.recipe.bagSizeMode === 'training_median' ? `${item.recipe.bagSizeFraction ?? 0.5} × fitting-fold median` : item.recipe.bagSize === null ? 'Whole bag (all patches)' : `${item.recipe.bagSize} patches maximum`}</td></tr>)}</tbody></table></div>;
 }
 
 export function ExperimentBatchOverview({ batches, view, onSelect }: { batches: ExperimentBatch[]; view: 'runs' | 'results'; onSelect: (id: string) => void }) {

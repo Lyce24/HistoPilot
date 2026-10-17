@@ -1,4 +1,5 @@
 import { downloadArtifact, fetchArtifactBlob, pollDelay, request } from './client';
+import { modelSpec } from '../lib/modelCapabilities';
 
 /** Machine-wide task queue served by the Task Center runner. These states exist
  * only in the task store; record status files keep their own vocabularies. */
@@ -358,14 +359,13 @@ export const taskKindLabel = (kind: string, labels?: Record<string, unknown> | n
   }
   return taskKinds[kind] ?? capitalized(kind);
 };
-const modelNames: Record<string, string> = { abmil: 'ABMIL', nnmil: 'nnMIL', transmil: 'TransMIL', clam: 'CLAM', dsmil: 'DSMIL', meanpool: 'Mean pooling', maxpool: 'Max pooling' };
 /**
  * A task title as the queue shows it. Refit titles end in a repeated "· refit" and do not
  * name the model; the model label, when recorded, replaces that suffix.
  */
 export function taskDisplayTitle(task: Pick<TaskItem, 'kind' | 'title' | 'labels'>) {
   if (task.kind !== 'compute-job' || !['refit', 'predictor-refit'].includes(String(task.labels?.computeKind))) return task.title;
-  const model = typeof task.labels?.model === 'string' ? modelNames[task.labels.model.toLowerCase()] ?? task.labels.model : null;
+  const model = typeof task.labels?.model === 'string' ? modelSpec(task.labels.model)?.label ?? task.labels.model : null;
   const title = task.title.replace(/\s·\s*refit$/i, '');
   return model ? `${title} · ${model}` : title;
 }

@@ -213,7 +213,7 @@ def test_bce_multiclass_and_unsupported_models_are_reported(preview_context):
     invalid = context.service.preview(with_recipe(context, lossType="bce"))
     assert not invalid["canFreeze"]
     assert "BCE requires a binary" in invalid["findings"][0]["message"]
-    invalid = context.service.preview(with_recipe(context, model="transmil"))
+    invalid = context.service.preview(with_recipe(context, model="unlisted_model"))
     assert not invalid["canFreeze"]
     assert invalid["findings"][0]["code"] == "TRAINING_MODEL_UNSUPPORTED"
 

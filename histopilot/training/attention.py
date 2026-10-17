@@ -1,4 +1,4 @@
-"""Whole-bag ABMIL/nnMIL pooling attention for refit and frozen ensembles."""
+"""Whole-bag attention maps of frozen refits and ensembles, for every attention model."""
 
 import hashlib
 import json
@@ -40,6 +40,18 @@ POOLING_FUNCTIONS = {
     "geometric_mean": lambda maps: np.exp(np.log(np.clip(maps, 1e-300, None)).mean(axis=0)),
 }
 MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
+
+
+def attention_note(model):
+    """How one architecture's member maps are formed; ABMIL and nnMIL keep ATTENTION_NOTE."""
+    found = catalog.spec(model)
+    if found is None or found.attention_note is None or found.name == "nnmil":
+        return ATTENTION_NOTE
+    return (
+        f"Per-patch attention weights, normalized over all patches in this slide. "
+        f"{found.attention_note} The ensemble mean averages each member's attention. "
+        "Percentiles are within-slide midranks for display, not calibrated probabilities."
+    )
 
 
 def _write_attention_json(path, value):
@@ -211,6 +223,8 @@ def interpret(plan, output_dir):
         input_contract["aggregation"] = aggregation
     input_hash = content_hash(input_contract)
     artifacts, summaries = {}, []
+    # Every member of one predictor shares its architecture, and so its note.
+    run_note = ATTENTION_NOTE
     for slide_index, slide in enumerate(plan["slides"]):
         if (folder / "cancel.requested").exists():
             raise KeyboardInterrupt("Interpretation cancelled.")
@@ -259,6 +273,7 @@ def interpret(plan, output_dir):
                 )
                 probabilities = np.asarray(value["probabilities"], dtype=np.float64)
                 window_uncertainty = value.get("windowUncertainty")
+                run_note = value.get("attentionNote", ATTENTION_NOTE)
                 if aggregation == "mean_logit":
                     log_probabilities = np.asarray(value.get("logProbabilities"), dtype=np.float64)
                     _validate_log_probabilities(log_probabilities, probabilities)
@@ -276,6 +291,7 @@ def interpret(plan, output_dir):
                     raise ValueError(
                         "Checkpoint architecture, target or feature dimensions differ from the predictor."
                     )
+                run_note = attention_note(model.recipe.get("model"))
                 model.eval().to(device)
                 with torch.inference_mode():
                     output = model.prediction_output(
@@ -307,6 +323,7 @@ def interpret(plan, output_dir):
                         member=str(member_index),
                         log_probabilities=log_probabilities,
                         window_uncertainty=window_uncertainty,
+                        note=run_note,
                     ),
                 )
                 write_json_atomic(
@@ -364,6 +381,7 @@ def interpret(plan, output_dir):
                 plan,
                 member="mean",
                 log_probabilities=total_log_probabilities if aggregation == "mean_logit" else None,
+                note=run_note,
             ),
         )
         artifacts[filename] = _receipt(folder / filename)
@@ -388,7 +406,7 @@ def interpret(plan, output_dir):
             "method": method,
             "classOrder": plan["target"]["classes"],
             "attentionKind": "class_independent_pooling",
-            "attentionNote": ATTENTION_NOTE,
+            "attentionNote": run_note,
             **({"ensembleAggregation": aggregation} if aggregation == "mean_logit" else {}),
             "slides": summaries,
         },
@@ -402,7 +420,7 @@ def interpret(plan, output_dir):
         "memberCount": len(checkpoints),
         "classOrder": plan["target"]["classes"],
         "attentionKind": "class_independent_pooling",
-        "attentionNote": ATTENTION_NOTE,
+        "attentionNote": run_note,
         **({"ensembleAggregation": aggregation} if aggregation == "mean_logit" else {}),
         "slides": summaries,
         "artifacts": artifacts,
