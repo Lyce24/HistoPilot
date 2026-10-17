@@ -56,6 +56,7 @@ A code's kind groups codes by what the caller should do next, and the CLI turns 
 | `INTERPRETATION_MEMBER_INVALID` | invalid | 422 | Choose the ensemble mean or an existing model member. |
 | `INTERPRETATION_PACK_MISMATCH` | invalid | 422 | Select a pack included in this frozen feature bundle. |
 | `INTERPRETATION_PATCH_INVALID` | invalid | 422 | Choose an existing patch index. |
+| `INTERPRETATION_POOL_MISMATCH` | invalid | 422 | Pooled models must predict the same classes in the same order. |
 | `INTERPRETATION_SLIDE_UNAVAILABLE` | invalid | 422 | The slide is not in the selected slide folder. |
 | `INTERPRETATION_VIEW_INVALID` | invalid | 422 | Provide all four viewport bounds. |
 | `INVALID_ARTIFACT` | invalid | 422 | Materialized artifacts must be bytes. |
