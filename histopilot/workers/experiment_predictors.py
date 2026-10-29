@@ -98,4 +98,7 @@ def _coordinate(service, store, identity, folder, *, sleep, clock) -> int:
 
 
 if __name__ == "__main__":
+    from histopilot.observability.logs import configure_worker
+
+    configure_worker()
     sys.exit(run(sys.argv[1]))

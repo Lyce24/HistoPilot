@@ -52,7 +52,27 @@ def create_dev_app():
     from histopilot.api.app import create_app
 
     values = json.loads(os.environ["HISTOPILOT_SERVICE_SETTINGS"])
-    return create_app(Settings(**values))
+    settings = Settings(**values)
+    # The reloader serves requests from this process, so this one writes the log file.
+    _route_logs(settings.port)
+    return create_app(settings)
+
+
+def _route_logs(port: int, *, file: bool = True):
+    """The service's records: JSON Lines in the Task Center state directory, and its
+    warnings and errors on stderr. A state directory that cannot hold the file costs the
+    file, not the service."""
+    from histopilot.observability import logs
+    from histopilot.storage.project_lock import StorageError
+    from histopilot.taskcenter import paths as task_paths
+
+    target = None
+    if file:
+        try:
+            target = task_paths.log_dir() / f"service-{port}.jsonl"
+        except (StorageError, OSError):
+            target = None
+    return logs.configure("service", file=target, stderr_warnings=True)
 
 
 RUNNER_RESTART_WAIT = 20.0
@@ -268,20 +288,36 @@ def serve(
                 timer = threading.Timer(1, webbrowser.open, args=[url], kwargs={"new": 2})
                 timer.daemon = True
                 timer.start()
-            if dev:
-                os.environ["HISTOPILOT_SERVICE_SETTINGS"] = json.dumps(
-                    asdict(settings), default=str
-                )
-                uvicorn.run(
-                    "histopilot.cli:create_dev_app",
-                    factory=True,
-                    host=settings.host,
-                    port=settings.port,
-                    reload=True,
-                    reload_dirs=[str(Path(__file__).parent)],
-                )
-            else:
-                uvicorn.run(create_app(settings), host=settings.host, port=settings.port, workers=1)
+            # Uvicorn's own records, its startup and errors, join HistoPilot's (log_config
+            # None), and its access log gives way to the service's own access lines: a
+            # terminal nobody reads must never hold up a request.
+            routing = _route_logs(settings.port, file=not dev)
+            try:
+                if dev:
+                    os.environ["HISTOPILOT_SERVICE_SETTINGS"] = json.dumps(
+                        asdict(settings), default=str
+                    )
+                    uvicorn.run(
+                        "histopilot.cli:create_dev_app",
+                        factory=True,
+                        host=settings.host,
+                        port=settings.port,
+                        reload=True,
+                        reload_dirs=[str(Path(__file__).parent)],
+                        log_config=None,
+                        access_log=False,
+                    )
+                else:
+                    uvicorn.run(
+                        create_app(settings),
+                        host=settings.host,
+                        port=settings.port,
+                        workers=1,
+                        log_config=None,
+                        access_log=False,
+                    )
+            finally:
+                routing.close()
     except (ValueError, OSError, RuntimeError) as exc:
         typer.echo(f"Cannot start HistoPilot: {exc}", err=True)
         raise typer.Exit(1) from exc

@@ -244,6 +244,7 @@ def test_ensure_runner_forwards_the_starting_environment(tmux, monkeypatch):
     monkeypatch.setenv("PATH", "/opt/tools/bin:/usr/bin")
     monkeypatch.setenv("HISTOPILOT_TASK_ID", "task-1")  # set inside task processes
     monkeypatch.setenv("HISTOPILOT_TASK_MANAGED", "1")
+    monkeypatch.setenv("HISTOPILOT_REQUEST_ID", "request-1")
     state = paths.state_dir()
     launcher.ensure_runner(python="/opt/python")
     [(command, _)] = tmux.calls
@@ -253,7 +254,12 @@ def test_ensure_runner_forwards_the_starting_environment(tmux, monkeypatch):
     assert pairs["LD_LIBRARY_PATH"] == "/usr/lib/wsl/lib:/opt/cuda/lib64"
     assert pairs["PATH"] == "/opt/tools/bin:/usr/bin"
     assert pairs[paths.STATE_ENV] == str(state) and pairs["PYTHONUNBUFFERED"] == "1"
-    for name in (paths.AUTOSTART_ENV, "HISTOPILOT_TASK_ID", "HISTOPILOT_TASK_MANAGED"):
+    for name in (
+        paths.AUTOSTART_ENV,
+        "HISTOPILOT_TASK_ID",
+        "HISTOPILOT_TASK_MANAGED",
+        "HISTOPILOT_REQUEST_ID",
+    ):
         assert name not in pairs
     assert rest == ["/opt/python", "-u", "-m", "histopilot.cli", "runner", "run"]
     monkeypatch.delenv("LD_LIBRARY_PATH")

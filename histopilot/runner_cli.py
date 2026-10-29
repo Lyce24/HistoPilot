@@ -58,32 +58,39 @@ def register_runner_commands(app: typer.Typer) -> None:
 
         _use_state_dir(state_dir)
         from histopilot.diagnostics import enable_stack_dumps
+        from histopilot.observability import logs
         from histopilot.taskcenter import paths
         from histopilot.taskcenter.runner import Runner, RunnerBusy, stop_signals
 
         enable_stack_dumps(paths.state_dir() / "runner-stacks.log")
         from histopilot.taskcenter.store import TaskStore
 
-        # Installed before startup: a stop while the runner reconciles (which may probe the
-        # training runtime for a while) ends it gracefully instead of killing it midway.
-        with stop_signals(threading.Event()) as stop:
-            try:
-                instance = Runner(TaskStore())
-                instance.start(stop=stop)
-            except RunnerBusy as error:
-                typer.echo(f"{error} Nothing to do.")
-                return
-            except (StorageError, OSError) as error:
-                typer.echo(f"Cannot start the Task Center runner: {error}", err=True)
-                raise typer.Exit(1) from error
-            if once:
+        # Structured records, each task's steps among them, go to logs/runner.jsonl; the
+        # runner's own messages still print to runner.log.
+        routing = logs.configure("runner", file=paths.log_dir() / "runner.jsonl")
+        try:
+            # Installed before startup: a stop while the runner reconciles (which may probe the
+            # training runtime for a while) ends it gracefully instead of killing it midway.
+            with stop_signals(threading.Event()) as stop:
                 try:
-                    if not stop.is_set():
-                        instance.tick()
-                finally:
-                    instance.shutdown()
-                return
-            instance.run_forever(stop=stop)
+                    instance = Runner(TaskStore())
+                    instance.start(stop=stop)
+                except RunnerBusy as error:
+                    typer.echo(f"{error} Nothing to do.")
+                    return
+                except (StorageError, OSError) as error:
+                    typer.echo(f"Cannot start the Task Center runner: {error}", err=True)
+                    raise typer.Exit(1) from error
+                if once:
+                    try:
+                        if not stop.is_set():
+                            instance.tick()
+                    finally:
+                        instance.shutdown()
+                    return
+                instance.run_forever(stop=stop)
+        finally:
+            routing.close()
 
     @runner.command("start")
     def start(state_dir: Path | None = state_option) -> None:

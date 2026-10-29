@@ -6,7 +6,7 @@ This page lists every route group and documents the ones that scripts most often
 
 ## Session and conventions
 
-Obtain a token with `GET /api/v1/session`, then send it as the `X-HistoPilot-Token` header on every other request. `GET /health` and `GET /session` do not need it. Tokens belong to one service process; get a new one after a restart. Requests also pass Host, Origin and `Sec-Fetch-Site` checks: the Host must be a loopback name, and cross-site browser requests are refused.
+Obtain a token with `GET /api/v1/session`, then send it as the `X-HistoPilot-Token` header on every other request. `GET /health` and `GET /session` do not need it, and neither does a metrics scraper on `GET /metrics` (see [Service and projects](#service-and-projects)). Tokens belong to one service process; get a new one after a restart. Requests also pass Host, Origin and `Sec-Fetch-Site` checks: the Host must be a loopback name, and cross-site browser requests are refused.
 
 A scoped agent token (`hpt_…`) goes in the same header and reaches one project; see [AI agent access](#ai-agent-access). A service started with `--login` answers `/session` only to a signed-in browser or to a request that carries the sign-in secret as `X-HistoPilot-Login`; otherwise it returns 401 `LOGIN_REQUIRED`.
 
@@ -20,13 +20,14 @@ A demo service (`histopilot serve --demo`) answers any Host, but only `GET /heal
 | `expectedRevision` | Draft updates and previews name the revision they read. A stale revision returns 409; reload, review and retry. |
 | `operationId` | Publications, launches and Task Center actions take an operation ID. Retrying the same ID replays the original result; reusing it with a different request is rejected (`OPERATION_CONFLICT`). Creating a project or a draft takes an optional one: a retry returns the record the first request created. |
 | `previewHash` | Freeze requests repeat the hash of the preview the user reviewed. If inputs changed since, the freeze is refused. |
+| `X-Request-ID` | Every response carries one: the request's own `X-Request-ID` when it is 1–128 letters, digits and `._:-`, otherwise a new one. The service's logs and audit lines, and the tasks the request queues, carry it; see [logs](deployment.md#logs). |
 | `versionLabel` | Freezing a dataset, feature source, feature bundle, Targets & splits version, cohort or development batch requires `{tag, note?}`: a tag of 1–80 characters and an optional note. A tag names one version of its kind per project, without regard to case. |
 
 ## Route map
 
 | Prefix (under `/api/v1`) | Purpose |
 | --- | --- |
-| `/health`, `/session`, `/version`, `/templates`, `/system`, `/system/compute` | Service status, session token, version and features, the service-owned templates, workspace and runtime readiness, live compute measurements |
+| `/health`, `/session`, `/version`, `/templates`, `/system`, `/system/compute`, `/metrics` | Service status, session token, version and features, the service-owned templates, workspace and runtime readiness, live compute measurements, Prometheus metrics |
 | `/filesystem/roots`, `/filesystem/list`, `/filesystem/directories` | Browse allowed roots and create a folder |
 | `/projects`, `/projects/open`, `/projects/{identity}` | Create, open, read and configure projects |
 | `…/drafts`, `…/imports`, `…/datasets` | Drafts, CSV/XLSX import, frozen datasets, record queries, version labels |
@@ -59,6 +60,7 @@ A demo service (`histopilot serve --demo`) answers any Host, but only `GET /heal
 | `GET /templates` | The service-owned starting specs, presets, couplings and defaults that the browser builds new records from; the CLI and agent tools read the same values from their own copy of `histopilot/templates.py`. |
 | `GET /system` | Workspace, storage and package diagnostics, plus worker and TRIDENT readiness and whether tmux is available to host the Task Center runner. `control.torchImported` reports whether the service process has imported Torch, which it never should. |
 | `GET /system/compute` | Current CPU, RAM, GPU and VRAM measurements. |
+| `GET /metrics` | Aggregate metrics in the Prometheus text format (0.0.4): tasks by state, held and waiting tasks, finished and failed attempts, run times, the runner's lock and heartbeat, GPU utilization and memory, and this service's requests by route template. A scraper on the loopback port needs no session; a service started with `--login` asks for its sign-in secret as a bearer token (`Authorization: Bearer …`) or in `X-HistoPilot-Login`, else 401 `LOGIN_REQUIRED`. Agent tokens are refused with 403 `SCOPE_MISSING`. See [metrics](deployment.md#metrics). |
 | `GET /filesystem/roots?purpose=source` | Allowed roots. `purpose=source` (the default) lists only configured data roots; `purpose=storage` adds the application workspace. |
 | `GET /filesystem/list?path=…&purpose=…` | A bounded listing inside those roots. Symlinks are resolved before the root check. Long listings report `truncated: true`. |
 | `POST /filesystem/directories` | Create a folder inside an allowed root (201). Never replaces an existing entry. |

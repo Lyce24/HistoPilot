@@ -34,6 +34,9 @@ def run(plan_path: Path, run_id: str) -> None:
 
 
 if __name__ == "__main__":
+    from histopilot.observability.logs import configure_worker
+
+    configure_worker()
     if len(sys.argv) != 3:
         raise SystemExit("Usage: python -m histopilot.workers.managed_fold PLAN.json RUN_ID")
     run(Path(sys.argv[1]), sys.argv[2])

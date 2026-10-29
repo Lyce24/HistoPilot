@@ -11,6 +11,11 @@ from histopilot.api.responses import refusal as _refusal
 from histopilot.api.route_classes import TOKEN_PREFIX
 from histopilot.config import Settings
 
+# A metrics scraper holds no session token. Reaching the loopback port admits it, as the
+# port alone hands out the session; with sign-in on, it presents the sign-in secret, so the
+# metrics stay exactly as private as the session. Agent tokens never reach them.
+METRICS = "/api/v1/metrics"
+
 
 def configure_browser_boundary(
     app: FastAPI,
@@ -54,6 +59,19 @@ def configure_browser_boundary(
         value = request.cookies.get(cookie, "")
         # Bytes: a cookie the browser was handed can still hold any character.
         return bool(value) and compare_digest(value.encode(), login.cookie_value(secret).encode())
+
+    def scraper_signed_in(request: Request) -> bool:
+        """The sign-in secret as a bearer token (what Prometheus sends from a credentials
+        file) or in X-HistoPilot-Login."""
+        secret = current_secret()
+        if not secret:
+            return False
+        scheme, _, value = request.headers.get("authorization", "").partition(" ")
+        if scheme.lower() == "bearer":
+            presented = value.strip()
+        else:
+            presented = request.headers.get(login.HEADER, "")
+        return bool(presented) and compare_digest(presented.encode(), secret.encode())
 
     def sign_in(request: Request):
         # Opening the printed link once leaves a cookie that only /session reads.
@@ -112,6 +130,16 @@ def configure_browser_boundary(
                 "LOGIN_REQUIRED",
                 401,
             )
+        elif request.url.path == METRICS and not supplied:
+            if login_secret and not scraper_signed_in(request):
+                response = _refusal(
+                    "This service requires sign-in: send its sign-in secret as a bearer "
+                    "token, or the service's session token.",
+                    "LOGIN_REQUIRED",
+                    401,
+                )
+            else:
+                response = await call_next(request)
         elif needs_token and scoped is not None and supplied.startswith(TOKEN_PREFIX):
             response = await scoped(request, supplied, call_next)
         elif needs_token and not compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):

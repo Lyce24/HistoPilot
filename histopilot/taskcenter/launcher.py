@@ -54,6 +54,7 @@ TASK_ONLY_ENV = frozenset(
         "HISTOPILOT_TASK_ATTEMPT",
         "HISTOPILOT_TASK_GPU",
         "HISTOPILOT_TASK_MANAGED",
+        "HISTOPILOT_REQUEST_ID",
     }
 )
 

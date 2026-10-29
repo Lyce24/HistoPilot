@@ -108,6 +108,7 @@ class Center:
             stop_request=None,
             exit={**exit_record(returncode), "reason": reason, "error": error},
             error=error,
+            detail={"exitReason": reason} if reason else None,
         )
         assert outcome == "concluded", f"{task_id} could not be concluded: {outcome}"
 

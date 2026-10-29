@@ -156,4 +156,7 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    from histopilot.observability.logs import configure_worker
+
+    configure_worker()
     raise SystemExit(main())

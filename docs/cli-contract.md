@@ -63,7 +63,7 @@ Every service error carries a code, and [error codes](error-codes.md) gives each
 
 | Class | The route… | Routes |
 | --- | --- | ---: |
-| read | changes nothing: every GET, plus POST queries and exports such as dataset queries, scores, agreement, subgroups and case exports. Caches and housekeeping do not count. | 119 |
+| read | changes nothing: every GET, plus POST queries and exports such as dataset queries, scores, agreement, subgroups and case exports. Caches and housekeeping do not count. | 120 |
 | preview | prepares a change without making it: the `…preview` checks, which return findings with a `previewHash` or a `can…` gate, and saves of drafts, which include experiments and their batch plans, and filing an experiment under an objective. Nothing is frozen, queued or removed. | 25 |
 | commit | changes one project for real: freeze, publish or save a record; launch, submit, resume, cancel, retry, hold or move work; clean up; relabel a version; add, change or remove an objective; write a slide review; edit the project's planning settings. | 53 |
 | admin | reaches beyond one project or widens access: create or open projects, register or relink source folders, create folders, study archives, the Task Center's capacity and runner, agent tokens, a project's AI-exposure level or name, and deciding agents' requests. | 17 |

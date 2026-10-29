@@ -41,6 +41,8 @@ _TABLE = {
     ("GET", "/filesystem/list"): READ,
     ("GET", "/filesystem/roots"): READ,
     ("GET", "/health"): READ,
+    # Machine-wide: the session reaches it, and a scraper on loopback (api/security.py).
+    ("GET", "/metrics"): READ,
     ("GET", "/projects"): READ,
     ("POST", "/projects"): ADMIN,
     ("POST", "/projects/open"): ADMIN,

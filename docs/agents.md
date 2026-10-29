@@ -110,7 +110,7 @@ Sign-in stops other OS accounts, Windows programs under WSL2 and anyone at the f
 
 ## The audit log
 
-Each project keeps `audit/actions.jsonl` in its folder: one line per request from a token, allowed or refused, and one per change or administrative request a person makes to the project: under its routes, to its tokens, on its agents' requests (each claim and decision) and on its Task Center work. A line holds the time, the actor, the route, its class and the outcome; a token's line also holds the exposure level (empty when the request was refused before the level was read) and the project and Task Center work the request named. It never holds request bodies or case identifiers. The log rotates at 10 MB and keeps three older files.
+Each project keeps `audit/actions.jsonl` in its folder: one line per request from a token, allowed or refused, and one per change or administrative request a person makes to the project: under its routes, to its tokens, on its agents' requests (each claim and decision) and on its Task Center work. A line holds the time, the request's ID (the `X-Request-ID` of its response, also in the [service's log](deployment.md#logs)), the actor, the route, its class and the outcome; a token's line also holds the exposure level (empty when the request was refused before the level was read) and the project and Task Center work the request named. It never holds request bodies or case identifiers. The log rotates at 10 MB and keeps three older files.
 
 The log is evidence against mistakes and against agents without a shell. A shell agent on your account could edit it.
 

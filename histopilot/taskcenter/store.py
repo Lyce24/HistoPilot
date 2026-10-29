@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 import threading
 from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
 
+from histopilot.observability import logs
 from histopilot.storage import read_sessions, sqlite_connections
 from histopilot.storage.io import utc_now
 from histopilot.storage.project_lock import (
@@ -41,7 +43,9 @@ from histopilot.taskcenter.model import (
     normalize_task,
 )
 
-__all__ = ["DEFAULT_SETTINGS", "TaskStore"]
+__all__ = ["DEFAULT_SETTINGS", "TaskStore", "log_task"]
+
+LOG = logging.getLogger("histopilot.taskcenter")
 
 SCHEMA = (
     "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -212,6 +216,29 @@ LIVE_OR_AWAITING_SQL = (
         hooks=_REQUEUE_HOOKS_SQL,
     )
 )
+
+
+def log_task(event: str, task: dict, *, level=logging.INFO, message=None, **fields) -> None:
+    """One structured record for a step in a task's life (queued, started, finished…):
+    which task, its kind, adapter and attempt, and why it moved. Never its title, command
+    or paths. Unset fields are left out."""
+    entry = {
+        "event": event,
+        "task_id": task["id"],
+        "kind": task.get("kind"),
+        "adapter": task.get("adapter"),
+        "attempt": task.get("attempt"),
+        **fields,
+    }
+    extra = {key: value for key, value in entry.items() if value is not None}
+    LOG.log(level, message or f"task {event}", extra=extra)
+
+
+def _requested() -> dict:
+    """The request this change serves, kept with its event so the runner can hand it to
+    the task's worker (``TaskStore.requested_by``)."""
+    request = logs.current_request()
+    return {"requestId": request} if request else {}
 
 
 def _encode(value) -> str | None:
@@ -571,6 +598,7 @@ class TaskStore:
                     ),
                 )
             created = []
+            states = {}
             for spec in specs:
                 group = spec["group"] or {"kind": owner["kind"], "id": owner["id"]}
                 group_row = db.execute(
@@ -651,8 +679,9 @@ class TaskStore:
                         now,
                     ),
                 )
-                self._event(db, spec["id"], 1, None, state, {"event": "enqueued"})
+                self._event(db, spec["id"], 1, None, state, {"event": "enqueued", **_requested()})
                 created.append(spec["id"])
+                states[spec["id"]] = state
             if created and existing is not None and not was_live:
                 # An idle owner that receives new work joins the back of the queue.
                 db.execute(
@@ -667,7 +696,10 @@ class TaskStore:
                     "VALUES(?,?,?,?)",
                     (operation_id, digest, _encode(result), now),
                 )
-            return result
+        for spec in specs:
+            if spec["id"] in states:
+                log_task("queued", spec, attempt=1, state=states[spec["id"]], owner=owner["kind"])
+        return result
 
     def requeue(
         self,
@@ -690,6 +722,7 @@ class TaskStore:
         allowed = TERMINAL if include_succeeded else TERMINAL - {"succeeded"}
         now = self._now()
         requeued = []
+        moved = []  # (task, attempt, state), logged once the transaction commits
         with self._connection(write=True) as db:
             for task_id in dict.fromkeys(task_ids):
                 row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -723,24 +756,29 @@ class TaskStore:
                         task_id,
                     ),
                 )
-                detail = {"reason": reason}
+                detail = {"reason": reason, **_requested()}
                 if reason == "auto-resume":
                     detail["autoResumed"] = True
                 if request_patch:
                     detail["requestPatch"] = request_patch
                 self._event(db, task_id, row["attempt"] + 1, row["state"], state, detail)
                 requeued.append(task_id)
-            self._revive_dependents(db, requeued, reason, now)
+                moved.append((self._brief(db, task_id), row["attempt"] + 1, state))
+            moved += self._revive_dependents(db, requeued, reason, now)
+        for task, attempt, state in moved:
+            log_task("queued", task, attempt=attempt, state=state, reason=reason)
         return requeued
 
-    def _revive_dependents(self, db, task_ids: list[str], reason: str, now: str) -> None:
+    def _revive_dependents(self, db, task_ids: list[str], reason: str, now: str) -> list:
         """Dependents that ``promote_ready`` cancelled because one of these tasks failed wait
-        for its new attempt again (and theirs for them); a user's own cancel is kept."""
+        for its new attempt again (and theirs for them); a user's own cancel is kept.
+        Returns (task, attempt, state) of each one revived."""
+        revived = []
         frontier = list(task_ids)
         while frontier:
             rows = db.execute(
-                "SELECT DISTINCT t.id, t.attempt FROM task_dependencies d JOIN tasks t "
-                f"ON t.id = d.task_id WHERE d.depends_on IN ({_marks(frontier)}) "
+                "SELECT DISTINCT t.id, t.kind, t.adapter, t.attempt FROM task_dependencies d "
+                f"JOIN tasks t ON t.id = d.task_id WHERE d.depends_on IN ({_marks(frontier)}) "
                 "AND t.state='cancelled'",
                 frontier,
             ).fetchall()
@@ -768,6 +806,8 @@ class TaskStore:
                     {"reason": reason, "event": "dependency-requeued"},
                 )
                 frontier.append(row["id"])
+                revived.append((dict(row), row["attempt"] + 1, "blocked"))
+        return revived
 
     def get(self, task_id: str) -> dict | None:
         with self._connection() as db:
@@ -916,6 +956,87 @@ class TaskStore:
             for row in reversed(rows)
         ]
 
+    def requested_by(self, task_id: str) -> str | None:
+        """The request that queued the task, or last retried it, when a request did."""
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT json_extract(detail, '$.requestId') AS request FROM task_events "
+                "WHERE task_id=? AND json_extract(detail, '$.requestId') IS NOT NULL "
+                "ORDER BY seq DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+        return row["request"] if row else None
+
+    def statistics(self, duration_bounds) -> dict:
+        """Aggregates for monitoring, read in one connection.
+
+        ``states`` counts tasks per state. ``held`` counts the blocked and queued tasks of
+        owners on hold; ``waiting`` the queued tasks of other owners that the runner left
+        with a waiting reason. ``durations`` gives, per adapter, how many task attempts
+        ended, their run time in total and the cumulative count within each of
+        ``duration_bounds`` (seconds), from the measurements; ``outcomes`` counts, per
+        adapter, terminal state and exit reason, how attempts ended, from the events.
+        Neither table is ever pruned, so both only grow. ``paused`` and ``heartbeatAt``
+        come from the settings and the runner row.
+        """
+        bounds = [float(bound) for bound in duration_bounds]
+        buckets = "".join(f", SUM(seconds <= ?) AS b{index}" for index in range(len(bounds)))
+        with self._connection() as db:
+            states = dict.fromkeys(STATES, 0)
+            for row in db.execute("SELECT state, COUNT(*) AS n FROM tasks GROUP BY state"):
+                states[row["state"]] = row["n"]
+            pending = db.execute(
+                "SELECT COALESCE(SUM(o.held), 0) AS held, COALESCE(SUM(NOT o.held AND "
+                "t.state='queued' AND t.waiting_reason IS NOT NULL), 0) AS waiting "
+                "FROM tasks t JOIN owners o ON o.key = t.owner_key "
+                "WHERE t.state IN ('blocked', 'queued')"
+            ).fetchone()
+            durations = db.execute(
+                f"SELECT t.adapter AS adapter, COUNT(*) AS n, SUM(m.seconds) AS total{buckets} "
+                "FROM (SELECT task_id, MAX(0.0, wall_seconds) AS seconds FROM measurements "
+                "WHERE wall_seconds IS NOT NULL) m JOIN tasks t ON t.id = m.task_id "
+                "GROUP BY t.adapter ORDER BY t.adapter",
+                bounds,
+            ).fetchall()
+            # A transition between two terminal states (a cancel reaching a task that waited
+            # for its requeue) re-concludes the same attempt; it is not counted again.
+            outcomes = db.execute(
+                "SELECT t.adapter AS adapter, e.to_state AS state, "
+                "COALESCE(json_extract(e.detail, '$.exitReason'), "
+                "json_extract(e.detail, '$.skipped')) AS reason, COUNT(*) AS n "
+                "FROM task_events e JOIN tasks t ON t.id = e.task_id "
+                f"WHERE e.to_state IN ({_TERMINAL_SQL}) AND (e.from_state IS NULL "
+                f"OR e.from_state NOT IN ({_TERMINAL_SQL})) "
+                "GROUP BY 1, 2, 3 ORDER BY 1, 2, 3"
+            ).fetchall()
+            runner = db.execute("SELECT heartbeat_at FROM runner WHERE id=1").fetchone()
+            paused = merge_settings(self._stored_settings(db))["paused"]
+        return {
+            "states": states,
+            "held": pending["held"],
+            "waiting": pending["waiting"],
+            "durations": [
+                {
+                    "adapter": row["adapter"],
+                    "count": row["n"],
+                    "seconds": row["total"] or 0.0,
+                    "buckets": [row[f"b{index}"] or 0 for index in range(len(bounds))],
+                }
+                for row in durations
+            ],
+            "outcomes": [
+                {
+                    "adapter": row["adapter"],
+                    "state": row["state"],
+                    "reason": row["reason"] if isinstance(row["reason"], str) else None,
+                    "count": row["n"],
+                }
+                for row in outcomes
+            ],
+            "paused": bool(paused),
+            "heartbeatAt": runner["heartbeat_at"] if runner else None,
+        }
+
     # -- transitions -----------------------------------------------------------------------
 
     def transition(self, task_id: str, *, from_states, to_state: str, **fields) -> bool:
@@ -1007,11 +1128,25 @@ class TaskStore:
             "waiting_reason": None,
         }
         with self._connection(write=True) as db:
-            return [
+            cancelled = [
                 task_id
                 for task_id in dict.fromkeys(task_ids)
                 if self._transition(db, task_id, tuple(PENDING), "cancelled", columns, None)
             ]
+            rows = [self._brief(db, task_id) for task_id in cancelled]
+        for task in rows:
+            log_task(
+                "finished", task, message="task cancelled", state="cancelled", reason="cancelled"
+            )
+        return cancelled
+
+    @staticmethod
+    def _brief(db, task_id: str) -> dict:
+        """What a lifecycle record names of a task."""
+        row = db.execute(
+            "SELECT id, kind, adapter, attempt FROM tasks WHERE id=?", (task_id,)
+        ).fetchone()
+        return dict(row) if row else {"id": task_id}
 
     def request_stop(self, task_ids: Iterable[str], reason: str) -> list[str]:
         """Ask the runner to stop active tasks; a cancel supersedes an earlier pause.
@@ -1163,15 +1298,19 @@ class TaskStore:
         """
         now = self._now()
         promoted = []
+        moved = []  # (task, state), logged once the transaction commits
         with self._connection(write=True) as db:
             changed = True
             while changed:
                 changed = False
-                for row in db.execute("SELECT id FROM tasks WHERE state='blocked'").fetchall():
+                blocked = db.execute(
+                    "SELECT id, kind, adapter, attempt FROM tasks WHERE state='blocked'"
+                ).fetchall()
+                for row in blocked:
                     failed = self._failed_dependency(db, row["id"])
                     if failed is not None:
                         message = f"A task it depends on did not succeed ({failed})."
-                        self._transition(
+                        if self._transition(
                             db,
                             row["id"],
                             ("blocked",),
@@ -1183,7 +1322,8 @@ class TaskStore:
                                 "waiting_reason": None,
                             },
                             {"event": "dependency-failed", "dependency": failed},
-                        )
+                        ):
+                            moved.append((dict(row), "cancelled"))
                         changed = True
                     elif self._dependencies_met(db, row["id"]):
                         self._transition(
@@ -1195,6 +1335,18 @@ class TaskStore:
                             {"event": "dependencies-met"},
                         )
                         promoted.append(row["id"])
+                        moved.append((dict(row), "queued"))
+        for task, state in moved:
+            if state == "queued":
+                log_task("queued", task, state="queued", reason="dependencies-met")
+            else:
+                log_task(
+                    "finished",
+                    task,
+                    message="task cancelled",
+                    state="cancelled",
+                    reason="dependency-failed",
+                )
         return promoted
 
     # -- settings, operations, measurements, runner ---------------------------------------
