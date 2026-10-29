@@ -12,6 +12,9 @@ import '../start.css';
 
 type StartView = 'welcome' | 'new' | 'load';
 
+export const DEMO_PROJECT_ID = 'blca-demo-v1';
+export const SOURCE_URL = 'https://github.com/Lyce24/HistoPilot';
+
 function folderName(name: string) {
   return (
     name
@@ -104,6 +107,10 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
   const previousView = useRef(view);
   const client = useQueryClient();
   const projects = useQuery({ queryKey: ['projects'], queryFn: api.projects });
+  // A public demo service serves the synthetic demo alone. Until the list says which kind of
+  // service this is, offer nothing that could turn out not to work.
+  const demoOnly = projects.data?.demoOnly === true;
+  const connecting = projects.isPending;
   const create = useMutation({
     mutationFn: api.createProject,
     onSuccess: (project) => {
@@ -248,9 +255,11 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
         >
           <Brand size={40} subtitle="PATHOLOGY WORKSPACE" />
         </button>
-        <span className="start-server-label">
-          <Icon name="system" size={15} /> Local workspace
-        </span>
+        {connecting ? null : (
+          <span className="start-server-label">
+            <Icon name="system" size={15} /> {demoOnly ? 'Public demo · read-only' : 'Local workspace'}
+          </span>
+        )}
       </header>
 
       <main id="start-content" className={`start-main start-view-${view}`}>
@@ -273,7 +282,9 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
           </h1>
           <p>
             {view === 'welcome'
-              ? 'Bring your data, shape your experiment, and keep every step in one place.'
+              ? demoOnly
+                ? 'This public demo is read-only. Explore a synthetic study from slide records to applied models; nothing you open here is saved.'
+                : 'Bring your data, shape your experiment, and keep every step in one place.'
               : view === 'new'
                 ? 'Give your project a home. You can add data and choose the details as you go.'
                 : 'Pick up where you left off, with your data references and settings together.'}
@@ -296,7 +307,46 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
           </div>
         ) : null}
 
-        {view === 'welcome' ? (
+        {view === 'welcome' && connecting ? (
+          <p className="start-list-note" role="status">
+            Connecting to HistoPilot…
+          </p>
+        ) : null}
+
+        {view === 'welcome' && !connecting && demoOnly ? (
+          <div className="start-actions">
+            <button
+              type="button"
+              className="start-action-card start-action-new"
+              onClick={() => onOpen(DEMO_PROJECT_ID)}
+            >
+              <span className="start-action-icon">
+                <Icon name="branch" size={26} />
+              </span>
+              <span className="start-action-copy">
+                <strong>Open the BLCA demo</strong>
+                <span>Follow a synthetic bladder-cancer grading study from slide records to models applied to new cohorts.</span>
+              </span>
+              <span className="start-action-link">
+                Explore the demo <Icon name="arrow" size={18} />
+              </span>
+            </button>
+            <a className="start-action-card start-action-load" href={SOURCE_URL} target="_blank" rel="noreferrer">
+              <span className="start-action-icon">
+                <Icon name="download" size={26} />
+              </span>
+              <span className="start-action-copy">
+                <strong>Run it on your own slides</strong>
+                <span>HistoPilot runs on your workstation, next to your data. Get the code and the setup guide on GitHub.</span>
+              </span>
+              <span className="start-action-link">
+                View on GitHub <Icon name="arrow" size={18} />
+              </span>
+            </a>
+          </div>
+        ) : null}
+
+        {view === 'welcome' && !connecting && !demoOnly ? (
           <>
             <div className="start-actions">
               <button
@@ -349,11 +399,6 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
                 ) : null}
               </div>
               {projectFilters}
-              {projects.isPending ? (
-                <p className="start-list-note" role="status">
-                  Loading saved projects…
-                </p>
-              ) : null}
               {filteredProjects.length ? (
                 <>
                   {recentList(recent.items, { key: `${projectState}-${recent.page}`, direction: pageTurn })}
@@ -573,13 +618,13 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
           </div>
         ) : null}
 
-        {view !== 'new' ? (
+        {view !== 'new' && !connecting && !demoOnly ? (
           <div className="start-demo">
             <span>Explore a sample workflow</span>
             <button
               type="button"
               className="text-link"
-              onClick={() => onOpen('blca-demo-v1')}
+              onClick={() => onOpen(DEMO_PROJECT_ID)}
               disabled={busy}
             >
               Open BLCA demo <Icon name="arrow" size={15} />

@@ -236,7 +236,8 @@ export async function requestScientificSave<T>(
   }
 }
 export const api = {
-  projects: () => request<{ projects: ProjectSummary[]; defaultStoragePath: string }>('/projects'),
+  /** `demoOnly`: a public demo service (`histopilot serve --demo`) that serves the synthetic demo alone. */
+  projects: () => request<{ projects: ProjectSummary[]; defaultStoragePath: string; demoOnly?: boolean }>('/projects'),
   createProject: (input: ProjectInput) =>
     request<ProjectSummary>('/projects', { method: 'POST', body: JSON.stringify(input) }),
   openProject: (path: string) =>

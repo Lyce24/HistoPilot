@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import Start, { RECENT_PAGE_SIZE, recentProjectPage, savedProjectsByState } from './Start';
+import Start, { RECENT_PAGE_SIZE, SOURCE_URL, recentProjectPage, savedProjectsByState } from './Start';
 import type { ProjectSummary } from '../api/types';
 
 const projects = [
@@ -63,5 +63,41 @@ describe('recent project pages', () => {
     expect(html).toContain('Page 1 of 3');
     expect(html).toContain('aria-current="page"');
     expect(html).toContain('View all');
+  });
+});
+
+describe('the kind of service', () => {
+  function render(data?: { projects: ProjectSummary[]; defaultStoragePath: string; demoOnly?: boolean }) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    if (data) client.setQueryData(['projects'], data);
+    return renderToStaticMarkup(<QueryClientProvider client={client}><Start onOpen={() => {}} /></QueryClientProvider>);
+  }
+  const demo = projects.filter((project) => project.mode === 'synthetic-demo');
+
+  it('offers only the demo on a public demo service', () => {
+    const html = render({ projects: demo, defaultStoragePath: '', demoOnly: true });
+    expect(html).toContain('Open the BLCA demo');
+    expect(html).toContain('Public demo · read-only');
+    expect(html).toContain(`href="${SOURCE_URL}"`);
+    for (const missing of ['Start a new project', 'Load an existing project', 'Recent projects', 'Manage cleanup', 'Local workspace', 'Open BLCA demo']) {
+      expect(html).not.toContain(missing);
+    }
+  });
+
+  it('keeps every local action on a local service', () => {
+    const html = render({ projects, defaultStoragePath: '/projects' });
+    for (const present of ['Start a new project', 'Load an existing project', 'Recent projects', 'Local workspace', 'Open BLCA demo']) {
+      expect(html).toContain(present);
+    }
+    expect(html).not.toContain('Open the BLCA demo');
+    expect(html).not.toContain('Public demo');
+  });
+
+  it('offers no action until the service has said which kind it is', () => {
+    const html = render();
+    expect(html).toContain('Connecting to HistoPilot');
+    for (const missing of ['Start a new project', 'Load an existing project', 'Open the BLCA demo', 'Open BLCA demo', 'Local workspace', 'Public demo']) {
+      expect(html).not.toContain(missing);
+    }
   });
 });
