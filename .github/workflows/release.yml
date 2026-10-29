@@ -1,0 +1,61 @@
+name: Release
+# A v* tag becomes a GitHub release: the wheel built as checks.yml builds it, with this
+# version's CHANGELOG.md section as its notes. images.yml publishes the images.
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: python -m pip install uv
+      - run: uv sync --locked --extra imaging
+      - name: Check that the tag names this version
+        run: |
+          version=$(uv run python -c 'import histopilot; print(histopilot.__version__)')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the package version $version."
+            exit 1
+          fi
+      - name: Release notes from CHANGELOG.md
+        run: uv run python scripts/release_notes.py "$GITHUB_REF_NAME" > release-notes.md
+      - run: npm ci && npm test && npm run build
+        working-directory: web
+      - run: uv run python scripts/bundle_web.py
+      - run: uv build --wheel
+      - name: Verify packaged frontend
+        run: |
+          uv run python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          with ZipFile(next(Path('dist').glob('*.whl'))) as wheel:
+              assert 'histopilot/static/index.html' in wheel.namelist()
+              assert 'histopilot/resources/blca_demo_workspace.json' in wheel.namelist()
+              # resources/docs links to docs/: only the MCP server's pages ship.
+              docs = sorted(
+                  name for name in wheel.namelist() if name.startswith('histopilot/resources/docs/')
+              )
+              pages = ['agents', 'cli-contract', 'error-codes', 'methods', 'user-guide']
+              assert docs == [f'histopilot/resources/docs/{page}.md' for page in pages], docs
+              licenses = [name for name in wheel.namelist() if '.dist-info/licenses/' in name]
+              assert [name.rsplit('/', 1)[1] for name in licenses] == ['LICENSE'], licenses
+          PY
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.whl \
+            --verify-tag \
+            --title "HistoPilot ${GITHUB_REF_NAME#v}" \
+            --notes-file release-notes.md

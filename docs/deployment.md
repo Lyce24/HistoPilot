@@ -200,7 +200,7 @@ uv run python scripts/bundle_web.py
 uv build
 ```
 
-`scripts/bundle_web.py` copies `web/dist/` into `histopilot/static/`, which the wheel includes along with the synthetic demo resource. A Python build alone does not compile the UI. Install the wheel into an environment and run `histopilot serve --no-browser`; end users then need neither Node.js nor Vite.
+`scripts/bundle_web.py` copies `web/dist/` into `histopilot/static/`, which the wheel includes along with the synthetic demo resource. A Python build alone does not compile the UI. Install the wheel into an environment and run `histopilot serve --no-browser`; end users then need neither Node.js nor Vite. Each [GitHub release](https://github.com/Lyce24/HistoPilot/releases) attaches the wheel built this way.
 
 ## Containers
 

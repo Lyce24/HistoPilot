@@ -114,6 +114,16 @@ node web/scripts/verify-blca-demo.mjs          # add --readme to refresh docs/as
 
 The service serves the bundle in `histopilot/static/`. `bash serve.sh` rebuilds it when `web/` changed; see [deployment](docs/deployment.md#start-and-restart).
 
+## Releases
+
+Versions follow [semantic versioning](https://semver.org), and [CHANGELOG.md](CHANGELOG.md) records what each one changed, with notable changes collected under **Unreleased** until then.
+
+1. Set the version in `pyproject.toml` and `histopilot/__init__.py`, run `uv lock`, and move the **Unreleased** notes under a new `## [X.Y.Z] - YYYY-MM-DD` heading, with its link at the bottom. `tests/test_release.py` checks that the three agree and that the notes exist; `python scripts/release_notes.py` prints them.
+2. Merge to `main`, then tag that commit and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. The **Release** workflow (`.github/workflows/release.yml`) refuses a tag that does not name the package version, builds and checks the wheel as CI does, and creates the GitHub release with the changelog section as its notes and the wheel attached. The **Container images** workflow (`images.yml`) publishes `ghcr.io/lyce24/histopilot` and `ghcr.io/lyce24/histopilot-worker` as `X.Y.Z`, `X.Y` and `latest`.
+
+The image workflow builds both images on every push and pull request and publishes only tags and `main`. Docker itself is not needed to work on HistoPilot.
+
 ## Documentation and privacy
 
 The GitHub remote is **public**. Docs, tests, fixtures, commit messages and screenshots must not contain study data or results: no cohort names or sizes, real slide or patient identifiers, performance numbers from real studies, reader or consensus details, or paths from a real machine. Use generic placeholders such as `/path/to/slides`, and the synthetic BLCA demo for examples and screenshots.
