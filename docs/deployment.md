@@ -52,6 +52,7 @@ bash serve.sh --data-root /path/to/research-data --port 8788
 | `--browser` | Open a browser (the launcher defaults to `--no-browser`) |
 | `--no-build` | Serve the existing bundle even if `web/` changed |
 | `--no-runner` | Do not start or restart the Task Center runner |
+| `--demo` | Serve only the synthetic demo, read-only, to anyone; see [public read-only demo](#public-read-only-demo) |
 
 Run the launcher from any directory with `bash /path/to/HistoPilot/serve.sh`; relative option paths resolve from the repository root. `bash serve.sh --help` works before setup. `uv run python scripts/bundle_web.py --check` reports whether the bundle is current without changing it, and `histopilot serve` started directly warns when it is not.
 
@@ -142,6 +143,7 @@ For extraction, HistoPilot applies two small runtime fixes to the recognized pin
 | `HISTOPILOT_SDPC_OPTIMIZATIONS=0` | Disable the OpenSDPC extraction fixes |
 | `HISTOPILOT_STATE_DIR` | Task Center state directory (default `$XDG_STATE_HOME/histopilot`, else `~/.local/state/histopilot`) |
 | `HISTOPILOT_TASK_CENTER_AUTOSTART=0` | Never start or restart the runner automatically |
+| `HISTOPILOT_DEMO=1` | Start `histopilot serve` in demo mode, as `--demo` does |
 | `HISTOPILOT_CHROMIUM` | Chromium used by the offline browser checks in `web/scripts/` |
 
 ## Slide viewing
@@ -167,9 +169,28 @@ Run the service on the workstation, then forward the port from your laptop:
 ssh -N -L 8787:127.0.0.1:8787 user@workstation
 ```
 
-Open `http://127.0.0.1:8787` on the laptop. The folder pickers still browse the workstation. VS Code's Ports view does the same forwarding. Non-loopback hosts such as `0.0.0.0` are refused, because network authentication is not implemented.
+Open `http://127.0.0.1:8787` on the laptop. The folder pickers still browse the workstation. VS Code's Ports view does the same forwarding. Non-loopback hosts such as `0.0.0.0` are refused, because network authentication is not implemented. The one exception is the [public read-only demo](#public-read-only-demo), which serves nothing from your machine.
 
 Tasks run in their own process groups under the Task Center runner, so closing the SSH session or the browser does not stop them. After a workstation reboot, the runner marks running tasks as interrupted and, with auto-resume on, requeues them from their checkpoints once you start the service again.
+
+## Public read-only demo
+
+`histopilot serve --demo`, or `histopilot serve` with `HISTOPILOT_DEMO=1`, serves the browser UI and the synthetic [BLCA demo](blca-demo.md) to anyone who can reach the port, for a public demo such as a Hugging Face Space. It accepts any `--host`, such as `0.0.0.0`. It reads no configuration file, takes no data roots, sign-in or `--dev`, starts no Task Center runner, and keeps its workspace and Task Center state in a temporary folder that it removes when it stops.
+
+A demo service is usually reached through a reverse proxy, so it trusts nothing about a request: not the client address, Host, Origin, fetch metadata or forwarded headers. It needs to trust nothing, because of what it answers:
+
+- `GET`, `HEAD` and `OPTIONS` only. Any other method is refused with 403 `DEMO_MODE_READ_ONLY` before a route runs.
+- Under `/api/`, only the four reads below, which give every caller the same public, synthetic content. Every other API route is refused for every method with 403 `DEMO_MODE_ROUTE_UNAVAILABLE`, including the reads that describe the machine: folders and data roots, the workspace, system and version reports, the Task Center, tokens and agent requests, slide images and exports.
+- Outside `/api/`, the packaged UI's files.
+
+| Route | Answers |
+| --- | --- |
+| `GET /api/v1/health` | Status and version |
+| `GET /api/v1/session` | The page's session token. Anyone can fetch it, and it reaches only these reads. |
+| `GET /api/v1/projects` | The demo alone, an empty `defaultStoragePath` and `demoOnly: true`, so the start page offers only the demo |
+| `GET /api/v1/projects/blca-demo-v1/workspace` | The packaged synthetic fixture |
+
+No other origin is granted a cross-origin read. Pages may be framed by `https://huggingface.co` only, where a Space's page shows the app. A service started without `--demo` keeps every check in [local API protections](#local-api-protections); demo mode changes none of them.
 
 ## Frontend development with Vite
 
@@ -219,4 +240,4 @@ If the service or runner seems stuck, `kill -USR1 <pid>` writes every thread's s
 - Optional sign-in: with `histopilot serve --login`, or `login = true` under `[server]`, the service hands out its session only to a browser that opened the link it printed. That keeps other OS accounts, Windows programs under WSL2 and the far end of an SSH forward from fetching the session. `histopilot login url` prints the link again.
 - AI agents get scoped tokens for one project, never the session, and only for projects whose AI-exposure level allows it. Their changes wait for a person's approval, and every request they make is audited. See [AI agents](agents.md).
 
-These controls protect a single-user local service. Shared-lab authentication, per-user permissions, HTTPS reverse proxies and remote job executors are not implemented.
+These controls protect a single-user local service. Shared-lab authentication, per-user permissions, HTTPS reverse proxies and remote job executors are not implemented. A [demo service](#public-read-only-demo) replaces them with its own, narrower boundary.

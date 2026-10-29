@@ -29,7 +29,7 @@ flowchart TD
 | Workers (`histopilot/workers`, `training`, `adapters/trident`) | Extraction, validation and packing, fold training and result collection, refits, predictor runs and attention |
 | External sources | Original tables, slides and features, referenced in place and never copied |
 
-Slide images are read by short-lived isolated reader processes, never inside the service; SDPC files use the configured OpenSDPC interpreter. Access is limited to loopback, with Host, Origin and fetch-metadata checks and a per-process session token; configured data roots bound what the service can browse. None of this is shared-lab authentication.
+Slide images are read by short-lived isolated reader processes, never inside the service; SDPC files use the configured OpenSDPC interpreter. Access is limited to loopback, with Host, Origin and fetch-metadata checks and a per-process session token; configured data roots bound what the service can browse. None of this is shared-lab authentication. A service started with `--demo` instead answers anyone, but only the synthetic demo's reads (`api/demo_mode.py`; see [public read-only demo](deployment.md#public-read-only-demo)).
 
 ## Scientific records
 

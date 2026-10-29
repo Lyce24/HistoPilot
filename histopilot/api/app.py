@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from histopilot import __version__
 from histopilot.adapters.trident import discover_runtime
 from histopilot.application import creations
+from histopilot.application.blca_demo import demo_summary
 from histopilot.application.project_workspace import ProjectWorkspace, WorkspaceError
 from histopilot.application.system_compute import ComputeSampler
 from histopilot.config import Settings, load_settings
@@ -37,6 +38,7 @@ from histopilot.storage.project_lock import StorageError
 
 from . import login
 from .access import access_router, token_project
+from .demo_mode import configure_demo_boundary
 from .lifecycle import lifecycle_router
 from .responses import coded_response
 from .scientific import scientific_router
@@ -107,14 +109,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return None
         return (found or {}).get("projectId")
 
-    configure_browser_boundary(
-        app,
-        settings,
-        token,
-        scoped=ScopeGate(projects, tokens, database, work_project=work_project),
-        after_session=audited,
-        login_secret=login.ensure_secret(settings.port) if settings.login else None,
-    )
+    if settings.demo:
+        # Read-only, for anyone: the demo's own boundary replaces the loopback one.
+        configure_demo_boundary(app, token)
+    else:
+        configure_browser_boundary(
+            app,
+            settings,
+            token,
+            scoped=ScopeGate(projects, tokens, database, work_project=work_project),
+            after_session=audited,
+            login_secret=login.ensure_secret(settings.port) if settings.login else None,
+        )
 
     @app.exception_handler(WorkspaceError)
     @app.exception_handler(FilesystemError)
@@ -200,6 +206,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/projects")
     def list_projects(request: Request):
+        if settings.demo:
+            # The demo alone: the workspace's own path describes this machine.
+            return {"projects": [demo_summary()], "defaultStoragePath": "", "demoOnly": True}
         listed = projects.list_projects()
         own = token_project(request)
         if own is not None:

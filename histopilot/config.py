@@ -15,9 +15,22 @@ class Settings:
     # Require the printed login link before /api/v1/session answers; see api/login.py.
     login: bool = False
     static_dir: Path = field(default_factory=lambda: Path(__file__).parent / "static")
+    # Serve only the UI and the synthetic BLCA demo, read-only, to anyone; see api/demo_mode.py.
+    demo: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.host, str) or self.host not in {"127.0.0.1", "localhost"}:
+        if not isinstance(self.demo, bool):
+            raise ValueError("demo must be true or false")
+        if self.demo:
+            # Any address: a demo service is meant to be reached from other machines.
+            if not isinstance(self.host, str) or not self.host.strip():
+                raise ValueError("host must be a nonempty address")
+            if self.data_roots or self.login or self.dev:
+                raise ValueError(
+                    "Demo mode serves only the synthetic demo: it takes no data roots, "
+                    "sign-in or development mode."
+                )
+        elif not isinstance(self.host, str) or self.host not in {"127.0.0.1", "localhost"}:
             raise ValueError(
                 "Only loopback hosting is supported. Use SSH forwarding for remote access."
             )

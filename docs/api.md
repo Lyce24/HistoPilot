@@ -10,6 +10,8 @@ Obtain a token with `GET /api/v1/session`, then send it as the `X-HistoPilot-Tok
 
 A scoped agent token (`hpt_…`) goes in the same header and reaches one project; see [AI agent access](#ai-agent-access). A service started with `--login` answers `/session` only to a signed-in browser or to a request that carries the sign-in secret as `X-HistoPilot-Login`; otherwise it returns 401 `LOGIN_REQUIRED`.
 
+A demo service (`histopilot serve --demo`) answers any Host, but only `GET /health`, `/session`, `/projects` and `/projects/blca-demo-v1/workspace`. Other methods return 403 `DEMO_MODE_READ_ONLY` and other routes 403 `DEMO_MODE_ROUTE_UNAVAILABLE`; see [public read-only demo](deployment.md#public-read-only-demo).
+
 | Convention | Meaning |
 | --- | --- |
 | `{identity}` | The project ID. Project routes below are written relative to `/api/v1/projects/{identity}`. |
@@ -60,7 +62,7 @@ A scoped agent token (`hpt_…`) goes in the same header and reaches one project
 | `GET /filesystem/roots?purpose=source` | Allowed roots. `purpose=source` (the default) lists only configured data roots; `purpose=storage` adds the application workspace. |
 | `GET /filesystem/list?path=…&purpose=…` | A bounded listing inside those roots. Symlinks are resolved before the root check. Long listings report `truncated: true`. |
 | `POST /filesystem/directories` | Create a folder inside an allowed root (201). Never replaces an existing entry. |
-| `GET /projects` | Recent projects with their availability, the BLCA demo, and `defaultStoragePath`. |
+| `GET /projects` | Recent projects with their availability, the BLCA demo, and `defaultStoragePath`. A demo service lists the demo alone, with an empty `defaultStoragePath` and `demoOnly: true`. |
 | `POST /projects` | Create a project in an exact new or empty folder (201). An optional `operationId` makes a retry return the same project. |
 | `POST /projects/open` | Register an existing project folder by `{path}` and return its summary. |
 | `GET /projects/{identity}/workspace` | The project's summary, saved setup and sources. The demo ID `blca-demo-v1` returns the demo. |

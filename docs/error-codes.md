@@ -189,6 +189,8 @@ A code's kind groups codes by what the caller should do next, and the CLI turns 
 | `CONFLICTING_PATIENT_LABELS` | refused | 409 | A test patient has conflicting labels across slides. |
 | `CREATED_BEFORE_TASK_CENTER` | refused | 409 | Created before the Task Center, so it can no longer run. Clone it, or preview it again, to run it in the Task Center. |
 | `DATASET_SLIDE_FOLDER_UNAVAILABLE` | refused | 422 | These features are scoped to a slide store, not a frozen dataset. Attach them to a dataset to open slides for interpretation. |
+| `DEMO_MODE_READ_ONLY` | refused | 403 | This public demo is read-only. |
+| `DEMO_MODE_ROUTE_UNAVAILABLE` | refused | 403 | This public demo serves only the synthetic BLCA walkthrough. |
 | `DEMO_PROJECT_READ_ONLY` | refused | 409 | The BLCA demo is read only and has no local project folder. |
 | `DEMO_STORE_UNAVAILABLE` | refused | 409 | The synthetic demo has no local scientific store. |
 | `DEVELOPMENT_FEATURE_BINDING_MISMATCH` | refused | 409 | The development bundle differs from the feature version pinned by this protocol. |

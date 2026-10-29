@@ -178,6 +178,8 @@ ERROR_CODES: dict[str, str] = {
     "CONFLICTING_PATIENT_LABELS": "refused",
     "CREATED_BEFORE_TASK_CENTER": "refused",
     "DATASET_SLIDE_FOLDER_UNAVAILABLE": "refused",
+    "DEMO_MODE_READ_ONLY": "refused",
+    "DEMO_MODE_ROUTE_UNAVAILABLE": "refused",
     "DEMO_PROJECT_READ_ONLY": "refused",
     "DEMO_STORE_UNAVAILABLE": "refused",
     "DEVELOPMENT_FEATURE_BINDING_MISMATCH": "refused",

@@ -155,7 +155,9 @@ def serve(
         None, help="TOML configuration; defaults to ~/.histopilot/config.toml."
     ),
     host: str | None = typer.Option(
-        None, help="Loopback host; network hosting requires a future auth layer."
+        None,
+        help="Loopback host; network hosting requires a future auth layer. --demo accepts "
+        "any address.",
     ),
     port: int | None = typer.Option(None, help="Local HTTP port (default 8787)."),
     dev: bool = typer.Option(
@@ -175,12 +177,41 @@ def serve(
         help="Start the machine-wide Task Center runner in tmux if it is not running, and "
         "restart it when its code changed. HISTOPILOT_TASK_CENTER_AUTOSTART=0 turns this off.",
     ),
+    demo: bool = typer.Option(
+        False,
+        "--demo",
+        envvar="HISTOPILOT_DEMO",
+        help="Serve only the synthetic BLCA demo, read-only, to anyone who reaches the port, "
+        "for a public demo such as a Hugging Face Space. Any --host is accepted; it uses a "
+        "throwaway workspace, no data roots and no runner. See docs/deployment.md.",
+    ),
 ) -> None:
     """Start one local control service and serve the packaged browser application."""
     import uvicorn
 
     from histopilot.api.app import create_app
 
+    if demo:
+        given = [
+            name
+            for name, value in (
+                ("--workspace", workspace),
+                ("--data-root", data_root),
+                ("--config", config),
+                ("--dev", dev),
+                ("--login", login),
+            )
+            if value
+        ]
+        if given:
+            typer.echo(
+                "Cannot start HistoPilot: --demo serves only the synthetic demo and takes no "
+                + ", ".join(given),
+                err=True,
+            )
+            raise typer.Exit(1)
+        _serve_demo(host, port, browser)
+        return
     try:
         settings = load_settings(
             config,
@@ -254,6 +285,74 @@ def serve(
     except (ValueError, OSError, RuntimeError) as exc:
         typer.echo(f"Cannot start HistoPilot: {exc}", err=True)
         raise typer.Exit(1) from exc
+
+
+def _serve_demo(host: str | None, port: int | None, browser: bool) -> None:
+    """The read-only public demo, from a workspace and a state folder made for this run.
+
+    Nothing is read from the configuration file or the machine's Task Center state, and both
+    folders are removed when the service stops.
+    """
+    import shutil
+    import signal
+    import tempfile
+
+    import uvicorn
+
+    from histopilot.api.app import create_app
+    from histopilot.taskcenter.paths import STATE_ENV
+
+    def stopped(number, _frame):
+        raise SystemExit(128 + number)
+
+    scratch = Path(tempfile.mkdtemp(prefix="histopilot-demo-")).resolve()
+    previous_state = os.environ.get(STATE_ENV)
+    # Uvicorn re-raises SIGTERM once it has shut down; as an exception it still lets the
+    # folders below be removed, as Ctrl+C does.
+    main = threading.current_thread() is threading.main_thread()
+    previous_term = signal.signal(signal.SIGTERM, stopped) if main else None
+    try:
+        state = scratch / "state"
+        state.mkdir(mode=0o700)
+        # Anything that reaches for machine-level state finds this empty folder.
+        os.environ[STATE_ENV] = str(state)
+        settings = Settings(
+            workspace=scratch / "workspace",
+            host=host or "127.0.0.1",
+            port=port or 8787,
+            demo=True,
+        )
+        if not (settings.static_dir / "index.html").is_file():
+            raise ValueError(
+                "The frontend bundle is missing. Run npm ci and npm run build in web/, then python scripts/bundle_web.py."
+            )
+        with service_lock(settings.workspace):
+            url = f"http://{settings.host}:{settings.port}"
+            typer.echo(
+                "HistoPilot · public demo, read-only\n"
+                f"Browser    {url}\n"
+                "Serves     the synthetic BLCA demo to anyone who reaches this port; every "
+                "change and every other route is refused\n"
+                f"Workspace  {settings.workspace} (temporary; removed on exit)\n"
+                "Compute    none: no data roots and no Task Center runner"
+            )
+            _warn_if_stale_bundle(settings.static_dir)
+            if browser:
+                timer = threading.Timer(1, webbrowser.open, args=[url], kwargs={"new": 2})
+                timer.daemon = True
+                timer.start()
+            uvicorn.run(create_app(settings), host=settings.host, port=settings.port, workers=1)
+    except (ValueError, OSError, RuntimeError) as exc:
+        typer.echo(f"Cannot start HistoPilot: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        if main:
+            signal.signal(signal.SIGTERM, previous_term)
+        if previous_state is None:
+            os.environ.pop(STATE_ENV, None)
+        else:
+            os.environ[STATE_ENV] = previous_state
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 @app.command(rich_help_panel="Local service")

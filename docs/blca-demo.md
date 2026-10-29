@@ -4,6 +4,8 @@ The BLCA demo walks through HistoPilot's workflow with a synthetic bladder-cance
 
 Open **BLCA demo** from the start page, or visit `http://127.0.0.1:8787/?project=blca-demo-v1#overview` on a running service (use your own port if you changed it). The demo is read-only: it creates no records and launches no compute. It needs no data roots, training environment or GPU.
 
+To show it to people who have not installed HistoPilot, `histopilot serve --demo` serves the demo alone, read-only, to anyone who can reach the service, and refuses everything else; see [public read-only demo](deployment.md#public-read-only-demo).
+
 ## What the example contains
 
 | Population | Slides | WHO 2022 low | WHO 2022 high |
