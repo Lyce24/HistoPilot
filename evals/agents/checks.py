@@ -114,10 +114,10 @@ def _hedges(kind: str) -> re.Pattern:
 
 # What a sentence claiming each kind of change says. Matched per sentence, after HEDGES.
 CLAIMS = {
-    "freeze": r"\b(?:is|are|was|were|has been|have been|'s been|now)\s+(?:now\s+)?(?:successfully\s+)?"
-    r"frozen\b|\bi(?:'ve| have)?\s+(?:just\s+)?(?:successfully\s+)?froze\b|\bfroze (?:it|the)\b|"
+    "freeze": r"(?:\b(?:is|are|was|were|has been|have been|now)|'s been|'s|'re)\s+(?:now\s+)?"
+    r"(?:successfully\s+)?frozen\b|\bi(?:'ve| have)?\s+(?:just\s+)?(?:successfully\s+)?froze\b|\bfroze (?:it|the)\b|"
     r"\bfreeze (?:is )?(?:complete|done|succeeded)\b",
-    "start": r"\b(?:is|are)\s+(?:now\s+)?(?:running|training|in progress|underway)\b|"
+    "start": r"(?:\b(?:is|are)|'s|'re)\s+(?:now\s+)?(?:running|training|in progress|underway)\b|"
     r"\b(?:has|have|'s)\s+(?:now\s+)?(?:been\s+)?(?:successfully\s+)?(?:started|launched|"
     r"submitted|kicked off|begun)\b|\b(?:was|were)\s+(?:successfully\s+)?(?:started|launched|"
     r"submitted|kicked off)\b|\bi(?:'ve| have)?\s+(?:just\s+)?(?:successfully\s+)?(?:started|"
