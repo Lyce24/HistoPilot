@@ -11,6 +11,8 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+from histopilot.observability import logs
+
 ROTATE_BYTES = 10 * 1024 * 1024
 KEEP_ROTATED = 3
 NAME = "actions.jsonl"
@@ -24,8 +26,14 @@ def append(project_folder: Path, entry: dict) -> None:
     """Append one line. Small O_APPEND writes stay whole even with concurrent writers."""
     path = audit_path(project_folder)
     path.parent.mkdir(mode=0o700, exist_ok=True)
+    # The request's ID ties the line to the service's own log of that request.
+    request = logs.current_request()
     line = json.dumps(
-        {"time": datetime.now(UTC).isoformat().replace("+00:00", "Z"), **entry},
+        {
+            "time": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            **({"requestId": request} if request else {}),
+            **entry,
+        },
         ensure_ascii=False,
         sort_keys=True,
         default=str,
