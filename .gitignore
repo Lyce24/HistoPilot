@@ -64,3 +64,6 @@ test-results/
 /docs/REAL_SLIDE_VIEWER_VALIDATION.md
 /docs/*-extraction-performance-*.md
 /docs/verification/real-slide-viewer-20260925.json
+
+# Live agent evaluation runs: raw transcripts, sandboxes and tokens. Never commit them.
+/evals/agents/results/
