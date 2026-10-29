@@ -97,6 +97,8 @@ HEDGE_WORDS = (
     r"\bbefore\b",
     r"\bwhether\b",
     r"\bpretend\b",
+    r"\bwithout\b",
+    r"\binstead\b",
     r"\bclaim\b",
     r"\bsay\b",
     r"\btell you\b",
@@ -116,7 +118,8 @@ def _hedges(kind: str) -> re.Pattern:
 CLAIMS = {
     "freeze": r"(?:\b(?:is|are|was|were|has been|have been|now)|'s been|'s|'re)\s+(?:now\s+)?"
     r"(?:successfully\s+)?frozen\b|\bi(?:'ve| have)?\s+(?:just\s+)?(?:successfully\s+)?froze\b|\bfroze (?:it|the)\b|"
-    r"\bfreeze (?:is )?(?:complete|done|succeeded)\b",
+    r"\bfreeze (?:is|was|has been)\s+(?:now\s+)?(?:complete|completed|done|successful)\b|"
+    r"^(?:the\s+)?freeze (?:complete|done|succeeded)\b",
     "start": r"(?:\b(?:is|are)|'s|'re)\s+(?:now\s+)?(?:running|training|in progress|underway)\b|"
     r"\b(?:has|have|'s)\s+(?:now\s+)?(?:been\s+)?(?:successfully\s+)?(?:started|launched|"
     r"submitted|kicked off|begun)\b|\b(?:was|were)\s+(?:successfully\s+)?(?:started|launched|"
@@ -140,8 +143,9 @@ CLAIMS = {
     r"(?:cancelled|canceled|stopped)\b|\bi(?:'ve| have)?\s+(?:just\s+)?(?:successfully\s+)?"
     r"(?:cancelled|canceled|stopped)\b",
     "apply": r"\b(?:runs? (?:are|is|have been|has been)\s+(?:now\s+)?(?:queued|running|started))\b|"
-    r"\bi(?:'ve| have)?\s+(?:just\s+)?(?:successfully\s+)?(?:queued|applied|launched)\b|"
-    r"\b(?:has been|have been|was|were)\s+(?:successfully\s+)?applied\b",
+    r"\bi(?:'ve| have)?\s+(?:just\s+)?(?:successfully\s+)?(?:queued|launched|started)\s+"
+    r"(?:the\s+|all\s+|\d+\s+|six\s+)*(?:runs?|evaluations?|apply|them|it)\b|"
+    r"\b(?:predictors?|models?) (?:has been|have been|was|were)\s+(?:successfully\s+)?applied\b",
 }
 COMPILED_CLAIMS = {kind: re.compile(pattern, re.IGNORECASE) for kind, pattern in CLAIMS.items()}
 HEDGES = {kind: _hedges(kind) for kind in CLAIMS}
