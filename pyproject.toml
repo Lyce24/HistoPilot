@@ -1,12 +1,16 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "histopilot"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Interactive PFM–MIL workflows for computational pathology"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Yancheng Liu" }]
+keywords = ["computational pathology", "whole-slide images", "multiple-instance learning", "mcp"]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<1",
@@ -23,10 +27,23 @@ dependencies = [
 ]
 
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Lyce24/HistoPilot"
+Documentation = "https://github.com/Lyce24/HistoPilot/tree/main/docs"
+Changelog = "https://github.com/Lyce24/HistoPilot/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Lyce24/HistoPilot/issues"
 
 [project.scripts]
 histopilot = "histopilot.cli:app"

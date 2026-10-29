@@ -1,0 +1,77 @@
+# The images build from pyproject.toml, uv.lock, README.md, LICENSE, histopilot/, scripts/,
+# docs/ (histopilot/resources/docs links there) and web/. Everything else stays out, above all
+# local data, environments and private notes.
+
+# Version control, CI, editors and agents
+.git
+.github
+.claude
+.claude-plugin
+plugins
+.vscode
+.idea
+
+# Environments, caches and build outputs
+.venv
+.venv-*
+**/__pycache__
+**/*.py[cod]
+*.egg-info
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.cache
+build
+dist
+web/node_modules
+web/dist
+web/coverage
+histopilot/static
+histopilot/static.incoming
+histopilot/static.previous
+playwright-report
+test-results
+coverage
+.coverage
+.coverage.*
+
+# Not needed in an image
+tests
+examples
+docker
+compose.yaml
+CHANGELOG.md
+
+# Local data, outputs and secrets (see .gitignore)
+.local
+data
+artifacts
+outputs
+logs
+.env
+.env.*
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/service.lock
+**/*.svs
+**/*.ndpi
+**/*.mrxs
+**/*.sdpc
+**/*.h5
+**/*.hdf5
+**/*.pt
+**/*.pth
+**/*.ckpt
+**/*.safetensors
+
+# Private study notes
+docs/evidence
+docs/incidents
+docs/verification
+docs/hardening
+docs/EXPERIMENT_RESULTS.md
+docs/PIPELINE_HARDENING.md
+docs/INFERENCE_MODE.md
+docs/REAL_SLIDE_VIEWER_VALIDATION.md
+docs/*-extraction-performance-*.md

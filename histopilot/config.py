@@ -14,6 +14,10 @@ class Settings:
     dev: bool = False
     # Require the printed login link before /api/v1/session answers; see api/login.py.
     login: bool = False
+    # Inside a container only: listen on every interface of the container's own network so
+    # that a port published on the host's loopback reaches the service. Requests must still
+    # name a loopback Host; see docs/deployment.md#containers.
+    container: bool = False
     static_dir: Path = field(default_factory=lambda: Path(__file__).parent / "static")
     # Serve only the UI and the synthetic BLCA demo, read-only, to anyone; see api/demo_mode.py.
     demo: bool = False
@@ -48,6 +52,11 @@ class Settings:
             tuple(dict.fromkeys(Path(root).expanduser().resolve() for root in self.data_roots)),
         )
 
+    @property
+    def listen_host(self) -> str:
+        """The address the server binds: its loopback host, or all of a container's."""
+        return "0.0.0.0" if self.container else self.host
+
 
 def load_settings(
     config: Path | None = None,
@@ -58,8 +67,13 @@ def load_settings(
     port: int | None = None,
     dev: bool = False,
     login: bool | None = None,
+    container: bool = False,
 ) -> Settings:
-    """Explicit CLI values override TOML; relative TOML paths use its directory."""
+    """Explicit CLI values override TOML; relative TOML paths use its directory.
+
+    ``container`` comes only from the command line or the image's environment, never from
+    a configuration file: it describes how this process is deployed, not a preference.
+    """
     path = (config or Path.home() / ".histopilot" / "config.toml").expanduser().resolve()
     if config is not None and not path.is_file():
         raise ValueError(f"Configuration file does not exist: {path}")
@@ -93,6 +107,7 @@ def load_settings(
         port=port if port is not None else server.get("port", 8787),
         dev=dev,
         login=login if login is not None else _login(server.get("login", False)),
+        container=container,
     )
 
 

@@ -126,6 +126,32 @@ def _warn_if_stale_bundle(static_dir: Path) -> None:
         )
 
 
+# Files Docker and Podman create in every container they start.
+CONTAINER_MARKERS = ("/.dockerenv", "/run/.containerenv")
+
+
+def _describe_container(settings: Settings) -> None:
+    """Container mode listens beyond loopback; say so, and what still guards the service."""
+    typer.echo(
+        f"Container  Listening on all of this container's interfaces, port {settings.port}. "
+        "Publish it on the host's loopback only, such as "
+        f"127.0.0.1:{settings.port}:{settings.port}."
+    )
+    if not any(Path(marker).exists() for marker in CONTAINER_MARKERS):
+        typer.echo(
+            "Container  This does not look like a container, so every network interface of "
+            "this machine reaches the service. Use --container (HISTOPILOT_CONTAINER) only "
+            "inside one.",
+            err=True,
+        )
+    if not settings.login:
+        typer.echo(
+            "Container  Sign-in is off: anything that can reach this port can take the "
+            "session. Start with --login unless only you can reach it.",
+            err=True,
+        )
+
+
 def _ensure_task_center_runner() -> None:
     """Best effort: a runner problem is reported but never stops the control service."""
     try:
@@ -191,6 +217,14 @@ def serve(
         "--login/--no-login",
         help="Require the printed link before handing out the session (default: config).",
     ),
+    container: bool = typer.Option(
+        False,
+        "--container",
+        envvar="HISTOPILOT_CONTAINER",
+        help="Inside a container only: listen on all of its interfaces so that a port "
+        "published on the host's loopback reaches the service. Requests must still name a "
+        "loopback Host. The HistoPilot images set HISTOPILOT_CONTAINER=1.",
+    ),
     runner: bool = typer.Option(
         True,
         "--runner/--no-runner",
@@ -241,6 +275,7 @@ def serve(
             port=port,
             dev=dev,
             login=login,
+            container=container,
         )
         for root in settings.data_roots:
             if not root.is_dir():
@@ -261,6 +296,8 @@ def serve(
                 f"Browser    {url}\n"
                 "Compute    Task Center: feature extraction, MIL training, predictor runs, attention"
             )
+            if settings.container:
+                _describe_container(settings)
             if not dev:
                 _warn_if_stale_bundle(settings.static_dir)
             if settings.data_roots:
@@ -300,7 +337,7 @@ def serve(
                     uvicorn.run(
                         "histopilot.cli:create_dev_app",
                         factory=True,
-                        host=settings.host,
+                        host=settings.listen_host,
                         port=settings.port,
                         reload=True,
                         reload_dirs=[str(Path(__file__).parent)],
@@ -310,7 +347,7 @@ def serve(
                 else:
                     uvicorn.run(
                         create_app(settings),
-                        host=settings.host,
+                        host=settings.listen_host,
                         port=settings.port,
                         workers=1,
                         log_config=None,
@@ -377,7 +414,19 @@ def _serve_demo(host: str | None, port: int | None, browser: bool) -> None:
                 timer = threading.Timer(1, webbrowser.open, args=[url], kwargs={"new": 2})
                 timer.daemon = True
                 timer.start()
-            uvicorn.run(create_app(settings), host=settings.host, port=settings.port, workers=1)
+            # Logs route as for any service; the file lands in the temporary state folder.
+            routing = _route_logs(settings.port)
+            try:
+                uvicorn.run(
+                    create_app(settings),
+                    host=settings.host,
+                    port=settings.port,
+                    workers=1,
+                    log_config=None,
+                    access_log=False,
+                )
+            finally:
+                routing.close()
     except (ValueError, OSError, RuntimeError) as exc:
         typer.echo(f"Cannot start HistoPilot: {exc}", err=True)
         raise typer.Exit(1) from exc

@@ -4,6 +4,8 @@ HistoPilot runs as a single-user service on the machine that holds your data, bo
 
 Storage needs POSIX file locking, directory sync and atomic rename, so run HistoPilot on Linux or WSL; native Windows storage is not supported.
 
+The [container images](#containers) run the same service and Task Center runner without a source checkout.
+
 ## Install from source
 
 You need Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 22.12+ with npm, and tmux for the Task Center runner. From the repository root:
@@ -53,6 +55,7 @@ bash serve.sh --data-root /path/to/research-data --port 8788
 | `--no-build` | Serve the existing bundle even if `web/` changed |
 | `--no-runner` | Do not start or restart the Task Center runner |
 | `--demo` | Serve only the synthetic demo, read-only, to anyone; see [public read-only demo](#public-read-only-demo) |
+| `--container` | Inside a container only: listen on all of its interfaces; see [container mode](#container-mode-and-the-local-api-protections) |
 
 Run the launcher from any directory with `bash /path/to/HistoPilot/serve.sh`; relative option paths resolve from the repository root. `bash serve.sh --help` works before setup. `uv run python scripts/bundle_web.py --check` reports whether the bundle is current without changing it, and `histopilot serve` started directly warns when it is not.
 
@@ -145,6 +148,7 @@ For extraction, HistoPilot applies two small runtime fixes to the recognized pin
 | `HISTOPILOT_TASK_CENTER_AUTOSTART=0` | Never start or restart the runner automatically |
 | `HISTOPILOT_DEMO=1` | Start `histopilot serve` in demo mode, as `--demo` does |
 | `HISTOPILOT_LOG_LEVEL`, `HISTOPILOT_LOG_STDERR`, `HISTOPILOT_LOG_FORMAT` | Log level, every record on stderr, and the format of stderr; see [logs](#logs) |
+| `HISTOPILOT_CONTAINER=1` | [Container mode](#container-mode-and-the-local-api-protections), as `--container`; the images set it |
 | `HISTOPILOT_CHROMIUM` | Chromium used by the offline browser checks in `web/scripts/` |
 
 ## Slide viewing
@@ -220,7 +224,59 @@ uv run python scripts/bundle_web.py
 uv build
 ```
 
-`scripts/bundle_web.py` copies `web/dist/` into `histopilot/static/`, which the wheel includes along with the synthetic demo resource. A Python build alone does not compile the UI. Install the wheel into an environment and run `histopilot serve --no-browser`; end users then need neither Node.js nor Vite.
+`scripts/bundle_web.py` copies `web/dist/` into `histopilot/static/`, which the wheel includes along with the synthetic demo resource. A Python build alone does not compile the UI. Install the wheel into an environment and run `histopilot serve --no-browser`; end users then need neither Node.js nor Vite. Each [GitHub release](https://github.com/Lyce24/HistoPilot/releases) attaches the wheel built this way.
+
+## Containers
+
+Two images run HistoPilot from `uv.lock` without a source checkout, on a Linux host with Docker:
+
+| Image | Holds | Runs |
+| --- | --- | --- |
+| `ghcr.io/lyce24/histopilot` | The service, browser UI and CLI on Python 3.11, without Torch | The synthetic demo, and opening projects and reading results without compute |
+| `ghcr.io/lyce24/histopilot-worker` | The same, with the `training` extra (Torch with CUDA 12.8) on an NVIDIA CUDA base | The Task Center runner and every task it starts, and the service of a setup that trains |
+
+Releases are tagged `X.Y.Z`, `X.Y` and `latest`; `main` follows the main branch. `docker/Dockerfile` and `docker/Dockerfile.worker` build them, and `compose.yaml` at the repository root runs them.
+
+### Compose
+
+```bash
+echo "HISTOPILOT_DATA=/path/to/research-data" > .env
+docker compose up -d
+docker compose logs histopilot | grep login=
+```
+
+Open the printed `http://127.0.0.1:8787/?login=…` link once; that browser then stays signed in, and `docker compose exec histopilot histopilot login url` prints the link again. This needs an NVIDIA GPU, a driver recent enough for CUDA 12.8, and the NVIDIA Container Toolkit. Without a published image of the chosen version, Compose builds it from the checkout; `docker compose build` does that ahead of time.
+
+| Service | Image | Role |
+| --- | --- | --- |
+| `histopilot` | worker | The service, published on `127.0.0.1` of the host only, with sign-in. It starts no runner. |
+| `worker` | worker | The Task Center runner in the foreground. Every task runs in this container, on its GPUs. |
+| `demo` | CPU | `histopilot serve --demo`: the read-only synthetic demo alone. `docker compose up demo` starts only it, with no GPU and nothing mounted. |
+
+Set these variables in an `.env` file beside `compose.yaml`, as above, so that every `docker compose` command mounts the same data and uses the same port.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `HISTOPILOT_DATA` | `./data` | Folder mounted read-only as `/data`, the only data root |
+| `HISTOPILOT_PORT` | `8787` | Port on the host's `127.0.0.1`. The container listens on the same port, because the service accepts only Host headers naming its own port. |
+| `HISTOPILOT_VERSION` | `latest` | Image tag |
+
+The service and the runner mount three named volumes at the same paths: `state` is the Task Center state directory (`HISTOPILOT_STATE_DIR`, with the task store and the sign-in secret), `workspace` is the application workspace where new projects go, and `tmp` is `TMPDIR`, where the lease registry and output locks live. Sharing them gives the two containers one queue, one lease registry and one set of locks, as on a workstation. Paths recorded in a project are the container's, such as `/data/slides/…`; a project made in a container opens elsewhere only where those paths exist. **Study backups & sources** exports a project from the workspace volume.
+
+- **Why the service runs from the CUDA image.** Starting training, refits, predictor runs and attention probes the training environment from the service, in a separate process that imports Torch and counts GPUs. The result decides whether runs ask for a GPU, and it is recorded in the experiment's execution contract, which the runner's workers must match. A service without Torch refuses to start training (`TRAINING_RUNTIME_UNAVAILABLE`), and one without GPUs plans CPU runs. Both containers therefore run the same image and see the same GPUs; the service process itself still never imports Torch.
+- **Users and files.** Both images run as `histopilot`, user and group 1000, and new volumes take that ownership. Data must be readable by that user; world-readable files are. `--build-arg HISTOPILOT_UID=…` and `HISTOPILOT_GID` build images for another user.
+- **Stopping.** Restarting the service leaves tasks running. Stopping the worker stops its tasks with it; with auto-resume on, they are requeued from their checkpoints when it starts again. Restart the runner with `docker compose restart worker`: the Task Center page's restart button works only where the service may start runners itself.
+- **Not included.** TRIDENT feature extraction: extract features elsewhere and place them under the data root, or extend the worker image with TRIDENT and set `HISTOPILOT_TRIDENT_PYTHON` and `HISTOPILOT_TRIDENT_ROOT`. SDPC slides: OpenSDPC needs git to install and the system libraries `libgomp1`, `libnuma1` and `libjpeg8` at run time; a derived image can add them and the `sdpc` extra, then set `HISTOPILOT_SDPC_PYTHON`.
+- **Command line.** `docker compose exec histopilot histopilot project list` runs the CLI next to the service. A CLI on the host reaches `http://127.0.0.1:8787` too, with `HISTOPILOT_LOGIN` set to the secret in the sign-in link.
+
+### Container mode and the local API protections
+
+Inside a container the service cannot listen on 127.0.0.1 alone: Docker forwards a published port to the container's address on its bridge network, so connections arrive from the bridge rather than from loopback. `histopilot serve --container`, or `HISTOPILOT_CONTAINER=1`, which both images set, makes the service listen on all of the container's interfaces (`0.0.0.0`) instead. It is off by default, it cannot be set in the configuration file, and `--host` still accepts only loopback names. Nothing else changes:
+
+- The service never trusted the peer address. A request must name `127.0.0.1`, `localhost` or `[::1]` with the service's own port as its Host, pass the Origin and fetch-metadata checks, carry the session token and, with `--login`, come from a signed-in browser or a client holding the secret. Container mode leaves each check as it is, so a browser on the host that opens `http://127.0.0.1:8787` is served, while other sites and DNS-rebinding names are refused, as on a workstation.
+- `compose.yaml` publishes the port on the host's loopback only (`127.0.0.1:8787:8787`), so the host's network interfaces do not reach it.
+- What container mode adds is reach within Docker: other containers on the same Docker network and, depending on the Docker version and the host's firewall, machines on the local network that route to the bridge network can open a connection to the container's port. The Host check stops browsers, not a client that writes its own Host header. The CPU image's default command and `compose.yaml` therefore start the service with `--login`: anything else that reaches the port gets the health check and the static UI, never the session.
+- Started without `--login`, container mode prints a warning. So does `--container` outside a container (no `/.dockerenv` or `/run/.containerenv`), where it would open the service to every network interface of the machine.
 
 ## Diagnostics
 
@@ -316,5 +372,6 @@ scrape_configs:
 - Downloads and slide images come only from validated project artifacts and frozen slide references. There is no general file download or slide upload route.
 - Optional sign-in: with `histopilot serve --login`, or `login = true` under `[server]`, the service hands out its session only to a browser that opened the link it printed. That keeps other OS accounts, Windows programs under WSL2 and the far end of an SSH forward from fetching the session. `histopilot login url` prints the link again.
 - AI agents get scoped tokens for one project, never the session, and only for projects whose AI-exposure level allows it. Their changes wait for a person's approval, and every request they make is audited. See [AI agents](agents.md).
+- In a container the service listens on the container's interfaces, and every check above still applies; see [container mode](#container-mode-and-the-local-api-protections).
 
 These controls protect a single-user local service. Shared-lab authentication, per-user permissions, HTTPS reverse proxies and remote job executors are not implemented. A [demo service](#public-read-only-demo) replaces them with its own, narrower boundary.
