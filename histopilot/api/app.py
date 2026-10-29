@@ -22,6 +22,7 @@ from histopilot.application.system_compute import ComputeSampler
 from histopilot.config import Settings, load_settings
 from histopilot.doctor import system_report
 from histopilot.observability import logs
+from histopilot.observability.metrics import HttpMetrics
 from histopilot.schemas.scientific import CreateDraftRequest, UpdateDraftRequest
 from histopilot.schemas.workspace import (
     CreateDirectoryRequest,
@@ -39,7 +40,7 @@ from histopilot.storage.project_lock import StorageError
 from . import login
 from .access import access_router, token_project
 from .lifecycle import lifecycle_router
-from .monitoring import RequestLog
+from .monitoring import RequestLog, monitoring_router
 from .responses import coded_response
 from .scientific import scientific_router
 from .scopes import ScopeGate, audit_session
@@ -117,9 +118,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         after_session=audited,
         login_secret=login.ensure_secret(settings.port) if settings.login else None,
     )
-    # Added last, so it runs first: every request, refused ones too, gets an ID and an
-    # access line.
-    app.add_middleware(RequestLog)
+    # Added last, so it runs first: every request, refused ones too, gets an ID, an access
+    # line and its place in the request metrics.
+    http_metrics = HttpMetrics()
+    app.add_middleware(RequestLog, metrics=http_metrics)
 
     @app.exception_handler(WorkspaceError)
     @app.exception_handler(FilesystemError)
@@ -416,6 +418,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     task_center = TaskCenterService(projects, filesystem, settings.workspace)
     app.state.task_center = task_center
     app.include_router(task_center_router(task_center))
+    app.include_router(monitoring_router(task_center, http_metrics, revision=revision))
     app.include_router(mil_router(projects, filesystem))
     app.include_router(evaluation_router(projects, filesystem))
     app.include_router(model_experiments_router(projects, filesystem))

@@ -967,6 +967,76 @@ class TaskStore:
             ).fetchone()
         return row["request"] if row else None
 
+    def statistics(self, duration_bounds) -> dict:
+        """Aggregates for monitoring, read in one connection.
+
+        ``states`` counts tasks per state. ``held`` counts the blocked and queued tasks of
+        owners on hold; ``waiting`` the queued tasks of other owners that the runner left
+        with a waiting reason. ``durations`` gives, per adapter, how many task attempts
+        ended, their run time in total and the cumulative count within each of
+        ``duration_bounds`` (seconds), from the measurements; ``outcomes`` counts, per
+        adapter, terminal state and exit reason, how attempts ended, from the events.
+        Neither table is ever pruned, so both only grow. ``paused`` and ``heartbeatAt``
+        come from the settings and the runner row.
+        """
+        bounds = [float(bound) for bound in duration_bounds]
+        buckets = "".join(f", SUM(seconds <= ?) AS b{index}" for index in range(len(bounds)))
+        with self._connection() as db:
+            states = dict.fromkeys(STATES, 0)
+            for row in db.execute("SELECT state, COUNT(*) AS n FROM tasks GROUP BY state"):
+                states[row["state"]] = row["n"]
+            pending = db.execute(
+                "SELECT COALESCE(SUM(o.held), 0) AS held, COALESCE(SUM(NOT o.held AND "
+                "t.state='queued' AND t.waiting_reason IS NOT NULL), 0) AS waiting "
+                "FROM tasks t JOIN owners o ON o.key = t.owner_key "
+                "WHERE t.state IN ('blocked', 'queued')"
+            ).fetchone()
+            durations = db.execute(
+                f"SELECT t.adapter AS adapter, COUNT(*) AS n, SUM(m.seconds) AS total{buckets} "
+                "FROM (SELECT task_id, MAX(0.0, wall_seconds) AS seconds FROM measurements "
+                "WHERE wall_seconds IS NOT NULL) m JOIN tasks t ON t.id = m.task_id "
+                "GROUP BY t.adapter ORDER BY t.adapter",
+                bounds,
+            ).fetchall()
+            # A transition between two terminal states (a cancel reaching a task that waited
+            # for its requeue) re-concludes the same attempt; it is not counted again.
+            outcomes = db.execute(
+                "SELECT t.adapter AS adapter, e.to_state AS state, "
+                "COALESCE(json_extract(e.detail, '$.exitReason'), "
+                "json_extract(e.detail, '$.skipped')) AS reason, COUNT(*) AS n "
+                "FROM task_events e JOIN tasks t ON t.id = e.task_id "
+                f"WHERE e.to_state IN ({_TERMINAL_SQL}) AND (e.from_state IS NULL "
+                f"OR e.from_state NOT IN ({_TERMINAL_SQL})) "
+                "GROUP BY 1, 2, 3 ORDER BY 1, 2, 3"
+            ).fetchall()
+            runner = db.execute("SELECT heartbeat_at FROM runner WHERE id=1").fetchone()
+            paused = merge_settings(self._stored_settings(db))["paused"]
+        return {
+            "states": states,
+            "held": pending["held"],
+            "waiting": pending["waiting"],
+            "durations": [
+                {
+                    "adapter": row["adapter"],
+                    "count": row["n"],
+                    "seconds": row["total"] or 0.0,
+                    "buckets": [row[f"b{index}"] or 0 for index in range(len(bounds))],
+                }
+                for row in durations
+            ],
+            "outcomes": [
+                {
+                    "adapter": row["adapter"],
+                    "state": row["state"],
+                    "reason": row["reason"] if isinstance(row["reason"], str) else None,
+                    "count": row["n"],
+                }
+                for row in outcomes
+            ],
+            "paused": bool(paused),
+            "heartbeatAt": runner["heartbeat_at"] if runner else None,
+        }
+
     # -- transitions -----------------------------------------------------------------------
 
     def transition(self, task_id: str, *, from_states, to_state: str, **fields) -> bool:
