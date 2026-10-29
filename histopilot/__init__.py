@@ -4,4 +4,4 @@ The control service owns metadata. ML and WSI adapters belong in isolated worker
 importing the top-level package never initializes a compute runtime.
 """
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0"
