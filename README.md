@@ -3,6 +3,9 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Lyce24/HistoPilot/actions/workflows/checks.yml"><img src="https://github.com/Lyce24/HistoPilot/actions/workflows/checks.yml/badge.svg" alt="Checks" /></a>
+  <a href="https://github.com/Lyce24/HistoPilot/releases"><img src="https://img.shields.io/github/v/release/Lyce24/HistoPilot?color=292833" alt="Latest release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-006b5f" alt="MIT license" /></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+" />
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20WSL-292833" alt="Linux or WSL" />
   <img src="https://img.shields.io/badge/data-stays%20on%20your%20machine-006b5f" alt="Data stays on your machine" />
@@ -59,6 +62,24 @@ Open `http://127.0.0.1:8787` and pick **Open BLCA demo**: a read-only tour of a 
 - `bash serve.sh --help` lists the options, such as `--port` and `--workspace`.
 
 </details>
+
+## Run with Docker
+
+On a Linux host with Docker, an NVIDIA GPU and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), no Python or Node.js setup is needed:
+
+```bash
+git clone https://github.com/Lyce24/HistoPilot.git && cd HistoPilot
+echo "HISTOPILOT_DATA=/path/to/your/data" > .env    # mounted read-only as /data
+docker compose up -d                                 # the service and a GPU worker
+docker compose logs histopilot | grep login=         # open this sign-in link once
+```
+
+- **Service.** It listens on `127.0.0.1:8787` only. Your data folder is mounted read-only as `/data`, and projects live in a Docker volume.
+- **GPU worker.** The `worker` container runs the Task Center: training, predictor runs and attention maps run there, on its GPUs.
+- **Demo only.** `docker compose up demo` serves the synthetic BLCA demo at `http://127.0.0.1:8787`, on CPU and without data.
+- **Terminal.** `docker compose exec histopilot histopilot project list`.
+
+The images are `ghcr.io/lyce24/histopilot` (CPU) and `ghcr.io/lyce24/histopilot-worker` (CUDA). Settings, volumes and how the service stays local: [containers](docs/deployment.md#containers).
 
 ## Fly it your way
 
@@ -162,5 +183,6 @@ flowchart LR
 | [BLCA demo](docs/blca-demo.md) | The synthetic walkthrough |
 | [Architecture](docs/architecture.md) · [Task Center](docs/task-center.md) · [API](docs/api.md) | How it works inside |
 | [Contributing](CONTRIBUTING.md) | Development setup and tests |
+| [Changelog](CHANGELOG.md) | What each release changed |
 
-<sub>Every screenshot and number on this page comes from synthetic data. No project license has been selected; third-party models and backends keep their own licenses.</sub>
+<sub>Every screenshot and number on this page comes from synthetic data. HistoPilot is released under the [MIT license](LICENSE); third-party models and backends keep their own licenses.</sub>
