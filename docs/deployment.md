@@ -142,6 +142,7 @@ For extraction, HistoPilot applies two small runtime fixes to the recognized pin
 | `HISTOPILOT_SDPC_OPTIMIZATIONS=0` | Disable the OpenSDPC extraction fixes |
 | `HISTOPILOT_STATE_DIR` | Task Center state directory (default `$XDG_STATE_HOME/histopilot`, else `~/.local/state/histopilot`) |
 | `HISTOPILOT_TASK_CENTER_AUTOSTART=0` | Never start or restart the runner automatically |
+| `HISTOPILOT_LOG_LEVEL`, `HISTOPILOT_LOG_STDERR`, `HISTOPILOT_LOG_FORMAT` | Log level, every record on stderr, and the format of stderr; see [logs](#logs) |
 | `HISTOPILOT_CHROMIUM` | Chromium used by the offline browser checks in `web/scripts/` |
 
 ## Slide viewing
@@ -210,10 +211,84 @@ histopilot runner status
 
 If the service or runner seems stuck, `kill -USR1 <pid>` writes every thread's stack to `server-<port>-stacks.log` or `runner-stacks.log` in the Task Center state directory.
 
+## Logs and metrics
+
+### Logs
+
+The service and the Task Center runner write structured logs, one JSON object per line, to `logs/` in the Task Center state directory:
+
+| File | Holds |
+| --- | --- |
+| `service-<port>.jsonl` | The service on that port: one access line per request, its own startup and errors, and each task it queues or retries |
+| `runner.jsonl` | The runner: each step of a task's life (`queued`, `started`, `stopping`, `finished`, `adopted`) with its kind, adapter, attempt, state, exit code, duration and reason |
+
+Each file rotates at 10 MiB and keeps five older ones (`runner.jsonl.1` and so on). `runner.log` keeps the runner's plain-text messages as before. A worker writes HistoPilot's records to its task's log, the one the Task Center shows; other libraries, such as Lightning, print there as they always have.
+
+A line holds `ts` (UTC), `level`, `logger`, `msg`, `request_id`, `task_id` and `component` (`service`, `runner` or `worker`), then the record's own fields; an error adds its traceback as `exc`. An access line:
+
+```json
+{"ts": "2026-10-29T14:03:12.345Z", "level": "INFO", "logger": "histopilot.api.access", "msg": "GET /api/v1/task-center/snapshot 200", "request_id": "4f2c9a1e0b5d4c55a9510f0c4b2f9e1d", "task_id": null, "component": "service", "method": "GET", "route": "/api/v1/task-center/snapshot", "status": 200, "duration_ms": 12.4, "auth": "session"}
+```
+
+An access line names the route template, never the values in the path, and the kind of credential presented (`session`, `token` or `none`), never the credential. Queries, headers, cookies and bodies are never logged.
+
+- **Request IDs.** Every response carries `X-Request-ID`: the client's own when it is 1–128 letters, digits and `._:-`, otherwise a new one. Everything logged while the request is served carries it as `request_id`, and so does the line it adds to a project's [audit log](agents.md#the-audit-log). A task that a request queues or retries keeps the ID: the runner hands it to the worker as `HISTOPILOT_REQUEST_ID`, beside `HISTOPILOT_TASK_ID`, and the worker's records carry both.
+- **Logging never waits.** Each output has a bounded queue drained by a thread of its own. When a disk stalls or nobody reads the terminal, records are dropped and counted (`histopilot_log_records_dropped_total`); requests are never held up. The service's terminal gets only warnings and errors, such as a port already in use. Uvicorn's startup messages go to the file, and its access log is replaced by the service's own access lines.
+
+| Variable | Effect |
+| --- | --- |
+| `HISTOPILOT_LOG_LEVEL` | `DEBUG`, `INFO` (default), `WARNING` or `ERROR` |
+| `HISTOPILOT_LOG_STDERR=1` | Every record on stderr as well, for containers and log collectors |
+| `HISTOPILOT_LOG_FORMAT` | `text` (default, one readable line per record) or `json`: the format of stderr and of workers' records in task logs. The files are always JSON Lines. |
+
+The runner inherits these from the service that starts it, and tasks from the runner. To follow the service's log: `tail -f ~/.local/state/histopilot/logs/service-8787.jsonl | jq -c 'select(.level != "INFO")'`.
+
+### Metrics
+
+`GET /api/v1/metrics` answers in the Prometheus text format, version 0.0.4. Every value is an aggregate: labels name task states, adapters, exit reasons, methods, route templates, status codes and GPU indices, never a project, record, slide, path or token. Task metrics are read from the Task Center store at each scrape, so they survive restarts; request metrics count from the service's start.
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `histopilot_tasks` | gauge | `state` | Tasks in each state: `blocked`, `queued`, `starting`, `running`, `stopping`, `succeeded`, `failed`, `cancelled`, `interrupted` |
+| `histopilot_tasks_held` | gauge | | Blocked and queued tasks of owners on hold |
+| `histopilot_tasks_waiting` | gauge | | Queued tasks the runner left waiting: for capacity, a related task, a busy output or a fenced GPU |
+| `histopilot_queue_paused` | gauge | | 1 while the queue is paused |
+| `histopilot_tasks_finished_total` | counter | `adapter`, `state` | Task attempts that ended, by how they ended |
+| `histopilot_task_failures_total` | counter | `adapter`, `reason` | Attempts that failed, by exit reason: `error`, `oom`, `cuda_failure` and so on |
+| `histopilot_task_duration_seconds` | histogram | `adapter` | Run time of each attempt that ended, from 1 second to a day |
+| `histopilot_runner_up` | gauge | | 1 while a runner holds the runner lock |
+| `histopilot_runner_heartbeat_age_seconds` | gauge | | Seconds since the runner's last heartbeat; it writes one every 2 seconds |
+| `histopilot_task_store_up` | gauge | | 0 when the store could not be read; the task metrics are then left out |
+| `histopilot_gpu_info` | gauge | `gpu`, `name` | One per GPU that nvidia-smi reports |
+| `histopilot_gpu_utilization_ratio`, `histopilot_gpu_memory_used_bytes`, `histopilot_gpu_memory_total_bytes` | gauge | `gpu` | Utilization from 0 to 1, and memory |
+| `histopilot_http_requests_total` | counter | `method`, `route`, `status` | Requests this service answered |
+| `histopilot_http_request_duration_seconds` | histogram | `method`, `route`, `status` | Time to answer them |
+| `histopilot_log_records_dropped_total` | counter | `sink` | Records a log output (`file` or `stderr`) dropped |
+| `histopilot_build_info` | gauge | `version`, `revision` | The code the service runs |
+| `histopilot_service_start_time_seconds` | gauge | | When the service started |
+
+Failures and finished attempts are counted from the store's event history, and durations from its measurements; neither is pruned, so these counters only grow, and a retry never takes back a failure. GPU readings come from `nvidia-smi` (on WSL, `/usr/lib/wsl/lib/nvidia-smi`), asked at most every 5 seconds with a short timeout; without it, or when it fails, the GPU metrics are left out.
+
+**Who may read them.** The metrics are machine-wide, like the Task Center's capacity. The service's session token reads them. A scraper needs no session: reaching the loopback port is enough, as it is to fetch the session itself. A service started with `--login` asks a scraper for its sign-in secret, as a bearer token or in `X-HistoPilot-Login`. Agent tokens are refused with 403 `SCOPE_MISSING`, and the attempt is audited.
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: histopilot
+    metrics_path: /api/v1/metrics
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["127.0.0.1:8787"]
+    # Only for a service started with --login: the secret's file in the Task Center state
+    # directory. Only your user can read it, so run Prometheus as you or give it a copy.
+    authorization:
+      credentials_file: /path/to/histopilot-state/login-8787.secret
+```
+
 ## Local API protections
 
 - The service accepts only a loopback Host header and refuses cross-site browser requests.
-- A random per-process session token from `/api/v1/session` is required on every other API route, in the `X-HistoPilot-Token` header. The UI handles this.
+- A random per-process session token from `/api/v1/session` is required on every other API route, in the `X-HistoPilot-Token` header. The UI handles this. A metrics scraper is the one exception; see [metrics](#metrics).
 - Folder browsing resolves symlinks before checking the configured roots, and listings are bounded.
 - Downloads and slide images come only from validated project artifacts and frozen slide references. There is no general file download or slide upload route.
 - Optional sign-in: with `histopilot serve --login`, or `login = true` under `[server]`, the service hands out its session only to a browser that opened the link it printed. That keeps other OS accounts, Windows programs under WSL2 and the far end of an SSH forward from fetching the session. `histopilot login url` prints the link again.

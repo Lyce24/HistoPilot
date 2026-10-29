@@ -134,7 +134,7 @@ Starts are journaled too. The runner moves a task to `starting` before it spawns
 
 ## The runner
 
-`histopilot serve` starts the runner in the tmux session `hp-runner-<uid>`, unless you pass `--no-runner`. A file lock keeps one runner per user. The runner ticks every second, writes a heartbeat every 2 seconds and samples telemetry every 10 seconds. Tasks run in their own process groups, so they survive the browser, SSH sessions, the service and the runner itself. The HistoPilot service is never hosted in tmux; start and stop it yourself.
+`histopilot serve` starts the runner in the tmux session `hp-runner-<uid>`, unless you pass `--no-runner`. A file lock keeps one runner per user. The runner ticks every second, writes a heartbeat every 2 seconds and samples telemetry every 10 seconds. It records each step of a task's life in `logs/runner.jsonl`, with the task's ID, and passes every task the IDs that name it in logs: `HISTOPILOT_TASK_ID`, and `HISTOPILOT_REQUEST_ID` when a request queued or retried it. `GET /api/v1/metrics` reports the queue for Prometheus; see [metrics](deployment.md#metrics). Tasks run in their own process groups, so they survive the browser, SSH sessions, the service and the runner itself. The HistoPilot service is never hosted in tmux; start and stop it yourself.
 
 `histopilot serve` also restarts a runner that is outdated: one whose loaded code differs from the checkout, or one started from another checkout ("Started from another checkout" on the page). The restart waits for the current tick to finish; running tasks are adopted by the new runner. Any submission wakes a stopped runner. Set `HISTOPILOT_TASK_CENTER_AUTOSTART=0` to disable automatic start and restart; the tests do this.
 
@@ -168,10 +168,11 @@ The state directory is `$HISTOPILOT_STATE_DIR`, else `$XDG_STATE_HOME/histopilot
 | `task-center.sqlite` (with `-wal` and `-shm`) | Owners, groups, tasks, dependencies, events, settings, operation receipts, measurements and the runner row, in WAL mode |
 | `runner.lock` | The single-runner lock |
 | `runner.log` | The runner's log |
+| `logs/` | Structured logs: `runner.jsonl`, with each step of every task, and `service-<port>.jsonl`; see [logs](deployment.md#logs) |
 | `exits/` | Wrapper start and exit records |
 | `runner-stacks.log`, `server-<port>-stacks.log` | Thread stacks written by `kill -USR1` on the runner or the service |
 
-Only the runner writes task state; the API writes intents and new tasks. Every transition is a guarded update in one transaction. Every 5 minutes the runner truncates the SQLite write-ahead log (`wal_checkpoint(TRUNCATE)`), and connections cap its size at 8 MiB, so the log stays bounded. Tasks, events and history are never pruned, and `runner.log` is not rotated; the store grows slowly with use. Page reads list live owners and page through history, so a large store costs little per poll.
+Only the runner writes task state; the API writes intents and new tasks. Every transition is a guarded update in one transaction. Every 5 minutes the runner truncates the SQLite write-ahead log (`wal_checkpoint(TRUNCATE)`), and connections cap its size at 8 MiB, so the log stays bounded. Tasks, events and history are never pruned, and `runner.log` is not rotated; the store grows slowly with use. The files in `logs/` rotate at 10 MiB, five kept. Page reads list live owners and page through history, so a large store costs little per poll.
 
 ## Work created before the Task Center
 

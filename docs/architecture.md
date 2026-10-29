@@ -129,7 +129,7 @@ Patch features stay in their HDF5 files. Optional verified packs are memory-mapp
 | `.histopilot-write.lock` | Serializes scientific writes across threads and processes; a busy project fails fast with `PROJECT_BUSY` |
 | `runner.lock` in the state directory | One Task Center runner per user |
 
-Drafts and labels carry revisions, and stale updates are refused. All SQLite databases use WAL. Every connection disables the close-time checkpoint, and connections open and close under one process-wide lock (`storage/sqlite_connections.py`): SQLite 3.51.0 can deadlock when one thread closes the last connection to a WAL database while another opens or closes one. `kill -USR1` on the service or runner writes every thread's stack to a log in the Task Center state directory.
+Drafts and labels carry revisions, and stale updates are refused. All SQLite databases use WAL. Every connection disables the close-time checkpoint, and connections open and close under one process-wide lock (`storage/sqlite_connections.py`): SQLite 3.51.0 can deadlock when one thread closes the last connection to a WAL database while another opens or closes one. `kill -USR1` on the service or runner writes every thread's stack to a log in the Task Center state directory. Both write structured logs to `logs/` there; see [logs](deployment.md#logs).
 
 Lists that read many records run in a read session (`storage/read_sessions.py`): one read connection per store and thread for the whole request, and values that cannot change within it, such as a job's status or a dataset's verified checksums, worked out once. Read sessions also take turns, two at a time: the service computes under one interpreter lock, so lists read side by side wait on each other at every file and database call, and a large project's first page load took three times as long that way. A session that has waited two minutes reads anyway.
 
@@ -149,12 +149,13 @@ TanStack Query owns cached server state, scoped by project and record identity. 
 
 | Location | Responsibility |
 | --- | --- |
-| `histopilot/api/` | FastAPI routers and the local security boundary (`security.py`, with the optional sign-in in `login.py`); every route's class (`route_classes.py`) and every error code's kind (`error_codes.py`); agent access: scoped tokens and approvals (`access.py`), the scope gate (`scopes.py`), metadata redaction (`redaction.py`) and the audit log (`audit.py`) |
+| `histopilot/api/` | FastAPI routers and the local security boundary (`security.py`, with the optional sign-in in `login.py`); every route's class (`route_classes.py`) and every error code's kind (`error_codes.py`); agent access: scoped tokens and approvals (`access.py`), the scope gate (`scopes.py`), metadata redaction (`redaction.py`) and the audit log (`audit.py`); request IDs, access lines and the metrics route (`monitoring.py`) |
 | `histopilot/schemas/` | Pydantic request and record contracts |
 | `histopilot/application/` | Services: imports, targets and splits, features, setups and experiments, training, predictors, cohorts and runs (Apply models), clinical utility, interpretation, lifecycle, operations, the BLCA demo |
 | `histopilot/storage/` | Scientific and central stores, locks, lifecycle sidecar, filesystem confinement, packed features, attention packs; `io.py` holds canonical JSON, content hashes, timestamps and bounded, atomic JSON files |
 | `histopilot/taskcenter/` | Task store, runner, wrapper, capacity, estimator, launcher, leases and per-kind adapters |
 | `histopilot/workers/` | Isolated worker entry points and the compute archive |
+| `histopilot/observability/` | Structured logs that carry request and task IDs, written through queues that never block (`logs.py`), and the Prometheus text format (`metrics.py`); standard library only |
 | `histopilot/training/` | Lightning fold training, refit, inference and attention |
 | `histopilot/models/` | ABMIL, nnMIL, CLAM, TransMIL, DSMIL, DTFD-MIL, ACMIL, pooling and clinical models, and the model catalog with each architecture's options |
 | `histopilot/datasets/` | MIL data module and sampling |

@@ -69,6 +69,7 @@ Shared helpers live in `tests/support/`, one module per purpose. Import them fro
 | `predictors.py` | Synthetic completed candidates, frozen predictors, fake refit jobs and the experiment predictor coordinator |
 | `training.py` | The fake training `runtime` probe, development batches, the `tc_execution` fixture, and helpers that finish or lose a batch's fold tasks |
 | `compute.py` | Compute-job services and tasks, and the `managed_study` attention study |
+| `logs.py` | The `collect` fixture: a logger's structured records, stamped with request and task IDs as the service's own handlers stamp them |
 
 A test module that uses a fixture from `tests/support/` imports it by name (for example `from support.predictors import registry as registry`) so that pytest registers it for that module.
 
