@@ -6,6 +6,7 @@ records they own. Tasks outlive the runner and are re-adopted by verified identi
 """
 
 import hashlib
+import logging
 import math
 import os
 import re
@@ -20,6 +21,7 @@ from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from pathlib import Path
 
+from histopilot.observability import logs
 from histopilot.storage.io import utc_now
 from histopilot.storage.project_lock import StorageError
 from histopilot.taskcenter import adapters as adapter_registry
@@ -35,8 +37,11 @@ from histopilot.taskcenter.model import (
     parse_iso,
     seconds_between,
 )
-from histopilot.taskcenter.store import MEASUREMENT_COLUMNS, TaskStore
+from histopilot.taskcenter.store import MEASUREMENT_COLUMNS, TaskStore, log_task
 
+# Structured records (logs/runner.jsonl); the free-text messages of ``Runner.log`` still go
+# to runner.log.
+LOG = logging.getLogger("histopilot.taskcenter.runner")
 HEARTBEAT_SECONDS = 2.0
 # Truncate the store's write-ahead log this often; the heartbeat alone adds megabytes an hour.
 CHECKPOINT_SECONDS = 300.0
@@ -432,6 +437,7 @@ class Runner:
             self.close()
             raise
         self.log(f"runner started (pid {self.identity['pid']})")
+        LOG.info("runner started", extra={"pid": self.identity["pid"]})
 
     def _stopping(self) -> bool:
         stop = self._stop
@@ -453,6 +459,7 @@ class Runner:
                         self.tick()
                     except Exception:  # the loop must survive any single tick
                         self.log("tick failed:\n" + traceback.format_exc())
+                        LOG.exception("runner tick failed")
                     if requested():
                         break
                     event.wait(interval)
@@ -468,6 +475,7 @@ class Runner:
         finally:
             self.close()
         self.log("runner stopped; tasks keep running")
+        LOG.info("runner stopped; tasks keep running")
 
     # -- helpers -------------------------------------------------------------------------------
 
@@ -489,11 +497,14 @@ class Runner:
         return (task.get("bookkeeping") or {}).get("hook") == "on_exit"
 
     def _guard(self, action: str, task: dict | None, function, *args) -> None:
-        try:
-            function(*args)
-        except Exception:  # one task must never stall the others
-            label = f" {task['id']}" if task else ""
-            self.log(f"{action}{label} failed:\n" + traceback.format_exc())
+        # Records made for one task, by an adapter's hooks too, carry its ID.
+        with logs.bound(task=task["id"] if task else None):
+            try:
+                function(*args)
+            except Exception:  # one task must never stall the others
+                label = f" {task['id']}" if task else ""
+                self.log(f"{action}{label} failed:\n" + traceback.format_exc())
+                LOG.exception("%s failed", action)
 
     def _refresh_host(self, clock: float, *, force=False) -> None:
         if not force and self._host_at is not None and clock - self._host_at < self.host_interval:
@@ -674,6 +685,7 @@ class Runner:
             self.store.set_fields(task["id"], signalled_at=self.now())
             result["stopped"].append(task["id"])
             self.log(f"stopping {task['id']} ({task['stopRequest'] or 'abort'})")
+            log_task("stopping", task, reason=task["stopRequest"] or "abort")
             return
         grace = task["request"].get("graceSeconds")
         if grace is None:
@@ -684,6 +696,7 @@ class Runner:
             if task["killedAt"] is None:
                 self.store.set_fields(task["id"], killed_at=self.now())
                 self.log(f"killed {task['id']} after {grace:g} s grace")
+                log_task("killed", task, level=logging.WARNING, grace_s=grace)
 
     def _reconcile(self, ctx: RunnerContext, result: dict) -> None:
         for task in self.store.list(states=ACTIVE, limit=None):
@@ -786,6 +799,7 @@ class Runner:
         )
         if undone:
             self.log(f"{task['id']} queued again: {why}")
+            log_task("queued", task, state="queued", reason="start-undone")
         return undone
 
     def _adopt_started(self, task: dict, spawned: dict, ctx: RunnerContext) -> None:
@@ -830,6 +844,7 @@ class Runner:
                 self.store.set_fields(task["id"], process=process, gpu=gpu, lease=lease)
             return
         self.log(f"adopted the journaled start of {task['id']} (pid {identity['pid']})")
+        log_task("adopted", task, pid=identity["pid"], gpu=gpu)
         current = self.store.get(task["id"]) or task
         self._started_hook(current, identity, gpu, ctx)
 
@@ -980,6 +995,22 @@ class Runner:
             self._guard("measurement", task, self._measure, task, record, result_outcome, now)
         result["finished"].append(task["id"])
         self.log(f"finished {task['id']}: {terminal} ({reason})")
+        # An interruption the runner itself requeues (a pause, a busy output, an automatic
+        # resume) is routine; a failure, or a loss nothing will resume, is worth a warning.
+        routine = terminal in ("succeeded", "cancelled") or follow_up is not None
+        duration = seconds_between(task["startedAt"], now)
+        log_task(
+            "finished",
+            task,
+            level=logging.INFO if routine else logging.WARNING,
+            message=f"task {terminal}",
+            state=terminal,
+            reason=reason,
+            exit_code=exit.get("returncode"),
+            duration_s=round(duration, 3) if duration is not None else None,
+            requeue=(follow_up or {}).get("reason"),
+            gpu=task.get("gpu"),
+        )
         if task.get("gpu") is not None:
             if lost_device:
                 self._fence_gpu(task["gpu"], error)
@@ -1357,6 +1388,7 @@ class Runner:
             self._intents.pop(task["id"], None)
             result["finished"].append(task["id"])
             self.log(f"finished {task['id']}: {state} (cancelled before its requeue)")
+            log_task("finished", task, message=f"task {state}", state=state, reason=reason)
 
     def _measure(self, task: dict, record: dict, result_outcome: dict, now: str) -> None:
         resources = task.get("resources") or {}
@@ -1409,6 +1441,7 @@ class Runner:
             detail={"abort": message},
         )
         self.log(f"aborting {task['id']}: {message}")
+        log_task("stopping", task, level=logging.WARNING, reason="abort")
 
     def _started_hook(self, task: dict, identity: dict, gpu: int | None, ctx) -> None:
         try:
@@ -1552,6 +1585,7 @@ class Runner:
         ):
             return False
         self.log(f"adopted an untracked process of {task['id']} (pid {identity.get('pid')})")
+        log_task("adopted", task, pid=identity.get("pid"), gpu=gpu)
         current = self.store.get(task["id"]) or task
         self._started_hook(current, identity, gpu, ctx)
         return True
@@ -1698,6 +1732,14 @@ class Runner:
                 ):
                     result["finished"].append(task["id"])
                     self.log(f"skipped {task['id']}: {skip['exitReason']}")
+                    log_task(
+                        "finished",
+                        task,
+                        message=f"task {state}",
+                        state=state,
+                        reason=skip["exitReason"],
+                        skipped=True,
+                    )
                 return None
             changes = {}
             if prepared.get("request"):
@@ -1729,6 +1771,19 @@ class Runner:
         ):
             result["finished"].append(task["id"])
             self.log(f"failed {task['id']} before start: {message}")
+            self._failed_before_start(task)
+
+    @staticmethod
+    def _failed_before_start(task: dict) -> None:
+        log_task(
+            "finished",
+            task,
+            level=logging.WARNING,
+            message="task failed",
+            state="failed",
+            reason="error",
+            started=False,
+        )
 
     def _admit_locked(self, task, effective, *, running, claims, host, own):
         """Admission against a registry read under its lock, so no legacy scheduler can
@@ -1762,6 +1817,7 @@ class Runner:
         owner = self.store.owner(task["ownerKey"])
         if owner is not None and owner["held"]:  # held after this pass listed the owners
             return False, None, ON_HOLD, None
+        command = self._command(task)
         stack = ExitStack()
         try:
             stack.enter_context(self.lease_lock())
@@ -1786,7 +1842,7 @@ class Runner:
             journal = self._journal(task)
             try:
                 child = self.spawner(
-                    task["command"], lane=request["lane"], gpu=gpu, task=task, journal=journal
+                    command, lane=request["lane"], gpu=gpu, task=task, journal=journal
                 )
             except Exception as error:  # a command that cannot start fails the task
                 self._drop_journal(task)
@@ -1862,9 +1918,22 @@ class Runner:
         self._procs[task["id"]] = child
         result["started"].append(task["id"])
         self.log(f"started {task['id']} ({task['title']}) pid {child.pid} gpu {gpu}")
+        log_task("started", task, pid=child.pid, lane=request["lane"], gpu=gpu)
         task = self.store.get(task["id"]) or task
         self._started_hook(task, identity, gpu, ctx)
         return True, gpu, None, None
+
+    def _command(self, task: dict) -> dict:
+        """The task's command, with the request that queued it (when one did) handed to the
+        worker as HISTOPILOT_REQUEST_ID, so the worker's records carry it too."""
+        try:
+            requested = logs.valid_request_id(self.store.requested_by(task["id"]))
+        except Exception:  # a log detail never stops a start
+            requested = None
+        command = task["command"]
+        if requested is None:
+            return command
+        return {**command, "env": {**(command.get("env") or {}), logs.REQUEST_ENV: requested}}
 
     def _fail_starting(self, task: dict, message: str, result: dict) -> None:
         if self.store.transition(
@@ -1877,6 +1946,7 @@ class Runner:
         ):
             result["finished"].append(task["id"])
             self.log(f"failed {task['id']} before start: {message}")
+            self._failed_before_start(task)
 
     def _discard(self, child, lease: str | None, *, locked=False, task=None) -> None:
         """Kill a just-spawned child and its session, reap it and withdraw its lease."""
@@ -1986,6 +2056,7 @@ class Runner:
                 continue
             if identity and procs.alive(identity):
                 self.log(f"adopted {task['id']} (pid {identity.get('pid')})")
+                log_task("adopted", task, pid=identity.get("pid"), gpu=task.get("gpu"))
                 continue
             recorded = procs.read_exit(self._journal(task)["exit"]) if identity else None
             if recorded is None and identity and procs.leader_alive(identity.get("wrapper")):
