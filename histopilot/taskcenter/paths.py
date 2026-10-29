@@ -50,6 +50,13 @@ def runner_lock_path() -> Path:
     return state_dir() / "runner.lock"
 
 
+def log_dir() -> Path:
+    """Where the service and the runner keep their structured logs."""
+    path = state_dir() / "logs"
+    ensure_managed_directory(path)
+    return path
+
+
 def autostart_enabled() -> bool:
     return os.environ.get(AUTOSTART_ENV, "1") != "0"
 

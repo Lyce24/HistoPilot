@@ -72,6 +72,9 @@ def collect(plan_path: Path, *, final: bool) -> int:
 
 
 if __name__ == "__main__":
+    from histopilot.observability.logs import configure_worker
+
+    configure_worker()
     arguments = sys.argv[1:]
     final = "--final" in arguments
     paths = [item for item in arguments if item != "--final"]
