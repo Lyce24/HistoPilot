@@ -192,6 +192,8 @@ A demo service is usually reached through a reverse proxy, so it trusts nothing 
 
 No other origin is granted a cross-origin read. Pages may be framed by `https://huggingface.co` only, where a Space's page shows the app. A service started without `--demo` keeps every check in [local API protections](#local-api-protections); demo mode changes none of them.
 
+[`deploy/huggingface-space/`](../deploy/huggingface-space/) holds a Docker Space that installs a released wheel and runs the demo; its `PUBLISH.md` lists the steps to create the Space.
+
 ## Frontend development with Vite
 
 Terminal A:
