@@ -33,7 +33,12 @@
 .blca-demo-records > tbody > tr > th { min-width: 250px; }
 .blca-demo-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .blca-demo-empty { padding: 28px 0; color: var(--muted); }
-.blca-demo-record-view { display: grid; gap: 22px; min-width: 0; }
+.blca-demo-record-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; min-width: 0; }
+/* An experiment's eight steps wrap in rows of four rather than widen the page past a laptop screen. */
+@media (min-width: 901px) {
+  .blca-demo-record-view .stage-steps ol { flex-wrap: wrap; }
+  .blca-demo-record-view .stage-steps li:nth-last-child(n+6), .blca-demo-record-view .stage-steps li:nth-last-child(n+6) ~ li { flex: 0 0 calc(25% - 7.5px); }
+}
 .blca-demo-record-heading { display: grid; justify-items: start; gap: 14px; }
 .blca-demo-record-heading h2 { margin: 0; }
 .blca-demo-step-description { color: var(--muted); line-height: 1.7; }
