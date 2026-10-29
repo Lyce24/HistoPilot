@@ -7,6 +7,8 @@ import { StageLibraryToolbar, StagePage, StageSteps, useStageLibrary } from '../
 import { RunTable } from '../components/ExperimentTracking';
 import { ResourceDashboard } from '../components/RunResourceUsage';
 import CurveChart from '../components/CurveChart';
+// The chart's own styles: without them a served demo draws its axes as black triangles.
+import './ClinicalInsights.css';
 import './BlcaDemo.css';
 
 export function filterDemoRecords(records: DemoRecord[], search: string, tag: string) {
