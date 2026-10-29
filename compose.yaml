@@ -1,0 +1,109 @@
+# HistoPilot with Docker Compose. See docs/deployment.md#containers.
+#
+#   docker compose up -d             the service and a GPU worker (NVIDIA GPU and the NVIDIA
+#                                    Container Toolkit required)
+#   docker compose logs histopilot   the sign-in link to open once in your browser
+#   docker compose up demo           the read-only synthetic demo alone: no GPU, no data
+#
+# Settings, from the environment or an .env file beside this one:
+#   HISTOPILOT_DATA     folder of slides, tables and features, mounted read-only as /data
+#                       (default ./data)
+#   HISTOPILOT_PORT     port on 127.0.0.1 (default 8787); the container listens on the same
+#                       port, because the service accepts only its own port in the Host header
+#   HISTOPILOT_VERSION  image tag (default latest, the newest release)
+
+name: histopilot
+
+x-histopilot: &histopilot
+  image: ghcr.io/lyce24/histopilot-worker:${HISTOPILOT_VERSION:-latest}
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.worker
+  init: true
+  restart: unless-stopped
+  environment:
+    HISTOPILOT_PORT: ${HISTOPILOT_PORT:-8787}
+    HISTOPILOT_URL: http://127.0.0.1:${HISTOPILOT_PORT:-8787}
+  # The service and the runner share the Task Center store (state), the projects (workspace)
+  # and the lease registry and output locks (TMPDIR, the tmp volume), at the same paths.
+  volumes:
+    - state:/var/lib/histopilot/state
+    - workspace:/var/lib/histopilot/workspace
+    - tmp:/var/lib/histopilot/tmp
+    - ${HISTOPILOT_DATA:-./data}:/data:ro
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  # The service and browser UI, published on the host's loopback only, with sign-in. It runs
+  # from the CUDA image because it plans training and predictor runs by probing the training
+  # environment and its GPUs; it never starts a runner.
+  histopilot:
+    <<: *histopilot
+    command:
+      - serve
+      - --no-runner
+      - --no-browser
+      - --login
+      - --port
+      - "${HISTOPILOT_PORT:-8787}"
+      - --workspace
+      - /var/lib/histopilot/workspace
+      - --data-root
+      - /data
+    ports:
+      - "127.0.0.1:${HISTOPILOT_PORT:-8787}:${HISTOPILOT_PORT:-8787}"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request as r; r.build_opener(r.ProxyHandler({})).open('http://127.0.0.1:%s/api/v1/health' % os.environ['HISTOPILOT_PORT'], timeout=4)"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # The Task Center runner: it starts every task in this container, on its GPUs. Stopping it
+  # stops running tasks; they resume from their checkpoints when it starts again.
+  worker:
+    <<: *histopilot
+    command: [runner, run]
+    stop_grace_period: 30s
+    # Data loader workers pass bags through shared memory; Docker's default is 64 MB.
+    shm_size: 8gb
+
+  # The synthetic BLCA demo on CPU, read-only, with nothing mounted. Demo mode serves only
+  # public synthetic content to anyone who reaches it and accepts any --host, so it listens
+  # on 0.0.0.0 directly rather than through container mode.
+  demo:
+    profiles: [demo]
+    image: ghcr.io/lyce24/histopilot:${HISTOPILOT_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    init: true
+    command:
+      - serve
+      - --demo
+      - --host
+      - 0.0.0.0
+      - --port
+      - "${HISTOPILOT_PORT:-8787}"
+      - --no-runner
+      - --no-browser
+    environment:
+      HISTOPILOT_PORT: ${HISTOPILOT_PORT:-8787}
+      HISTOPILOT_URL: http://127.0.0.1:${HISTOPILOT_PORT:-8787}
+    ports:
+      - "127.0.0.1:${HISTOPILOT_PORT:-8787}:${HISTOPILOT_PORT:-8787}"
+
+volumes:
+  state:
+  workspace:
+  tmp:
