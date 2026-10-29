@@ -91,3 +91,5 @@ node web/scripts/verify-blca-demo.mjs --readme
 ```
 
 The [capture script](../web/scripts/verify-blca-demo.mjs) builds an offline fixture from the current React source, checks the walkthrough on desktop and mobile, and with `--readme` replaces the images in `docs/assets/blca/` and their [capture metadata](assets/blca/captures.json). Without `--readme` it writes to a temporary directory. It starts no HistoPilot server. Set `HISTOPILOT_CHROMIUM` to use another Chromium executable.
+
+The README's animated tour, [`docs/assets/demo.gif`](assets/demo.gif), is recorded from a running demo service by [`web/scripts/record-demo-gif.mjs`](../web/scripts/record-demo-gif.mjs); see [contributing](../CONTRIBUTING.md#frontend).

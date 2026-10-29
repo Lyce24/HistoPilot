@@ -20,6 +20,10 @@
 
 HistoPilot is a research workspace for computational pathology. It takes a slide table to cross-validated, compared and applied multiple instance learning (MIL) models, and it keeps every step frozen, versioned and reproducible. It runs on your own workstation, and you can drive it three ways: from the **browser**, from the **terminal**, or by asking an **AI agent**.
 
+<img src="docs/assets/demo.gif" width="100%" alt="A tour of the synthetic BLCA demo in the browser: the start page, datasets, slide features, targets and splits, an experiment's runs and training curves, a scored run's ROC curve, its clinical utility and model interpretation" />
+
+<sub>The synthetic BLCA demo: every record, score and curve in it is generated, not taken from a real study.</sub>
+
 ## One question, three cockpits
 
 *"Which design won the comparison, and is the difference real?"* Here is one synthetic study answering in each cockpit. The numbers agree because all three read the same local API.

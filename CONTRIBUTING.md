@@ -112,6 +112,13 @@ node web/scripts/verify-task-center.mjs
 node web/scripts/verify-blca-demo.mjs          # add --readme to refresh docs/assets/blca
 ```
 
+`web/scripts/record-demo-gif.mjs` records `docs/assets/demo.gif`, the README's tour of the synthetic demo. Unlike the checks, it drives a running service, and only a [demo service](docs/deployment.md#public-read-only-demo): it refuses any other. It also needs `ffmpeg`.
+
+```bash
+bash serve.sh --demo --port 8795               # in another terminal; rebuilds the UI if web/ changed
+node web/scripts/record-demo-gif.mjs           # --url for another address, --keep to keep the frames
+```
+
 The service serves the bundle in `histopilot/static/`. `bash serve.sh` rebuilds it when `web/` changed; see [deployment](docs/deployment.md#start-and-restart).
 
 ## Documentation and privacy
