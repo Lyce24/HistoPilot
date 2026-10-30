@@ -198,9 +198,7 @@ def _run_bounded(command: list[str], *, timeout: float) -> subprocess.CompletedP
         process.kill()
         with _PROBE_LOCK:
             _LINGERING_PROBE = process
-        threading.Thread(
-            target=process.communicate, name="probe-reaper", daemon=True
-        ).start()
+        threading.Thread(target=process.communicate, name="probe-reaper", daemon=True).start()
         raise
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 

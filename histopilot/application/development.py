@@ -430,6 +430,7 @@ class DevelopmentService:
         if candidates:
             # Pretrained weights are part of the design: hash them now; freezing publishes the
             # pins and every later step refuses a file that no longer matches.
+            assert protocol is not None  # candidates exist only once the protocol has loaded
             try:
                 model_checkpoints = pin_recipes(
                     self.filesystem, [item["recipe"] for item in candidates]

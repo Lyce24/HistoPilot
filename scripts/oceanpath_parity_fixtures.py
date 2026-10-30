@@ -297,7 +297,7 @@ def differences(expected, actual, path="", tolerance=1e-5):
             return [path]
         return [
             item
-            for index, (left, right) in enumerate(zip(expected, actual))
+            for index, (left, right) in enumerate(zip(expected, actual, strict=True))
             for item in differences(left, right, f"{path}/{index}", tolerance)
         ]
     if isinstance(expected, float) and isinstance(actual, float):
