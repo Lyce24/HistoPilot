@@ -52,6 +52,10 @@ export interface TrainingRecipe {
   dtfdAttentionDim?: number; dtfdDropout?: number;
   acmilBranches?: number; acmilMaskedPatches?: number; acmilMaskDrop?: number;
   acmilAttentionDim?: number; acmilDropout?: number;
+  mamba2Initialization?: 'random' | 'checkpoint'; mamba2Checkpoint?: string; mamba2AggregatorLearningRate?: number;
+  mamba2FreezeAggregator?: boolean; mamba2EmbedDim?: number; mamba2Layers?: number; mamba2StateDim?: number;
+  mamba2Expand?: number; mamba2HeadDim?: number; mamba2ConvWidth?: number; mamba2AttentionDim?: number;
+  mamba2Dropout?: number; mamba2Hilbert?: boolean; mamba2CobraPooling?: boolean;
 }
 export interface ResourcePolicy {
   maxConcurrentRuns: number; gpuIds: number[]; runsPerGpu: number;

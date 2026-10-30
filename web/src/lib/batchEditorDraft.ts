@@ -64,12 +64,16 @@ function recipe(value: unknown): value is TrainingRecipe {
     // Each architecture's own choices, such as CLAM's instance loss.
     ...Object.fromEntries(MODEL_OPTIONS.filter((option) => option.kind === 'choice').map((option) => [option.key, option.choices.map((choice) => choice.value)])),
   };
+  // Architecture paths, such as a pretrained checkpoint, with their own length limit.
+  const textOptions: Record<string, number> = Object.fromEntries(MODEL_OPTIONS
+    .filter((option) => option.kind === 'text').map((option) => [option.key, option.maximum ?? 4096]));
   return Object.entries(experimentalRecipeDefaults).every(([key, sample]) => {
     const item = value[key];
     if (item === undefined) return true; // Historical recovery copies predate these controls.
     if (key === 'classWeights') return item === null || Array.isArray(item) && item.length >= 2 && item.length <= 50 && item.every(number);
     if (key === 'adamBetas') return Array.isArray(item) && item.length === 2 && item.every(number);
     if (choices[key]) return typeof item === 'string' && choices[key].includes(item);
+    if (textOptions[key] !== undefined) return text(item, textOptions[key]);
     if (sample === null) return item === null || number(item);
     if (typeof sample === 'number') return number(item);
     if (typeof sample === 'string') return text(item, 128);

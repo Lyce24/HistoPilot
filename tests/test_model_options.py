@@ -59,6 +59,10 @@ def test_schema_field_matches_the_catalogued_option(option):
             TrainingRecipe.model_validate({option.key: "unlisted"})
     elif option.kind == catalog.BOOLEAN:
         assert field.annotation is bool and accepts(not option.default)
+    elif option.kind == catalog.TEXT:
+        assert field.annotation is str and accepts("x" * option.maximum)
+        with pytest.raises(ValidationError):
+            TrainingRecipe.model_validate({option.key: "x" * (option.maximum + 1)})
     else:
         assert accepts(option.minimum)
         for outside in (option.minimum - 1, option.maximum + 1):
@@ -240,3 +244,59 @@ def test_published_defaults_and_shared_fields_that_depend_on_an_option():
     }
     assert described["dtfd"]["reads"] == described["acmil"]["reads"] == ["embedDim", "inputDropout"]
     assert described["transmil"]["readsEnabledWhen"] == {}
+
+
+# -- OceanPath Mamba-2 MIL: its initialization settings ---------------------------------------
+
+MAMBA2 = "oceanpath_mamba2"
+
+
+def mamba2(**values):
+    return recipe(model=MAMBA2, **values)
+
+
+def pretrained(path, **values):
+    return mamba2(mamba2Initialization="checkpoint", mamba2Checkpoint=str(path), **values)
+
+
+@pytest.mark.parametrize("path", ["", "weights.pt", "/data/../weights.pt", "/data/weights.ckpt"])
+def test_mamba2_checkpoint_initialization_needs_an_absolute_checkpoint_path(path):
+    with pytest.raises(ValidationError, match="absolute path"):
+        mamba2(mamba2Initialization="checkpoint", mamba2Checkpoint=path)
+
+
+def test_a_random_mamba2_aggregator_drops_the_checkpoint_settings_it_never_reads():
+    plain = mamba2()
+    assert not [key for key in plain if key.startswith("mamba2")]
+    assert mamba2(mamba2Checkpoint="/data/weights.pt", mamba2AggregatorLearningRate=0.01) == plain
+    assert pretrained("/data/weights.pt")["mamba2Checkpoint"] == "/data/weights.pt"
+
+
+def test_mamba2_settings_that_cannot_build_or_would_be_ambiguous_are_rejected():
+    with pytest.raises(ValidationError, match="head dimensions must divide"):
+        mamba2(mamba2HeadDim=100)
+    with pytest.raises(ValidationError, match="clear the separate aggregator learning rate"):
+        pretrained("/data/weights.pt", aggregatorLearningRate=1e-4)
+    # Without a checkpoint the recipe's component rates apply as for any model.
+    assert mamba2(aggregatorLearningRate=1e-4)["aggregatorLearningRate"] == 1e-4
+
+
+def test_the_catalog_says_when_mamba2_reads_coordinates_and_a_checkpoint():
+    assert catalog.reads_coordinates(mamba2())
+    assert not catalog.reads_coordinates(mamba2(mamba2Hilbert=False))
+    assert not catalog.reads_coordinates({"model": "abmil"})
+    assert catalog.initial_checkpoint(mamba2()) is None
+    assert catalog.initial_checkpoint(pretrained("/data/weights.pt")) == "/data/weights.pt"
+    assert catalog.checkpoint_path_option(MAMBA2) == "mamba2Checkpoint"
+
+
+def test_mamba2_initializations_compare_under_control_and_optimisation_changes_do_not():
+    base = {"learningRate": 1e-4}
+    random_init = mamba2(**base)
+    vicreg = pretrained("/data/vicreg.pt", **base)
+    probe = pretrained("/data/lejepa.pt", mamba2FreezeAggregator=True, **base)
+    assert confounders(random_init, vicreg) == []
+    assert confounders(vicreg, probe) == []
+    abmil = recipe(model="abmil", **base)
+    assert confounders(abmil, random_init) == []
+    assert confounders(random_init, mamba2(learningRate=3e-4)) == ["learningRate"]

@@ -49,10 +49,12 @@ def execute_plan(batch: dict, run: dict, gpu: int | None) -> dict:
 
 
 def check_inputs(data):
+    from histopilot.storage.model_weights import verify
     from histopilot.storage.pack_import import pack_file_stamps
     from histopilot.storage.packed import check_sources
 
     check_sources({"sourceStamps": data["sourceStamps"]})
+    verify(data.get("modelCheckpoints", []))
     if data.get("packPath") and pack_file_stamps(Path(data["packPath"])) != data["packStamps"]:
         raise ValueError("The verified feature pack changed after the batch was launched.")
 
@@ -271,6 +273,7 @@ def run_fold_worker(plan_path: Path):
             {
                 "error": str(error),
                 "type": type(error).__name__,
+                **({"code": error.code} if isinstance(getattr(error, "code", None), str) else {}),
                 "category": classify_training_failure(str(error)),
                 "traceback": traceback.format_exc(),
                 "at": utc_now(),

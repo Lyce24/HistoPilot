@@ -99,6 +99,9 @@ A code's kind groups codes by what the caller should do next, and the CLI turns 
 | `INVALID_TRIDENT_OPTIONS` | invalid | 422 | The TRIDENT extraction options fail validation. |
 | `INVALID_VERSION_LABEL` | invalid | 422 | Supply a nonempty version tag of at most 80 characters and a commit note of at most 2000 characters. |
 | `MAPPING_COLUMN_MISSING` | invalid | 422 | One or more selected columns are absent from the main table. |
+| `MODEL_CHECKPOINT_INCOMPATIBLE` | invalid | 422 | The aggregator checkpoint … does not fit this model's settings: … |
+| `MODEL_CHECKPOINT_INVALID` | invalid | 422 | The aggregator checkpoint … cannot be used: …. Choose a regular file inside a configured data root, without symbolic links. |
+| `MODEL_COORDINATES_UNAVAILABLE` | invalid | 422 | The model orders patches by their coordinates, and the features carry none. |
 | `MORPHOLOGY_DATASET_MISMATCH` | invalid | 422 | This feature bundle is scoped to a different frozen dataset. |
 | `MORPHOLOGY_REGION_INVALID` | invalid | 422 | Provide every viewport coordinate. |
 | `PACK_FEATURE_MISMATCH` | invalid | 422 | This pack was verified for a different feature version. |
@@ -307,6 +310,7 @@ A code's kind groups codes by what the caller should do next, and the CLI turns 
 | `MISSING_TARGET_LABEL` | refused | 409 | Selected slides have missing or unmapped target labels. Map them, explicitly exclude them, or keep them unlabeled. |
 | `MISSING_TEST_FEATURES` | refused | 409 | … selected test slide IDs have no features in the selected bundle. |
 | `MISSING_TEST_PACK_SLIDES` | refused | 409 | … selected test slide IDs are absent from the selected pack index. |
+| `MODEL_CHECKPOINT_CHANGED` | refused | 409 | A pinned pretrained checkpoint is missing or changed since its batch was frozen. Restore the file, or review a new batch. |
 | `MORPHOLOGY_DATASET_INVALID` | refused | 422 | Legacy frozen dataset records are invalid. |
 | `MORPHOLOGY_INDEX_LIMIT` | refused | 413 | This exploration exceeds its bounded index. Reduce slides or patches per slide. |
 | `MORPHOLOGY_INVALID` | refused | 404, 413, 422 | Features, coordinates or slides cannot be explored as requested. |

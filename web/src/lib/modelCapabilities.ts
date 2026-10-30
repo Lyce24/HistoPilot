@@ -17,7 +17,8 @@ export type SharedField = 'embedDim' | 'attentionDim' | 'numFcLayers' | 'gatedAt
 export interface ModelOption {
   key: string;
   label: string;
-  kind: 'integer' | 'number' | 'boolean' | 'choice';
+  /** `text` is a path or short string; its `maximum` is the length limit. */
+  kind: 'integer' | 'number' | 'boolean' | 'choice' | 'text';
   default: number | boolean | string;
   help: string;
   minimum: number | null;

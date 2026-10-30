@@ -152,12 +152,12 @@ TanStack Query owns cached server state, scoped by project and record identity. 
 | `histopilot/api/` | FastAPI routers and the local security boundary (`security.py`, with the optional sign-in in `login.py`); every route's class (`route_classes.py`) and every error code's kind (`error_codes.py`); agent access: scoped tokens and approvals (`access.py`), the scope gate (`scopes.py`), metadata redaction (`redaction.py`) and the audit log (`audit.py`); request IDs, access lines and the metrics route (`monitoring.py`) |
 | `histopilot/schemas/` | Pydantic request and record contracts |
 | `histopilot/application/` | Services: imports, targets and splits, features, setups and experiments, training, predictors, cohorts and runs (Apply models), clinical utility, interpretation, lifecycle, operations, the BLCA demo |
-| `histopilot/storage/` | Scientific and central stores, locks, lifecycle sidecar, filesystem confinement, packed features, attention packs; `io.py` holds canonical JSON, content hashes, timestamps and bounded, atomic JSON files |
+| `histopilot/storage/` | Scientific and central stores, locks, lifecycle sidecar, filesystem confinement, packed features, attention packs, SHA-256 pins of pretrained weights (`model_weights.py`); `io.py` holds canonical JSON, content hashes, timestamps and bounded, atomic JSON files |
 | `histopilot/taskcenter/` | Task store, runner, wrapper, capacity, estimator, launcher, leases and per-kind adapters |
 | `histopilot/workers/` | Isolated worker entry points and the compute archive |
 | `histopilot/observability/` | Structured logs that carry request and task IDs, written through queues that never block (`logs.py`), and the Prometheus text format (`metrics.py`); standard library only |
 | `histopilot/training/` | Lightning fold training, refit, inference and attention |
-| `histopilot/models/` | ABMIL, nnMIL, CLAM, TransMIL, DSMIL, DTFD-MIL, ACMIL, pooling and clinical models, and the model catalog with each architecture's options |
+| `histopilot/models/` | ABMIL, nnMIL, CLAM, TransMIL, DSMIL, DTFD-MIL, ACMIL, OceanPath Mamba-2 MIL, pooling and clinical models, and the model catalog with each architecture's options |
 | `histopilot/datasets/` | MIL data module and sampling |
 | `histopilot/adapters/` | Training runtime discovery (`native/`) and the TRIDENT integration (`trident/`) |
 | `histopilot/viewer/` | Isolated slide readers, image cache and attention arrays |

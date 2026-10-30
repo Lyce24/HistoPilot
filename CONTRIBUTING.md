@@ -41,7 +41,7 @@ def test_submission_queues_one_task_per_fold(task_center, tmp_path):
     ...  # call the service under test
     folds = task_center.tasks(adapter="mil-fold")
     assert len(folds) == 5
-    task_center.finish(folds[0]["id"])            # record a successful exit
+    task_center.finish(folds[0]["id"])  # record a successful exit
     task_center.finish(folds[1]["id"], "failed")  # or a failure
 ```
 
@@ -72,6 +72,20 @@ Shared helpers live in `tests/support/`, one module per purpose. Import them fro
 | `logs.py` | The `collect` fixture: a logger's structured records, stamped with request and task IDs as the service's own handlers stamp them |
 
 A test module that uses a fixture from `tests/support/` imports it by name (for example `from support.predictors import registry as registry`) so that pytest registers it for that module.
+
+### Golden outputs of reference implementations
+
+`tests/test_mil_parity.py` and `tests/test_oceanpath_parity.py` compare HistoPilot's architectures with outputs recorded from the reference code, kept in `tests/fixtures/`. The tests need neither that code nor a GPU; recording does. Each fixture names the code and versions it came from, and each script's `--check` compares a fresh recording with the committed one:
+
+```bash
+# CLAM, TransMIL, DSMIL, DTFD-MIL and ACMIL: shallow clones at the fixture's commits, on the CPU
+python scripts/mil_parity_fixtures.py --refs REFS --deps DEPS
+# OceanPath Mamba-2 MIL: OceanPath's environment (mamba-ssm built for CUDA), one process on a free GPU
+OCEANPATH/.venv/bin/python scripts/oceanpath_parity_fixtures.py --oceanpath OCEANPATH \
+    --checkpoint /path/to/aggregator_weights_lejepa.pt
+```
+
+`--device cpu` records OceanPath's model with mamba-ssm's reference functions instead of its fused kernels. The test of the real checkpoint runs only where `HISTOPILOT_OCEANPATH_CHECKPOINT` names a copy of that file; pretrained weights never go into the repository.
 
 ### Stored names must not move
 

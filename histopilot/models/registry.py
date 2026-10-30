@@ -6,7 +6,7 @@ is imported only by training workers. A new architecture needs one catalog entry
 and one builder here; no other layer should branch on a model name.
 """
 
-from histopilot.models.catalog import OPTIONS, normalize
+from histopilot.models.catalog import OPTIONS, initial_checkpoint, normalize
 
 
 def _option(recipe, key):
@@ -153,6 +153,34 @@ def _acmil(feature_dim, output_dim, recipe):
     )
 
 
+def _mamba2(feature_dim, output_dim, recipe):
+    """OceanPath's Mamba-2 MIL. Building never reads a checkpoint: fitting loads a pinned
+    pretrained file into ``aggregator``, and saved models load their own weights."""
+    from histopilot.models.mamba2 import OceanPathMamba2MIL
+
+    model = OceanPathMamba2MIL(
+        feature_dim,
+        output_dim,
+        embed_dim=_option(recipe, "mamba2EmbedDim"),
+        num_layers=_option(recipe, "mamba2Layers"),
+        d_state=_option(recipe, "mamba2StateDim"),
+        d_conv=_option(recipe, "mamba2ConvWidth"),
+        expand=_option(recipe, "mamba2Expand"),
+        headdim=_option(recipe, "mamba2HeadDim"),
+        attention_dim=_option(recipe, "mamba2AttentionDim"),
+        dropout=_option(recipe, "mamba2Dropout"),
+        hilbert=_option(recipe, "mamba2Hilbert"),
+        cobra_pooling=_option(recipe, "mamba2CobraPooling"),
+        input_dropout=recipe.get("inputDropout", 0.0),
+        gradient_checkpointing=recipe.get("gradientCheckpointing", False),
+    )
+    if initial_checkpoint(recipe):
+        model.aggregator_learning_rate = _option(recipe, "mamba2AggregatorLearningRate")
+    if _option(recipe, "mamba2FreezeAggregator"):
+        model.freeze_aggregator()
+    return model
+
+
 def _pooling(pooling):
     def build(feature_dim, output_dim, recipe):
         from histopilot.models.pooling import PoolingMIL
@@ -186,6 +214,7 @@ BUILDERS = {
     "dsmil": _dsmil,
     "dtfd": _dtfd,
     "acmil": _acmil,
+    "oceanpath_mamba2": _mamba2,
     "mean_pool": _pooling("mean"),
     "max_pool": _pooling("max"),
     "slide_linear": _slide_probe(hidden=False),

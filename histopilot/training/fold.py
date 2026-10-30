@@ -25,6 +25,7 @@ from histopilot.training.module import (
     classification_metrics,
     prediction_rows,
 )
+from histopilot.training.pretrained import load_pinned_weights
 
 
 def _checkpoint_evidence(path, output_dir):
@@ -215,6 +216,7 @@ def _predict(model, loader, target, device, precision="32-true"):
                 dtype=torch.float16 if precision == "16-mixed" else torch.bfloat16,
                 enabled=precision != "32-true",
             ):
+                coords = {"coords": batch["coords"].to(device)} if "coords" in batch else {}
                 if catalog.uses_structured_output(
                     model.recipe.get("model"), model.recipe.get("inputMode", "image")
                 ):
@@ -222,11 +224,12 @@ def _predict(model, loader, target, device, precision="32-true"):
                         batch["features"].to(device),
                         batch["mask"].to(device),
                         **({"clinical": batch["clinical"]} if "clinical" in batch else {}),
+                        **coords,
                     )
                     logits = output["logits"]
                 else:
                     output = {}
-                    logits = model(batch["features"].to(device), batch["mask"].to(device))
+                    logits = model(batch["features"].to(device), batch["mask"].to(device), **coords)
             if not bool(torch.isfinite(logits).all()):
                 raise FloatingPointError(
                     "The selected checkpoint produced nonfinite probabilities."
@@ -311,6 +314,13 @@ def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
         class_weight_unit=datamodule.training_class_weight_unit(),
         clinical_preprocessor=datamodule.clinical_preprocessor,
         split_unit=plan.get("splitUnit"),
+    )
+    # Pretrained weights start a fresh fit; a resumed one continues from its own checkpoint.
+    initial = load_pinned_weights(
+        model.model,
+        model_recipe,
+        plan["data"].get("modelCheckpoints"),
+        load=checkpoint_path is None,
     )
     monitor = recipe["checkpointMetric"]
     mode = "min" if monitor == "validation_loss" else "max"
@@ -415,6 +425,7 @@ def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
         ),
         "cudaPeakAllocatedBytes": torch.cuda.max_memory_allocated() if device_name == "cuda" else 0,
         "cudaPeakReservedBytes": torch.cuda.max_memory_reserved() if device_name == "cuda" else 0,
+        **({"initialCheckpoint": initial} if initial else {}),
     }
     write_json_atomic(
         output_dir / "fit-complete.json",
@@ -514,6 +525,7 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
             else {}
         ),
         "epochsCompleted": len(fit["history"]),
+        **({"initialCheckpoint": fit["initialCheckpoint"]} if "initialCheckpoint" in fit else {}),
         "trainingObjective": datamodule.trainingObjective,
         **(
             {"clinicalPreprocessing": selected.clinical_preprocessor}

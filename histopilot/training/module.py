@@ -330,15 +330,27 @@ class MILTrainModule(L.LightningModule):
             device=self.device,
         )
 
-    def forward(self, features, mask=None, clinical=None):
+    def _image(self, features, mask, coords=None, **options):
+        """The image model's output; patch coordinates reach only models that read them."""
+        if catalog.reads_coordinates(self.recipe):
+            if coords is None:
+                raise ValueError(
+                    "This model orders patches by their coordinates; the batch has none."
+                )
+            options["coords"] = coords
+        return self.model(features, mask, **options)
+
+    def forward(self, features, mask=None, clinical=None, coords=None):
         if self.input_mode == "clinical":
             return self.model(self._clinical_tensor(clinical, len(features)))
-        logits = self.model(features, mask)
+        logits = self._image(features, mask, coords)
         if self.clinical_head is not None:
             logits = logits + self.clinical_head(self._clinical_tensor(clinical, len(features)))
         return logits
 
-    def prediction_output(self, features, mask=None, *, return_attention=False, clinical=None):
+    def prediction_output(
+        self, features, mask=None, *, return_attention=False, clinical=None, coords=None
+    ):
         if self.input_mode == "clinical":
             if return_attention:
                 raise ValueError("Clinical-only predictors have no image attention.")
@@ -350,9 +362,9 @@ class MILTrainModule(L.LightningModule):
             if "window_uncertainty" in output:
                 output["window_uncertainty"]["binaryLogit"] = self.model.num_classes == 1
         elif return_attention:
-            output = self.model(features, mask, return_attention=True)
+            output = self._image(features, mask, coords, return_attention=True)
         else:
-            output = {"logits": self.model(features, mask)}
+            output = {"logits": self._image(features, mask, coords)}
         if self.clinical_head is not None:
             output["logits"] = output["logits"] + self.clinical_head(
                 self._clinical_tensor(clinical, len(features))
@@ -394,9 +406,10 @@ class MILTrainModule(L.LightningModule):
         """
         labels = batch["labels"]
         if self.input_mode == "clinical" or not catalog.auxiliary_loss(self.recipe.get("model")):
-            return self.loss(
-                self(batch["features"], batch["mask"], batch.get("clinical")).float(), labels
+            logits = self(
+                batch["features"], batch["mask"], batch.get("clinical"), batch.get("coords")
             )
+            return self.loss(logits.float(), labels)
         output = self.model.training_output(batch["features"], batch["mask"], labels, self.loss)
         logits = output["logits"]
         if self.clinical_head is not None:
@@ -465,7 +478,10 @@ class MILTrainModule(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         output = self.prediction_output(
-            batch["features"], batch["mask"], clinical=batch.get("clinical")
+            batch["features"],
+            batch["mask"],
+            clinical=batch.get("clinical"),
+            coords=batch.get("coords"),
         )
         logits = output["logits"]
         if not bool(torch.isfinite(logits).all()):
@@ -525,16 +541,32 @@ class MILTrainModule(L.LightningModule):
             head.extend(self.clinical_head.parameters())
         head_ids = {id(parameter) for parameter in head}
         aggregator = [parameter for parameter in self.parameters() if id(parameter) not in head_ids]
-        if self.recipe.get("aggregatorLearningRate") or self.recipe.get("headLearningRate"):
+        # A pretrained aggregator may carry its own rate (OceanPath Mamba-2 MIL fine-tuning).
+        own_rate = getattr(self.model, "aggregator_learning_rate", None)
+        if (
+            own_rate is not None
+            or self.recipe.get("aggregatorLearningRate")
+            or self.recipe.get("headLearningRate")
+        ):
             parameters = [
                 {
                     "params": aggregator,
-                    "lr": self.recipe.get("aggregatorLearningRate") or options["lr"],
+                    "lr": own_rate
+                    if own_rate is not None
+                    else self.recipe.get("aggregatorLearningRate") or options["lr"],
                 },
                 {"params": head, "lr": self.recipe.get("headLearningRate") or options["lr"]},
             ]
         else:
             parameters = self.parameters()
+        if not all(parameter.requires_grad for parameter in self.parameters()):
+            # A frozen aggregator keeps its weights: no updates and no weight decay.
+            groups = parameters if isinstance(parameters, list) else [{"params": parameters}]
+            parameters = [
+                {**group, "params": kept}
+                for group in groups
+                if (kept := [value for value in group["params"] if value.requires_grad])
+            ]
         decay_policy = self.recipe.get("weightDecayPolicy", "all")
         if decay_policy not in {"all", "weights_only"}:
             raise ValueError("Weight decay policy must be all or weights_only.")

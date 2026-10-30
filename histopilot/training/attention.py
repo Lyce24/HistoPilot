@@ -236,6 +236,8 @@ def interpret(plan, output_dir):
                 "Feature vectors, coordinates, or geometry differ from reviewed evidence."
             )
         tensor = torch.from_numpy(features).unsqueeze(0).to(device)
+        # Only models that read patch coordinates (Hilbert ordering) receive them.
+        positions = torch.from_numpy(np.asarray(coords, dtype=np.int64)).unsqueeze(0).to(device)
         total_weights = np.zeros(len(coords), dtype=np.float64)
         total_probabilities = np.zeros(len(plan["target"]["classes"]), dtype=np.float64)
         total_log_probabilities = np.zeros_like(total_probabilities)
@@ -297,6 +299,7 @@ def interpret(plan, output_dir):
                     output = model.prediction_output(
                         tensor,
                         return_attention=True,
+                        coords=positions,
                         **({"clinical": [slide["clinical"]]} if "clinical" in slide else {}),
                     )
                     weights = output["attention"][0].double().cpu().numpy()
@@ -427,7 +430,7 @@ def interpret(plan, output_dir):
     }
 
 
-def _checkpoint_attention(checkpoint, plan, tensor, slide, device, mean_logit):
+def _checkpoint_attention(checkpoint, plan, tensor, slide, device, mean_logit, positions=None):
     """One checkpoint's whole-bag attention and class probabilities, as in interpret(), and
     the note that says how its architecture's map is formed."""
     model = MILTrainModule.load_from_checkpoint(
@@ -448,6 +451,7 @@ def _checkpoint_attention(checkpoint, plan, tensor, slide, device, mean_logit):
         output = model.prediction_output(
             tensor,
             return_attention=True,
+            coords=positions,
             **({"clinical": [slide["clinical"]]} if "clinical" in slide else {}),
         )
         weights = output["attention"][0].double().cpu().numpy()
@@ -535,6 +539,8 @@ def _interpret_pooled(plan, folder):
                 "Feature vectors, coordinates, or geometry differ from reviewed evidence."
             )
         tensor = torch.from_numpy(features).unsqueeze(0).to(device)
+        # Only models that read patch coordinates (Hilbert ordering) receive them.
+        positions = torch.from_numpy(np.asarray(coords, dtype=np.int64)).unsqueeze(0).to(device)
         maps, model_probabilities, members = [], [], []
         for model_index, entry in enumerate(models):
             filename = f"slide-{slide_index}-member-{model_index}.json"
@@ -567,7 +573,7 @@ def _interpret_pooled(plan, folder):
                     if (folder / "cancel.requested").exists():
                         raise KeyboardInterrupt("Interpretation cancelled.")
                     w, p, log_p, note = _checkpoint_attention(
-                        checkpoint, plan, tensor, slide, device, mean_logit
+                        checkpoint, plan, tensor, slide, device, mean_logit, positions
                     )
                     weights += w / count
                     probabilities += p / count

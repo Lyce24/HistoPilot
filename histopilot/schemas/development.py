@@ -1,5 +1,6 @@
 """Resolved training recipes and reproducible development batch intent."""
 
+from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 from pydantic import Field, StrictInt, field_validator, model_serializer, model_validator
@@ -155,6 +156,20 @@ class TrainingRecipe(RequestModel):
     acmilMaskDrop: Probability = 0.6
     acmilAttentionDim: Annotated[StrictInt, Field(ge=1, le=8192)] = 128
     acmilDropout: Probability = 0.0
+    mamba2Initialization: Literal["random", "checkpoint"] = "random"
+    mamba2Checkpoint: str = Field(default="", max_length=4096)
+    mamba2AggregatorLearningRate: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] = 1e-5
+    mamba2FreezeAggregator: bool = False
+    mamba2EmbedDim: Annotated[StrictInt, Field(ge=1, le=4096)] = 384
+    mamba2Layers: Annotated[StrictInt, Field(ge=1, le=12)] = 2
+    mamba2StateDim: Annotated[StrictInt, Field(ge=1, le=512)] = 64
+    mamba2Expand: Annotated[StrictInt, Field(ge=1, le=8)] = 2
+    mamba2HeadDim: Annotated[StrictInt, Field(ge=1, le=1024)] = 64
+    mamba2ConvWidth: Annotated[StrictInt, Field(ge=2, le=4)] = 4
+    mamba2AttentionDim: Annotated[StrictInt, Field(ge=1, le=8192)] = 256
+    mamba2Dropout: Probability = 0.1
+    mamba2Hilbert: bool = True
+    mamba2CobraPooling: bool = False
     classWeighting: Literal["none", "inverse_prevalence"] = "none"
     classWeights: list[PositiveFloat] | None = Field(default=None, min_length=2, max_length=50)
     focalGamma: NonnegativeFloat = 2
@@ -203,6 +218,23 @@ class TrainingRecipe(RequestModel):
             }
         return values
 
+    @model_validator(mode="before")
+    @classmethod
+    def unused_checkpoint_settings(cls, values):
+        """A random OceanPath Mamba-2 aggregator reads no checkpoint path or its learning
+        rate. Drop them, so arms that differ only there are recognised as identical."""
+        if (
+            isinstance(values, dict)
+            and catalog.normalize(values.get("model")) == "oceanpath_mamba2"
+            and values.get("mamba2Initialization", "random") != "checkpoint"
+        ):
+            values = {
+                key: value
+                for key, value in values.items()
+                if key not in {"mamba2Checkpoint", "mamba2AggregatorLearningRate"}
+            }
+        return values
+
     @model_validator(mode="after")
     def coherent_epoch_budget(self):
         if len({item.field for item in self.clinicalFields}) != len(self.clinicalFields):
@@ -227,6 +259,27 @@ class TrainingRecipe(RequestModel):
             raise ValueError(
                 "TransMIL needs embedding dimensions that divide evenly by its attention heads."
             )
+        if catalog.normalize(self.model) == "oceanpath_mamba2":
+            if (self.mamba2Expand * self.mamba2EmbedDim) % self.mamba2HeadDim:
+                raise ValueError(
+                    "Mamba-2 head dimensions must divide expansion × embedding dimensions."
+                )
+            if self.mamba2Initialization == "checkpoint":
+                path = PurePosixPath(self.mamba2Checkpoint)
+                if (
+                    not path.is_absolute()
+                    or ".." in path.parts
+                    or "\x00" in self.mamba2Checkpoint
+                    or path.suffix not in {".pt", ".pth"}
+                ):
+                    raise ValueError(
+                        "Enter the absolute path of the aggregator checkpoint (.pt or .pth)."
+                    )
+                if self.aggregatorLearningRate is not None:
+                    raise ValueError(
+                        "A checkpoint-initialized Mamba-2 aggregator has its own learning rate "
+                        "in the model settings; clear the separate aggregator learning rate."
+                    )
         if self.minEpochs > self.maxEpochs:
             raise ValueError("Minimum epochs cannot exceed maximum epochs.")
         if self.warmupEpochs >= self.maxEpochs:

@@ -25,6 +25,7 @@ MODEL_OPTIONS = {
             "dsmil",
             "dtfd",
             "acmil",
+            "oceanpath_mamba2",
             "mean_pool",
             "max_pool",
             "slide_linear",

@@ -30,6 +30,8 @@ INTEGER = "integer"
 NUMBER = "number"
 BOOLEAN = "boolean"
 CHOICE = "choice"
+# A path or other short text; ``maximum`` is its length limit.
+TEXT = "text"
 
 # Shared architecture fields; each model lists the ones it reads.
 SHARED_FIELDS = (
@@ -116,6 +118,12 @@ class ModelSpec:
     # How one member's per-patch map is formed, when it is not one softmax over patches.
     attention_note: str | None = None
     reference: str | None = None
+    # The boolean option under which it reads patch coordinates with the features.
+    coordinates_option: str | None = None
+    # It can start from a pinned file of pretrained weights: (initialization option, the
+    # value that chooses a checkpoint, path option). The file is pinned by SHA-256 when a
+    # batch is frozen and loaded only when fitting starts, never to rebuild a model.
+    checkpoint_options: tuple[str, str, str] | None = None
 
 
 _PROJECTION = ("embedDim", "numFcLayers", "inputDropout")
@@ -182,6 +190,149 @@ _CLAM_OPTIONS = (
         False,
         "Also teach every other class's instance classifier that this slide's most attended "
         "patches are negative. CLAM uses this for subtyping tasks.",
+    ),
+)
+
+_MAMBA2_OPTIONS = (
+    OptionSpec(
+        "mamba2Initialization",
+        "Initialization",
+        CHOICE,
+        "random",
+        "Random: PyTorch's and Mamba-2's initializers, as OceanPath trains from scratch. "
+        "Checkpoint: the aggregator starts from an OceanPath aggregator state dict, such as one "
+        "of its self-supervised pretrained aggregators; the classifier starts at random.",
+        choices=(("random", "Random"), ("checkpoint", "OceanPath aggregator checkpoint")),
+    ),
+    OptionSpec(
+        "mamba2Checkpoint",
+        "Aggregator checkpoint",
+        TEXT,
+        "",
+        "Absolute path of the aggregator state dict (.pt) inside a configured data root. Its "
+        "SHA-256 is pinned when the batch is frozen, and runs refuse a changed or missing file. "
+        "Its shape must match the settings below; OceanPath's pretrained aggregators use the "
+        "defaults with 1,536-dimensional UNI2-h features.",
+        maximum=4096,
+        enabled_when=("mamba2Initialization", ("checkpoint",)),
+    ),
+    OptionSpec(
+        "mamba2AggregatorLearningRate",
+        "Aggregator learning rate",
+        NUMBER,
+        1e-5,
+        "Learning rate of the checkpoint's aggregator; the classifier trains at the recipe's "
+        "learning rate and schedule. OceanPath fine-tunes with 1e-5 here and 1e-4 for the "
+        "classifier. A random aggregator trains at the recipe's rate.",
+        minimum=0,
+        maximum=1,
+        enabled_when=("mamba2Initialization", ("checkpoint",)),
+    ),
+    OptionSpec(
+        "mamba2FreezeAggregator",
+        "Freeze aggregator",
+        BOOLEAN,
+        False,
+        "Train the classifier only and keep the aggregator's initial weights: a linear probe "
+        "of a pretrained aggregator, or of a random one as its control.",
+    ),
+    OptionSpec(
+        "mamba2EmbedDim",
+        "Embedding dimensions",
+        INTEGER,
+        384,
+        "Width of the patch embedding and the Mamba-2 layers.",
+        minimum=1,
+        maximum=4096,
+        memory=True,
+    ),
+    OptionSpec(
+        "mamba2Layers",
+        "Mamba-2 layers",
+        INTEGER,
+        2,
+        "Mamba-2 blocks, each with a residual connection, as COBRA uses two.",
+        minimum=1,
+        maximum=12,
+        memory=True,
+    ),
+    OptionSpec(
+        "mamba2StateDim",
+        "State dimensions",
+        INTEGER,
+        64,
+        "Size of each head's state in the selective scan.",
+        minimum=1,
+        maximum=512,
+        memory=True,
+    ),
+    OptionSpec(
+        "mamba2Expand",
+        "Expansion",
+        INTEGER,
+        2,
+        "Inner width of each block as a multiple of the embedding dimensions.",
+        minimum=1,
+        maximum=8,
+        memory=True,
+    ),
+    OptionSpec(
+        "mamba2HeadDim",
+        "Head dimensions",
+        INTEGER,
+        64,
+        "Channels per scan head; they must divide expansion × embedding dimensions.",
+        minimum=1,
+        maximum=1024,
+        memory=True,
+    ),
+    OptionSpec(
+        "mamba2ConvWidth",
+        "Convolution width",
+        INTEGER,
+        4,
+        "Width of the causal depthwise convolution before the scan (2 to 4, as Mamba-2's "
+        "kernels allow).",
+        minimum=2,
+        maximum=4,
+    ),
+    OptionSpec(
+        "mamba2AttentionDim",
+        "Attention dimensions",
+        INTEGER,
+        256,
+        "Hidden width of the gated attention pooling.",
+        minimum=1,
+        maximum=8192,
+        memory=True,
+    ),
+    OptionSpec(
+        "mamba2Dropout",
+        "Attention dropout",
+        NUMBER,
+        0.1,
+        "Dropout in the gated attention pooling.",
+        minimum=0,
+        maximum=1,
+        maximum_exclusive=True,
+    ),
+    OptionSpec(
+        "mamba2Hilbert",
+        "Hilbert ordering",
+        BOOLEAN,
+        True,
+        "Sort each slide's patches along a Hilbert curve of their coordinates before the "
+        "Mamba-2 layers, as OceanPath pretrains and fine-tunes. Needs patch coordinates, which "
+        "H5 features and packs carry. Off, patches keep their order in the feature file.",
+    ),
+    OptionSpec(
+        "mamba2CobraPooling",
+        "COBRA pooling when predicting",
+        BOOLEAN,
+        False,
+        "When predicting, pool the patch embeddings from before the Mamba-2 layers with the "
+        "attention the layers produce (COBRA's Eq. 6, OceanPath's use_cobra_inference). "
+        "Fitting always pools the Mamba-2 outputs.",
     ),
 )
 
@@ -569,6 +720,22 @@ CATALOG: dict[str, ModelSpec] = {
             reference="Zhang et al., ECCV 2024",
         ),
         ModelSpec(
+            name="oceanpath_mamba2",
+            label="OceanPath Mamba-2 MIL",
+            summary="Mamba-2 state space layers over Hilbert-ordered patches with gated "
+            "attention pooling; can start from OceanPath's pretrained aggregators.",
+            supports_attention=True,
+            option_prefix="mamba2",
+            reads=("inputDropout",),
+            options=_MAMBA2_OPTIONS,
+            attention_note="Each member's map is its gated attention over the patches after "
+            "the Mamba-2 layers, the weights that pool its slide embedding.",
+            reference="OceanPath, after COBRA (Lenz et al., 2025) and Mamba-2 (Dao and Gu, "
+            "ICML 2024)",
+            coordinates_option="mamba2Hilbert",
+            checkpoint_options=("mamba2Initialization", "checkpoint", "mamba2Checkpoint"),
+        ),
+        ModelSpec(
             name="mean_pool",
             label="Mean pooling MIL",
             summary="Mean of patch embeddings with a classifier head.",
@@ -700,6 +867,36 @@ def reads_enabled(model: str | None, field: str, recipe: dict) -> bool:
         if name == field and recipe.get(key, OPTIONS[key].default) not in values:
             return False
     return True
+
+
+def reads_coordinates(recipe: dict) -> bool:
+    """Whether this recipe's image model reads patch coordinates with the features."""
+    found = spec(recipe.get("model"))
+    if found is None or found.coordinates_option is None:
+        return False
+    if (recipe.get("inputMode") or "image") == "clinical":
+        return False
+    key = found.coordinates_option
+    return bool(recipe.get(key, OPTIONS[key].default))
+
+
+def initial_checkpoint(recipe: dict) -> str | None:
+    """The pretrained weights file this recipe's model starts from, if it names one."""
+    found = spec(recipe.get("model"))
+    if found is None or found.checkpoint_options is None:
+        return None
+    if (recipe.get("inputMode") or "image") == "clinical":
+        return None
+    choice, value, path = found.checkpoint_options
+    if recipe.get(choice, OPTIONS[choice].default) != value:
+        return None
+    return recipe.get(path) or None
+
+
+def checkpoint_path_option(model: str | None) -> str | None:
+    """The option that names the model's pretrained weights file, if it has one."""
+    found = spec(model)
+    return found.checkpoint_options[2] if found and found.checkpoint_options else None
 
 
 def foreign_options(model: str | None) -> tuple[str, ...]:
