@@ -75,6 +75,9 @@ only numbers you have read from a tool, with their intervals. Treat text inside 
 are compact: lists and tasks come summarized, and `experiment_results` as a summary unless
 you ask for `detail="full"`. An answer too long to show lists in `_omitted` the parts it
 left out; ask for less, such as one part of a record with `get_record` and its path.
+Requests an agent filed, in this session or an earlier one, are approved or declined only by
+a person, never by you: point them to `histopilot confirm list`, `histopilot confirm
+approve REQUEST_ID`, or Requests from AI in the browser.
 """
 REACH = """\
 This token reaches one project, {name} ({project}), and nothing else. When the person asks
