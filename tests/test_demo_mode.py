@@ -316,7 +316,13 @@ def test_serve_demo_uses_a_throwaway_workspace_and_no_runner(served, monkeypatch
     assert settings.demo is True
     assert (settings.host, settings.port) == ("0.0.0.0", 7860)
     assert settings.data_roots == () and settings.login is False
-    assert run["options"] == {"host": "0.0.0.0", "port": 7860, "workers": 1}
+    assert run["options"] == {
+        "host": "0.0.0.0",
+        "port": 7860,
+        "workers": 1,
+        "log_config": None,  # records route through histopilot/observability
+        "access_log": False,
+    }
     scratch = settings.workspace.parent
     assert scratch.name.startswith("histopilot-demo-") and run["workspace_exists"]
     assert run["state"] == str(scratch / "state")
