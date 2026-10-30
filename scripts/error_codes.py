@@ -80,6 +80,13 @@ MEANINGS = {
     "INVALID_TRIDENT_OPTIONS": "The TRIDENT extraction options fail validation.",
     "LIFECYCLE_LIMIT": "Workspace cleanup metadata reached a size or revision limit.",
     "MIL_BAG_PLANNING_INVALID": "MIL bags cannot be planned for these features.",
+    "MODEL_CHECKPOINT_CHANGED": (
+        "A pinned pretrained checkpoint is missing or changed since its batch was frozen. "
+        "Restore the file, or review a new batch."
+    ),
+    "MODEL_COORDINATES_UNAVAILABLE": (
+        "The model orders patches by their coordinates, and the features carry none."
+    ),
     "MORPHOLOGY_INVALID": "Features, coordinates or slides cannot be explored as requested.",
     "MORPHOLOGY_SLIDE_CHANGED": "The slide file changed since it was prepared. Reopen the slide.",
     "OPERATION_CONFLICT": "This operation ID was already used for a different request.",

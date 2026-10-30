@@ -25,6 +25,7 @@ from histopilot.training.module import (
     classification_metrics,
     prediction_rows,
 )
+from histopilot.training.pretrained import load_pinned_weights
 
 
 def _checkpoint_evidence(path, output_dir):
@@ -314,6 +315,13 @@ def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
         clinical_preprocessor=datamodule.clinical_preprocessor,
         split_unit=plan.get("splitUnit"),
     )
+    # Pretrained weights start a fresh fit; a resumed one continues from its own checkpoint.
+    initial = load_pinned_weights(
+        model.model,
+        model_recipe,
+        plan["data"].get("modelCheckpoints"),
+        load=checkpoint_path is None,
+    )
     monitor = recipe["checkpointMetric"]
     mode = "min" if monitor == "validation_loss" else "max"
     checkpoint = _EveryEpochCheckpoint(
@@ -417,6 +425,7 @@ def _fit(plan, output_dir, recipe, datamodule, checkpoint_path):
         ),
         "cudaPeakAllocatedBytes": torch.cuda.max_memory_allocated() if device_name == "cuda" else 0,
         "cudaPeakReservedBytes": torch.cuda.max_memory_reserved() if device_name == "cuda" else 0,
+        **({"initialCheckpoint": initial} if initial else {}),
     }
     write_json_atomic(
         output_dir / "fit-complete.json",
@@ -516,6 +525,7 @@ def _fit_and_assess(plan, output_dir, recipe, datamodule, checkpoint_path):
             else {}
         ),
         "epochsCompleted": len(fit["history"]),
+        **({"initialCheckpoint": fit["initialCheckpoint"]} if "initialCheckpoint" in fit else {}),
         "trainingObjective": datamodule.trainingObjective,
         **(
             {"clinicalPreprocessing": selected.clinical_preprocessor}

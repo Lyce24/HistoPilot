@@ -18,6 +18,7 @@ from histopilot.schemas.nnmil import resolve_nnmil_plan, window_seed
 from histopilot.storage.io import write_json_atomic
 from histopilot.training.fold import _HistoryWriter
 from histopilot.training.module import MILTrainModule
+from histopilot.training.pretrained import load_pinned_weights
 
 
 class RefitDataModule(MILDataModule):
@@ -157,6 +158,12 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
         clinical_preprocessor=datamodule.clinical_preprocessor,
         split_unit=plan.get("splitUnit"),
     )
+    initial = load_pinned_weights(
+        model.model,
+        model_recipe,
+        plan["data"].get("modelCheckpoints"),
+        load=checkpoint_path is None,
+    )
     checkpoint = ModelCheckpoint(
         dirpath=output_dir,
         save_top_k=0,
@@ -200,6 +207,7 @@ def train_refit(plan, output_dir, *, checkpoint_path=None):
             "lastCheckpointPath": str(output_dir / "last.ckpt"),
             "epochsCompleted": epochs,
             "bestEpoch": epochs,
+            **({"initialCheckpoint": initial} if initial else {}),
             "epochBudget": plan["epochBudget"],
             "historyPath": str(output_dir / "history.json"),
             "trainingSlideCount": len(datamodule.memberships["train"]),

@@ -19,6 +19,7 @@ from histopilot.schemas.training_controls import (
 )
 from histopilot.storage.io import content_hash
 from histopilot.storage.lifecycle import lifecycle_guard
+from histopilot.storage.model_weights import pin_recipes
 from histopilot.storage.project_lock import StorageError
 
 MAX_CONFIGURATIONS = 512
@@ -423,6 +424,24 @@ class DevelopmentService:
                     {"severity": "error", "code": "MIL_BAG_PLANNING_INVALID", "message": str(error)}
                 )
                 candidates, runs, nnmil_planning = [], [], []
+        model_checkpoints = []
+        if candidates:
+            # Pretrained weights are part of the design: hash them now; freezing publishes the
+            # pins and every later step refuses a file that no longer matches.
+            try:
+                model_checkpoints = pin_recipes(
+                    self.filesystem, [item["recipe"] for item in candidates]
+                )
+                issue = self._coordinate_issue(
+                    binding,
+                    [item["recipe"] for item in candidates],
+                    {row["slideId"] for row in protocol["memberships"]},
+                )
+                if issue:
+                    raise StorageError(issue, "MODEL_COORDINATES_UNAVAILABLE", 422)
+            except StorageError as error:
+                findings.append({"severity": "error", "code": error.code, "message": str(error)})
+                candidates, runs, nnmil_planning, model_checkpoints = [], [], [], []
         manifest = {
             "kind": "mil-batch",
             "version": 1,
@@ -433,6 +452,7 @@ class DevelopmentService:
             "splitPlans": plans,
             "runs": runs,
             **({"nnmilPlanning": nnmil_planning} if nnmil_planning else {}),
+            **({"modelCheckpoints": model_checkpoints} if model_checkpoints else {}),
             "summary": {
                 "configurationCount": len(recipes),
                 "trainingSeedCount": len(spec.trainingSeeds),
@@ -465,6 +485,27 @@ class DevelopmentService:
             "previewHash": content_hash(manifest),
             **manifest,
         }
+
+    def _coordinate_issue(self, binding, recipes, slides):
+        """Why the features cannot give patch coordinates to a model that reads them."""
+        if not any(catalog.reads_coordinates(recipe) for recipe in recipes):
+            return None
+        if binding.get("resolvedLoadingPolicy") == "mmap":
+            return None  # packs always store each patch's coordinates
+        feature = self.store.get_configuration(binding["featureSetId"])
+        missing = [
+            row["slideId"]
+            for row in feature["manifest"]["files"]
+            if row["slideId"] in slides
+            and not str(row.get("coordinatePath") or row["path"]).lower().endswith((".h5", ".hdf5"))
+        ]
+        if not missing:
+            return None
+        return (
+            "A model in this batch orders patches by their coordinates, but "
+            f"{len(missing)} slide feature files carry none (for example {missing[0]}). "
+            "Use H5 features with coordinates or a pack, or turn Hilbert ordering off."
+        )
 
     def freeze(self, spec, preview_hash, operation_id, version_label):
         with lifecycle_guard(self.store.folder):

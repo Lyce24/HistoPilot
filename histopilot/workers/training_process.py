@@ -168,6 +168,8 @@ def compute_snapshot() -> dict:
         root / "storage" / "attention_packs.py",
         root / "storage" / "packed.py",
         root / "storage" / "pack_import.py",
+        # Pretrained weights are verified against their pins before fitting starts.
+        root / "storage" / "model_weights.py",
         # Content hashes, timestamps and the JSON files the modules above read and write.
         root / "storage" / "io.py",
     ]

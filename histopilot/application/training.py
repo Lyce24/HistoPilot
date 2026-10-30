@@ -439,6 +439,23 @@ class TrainingService:
             pack = packing.artifact(binding["packArtifactId"])
             pack_path, pack_stamps = pack["outputPath"], pack["packStamps"]
         source_stamps = {row["path"]: row for row in files.values()}
+        from histopilot.storage.model_weights import checkpoint_key, verify
+
+        model_checkpoints = manifest.get("modelCheckpoints", [])
+        named = {
+            checkpoint_key(path)
+            for path in (
+                catalog.initial_checkpoint(item["recipe"]) for item in manifest["configurations"]
+            )
+            if path
+        }
+        if named != {item["path"] for item in model_checkpoints}:
+            raise StorageError(
+                "The batch's pretrained checkpoints were not pinned when it was frozen. "
+                "Review a new batch.",
+                "MODEL_CHECKPOINT_CHANGED",
+            )
+        verify(model_checkpoints, self.filesystem)
         from histopilot.application.clinical_inputs import development_clinical_values
 
         clinical_values = development_clinical_values(
@@ -456,6 +473,7 @@ class TrainingService:
             "featureDim": next(iter(dimensions)),
             **({"cohortValues": cohort_values} if cohort_values else {}),
             **({"clinicalValues": clinical_values} if clinical_values else {}),
+            **({"modelCheckpoints": model_checkpoints} if model_checkpoints else {}),
         }
         from histopilot.schemas.nnmil import resolve_nnmil_recipe
 
