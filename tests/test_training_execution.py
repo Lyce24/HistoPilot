@@ -420,7 +420,7 @@ def test_orphan_cleanup_failure_does_not_skip_later_workers(tc_execution, task_c
         for index in range(2)
     ]
     state.update(status="failed")
-    for run, process in zip(state["runs"], children):
+    for run, process in zip(state["runs"], children, strict=False):  # the first two runs
         run.update(status="failed", process=process)
     save_state(Path(state["outputPath"]), state)
     lose_batch(task_center, frozen["id"], state="failed")
@@ -658,7 +658,7 @@ def test_oof_collection_rejects_missing_duplicate_or_mismatched_identity(tc_exec
     else:
         records[0]["patientId" if corruption == "patient" else "label"] = "wrong"
     write_json_atomic(path, {"records": records, "classOrder": batch["target"]["classes"]})
-    with pytest.raises(ValueError, match="exactly once|differs from frozen"):
+    with pytest.raises(ValueError, match=r"exactly once|differs from frozen"):
         collect_results(batch, state, service._folder(frozen["id"]))
 
 

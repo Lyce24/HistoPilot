@@ -193,7 +193,7 @@ def build_progress(job, logs, now=None):
     )
 
     gpus = options.get("gpus") or [options.get("gpu", 0)]
-    effective_gpus = len(set(gpu for gpu in gpus if gpu >= 0)) + gpus.count(-1)
+    effective_gpus = len({gpu for gpu in gpus if gpu >= 0}) + gpus.count(-1)
     batched = bool(options.get("wsi_cache")) or effective_gpus > 1
     stage = "preparing"
     current = None

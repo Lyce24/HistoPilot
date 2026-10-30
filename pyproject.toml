@@ -112,7 +112,56 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I", "UP"]
+select = [
+    "E4", "E7", "E9", "F", "I", "UP",
+    "B",    # bugbear: likely bugs and design problems
+    "C4",   # comprehensions
+    "DTZ",  # timezone-naive datetimes
+    "ISC",  # implicit string concatenation, such as a missing comma in a list
+    "LOG",  # logging misuse
+    "PERF", # avoidable slow loops
+    "PGH",  # blanket noqa and type-ignore comments
+    "PIE",  # unnecessary code
+    "PT",   # pytest style
+    "RET",  # return statements
+    "RUF",  # Ruff's own rules, including unused noqa comments
+    "SIM",  # simplifications
+    "T10",  # debugger breakpoints
+]
+ignore = [
+    "ISC001",  # conflicts with ruff format, which joins such strings itself
+    "PERF401", # findings and messages are appended check by check; the lists are small
+    "PT006",   # the tests name several parametrize arguments in one string, as pytest allows
+    "PT011",   # the tests check a raised error's code and fields after the block, not its text
+    "PT018",   # pytest already reports which operand of `assert a and b` failed
+    "RUF001",  # messages use typographic dashes and quotes on purpose
+    "RUF002",  # docstrings do too
+    "RUF003",  # and comments
+    "RUF005",  # concatenation keeps groups of arguments apart where one unpacked literal would not
+    "SIM102",  # a nested if keeps a long condition apart from the check it guards
+    "SIM105",  # try/except/pass is the house style; contextlib.suppress hides the control flow
+    "SIM114",  # separate branches name separate reasons for the same outcome
+    "SIM117",  # nested with blocks show which body uses which resource
+    "SIM300",  # tests put the module constant under test on the left, which it takes for yoda
+]
+# noqa comments that name these rules record a deliberate exception (a broad except that must
+# never raise, an HTTP or query name); the rules stay off, and RUF100 keeps the comments.
+external = ["BLE001", "N802", "N803"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests unpack a fixture or result whole, so its parts keep their names.
+"tests/**" = ["RUF059"]
+# unittest.TestCase modules use its assertions.
+"tests/test_architecture.py" = ["PT009", "PT027"]
+"tests/test_model_catalog_fixture.py" = ["PT009"]
+
+[tool.ruff.lint.flake8-comprehensions]
+# dict(key=value) reads as well as a literal; C408 still reports empty dict(), list() and tuple().
+allow-dict-calls-with-keyword-arguments = true
+
+[tool.ruff.lint.flake8-bugbear]
+# Typer declares parameters through calls in their defaults.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
 
 [tool.pyright]
 # The service's core. Other packages are read only for the types the core imports from them.

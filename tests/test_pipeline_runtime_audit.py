@@ -200,7 +200,7 @@ def test_oof_refuses_fold_or_provenance_drift(tmp_path, tamper):
         else:
             rows["records"][0]["patientIdSource"] = "different-source"
         paths["fold-1"].write_text(json.dumps(rows))
-    with pytest.raises(ValueError, match="fold|source|seed"):
+    with pytest.raises(ValueError, match=r"fold|source|seed"):
         collect_results(plan, state, tmp_path)
 
 

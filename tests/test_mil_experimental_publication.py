@@ -82,9 +82,7 @@ def test_cohort_enriched_worker_memberships_publish_and_refit(registry, monkeypa
         service, monkeypatch, samplingStrategy=strategy, cohortColumn="site"
     )
     plan = json.loads((folder / "plan.json").read_text())
-    plan["data"]["cohortValues"] = {
-        "site": {identity: "Site A" for identity in plan["data"]["featureFiles"]}
-    }
+    plan["data"]["cohortValues"] = {"site": dict.fromkeys(plan["data"]["featureFiles"], "Site A")}
     for run in state["runs"]:
         write_json_atomic(folder / "runs" / run["id"] / "plan.json", execute_plan(plan, run, None))
         run["result"]["bestEpoch"] = 2

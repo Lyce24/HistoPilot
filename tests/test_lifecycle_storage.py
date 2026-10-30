@@ -42,7 +42,7 @@ def dataset(store, *, name="Original", operation="dataset"):
 def change(store, refs, state, *, operation=None, action=None):
     operation = operation or f"operation-{store.read()['revision']}"
     return store.apply(
-        {ref: state for ref in refs},
+        dict.fromkeys(refs, state),
         operation,
         digest(operation),
         store.read()["revision"],

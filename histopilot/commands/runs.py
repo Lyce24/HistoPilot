@@ -100,7 +100,7 @@ def _summary_text(data: dict) -> str:
         matrix = other.get("matrix") or []
         if len(matrix) == len(classes):
             rows = [
-                {"class": label, **{name: count for name, count in zip(classes, row, strict=True)}}
+                {"class": label, **dict(zip(classes, row, strict=True))}
                 for label, row in zip(classes, matrix, strict=True)
             ]
             shown = [("THIS RUN \\ OTHER", "class"), *[(name, name) for name in classes]]

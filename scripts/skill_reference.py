@@ -54,10 +54,12 @@ def render() -> str:
         "",
         "## Commands",
         "",
-        "Every command takes `--json`, `--url`, `--project` and `--timeout SECONDS`. Commands "
-        "that change records also take `--yes`, `--dry-run`, `--preview-hash HASH` and "
-        "`--operation-id ID`; commands that start work take `--wait`; lists take `--limit` and "
-        "`--offset`.",
+        (
+            "Every command takes `--json`, `--url`, `--project` and `--timeout SECONDS`. Commands "
+            "that change records also take `--yes`, `--dry-run`, `--preview-hash HASH` and "
+            "`--operation-id ID`; commands that start work take `--wait`; lists take `--limit` and "
+            "`--offset`."
+        ),
         "",
         "| Command | What it does |",
         "| --- | --- |",
@@ -77,8 +79,10 @@ def render() -> str:
         "",
         "## Spec kinds",
         "",
-        f"Spec files start with `kind` and `specVersion: {SPEC_VERSION}`. "
-        "`histopilot schema KIND` prints each kind's fields.",
+        (
+            f"Spec files start with `kind` and `specVersion: {SPEC_VERSION}`. "
+            "`histopilot schema KIND` prints each kind's fields."
+        ),
         "",
         "| Kind | Request model | Fields that must be written out |",
         "| --- | --- | --- |",

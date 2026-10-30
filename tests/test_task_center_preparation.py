@@ -623,9 +623,7 @@ def test_preview_blocks_missing_slide_readers(extraction, monkeypatch):
     monkeypatch.setattr(
         "histopilot.adapters.trident.probe_reader_modules",
         lambda _python, modules, **_: {
-            "modules": {
-                name: "ModuleNotFoundError: No module named 'openslide'" for name in modules
-            }
+            "modules": dict.fromkeys(modules, "ModuleNotFoundError: No module named 'openslide'")
         },
     )
     preview = service.preview(spec)

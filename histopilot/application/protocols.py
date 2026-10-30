@@ -243,7 +243,7 @@ class FilterEvaluator:
     def conjunction(self, row, conditions):
         # Evaluate every condition on this slide; never combine different slides'
         # evidence and never hide malformed expressions behind short-circuiting.
-        return all([self.matches(row, condition) for condition in conditions])
+        return all([self.matches(row, condition) for condition in conditions])  # noqa: C419
 
 
 def valid_patient(row):
@@ -457,8 +457,7 @@ class ProtocolService:
                         value is not None and not isinstance(value, str)
                         for value in row["attributes"].values()
                     )
-                    or row.get("patientId") is not None
-                    and not isinstance(row["patientId"], str)
+                    or (row.get("patientId") is not None and not isinstance(row["patientId"], str))
                 ):
                     raise _failure(
                         "The frozen slide records have an invalid schema.", "STORAGE_CORRUPT"

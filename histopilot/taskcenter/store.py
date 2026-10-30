@@ -76,8 +76,10 @@ SCHEMA = (
     "CREATE INDEX IF NOT EXISTS tasks_state ON tasks(state)",
     "CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner_key)",
     "CREATE INDEX IF NOT EXISTS tasks_group ON tasks(group_kind, group_id, project_folder)",
-    "CREATE UNIQUE INDEX IF NOT EXISTS tasks_session ON tasks(session_name) "
-    "WHERE session_name IS NOT NULL",
+    (
+        "CREATE UNIQUE INDEX IF NOT EXISTS tasks_session ON tasks(session_name) "
+        "WHERE session_name IS NOT NULL"
+    ),
     """CREATE TABLE IF NOT EXISTS task_dependencies(task_id TEXT NOT NULL, depends_on TEXT NOT NULL,
   condition TEXT NOT NULL CHECK(condition IN ('succeeded','terminal')),
   PRIMARY KEY(task_id, depends_on))""",

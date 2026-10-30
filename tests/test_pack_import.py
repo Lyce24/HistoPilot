@@ -88,7 +88,7 @@ def test_same_count_different_extraction_passes_headers_but_fails_values(tmp_pat
     other = configuration(tmp_path / "other", delta=1)
     build_pack(other, tmp_path / "pack")
     assert inspect_existing_pack(source, tmp_path / "pack")["matchesFeatures"]
-    with pytest.raises(PackedStoreError, match="feature values differ.*matching shape"):
+    with pytest.raises(PackedStoreError, match=r"feature values differ.*matching shape"):
         verify_existing_pack(source, tmp_path / "pack", chunk_bytes=32)
 
 
@@ -121,7 +121,7 @@ def test_partial_histopilot_evidence_cannot_be_downgraded_to_legacy(tmp_path, mi
     path = tmp_path / "pack"
     build_pack(source, path)
     (path / missing).unlink()
-    with pytest.raises(PackedStoreError, match="require both manifest.json and checksums.json"):
+    with pytest.raises(PackedStoreError, match=r"require both manifest\.json and checksums\.json"):
         inspect_existing_pack(source, path)
     with pytest.raises(PackedStoreError, match="folder is incomplete"):
         verify_existing_pack(source, path)
@@ -181,7 +181,7 @@ def test_changed_pack_since_preview_is_rejected(tmp_path):
     before = pack_file_stamps(path)
     with (path / "features.bin").open("r+b") as stream:
         stream.write(np.array([123], dtype="<f4").tobytes())
-    with pytest.raises(PackedStoreError, match="changed since.*preview"):
+    with pytest.raises(PackedStoreError, match=r"changed since.*preview"):
         verify_existing_pack(source, path, expected_stamps=before)
 
 
@@ -223,7 +223,7 @@ def test_legacy_pack_requires_every_row_to_match_not_only_headers(tmp_path, payl
         stream.seek(-4, 2)
         stream.write(np.array([123], dtype=dtype).tobytes())
     assert inspect_existing_pack(source, path)["matchesFeatures"]
-    with pytest.raises(PackedStoreError, match="values differ|coordinates differ"):
+    with pytest.raises(PackedStoreError, match=r"values differ|coordinates differ"):
         verify_existing_pack(source, path, chunk_bytes=16)
 
 

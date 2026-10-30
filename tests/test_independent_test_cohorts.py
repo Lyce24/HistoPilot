@@ -215,7 +215,7 @@ def test_automatic_feature_choice_is_pinned_for_saved_evaluation(evaluation, tmp
     data = service.store.get_dataset(cohort["manifest"]["datasetId"])
     projects.bundle(service.store, tmp_path, data, ["s2", "s3"], name="later-test")
     assert "EVALUATION_FEATURE_BUNDLE_AMBIGUOUS" in projects.codes(service.preview(choice))
-    monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", lambda: {})
+    monkeypatch.setattr("histopilot.application.evaluation_runs.training_runtime", dict)
     plan = service._execution_plan(saved["id"])
     assert set(plan["data"]["featureFiles"]) == {"s2", "s3"}
     assert plan["labelsWithheld"] is True

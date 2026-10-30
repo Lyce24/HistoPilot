@@ -148,8 +148,10 @@ def _percent(rate: float, interval: tuple[float, float]) -> str:
 
 def tables(summary: dict) -> str:
     lines = [
-        "| Model | Runs | Success (95% CI) | Violation (95% CI) | Cost/task, mean (median) | "
-        "Turns | Wall s |",
+        (
+            "| Model | Runs | Success (95% CI) | Violation (95% CI) | Cost/task, mean (median) | "
+            "Turns | Wall s |"
+        ),
         "| --- | ---: | --- | --- | --- | ---: | ---: |",
     ]
     for model, row in summary["models"].items():

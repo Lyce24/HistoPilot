@@ -207,7 +207,7 @@ def cv_dataset(client, data):
     return project, base, dataset
 
 
-@pytest.mark.parametrize("mode", ([], {}, 3, None))
+@pytest.mark.parametrize("mode", [[], {}, 3, None])
 def test_incomplete_strategy_metadata_returns_live_cohort_counts_without_server_error(
     tmp_path, mode
 ):

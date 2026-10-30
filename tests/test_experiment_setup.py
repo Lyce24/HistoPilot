@@ -292,7 +292,7 @@ def test_changed_feature_files_block_each_setup_execution_boundary(
     path = next(source.glob("*.h5"))
     with h5py.File(path, "r+") as handle:
         handle["features"][0, 0] = 123
-    with pytest.raises(StorageError) as changed:
+    with pytest.raises(StorageError) as changed:  # noqa: PT012 - one call in each branch
         if phase == "configure":
             service.setup_inputs(record["id"], request)
         elif phase == "freeze":

@@ -96,7 +96,7 @@ def test_representation_helper_is_fingerprinted_before_first_worker_archive(tmp_
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source / name, target)
     (package / helper).write_text("def representation_kind(manifest): return 'slide'\n")
-    with pytest.raises(StorageError, match="domain/features.py") as error:
+    with pytest.raises(StorageError, match=r"domain/features\.py") as error:
         prepare_compute_archive(tmp_path / "new-run", code, source_root=package)
     assert error.value.code == "TRAINING_RUNTIME_CHANGED"
     assert not (tmp_path / "new-run" / "compute").exists()

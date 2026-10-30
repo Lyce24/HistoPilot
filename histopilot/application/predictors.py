@@ -657,8 +657,10 @@ class PredictorService:
                 and (
                     selection.batchId not in submission["batchIds"]
                     or policy["method"] not in {selection.method, "both"}
-                    or selection.method == "refit"
-                    and policy["refitPercentile"] != selection.refitPercentile
+                    or (
+                        selection.method == "refit"
+                        and policy["refitPercentile"] != selection.refitPercentile
+                    )
                 )
             ):
                 raise StorageError(

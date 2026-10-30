@@ -44,5 +44,5 @@ def test_notes_end_at_the_next_version_or_the_links():
     for missing in ("0.3.0", "0.1"):
         with pytest.raises(ValueError, match=missing):
             section(changelog, missing)
-    with pytest.raises(ValueError, match="0.4.0"):
+    with pytest.raises(ValueError, match=r"0\.4\.0"):
         section("## [0.4.0] - 2027-02-01\n\n[0.4.0]: https://example.org\n", "0.4.0")

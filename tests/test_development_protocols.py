@@ -168,7 +168,8 @@ def assert_blocked(store):
     try:
         result = preview(store)
     except StorageError as error:
-        assert error.code == "INVALID_PROTOCOL_SPEC"
+        # Either outcome blocks the protocol, so this cannot be a pytest.raises block.
+        assert error.code == "INVALID_PROTOCOL_SPEC"  # noqa: PT017
         return
     assert not result["canFreeze"]
     assert any(finding["severity"] == "error" for finding in result["findings"])
@@ -293,7 +294,7 @@ def test_domain_cv_rejects_fixed_validation_entirely_from_held_out_site():
     assert_blocked(store)
 
 
-@pytest.mark.parametrize("invalid_domain", (None, "conflicting"))
+@pytest.mark.parametrize("invalid_domain", [None, "conflicting"])
 def test_domain_cv_requires_resolved_consistent_domains_for_fixed_validation(invalid_domain):
     store = development_store("leave_one_domain_out", fixed_validation=True)
     store.rows[160]["attributes"]["site"] = invalid_domain
@@ -317,7 +318,7 @@ def test_missing_training_pool_rules_do_not_silently_assign_every_row():
     assert "TRAIN_POOL_REQUIRED" in codes(result)
 
 
-@pytest.mark.parametrize("invalid", ("overlap", "empty_fixed_val"))
+@pytest.mark.parametrize("invalid", ["overlap", "empty_fixed_val"])
 def test_conflicting_or_incomplete_pool_selections_block_freezing(invalid):
     store = development_store(fixed_validation=True)
     pools = store.draft["payload"]["spec"]["split"]["pools"]

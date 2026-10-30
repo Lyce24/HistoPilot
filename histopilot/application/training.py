@@ -385,7 +385,7 @@ class TrainingService:
                 for column in sorted(cohort_columns)
             }
         for rows in groups.values():
-            if set(row["partition"] for row in rows) != {"train", "val", "test"}:
+            if {row["partition"] for row in rows} != {"train", "val", "test"}:
                 raise StorageError(
                     "Every fold requires training, validation, and development assessment rows.",
                     "TRAINING_PARTITION_MISSING",

@@ -112,8 +112,10 @@ def report() -> str:
     lines = [
         "### Type coverage",
         "",
-        "| Package | Fully annotated functions | Annotated parameters | Annotated returns "
-        "| Public symbols with known types |",
+        (
+            "| Package | Fully annotated functions | Annotated parameters | Annotated returns "
+            "| Public symbols with known types |"
+        ),
         "| --- | ---: | ---: | ---: | ---: |",
     ]
     total = Counts()

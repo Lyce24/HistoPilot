@@ -23,7 +23,7 @@ from histopilot.schemas.predictors import EvaluationRunSelection
 from histopilot.schemas.slide_reviews import SaveSlideReview
 from histopilot.storage.project_lock import StorageError
 
-__all__ = ["cases", "evaluation", "managed_study", "registry", "preview_context"]
+__all__ = ["cases", "evaluation", "managed_study", "preview_context", "registry"]
 
 
 def test_patch_contract_identity_stays_unchanged_and_slide_kind_is_explicit():

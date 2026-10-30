@@ -5,6 +5,7 @@ import hashlib
 import io
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 import h5py
 import numpy as np
@@ -385,7 +386,7 @@ def test_pyramid_render_uses_exact_fractional_field_of_view(tmp_path, monkeypatc
 
     class FakeSlide:
         dimensions = (10000, 6500)
-        level_downsamples = [1.0, 64.0]
+        level_downsamples: ClassVar[list[float]] = [1.0, 64.0]
 
         @staticmethod
         def detect_format(path):

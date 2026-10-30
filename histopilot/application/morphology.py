@@ -107,7 +107,7 @@ class MorphologyService:
             ):
                 raise _error(
                     "Legacy frozen dataset records are invalid.", "MORPHOLOGY_DATASET_INVALID"
-                )
+                ) from error
             return rows
 
     def slides(self, dataset_id, *, search="", offset=0, limit=100):

@@ -274,7 +274,7 @@ class EvaluationRunService:
         """
         from histopilot.application.references import ReferenceService
 
-        document, cohort, predictor, content = self._completed(identity)
+        document, _cohort, predictor, content = self._completed(identity)
         manifest = document["manifest"]
         standard = ReferenceService(self.store, self.filesystem).for_run(manifest, reference_id)
         if "analysis" not in manifest and manifest.get("splitUnit") != "slide":

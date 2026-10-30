@@ -532,7 +532,7 @@ class InterpretationService:
                 if identity == predictor["id"]
                 else self._attention_model(identity, selection.encoderId)
             )
-            other, other_model, _, _, other_contract = entry
+            _other, other_model, _, _, other_contract = entry
             if other_model.get("recipe", {}).get("inputMode") == "multimodal":
                 raise StorageError(
                     "Pooled attention supports image-only models.",

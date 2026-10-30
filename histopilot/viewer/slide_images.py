@@ -5,6 +5,7 @@ import math
 import stat
 import warnings
 from contextlib import contextmanager
+from itertools import pairwise
 from pathlib import Path
 
 from histopilot.storage.project_lock import StorageError, reject_symlink_components
@@ -147,7 +148,7 @@ def _inspect_open_slide(slide, backend):
         or len(downsamples) > 64
         or downsamples[0] != 1
         or any(type(v) not in (int, float) or not math.isfinite(v) or v < 1 for v in downsamples)
-        or any(a >= b for a, b in zip(downsamples, downsamples[1:]))
+        or any(a >= b for a, b in pairwise(downsamples))
     ):
         raise StorageError("The slide pyramid is invalid.", "SLIDE_GEOMETRY_INVALID", 422)
     return {

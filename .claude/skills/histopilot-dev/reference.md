@@ -331,7 +331,7 @@ Serving the UI: `histopilot serve` serves `histopilot/static/`. `bash serve.sh` 
 
 | Tool | Rule |
 | --- | --- |
-| `ruff check .` | Must pass: CI and CONTRIBUTING require it. Rules `E4`, `E7`, `E9`, `F`, `I` (import order) and `UP`, target Python 3.11, line length 100 (`pyproject.toml`). `tests/support` imports sort with third-party packages, `histopilot` imports in their own block. |
+| `ruff check .` | Must pass: CI and CONTRIBUTING require it. Rules `E4`, `E7`, `E9`, `F`, `I` (import order), `UP`, `B`, `C4`, `DTZ`, `ISC`, `LOG`, `PERF`, `PGH`, `PIE`, `PT`, `RET`, `RUF`, `SIM` and `T10`, target Python 3.11, line length 100 (`pyproject.toml`, which gives the reason for each ignored rule). A `# noqa` names its rule and the reason; RUF100 reports one that suppresses nothing. `tests/support` imports sort with third-party packages, `histopilot` imports in their own block. |
 | `pyright` | Must pass: CI and CONTRIBUTING require it. `[tool.pyright]` in `pyproject.toml` checks `histopilot/domain` in strict mode, and `histopilot/application` and `histopilot/api` in standard mode plus a few strict rules, against Python 3.11 on Linux. Fix errors with annotations or narrowing; an ignore names its rule and reason (`# pyright: ignore[rule]  # why`), and a stale one fails the check. |
 | `ruff format` | Not enforced, and the tree is not format-clean. Keep new files and your own hunks formatted (`.venv/bin/ruff format --check <files>`); never run `ruff format .`, which rewrites dozens of files you did not touch. Ruff also formats Python code blocks in Markdown. |
 | TypeScript | `tsc` strict mode is the only gate; there is no ESLint or Prettier. Follow the surrounding style. |

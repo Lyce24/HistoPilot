@@ -857,8 +857,10 @@ def test_a_device_loss_requeues_the_task_without_spending_a_retry(center):
 @pytest.mark.parametrize(
     "error",
     [
-        "RuntimeError: CUDA error: device-side assert triggered\nCUDA kernel errors might be "
-        "asynchronously reported; check the driver log",
+        (
+            "RuntimeError: CUDA error: device-side assert triggered\nCUDA kernel errors might be "
+            "asynchronously reported; check the driver log"
+        ),
         "RuntimeError: CUDA error: an illegal memory access was encountered",
         "CUDA error: unspecified launch failure",
     ],

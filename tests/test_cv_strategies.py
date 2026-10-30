@@ -322,7 +322,7 @@ def test_selected_domain_policy_only_evaluates_requested_sites():
     assert patients(assignments, "test") == {f"patient-{index:02d}" for index in range(20, 40)}
 
 
-@pytest.mark.parametrize("failure", ("missing", "conflicting", "unknown"))
+@pytest.mark.parametrize("failure", ["missing", "conflicting", "unknown"])
 def test_undefined_or_ambiguous_domain_identity_blocks_evaluation(failure):
     store = Store("leave_one_domain_out")
     if failure == "missing":
