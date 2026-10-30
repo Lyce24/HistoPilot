@@ -103,7 +103,7 @@ def test_exact_memberships_and_patient_weighting_without_resampling(plan):
     weights = {
         identity: weight
         for batch in loaded
-        for identity, weight in zip(batch["slideIds"], batch["lossWeights"].tolist())
+        for identity, weight in zip(batch["slideIds"], batch["lossWeights"].tolist(), strict=True)
     }
     assert weights == {"001": 0.75, "002": 0.75, "003": 1.5}
     assert weights["001"] + weights["002"] == weights["003"]
@@ -270,7 +270,7 @@ def test_invalid_frozen_membership_contract_is_blocked(plan, change, match):
 
 def test_exact_feature_ids_are_not_normalized_or_silently_skipped(plan):
     plan["featureFiles"]["1"] = plan["featureFiles"].pop("001")
-    with pytest.raises(MILDataError, match="exact feature inventory.*001"):
+    with pytest.raises(MILDataError, match=r"exact feature inventory.*001"):
         MILDataModule(plan).setup()
 
 

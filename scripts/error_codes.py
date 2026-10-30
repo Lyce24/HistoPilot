@@ -192,9 +192,13 @@ def _parameters(function) -> tuple[list, list, dict]:
     arguments = function.args
     positional = [item.arg for item in (*arguments.posonlyargs, *arguments.args)]
     defaults = dict(
-        zip(positional[len(positional) - len(arguments.defaults) :], arguments.defaults)
+        zip(
+            positional[len(positional) - len(arguments.defaults) :],
+            arguments.defaults,
+            strict=True,
+        )
     )
-    for item, default in zip(arguments.kwonlyargs, arguments.kw_defaults):
+    for item, default in zip(arguments.kwonlyargs, arguments.kw_defaults, strict=True):
         if default is not None:
             defaults[item.arg] = default
     return positional, [*positional, *(item.arg for item in arguments.kwonlyargs)], defaults
@@ -223,7 +227,7 @@ def _response_parts(call):
         return None
     values = {
         key.value: value
-        for key, value in zip(content.keys, content.values)
+        for key, value in zip(content.keys, content.values, strict=True)
         if isinstance(key, ast.Constant)
     }
     if "code" not in values or "detail" not in values:
@@ -393,7 +397,7 @@ class _Scanner:
             return None
         return [
             (key.value, value.value)
-            for key, value in zip(table.keys, table.values)
+            for key, value in zip(table.keys, table.values, strict=True)
             if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
         ]
 
@@ -477,7 +481,7 @@ class _Scanner:
                 if isinstance(node, ast.Dict):
                     values = {
                         key.value: value
-                        for key, value in zip(node.keys, node.values)
+                        for key, value in zip(node.keys, node.values, strict=True)
                         if isinstance(key, ast.Constant)
                     }
                     code, message = values.get("code"), values.get("message")
@@ -510,7 +514,8 @@ def _assigned(function, name) -> list:
                 elif isinstance(target, ast.Tuple) and isinstance(node.value, ast.Tuple):
                     values += [
                         value
-                        for item, value in zip(target.elts, node.value.elts)
+                        # A starred target can take several values; pairs stop at the shorter side.
+                        for item, value in zip(target.elts, node.value.elts, strict=False)
                         if isinstance(item, ast.Name) and item.id == name
                     ]
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
@@ -559,18 +564,24 @@ def render(found: Scan) -> str:
     lines = [
         "# Error codes",
         "",
-        "Every error the local service returns has a JSON body `{detail, code}`: `detail` says "
-        "what went wrong for a person, `code` names it for a program. A commit refused over "
-        "review findings also sends `findings`, each `{code, message, severity}` plus `field` "
-        "when one field is at fault. For a request that fails schema validation, `detail` is "
-        "the list of rejected fields.",
+        (
+            "Every error the local service returns has a JSON body `{detail, code}`: `detail` says "
+            "what went wrong for a person, `code` names it for a program. A commit refused over "
+            "review findings also sends `findings`, each `{code, message, severity}` plus `field` "
+            "when one field is at fault. For a request that fails schema validation, `detail` is "
+            "the list of rejected fields."
+        ),
         "",
-        "A code's kind groups codes by what the caller should do next, and the CLI turns each "
-        "kind into an exit code: see [exit codes](cli-contract.md#exit-codes). A code missing "
-        "from this page takes its kind from its HTTP status by the rules there.",
+        (
+            "A code's kind groups codes by what the caller should do next, and the CLI turns each "
+            "kind into an exit code: see [exit codes](cli-contract.md#exit-codes). A code missing "
+            "from this page takes its kind from its HTTP status by the rules there."
+        ),
         "",
-        "`scripts/error_codes.py` writes this page from the raise sites in `histopilot/` and "
-        "the registry in `histopilot/api/error_codes.py`. Edit those, not this page.",
+        (
+            "`scripts/error_codes.py` writes this page from the raise sites in `histopilot/` and "
+            "the registry in `histopilot/api/error_codes.py`. Edit those, not this page."
+        ),
         "",
         "| Kind | Next move |",
         "| --- | --- |",
@@ -592,8 +603,10 @@ def render(found: Scan) -> str:
             "",
             "## Deprecated codes",
             "",
-            "The service still returns these names in some places. Treat each one as the code "
-            "that replaces it.",
+            (
+                "The service still returns these names in some places. Treat each one as the code "
+                "that replaces it."
+            ),
             "",
             "| Code | Kind | HTTP status | Replaced by |",
             "| --- | --- | --- | --- |",

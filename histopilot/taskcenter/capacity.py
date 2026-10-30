@@ -159,7 +159,7 @@ def blocking_scope(reason: str | None) -> str | None:
     """Which later candidates a waiting reason holds back: "all", "cpu" or "gpu"."""
     if reason is None:
         return None
-    if reason.startswith("Waiting for CPU threads") or reason.startswith(WAITING_RAM):
+    if reason.startswith(("Waiting for CPU threads", WAITING_RAM)):
         return "all"
     if reason.startswith("Waiting for a CPU task slot"):
         return "cpu"
@@ -212,8 +212,10 @@ def admit(
             return (
                 False,
                 None,
-                f"Waiting for a CPU task slot ({usage['cpu']['cpuTasks']}/"
-                f"{effective['cpuTaskSlots']})",
+                (
+                    f"Waiting for a CPU task slot ({usage['cpu']['cpuTasks']}/"
+                    f"{effective['cpuTaskSlots']})"
+                ),
             )
     available = host.get("availableRamGb")
     if available is None:
@@ -284,7 +286,9 @@ def admit(
         return (
             False,
             None,
-            f"{WAITING_IDLE_GPU}: needs {need:.1f} GiB of GPU memory, more than any GPU "
-            f"offers ({largest:.1f} GiB after the reserve), so it will run alone",
+            (
+                f"{WAITING_IDLE_GPU}: needs {need:.1f} GiB of GPU memory, more than any GPU "
+                f"offers ({largest:.1f} GiB after the reserve), so it will run alone"
+            ),
         )
     return False, None, first_reason

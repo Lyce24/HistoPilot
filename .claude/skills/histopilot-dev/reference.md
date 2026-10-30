@@ -29,7 +29,7 @@ The detail behind [SKILL.md](SKILL.md). Read only the section you need. Nothing 
 | `serve.sh` | Launcher: rebuilds the UI when `web/` changed, then runs `histopilot serve` in the foreground |
 | `examples/config.toml` | Service configuration: `[server]` (`host`, `port`) and `[storage]` (`workspace`, `data_roots`) |
 | `pyproject.toml`, `uv.lock` | Dependencies, the `training`, `imaging` and `sdpc` extras, the `dev` group, the pytest `slow` marker, Ruff settings |
-| `.github/workflows/checks.yml` | CI: `uv sync --locked --extra imaging`, `ruff check .`, the full pytest suite, the agent tests in a `.venv-agent`, `npm ci && npm test && npm run build` in `web/`, bundling and a wheel check (the frontend, the demo workspace and exactly the MCP doc pages) |
+| `.github/workflows/checks.yml` | CI: `uv sync --locked --extra imaging`, `ruff check .`, `pyright` and the type coverage table (`scripts/type_coverage.py`) in the job summary, the full pytest suite, the agent tests in a `.venv-agent`, `npm ci && npm test && npm run build` in `web/`, bundling and a wheel check (the frontend, the demo workspace and exactly the MCP doc pages) |
 | `histopilot/static/` | The built UI a checkout serves; gitignored |
 | `/.local/` | Private, gitignored notes. Never copy anything from it into tracked files. |
 
@@ -331,7 +331,8 @@ Serving the UI: `histopilot serve` serves `histopilot/static/`. `bash serve.sh` 
 
 | Tool | Rule |
 | --- | --- |
-| `ruff check .` | Must pass: CI and CONTRIBUTING require it. Rules `E4`, `E7`, `E9`, `F`, `I` (import order) and `UP`, target Python 3.11, line length 100 (`pyproject.toml`). `tests/support` imports sort with third-party packages, `histopilot` imports in their own block. |
+| `ruff check .` | Must pass: CI and CONTRIBUTING require it. Rules `E4`, `E7`, `E9`, `F`, `I` (import order), `UP`, `B`, `C4`, `DTZ`, `ISC`, `LOG`, `PERF`, `PGH`, `PIE`, `PT`, `RET`, `RUF`, `SIM` and `T10`, target Python 3.11, line length 100 (`pyproject.toml`, which gives the reason for each ignored rule). A `# noqa` names its rule and the reason; RUF100 reports one that suppresses nothing. `tests/support` imports sort with third-party packages, `histopilot` imports in their own block. |
+| `pyright` | Must pass: CI and CONTRIBUTING require it. `[tool.pyright]` in `pyproject.toml` checks `histopilot/domain` in strict mode, and `histopilot/application` and `histopilot/api` in standard mode plus a few strict rules, against Python 3.11 on Linux. Fix errors with annotations or narrowing; an ignore names its rule and reason (`# pyright: ignore[rule]  # why`), and a stale one fails the check. |
 | `ruff format` | Not enforced, and the tree is not format-clean. Keep new files and your own hunks formatted (`.venv/bin/ruff format --check <files>`); never run `ruff format .`, which rewrites dozens of files you did not touch. Ruff also formats Python code blocks in Markdown. |
 | TypeScript | `tsc` strict mode is the only gate; there is no ESLint or Prettier. Follow the surrounding style. |
 | Names | A helper that another module imports is public (no leading underscore); `tests/test_private_imports.py` only lets the count of private cross-module imports fall. |

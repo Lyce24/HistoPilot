@@ -653,7 +653,7 @@ def test_renaming_an_identity_source_cannot_make_it_a_target(identity_column, re
 def test_holdout_settings_cannot_create_or_imply_a_development_test_set(change):
     spec = specification()
     spec["split"].update(change)
-    with pytest.raises(ValidationError, match="test data|external holdout"):
+    with pytest.raises(ValidationError, match=r"test data|external holdout"):
         ProtocolSpec.model_validate(spec)
 
 

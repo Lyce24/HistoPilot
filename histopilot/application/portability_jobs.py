@@ -183,7 +183,7 @@ class PortabilityJobs:
         return folder
 
     def submit(self, identity, request):
-        document, project = self.projects._load(identity)
+        _document, project = self.projects._load(identity)
         values = request.model_dump(mode="json")
         archive = permitted_path(
             self.projects.storage, request.archivePath, existing=request.action != "export"

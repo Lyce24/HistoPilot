@@ -62,6 +62,7 @@ def source_items(experiment_id, batches, policy=None, *, policies=None):
     items = []
     for batch in batches:
         selected = policies[batch["id"]] if policies is not None else policy
+        assert selected is not None  # callers pass one policy, or one per batch
         if policies is not None:
             verify_batch_policy(selected, batch["manifest"].get("spec", {}))
         if selected["method"] == "skip":
@@ -488,6 +489,7 @@ class ExperimentPredictorService:
                 if self._legacy(previous):
                     refuse_legacy()
                 current = self.status(identity)
+                assert current is not None  # it has a state file, so it has a status
 
                 def accepted_noop():
                     previous["operations"][operation_id] = resume

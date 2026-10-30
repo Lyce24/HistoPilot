@@ -385,7 +385,7 @@ class TrainingService:
                 for column in sorted(cohort_columns)
             }
         for rows in groups.values():
-            if set(row["partition"] for row in rows) != {"train", "val", "test"}:
+            if {row["partition"] for row in rows} != {"train", "val", "test"}:
                 raise StorageError(
                     "Every fold requires training, validation, and development assessment rows.",
                     "TRAINING_PARTITION_MISSING",
@@ -859,9 +859,10 @@ class TrainingService:
             plan, freshness = self._prepare(batch)
             prepared_runtime = plan["runtime"]
             provenance = {"at": utc_now(), "host": host_snapshot(), **gpu_snapshot()}
-            original_plan = read_json_bounded(folder / "plan.json") if resume else None
             session = session_name(folder)
             if resume:
+                assert previous is not None  # resuming requires an earlier launch, checked above
+                original_plan = read_json_bounded(folder / "plan.json")
                 if original_plan.get("executionMode") != MANAGED:
                     refuse_legacy()
                 if content_hash(original_plan) != previous.get("planHash"):

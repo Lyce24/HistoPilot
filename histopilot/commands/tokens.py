@@ -15,6 +15,8 @@ from histopilot.client.paging import page
 from . import output
 from .common import Result, command
 
+SCOPE_HELP = ", ".join(TOKEN_SCOPES) + "; repeatable. Each includes the ones before it."
+
 
 def register(app: typer.Typer) -> None:
     group = typer.Typer(no_args_is_help=True, help="Scoped access tokens for AI agents.")
@@ -26,7 +28,7 @@ def register(app: typer.Typer) -> None:
         scope: list[str] = typer.Option(
             list(DEFAULT_TOKEN_SCOPES),
             "--scope",
-            help=", ".join(TOKEN_SCOPES) + "; repeatable. Each includes the ones before it.",
+            help=SCOPE_HELP,
         ),
         name: str = typer.Option("", "--name", help="What the token is for, such as a chat app."),
         days: int = typer.Option(

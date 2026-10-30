@@ -123,7 +123,7 @@ def _missing_references(filesystem, paths, folder):
                 listing = {}
             resolved = parent.resolve()
         except OSError:
-            resolved, listing = None, None
+            resolved, listing = None, {}  # a listing is read only when its parent resolved
         for value, path in members:
             name = path.name
             fast = resolved is not None and name not in {"", ".", ".."}

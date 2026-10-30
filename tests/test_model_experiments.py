@@ -263,7 +263,7 @@ def test_registry_summary_is_bounded_and_detail_hydrates_only_selected_experimen
 
     def execution(identity, **kwargs):
         reads.append((identity, kwargs["include_progress"]))
-        return None
+        return
 
     monkeypatch.setattr(service.training, "execution", execution)
     records = service.list(summary=True)["items"]

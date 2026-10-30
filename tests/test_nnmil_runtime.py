@@ -3,6 +3,7 @@
 import copy
 import json
 import runpy
+from itertools import pairwise
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -198,7 +199,7 @@ def test_step_cosine_warms_up_from_first_update_and_reaches_floor():
         scheduler.step()
     assert rates[:4] == pytest.approx([2.5e-5, 5e-5, 7.5e-5, 1e-4])
     assert rates[-1] == 0
-    assert all(a >= b for a, b in zip(rates[4:], rates[5:]))
+    assert all(a >= b for a, b in pairwise(rates[4:]))
     # An explicit shorter fitting budget keeps the predeclared schedule horizon.
     module._trainer = SimpleNamespace(estimated_stepping_batches=8, max_epochs=2)
     short = module.configure_optimizers()

@@ -7,6 +7,7 @@ import subprocess
 import sys
 from collections import Counter
 from datetime import datetime
+from itertools import pairwise
 
 import pytest
 from fastapi.testclient import TestClient
@@ -184,8 +185,8 @@ def test_evaluation_roc_confusion_and_metrics_derive_from_published_synthetic_pr
     roc = summary["chart"]["series"][0]["points"]
     assert roc[0] == {"x": 0, "y": 0}
     assert roc[-1] == {"x": 1, "y": 1}
-    assert all(a["x"] <= b["x"] and a["y"] <= b["y"] for a, b in zip(roc, roc[1:]))
-    auc = sum((b["x"] - a["x"]) * (a["y"] + b["y"]) / 2 for a, b in zip(roc, roc[1:]))
+    assert all(a["x"] <= b["x"] and a["y"] <= b["y"] for a, b in pairwise(roc))
+    auc = sum((b["x"] - a["x"]) * (a["y"] + b["y"]) / 2 for a, b in pairwise(roc))
     assert float(facts["AUROC"]) == pytest.approx(auc, abs=0.0005)
     assert 0.85 < auc < 0.99
     # Clinical calibration and decision curves use these same exact rows.
@@ -196,7 +197,7 @@ def test_evaluation_roc_confusion_and_metrics_derive_from_published_synthetic_pr
     assert float(calibration["facts"][0]["value"]) == pytest.approx(brier, abs=0.0005)
     thresholds = step(clinical, "thresholds")
     curve = thresholds["chart"]["series"][0]["points"]
-    for point, row in zip(curve, thresholds["table"]["rows"]):
+    for point, row in zip(curve, thresholds["table"]["rows"], strict=True):
         threshold, table_tn, table_fp, table_fn, table_tp, benefit, _ = row
         expected_tp = sum(item[1] == "high" and item[2] >= threshold for item in rows)
         expected_fp = sum(item[1] == "low" and item[2] >= threshold for item in rows)
@@ -235,7 +236,7 @@ def test_training_is_non_executable_and_resource_histories_are_coherent():
             assert run["checkpointPath"].startswith("demo://blca/")
         samples = training["resources"]["rows"]
         timestamps = [datetime.fromisoformat(sample["at"]) for sample in samples]
-        assert all((b - a).total_seconds() == 15 for a, b in zip(timestamps, timestamps[1:]))
+        assert all((b - a).total_seconds() == 15 for a, b in pairwise(timestamps))
         assert execution["telemetry"]["latest"] == samples[-1]
         for sample in samples:
             assert 0 <= sample["host"]["cpuUtilizationPercent"] <= 100

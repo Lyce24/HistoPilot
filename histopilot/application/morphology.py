@@ -107,7 +107,7 @@ class MorphologyService:
             ):
                 raise _error(
                     "Legacy frozen dataset records are invalid.", "MORPHOLOGY_DATASET_INVALID"
-                )
+                ) from error
             return rows
 
     def slides(self, dataset_id, *, search="", offset=0, limit=100):
@@ -174,8 +174,9 @@ class MorphologyService:
             raise _error("Feature slide identities are ambiguous.")
         return rows, bundle, feature, files
 
-    def _features(self, item, indices, *, coordinates=False):
-        """Read only selected rows, with recorded inode/size/time evidence on both ends."""
+    def _features(self, item, indices):
+        """Read only selected rows and their coordinates, with recorded inode/size/time
+        evidence on both ends."""
         path = allowed_file(self.filesystem, item["path"])
         with open_source(path, item) as (stream, _):
             with h5py.File(stream, "r") as handle:
@@ -183,16 +184,14 @@ class MorphologyService:
                 if features.shape != (item["patchCount"], item["dimensions"]):
                     raise _error("The saved feature dimensions changed.")
                 values = np.asarray(features[indices], dtype=np.float32)
-        coords = None
-        if coordinates:
-            coord_path = allowed_file(self.filesystem, item.get("coordinatePath", item["path"]))
-            expected = item if coord_path == path else item.get("coordinateFile", {})
-            with open_source(coord_path, expected) as (stream, _):
-                with h5py.File(stream, "r") as handle:
-                    dataset = h5_dataset(handle, "coords")
-                    if dataset.shape != (item["patchCount"], 2) or dataset.dtype.kind not in "iu":
-                        raise _error("Coordinates no longer match the feature row order.")
-                    coords = np.asarray(dataset[indices], dtype=np.int64)
+        coord_path = allowed_file(self.filesystem, item.get("coordinatePath", item["path"]))
+        expected = item if coord_path == path else item.get("coordinateFile", {})
+        with open_source(coord_path, expected) as (stream, _):
+            with h5py.File(stream, "r") as handle:
+                dataset = h5_dataset(handle, "coords")
+                if dataset.shape != (item["patchCount"], 2) or dataset.dtype.kind not in "iu":
+                    raise _error("Coordinates no longer match the feature row order.")
+                coords = np.asarray(dataset[indices], dtype=np.int64)
         return values, coords
 
     def build(self, request):
@@ -257,7 +256,7 @@ class MorphologyService:
                     )
                 item = files[row["slideId"]]
                 indices = sample_rows(item["patchCount"], request.patchesPerSlide)
-                values, coords = self._features(item, indices, coordinates=True)
+                values, coords = self._features(item, indices)
                 if not np.isfinite(values).all():
                     raise _error("Non-finite patch features cannot be explored.")
                 pooled.append(values.mean(axis=0, dtype=np.float64))
@@ -641,7 +640,7 @@ class MorphologyService:
             width, height = patch_geometry(attrs, {}, geometry)
         except ValueError as error:
             raise _error(f"Exact patch geometry is unavailable: {error}") from error
-        _, coords = self._features(item, np.array([patch_index]), coordinates=True)
+        _, coords = self._features(item, np.array([patch_index]))
         x, y = map(int, coords[0])
         if not (0 <= x < geometry["width"] and 0 <= y < geometry["height"]):
             raise _error("The selected patch is outside this exact slide image.")

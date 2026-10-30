@@ -16,6 +16,7 @@ import base64
 import hashlib
 import hmac
 import re
+from typing import TypeGuard
 
 # Keys whose values are dropped outright. Keys are compared without case, "_" or "-", so
 # snake_case keys from other tools (TRIDENT's `wsi_rel_paths`, `job_dir`) match too.
@@ -161,7 +162,7 @@ class Redactor:
             return self.text(value)
         return value
 
-    def _is_known(self, value) -> bool:
+    def _is_known(self, value: object) -> TypeGuard[str]:
         return isinstance(value, str) and value in self.known
 
     def _case_named(self, text):

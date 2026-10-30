@@ -1,9 +1,11 @@
 """Feature artifacts retain encoder, preprocessing, and patch coordinate lineage."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 
-def representation_kind(manifest: dict) -> str:
+def representation_kind(manifest: Mapping[str, Any]) -> str:
     """Read the representation of a feature inventory or saved input contract.
 
     Frozen patch records predate the field. Their absence must keep meaning

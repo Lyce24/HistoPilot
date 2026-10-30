@@ -210,6 +210,7 @@ def enqueue(access: TaskCenterAccess, owner_value: dict, specs: list[dict]) -> N
         if spec["id"] in new_ids:
             continue
         task = client.task(spec["id"])
+        assert task is not None  # only specs that had a task are left here
         if task["state"] in LIVE:
             raise StorageError("This task is already queued or running.", "TASK_ACTIVE", 409)
         client.store.set_fields(

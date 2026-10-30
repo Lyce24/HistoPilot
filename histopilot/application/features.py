@@ -116,7 +116,11 @@ class FeatureService:
         feature_root = root
         kind = "flat"
         inferred_encoder = None
-        selected_encoder = ENCODER_ALIASES.get(spec.encoderId, spec.encoderId)
+        selected_encoder = (
+            ENCODER_ALIASES.get(spec.encoderId, spec.encoderId)
+            if spec.encoderId is not None
+            else None
+        )
         # TRIDENT writes patch bags to features_<encoder> and slide embeddings to
         # slide_features_<encoder>, so each kind discovers only its own folders.
         prefix = "slide_features_" if spec.featureKind == "slide" else "features_"

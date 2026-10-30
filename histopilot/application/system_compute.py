@@ -69,12 +69,12 @@ def parse_cpu_info(text: str) -> tuple[str | None, int | None]:
     model = None
     cores = set()
     for block in text.split("\n\n"):
-        fields = dict(
-            (key.strip(), value.strip())
+        fields = {
+            key.strip(): value.strip()
             for line in block.splitlines()
             if ":" in line
             for key, value in [line.split(":", 1)]
-        )
+        }
         model = model or fields.get("model name") or fields.get("Hardware")
         if fields.get("physical id") is not None and fields.get("core id") is not None:
             cores.add((fields["physical id"], fields["core id"]))
@@ -127,15 +127,16 @@ def parse_gpu_csv(output: str, fields: tuple[str, ...] = _GPU_FIELDS) -> list[di
         if index is None or not index.is_integer() or not values.get("name"):
             raise ValueError("Invalid GPU identity")
 
+        # The helpers below run within this iteration, so they read this row's values.
         def metric(key):
-            return _number(values.get(key))
+            return _number(values.get(key))  # noqa: B023
 
         def mib(key):
             value = metric(key)
             return int(value * 1024 * 1024) if value is not None else None
 
         def label(key):
-            value = values.get(key)
+            value = values.get(key)  # noqa: B023
             return value if value and value not in {"N/A", "[N/A]", "[Not Supported]"} else None
 
         total, used = mib("memory.total"), mib("memory.used")
@@ -289,7 +290,11 @@ class ComputeSampler:
         proc = Path("/proc")
         counters = parse_cpu_times(_read(proc / "stat"))
         utilization, interval = None, None
-        if counters is not None and self._cpu_previous is not None:
+        if (
+            counters is not None
+            and self._cpu_previous is not None
+            and self._cpu_sampled_at is not None
+        ):
             total, idle = (new - old for new, old in zip(counters, self._cpu_previous, strict=True))
             if total > 0 and 0 <= idle <= total:
                 utilization = _percent(total - idle, total)

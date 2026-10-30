@@ -22,9 +22,23 @@ Frontend dependencies are installed once with `npm --prefix web ci`.
 uv run pytest -n auto --dist worksteal -m "not slow"   # about 3 minutes
 uv run pytest -n auto --dist worksteal                 # full suite, about 8 minutes
 uv run ruff check .
+uv run pyright                                         # type check, about 20 seconds
+uv run python scripts/type_coverage.py                 # how much of the core is typed
 ```
 
-Tests marked `slow` train real models or drive the real Task Center runner. Run the fast tier while you work and the full suite before you hand a change over. CI runs Ruff, the full suite, the agent tests with the `agent` extra, the frontend tests and build, and a wheel packaging check.
+Tests marked `slow` train real models or drive the real Task Center runner. Run the fast tier while you work and the full suite before you hand a change over. CI runs Ruff, pyright and the type coverage report, the full suite, the agent tests with the `agent` extra, the frontend tests and build, and a wheel packaging check.
+
+### Lint
+
+Ruff checks for likely bugs (bugbear, implicit string concatenation, naive datetimes), simpler forms and pytest style as well as imports and syntax; `[tool.ruff.lint]` in `pyproject.toml` lists the rule families and gives the reason for each rule it leaves off. Silence one finding on its line only, naming the rule and the reason, such as `# noqa: B023 - called within this iteration`. Ruff reports a `noqa` comment that no longer suppresses anything.
+
+### Type checking
+
+Pyright checks the service core against Python 3.11 on Linux, as CI does: `histopilot/domain` in strict mode, and `histopilot/application` and `histopilot/api` in standard mode plus the strict rules listed in `[tool.pyright]` in `pyproject.toml`. Other packages are read only for the types the core imports. Pyright runs on Node.js, which the frontend needs anyway; with no `node` on `PATH` it downloads one the first time.
+
+Fix a type error with annotations or narrowing, not by widening a type to `Any`. Where pyright is wrong, add a targeted ignore that names the rule and says why, such as `# pyright: ignore[reportArgumentType]  # <why pyright is wrong here>`. An ignore that no longer suppresses anything fails the check.
+
+`scripts/type_coverage.py` prints, for each checked package, the functions whose parameters and return are annotated and the share of public symbols whose types pyright knows (`pyright --verifytypes`). CI adds the table to the job summary; it reports and never fails on the numbers.
 
 `tests/conftest.py` isolates every test from your machine:
 

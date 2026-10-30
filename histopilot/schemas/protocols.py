@@ -43,10 +43,8 @@ class Condition(RequestModel):
             if not isinstance(self.value, str) or not 1 <= len(self.value) <= 512:
                 raise ValueError("A regular expression must contain 1–512 characters.")
         elif self.op in {"lt", "lte", "gt", "gte"}:
-            if (
-                type(self.value) not in (int, float)
-                or type(self.value) is float
-                and not math.isfinite(self.value)
+            if type(self.value) not in (int, float) or (
+                type(self.value) is float and not math.isfinite(self.value)
             ):
                 raise ValueError("Numeric comparisons require a finite number.")
         elif not scalar(self.value):

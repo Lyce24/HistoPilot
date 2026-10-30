@@ -310,10 +310,15 @@ def test_unknown_or_wrong_resource_type_cannot_create_or_read_labels(versions):
         ("dataset", "dataset-missing", "DATASET_NOT_FOUND"),
         ("cohort", configs["protocol"]["id"], "INVALID_RESOURCE_TYPE"),
     ):
+        # Each action runs within this iteration.
         for action in (
-            lambda: store.get_version_label(resource_type, resource_id),
+            lambda: store.get_version_label(resource_type, resource_id),  # noqa: B023
             lambda: store.set_version_label(
-                resource_type, resource_id, tag="v1", note="", expected_revision=0
+                resource_type,  # noqa: B023
+                resource_id,  # noqa: B023
+                tag="v1",
+                note="",
+                expected_revision=0,
             ),
         ):
             with pytest.raises(StorageError) as error:

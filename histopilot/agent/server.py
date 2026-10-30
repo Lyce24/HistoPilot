@@ -108,27 +108,35 @@ RESOURCES = {
 PROMPTS = {
     "review_results": (
         "Review an experiment's results",
-        "Read the results of experiment {experiment} with `experiment_results`. Report the "
-        "reported configuration's seed-averaged AUROC with its interval, how many seeds and "
-        "folds completed, and every warning finding. Say plainly what the intervals do not "
-        "show, such as patient independence for slide-level splits.",
+        (
+            "Read the results of experiment {experiment} with `experiment_results`. Report the "
+            "reported configuration's seed-averaged AUROC with its interval, how many seeds and "
+            "folds completed, and every warning finding. Say plainly what the intervals do not "
+            "show, such as patient independence for slide-level splits."
+        ),
     ),
     "design_experiment": (
         "Prepare an experiment for a person to start",
-        "Start from `template` kind experiment, fill in the dataset, Targets & splits and "
-        "feature bundle IDs from `list_records`, and call `preview_design`. Fix every blocking "
-        "finding, then hand the person the experiment ID and the preview.",
+        (
+            "Start from `template` kind experiment, fill in the dataset, Targets & splits and "
+            "feature bundle IDs from `list_records`, and call `preview_design`. Fix every blocking "
+            "finding, then hand the person the experiment ID and the preview."
+        ),
     ),
     "apply_models": (
         "Prepare predictors to apply to a cohort",
-        "Call `propose_apply` with the experiment IDs, which proposes the method, predictors "
-        "and cohort as Apply models does, then pass its spec to `apply_preview`. Report the "
-        "notes, how many runs it would queue and any findings.",
+        (
+            "Call `propose_apply` with the experiment IDs, which proposes the method, predictors "
+            "and cohort as Apply models does, then pass its spec to `apply_preview`. Report the "
+            "notes, how many runs it would queue and any findings."
+        ),
     ),
     "triage_tasks": (
         "Explain failed or stuck work",
-        "List this project's tasks with state history and live, read the failed ones with "
-        "`task`, and explain each failure and whether retrying is safe. Do not retry anything.",
+        (
+            "List this project's tasks with state history and live, read the failed ones with "
+            "`task`, and explain each failure and whether retrying is safe. Do not retry anything."
+        ),
     ),
 }
 

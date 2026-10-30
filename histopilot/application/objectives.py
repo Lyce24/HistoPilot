@@ -212,7 +212,8 @@ class ObjectiveService:
         objectives = {item.id: item for item in document.objectives}
         for item in items:
             filing = document.experiments.get(item["id"])
-            objective = objectives.get(filing.objectiveId) if filing else None
+            objective_id = filing.objectiveId if filing else None
+            objective = objectives.get(objective_id) if objective_id is not None else None
             item.update(
                 {
                     "objectiveId": objective.id if objective else None,

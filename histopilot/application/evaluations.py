@@ -686,6 +686,7 @@ class EvaluationService:
                 selected_bundle = bundle
             if bundle["current"]:
                 guards.append(self.bundles._freshness_guard(feature, bundle["manifest"]))
+        assert selected_bundle is not None  # the loop's second pass binds the test bundle
         missing_features = sorted(selected_ids - feature_ids)
         if missing_features:
             finding(

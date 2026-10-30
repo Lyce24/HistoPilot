@@ -8,9 +8,9 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
-from histopilot.storage.io import read_json_bounded, write_json_atomic  # noqa: E402
-from histopilot.training import module  # noqa: E402
-from histopilot.workers.train_batch import collect_results  # noqa: E402
+from histopilot.storage.io import read_json_bounded, write_json_atomic
+from histopilot.training import module
+from histopilot.workers.train_batch import collect_results
 
 
 @pytest.mark.parametrize("corrupt_value", [0, float("nan")])

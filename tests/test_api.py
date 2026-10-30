@@ -28,8 +28,7 @@ def settings(tmp_path):
 
 
 def authenticated_client(settings):
-    client = TestClient(create_app(settings), base_url=BASE_URL)
-    return client
+    return TestClient(create_app(settings), base_url=BASE_URL)
 
 
 def authenticate(client):

@@ -3,6 +3,7 @@
 import sys
 import threading
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
@@ -124,7 +125,7 @@ def test_source_stat_changes_force_fresh_openslide_reader(tmp_path, monkeypatch)
 
     class FakeSlide(Reader):
         dimensions = (1024, 512)
-        level_downsamples = [1, 4]
+        level_downsamples: ClassVar[list[int]] = [1, 4]
 
         @staticmethod
         def detect_format(path):

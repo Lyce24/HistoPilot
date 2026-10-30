@@ -317,7 +317,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         owner = nested_owner if nested_owner is not None else direct_owner
         old_owner = old_spec.get("experimentId") or (previous or {}).get("experimentId")
-        if old_owner and (owner != old_owner or payload.get("type") != previous.get("type")):
+        if old_owner and (
+            owner != old_owner or payload.get("type") != (previous or {}).get("type")
+        ):
             raise StorageError(
                 "A batch draft cannot change its experiment owner.", "EXPERIMENT_OWNER_CHANGED", 409
             )

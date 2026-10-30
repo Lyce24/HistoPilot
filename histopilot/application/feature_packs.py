@@ -20,6 +20,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
+from typing import overload
 from uuid import uuid4
 
 from histopilot.application import task_records
@@ -46,7 +47,6 @@ from histopilot.workers.packing_process import maybe_sweep_registry, output_lock
 ACTIVE = {"queued", "starting", "running", "cancelling"}
 JOB_ID = re.compile(r"^packing-[a-f0-9]{32}$")
 MAX_JSON = 64 * 1024 * 1024
-_UNREAD = object()
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(__file__).parents[1] / "workers" / "pack_features.py"
 PACKING_GRACE_SECONDS = 60
@@ -92,6 +92,10 @@ def _read(path: Path) -> dict:
         raise StorageError("Packing metadata is invalid.", "PACKING_CORRUPT") from error
 
 
+@overload
+def _compact(value: dict) -> dict: ...
+@overload
+def _compact(value: None) -> None: ...
 def _compact(value: dict | None) -> dict | None:
     if value is None:
         return None
@@ -632,15 +636,14 @@ class FeaturePackService:
                 [f"packing:{identity}"]
             )
         job = self._job_record(identity)
-        return self._present(job, logs=logs)
+        return self._present(job, logs=logs, result=self._result(job))
 
-    def _present(self, job: dict, *, logs=False, result=_UNREAD) -> dict:
+    def _present(self, job: dict, *, logs=False, result: dict | None) -> dict:
         job = dict(job)
         identity = job["id"]
         folder = self.folder / identity
-        if result is _UNREAD:
-            result = self._result(job)
         managed = task_records.managed_record(job)
+        view = None
         if managed:
             (view,) = self.tasks.views([job.get("taskId")])
             job["executor"] = "task-center"

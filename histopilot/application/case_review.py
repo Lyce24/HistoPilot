@@ -329,6 +329,7 @@ class CaseReviewService:
             other = other_rows.get(row[key])
             comparison_value = None
             if other:
+                assert comparison is not None  # other rows come only from a comparison
                 predicted_other = predicted_index(
                     other["probabilities"], target, comparison["manifest"]["inference"]
                 )
@@ -341,8 +342,11 @@ class CaseReviewService:
                 counts["disagreement"] += predicted_other != predicted
             if query.outcome == "error" and outcome in {"correct", "unlabeled"}:
                 continue
-            if query.outcome == "disagreement" and not comparison_value["disagrees"]:
-                continue
+            if query.outcome == "disagreement":
+                # Disagreements require a comparison covering every case, checked above.
+                assert comparison_value is not None
+                if not comparison_value["disagrees"]:
+                    continue
             if query.outcome not in {"all", "error", "disagreement"} and outcome != query.outcome:
                 continue
             if query.actualClass is not None and row["labelIndex"] != query.actualClass:

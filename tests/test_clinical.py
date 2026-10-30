@@ -630,8 +630,10 @@ def test_clinical_control_service_does_not_import_training_libraries():
         [
             sys.executable,
             "-c",
-            "import sys; import histopilot.application.clinical; "
-            "assert not any(name in sys.modules for name in ('torch', 'h5py', 'sklearn', 'scipy'))",
+            (
+                "import sys; import histopilot.application.clinical; "
+                "assert not any(name in sys.modules for name in ('torch', 'h5py', 'sklearn', 'scipy'))"
+            ),
         ],
         capture_output=True,
         text=True,

@@ -545,7 +545,7 @@ def collate_mil(batch):
     dimensions = batch[0]["features"].shape[1]
     if any(
         not count or item["features"].ndim != 2 or item["features"].shape[1] != dimensions
-        for count, item in zip(lengths, batch)
+        for count, item in zip(lengths, batch, strict=True)
     ):
         raise MILDataError("MIL batches require nonempty bags with consistent feature dimensions.")
     if len(batch) == 1:

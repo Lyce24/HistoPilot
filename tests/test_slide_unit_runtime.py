@@ -8,15 +8,15 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
-from test_mil_training import tiny_plan  # noqa: E402
+from test_mil_training import tiny_plan
 
-from histopilot.datasets.mil import MILDataError, validate_memberships  # noqa: E402
-from histopilot.schemas.training_controls import resolve_stopping, validate_split_unit  # noqa: E402
-from histopilot.storage.io import write_json_atomic  # noqa: E402
-from histopilot.training import module  # noqa: E402
-from histopilot.training.fold import _validate_plan, train_fold  # noqa: E402
-from histopilot.training.refit import RefitDataModule  # noqa: E402
-from histopilot.workers.train_batch import collect_results  # noqa: E402
+from histopilot.datasets.mil import MILDataError, validate_memberships
+from histopilot.schemas.training_controls import resolve_stopping, validate_split_unit
+from histopilot.storage.io import write_json_atomic
+from histopilot.training import module
+from histopilot.training.fold import _validate_plan, train_fold
+from histopilot.training.refit import RefitDataModule
+from histopilot.workers.train_batch import collect_results
 
 
 def slide_plan(tmp_path):
@@ -74,7 +74,7 @@ def test_slide_validation_positive_threshold_counts_slides(tmp_path):
     "recipe", [{"samplingStrategy": "patient_natural"}, {"samplingStrategy": "cohort_balanced"}]
 )
 def test_slide_mode_rejects_patient_computation_controls(recipe):
-    with pytest.raises(ValueError, match="[Pp]atient"):
+    with pytest.raises(ValueError, match=r"[Pp]atient"):
         validate_split_unit(recipe, {"unit": "slide"}, "slide")
 
 
@@ -88,7 +88,8 @@ def test_slide_cpu_fit_scoring_checkpoint_and_refit_never_aggregate_patients(tmp
     monkeypatch.setattr(histopilot.statistics, "patient_analysis", forbid_patient_work)
     result = train_fold(plan, tmp_path / "run")
     for role in ("validation", "assessment"):
-        document = json.loads(open(result["predictions"][role]).read())
+        with open(result["predictions"][role]) as stream:
+            document = json.load(stream)
         assert len(document["records"]) == 4
         assert document["patientRecords"] is None
         assert result["metrics"][role]["unit"] == "slide"

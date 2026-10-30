@@ -233,7 +233,7 @@ def _semantic(value):
         }
     if isinstance(value, list):
         return [_semantic(item) for item in value]
-    if isinstance(value, str) and (value.startswith("/") or value.startswith("file://")):
+    if isinstance(value, str) and value.startswith(("/", "file://")):
         return "<external-locator>"
     return value
 

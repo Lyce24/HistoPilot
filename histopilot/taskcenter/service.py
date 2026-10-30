@@ -1962,7 +1962,8 @@ class TaskCenterService:
             if whole_owner:
                 # As the owner's own retry offer (``_owner_retryable``).
                 trashed = self._trashed_batches(owner, trashed_cache)
-                items = self._without_batches(items, lambda batch: batch not in trashed)
+                # Applied at once, so it reads this owner's trashed batches.
+                items = self._without_batches(items, lambda batch: batch not in trashed)  # noqa: B023
             if _plan_resumes(self._retry_plan(items, owner, whole_owner=whole_owner)):
                 return True
         return False

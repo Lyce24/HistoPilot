@@ -188,7 +188,7 @@ class FilterEvaluator:
             return self.number(raw) == self.number(expected)
         return raw == expected
 
-    def matches(self, row, condition: Condition):
+    def matches(self, row, condition: Condition | ConditionGroup):
         if isinstance(condition, ConditionGroup):
             results = [self.matches(row, child) for child in condition.conditions]
             return all(results) if condition.op == "all" else any(results)
@@ -200,11 +200,13 @@ class FilterEvaluator:
             result = self.equal(raw, value)
             return result if op == "eq" else not result
         if op in {"in", "not_in"}:
+            assert isinstance(value, list)  # Condition requires a list of values here
             result = any(self.equal(raw, candidate) for candidate in value)
             return result if op == "in" else not result
         if raw is None:
             return False
         if op == "regex":
+            assert isinstance(value, str)  # Condition requires a pattern here
             if value not in self.compiled:
                 try:
                     self.compiled[value] = regex.compile(value)
@@ -241,7 +243,7 @@ class FilterEvaluator:
     def conjunction(self, row, conditions):
         # Evaluate every condition on this slide; never combine different slides'
         # evidence and never hide malformed expressions behind short-circuiting.
-        return all([self.matches(row, condition) for condition in conditions])
+        return all([self.matches(row, condition) for condition in conditions])  # noqa: C419
 
 
 def valid_patient(row):
@@ -455,8 +457,7 @@ class ProtocolService:
                         value is not None and not isinstance(value, str)
                         for value in row["attributes"].values()
                     )
-                    or row.get("patientId") is not None
-                    and not isinstance(row["patientId"], str)
+                    or (row.get("patientId") is not None and not isinstance(row["patientId"], str))
                 ):
                     raise _failure(
                         "The frozen slide records have an invalid schema.", "STORAGE_CORRUPT"
@@ -911,6 +912,7 @@ class ProtocolService:
             return any(item["severity"] == "error" for item in findings)
 
         pools = spec.split.pools
+        assert pools is not None  # _load admits only version 4 splits, which name their pools
         conditions = [
             *spec.eligibility,
             *(condition for role in PARTITIONS for condition in getattr(pools.rules, role)),

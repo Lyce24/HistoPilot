@@ -55,6 +55,7 @@ pgrep -af "histopilot(\.cli)? (serve|runner run)"   # a live service or runner? 
 - [ ] `.venv/bin/python -m pytest -q -n 8 -m "not slow"`. Before hand-over, run the full `.venv/bin/python -m pytest -q -n 8` (about 9 minutes) when you touched storage, training, workers or the Task Center.
 - [ ] The contract tests pass without edits to their expectations: `test_persisted_contracts`, `test_storage_io`, `test_route_classes`, `test_error_codes`, `test_private_imports`, `test_architecture`, `test_model_catalog_fixture`, `test_task_center_launcher`.
 - [ ] `.venv/bin/ruff check .` and `.venv/bin/ruff format --check <the files you changed>`.
+- [ ] `.venv/bin/pyright` reports 0 errors (it checks `histopilot/domain`, `application` and `api`).
 - [ ] If `web/` changed: `npm --prefix web test`, `npm --prefix web run typecheck`, `npm --prefix web run build`, and `node web/scripts/verify-<surface>.mjs` for each walkthrough that renders what you changed.
 - [ ] Docs synced (reference.md, "Docs sync"); `docs/error-codes.md` regenerated if error codes changed.
 - [ ] `git diff` reviewed: only your files, no weakened assertions, no unrelated reformatting, nothing private.

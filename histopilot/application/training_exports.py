@@ -179,7 +179,7 @@ def verified_oof(store, batch_id, candidate_id, training_seed, split_seed):
         ):
             raise _invalid("The OOF artifact belongs to a different frozen experiment group.")
         records = validate_records(document["records"], classes)
-        if set(row["slideId"] for row in records) != set(expected):
+        if {row["slideId"] for row in records} != set(expected):
             raise _invalid("OOF predictions are incomplete.")
         expected_hash = content_hash(
             {

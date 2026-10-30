@@ -5,6 +5,7 @@ import math
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import ClassVar
 
 import pytest
 from support.compute import managed_study as managed_study
@@ -17,8 +18,8 @@ Image = pytest.importorskip("PIL.Image")
 
 
 class Pyramid:
-    level_dimensions = [(1025, 769), (256, 192), (64, 48)]
-    level_downsamples = [1.0, 4.0, 16.0]
+    level_dimensions: ClassVar[list[tuple[int, int]]] = [(1025, 769), (256, 192), (64, 48)]
+    level_downsamples: ClassVar[list[float]] = [1.0, 4.0, 16.0]
 
     def __init__(self):
         self.reads = []

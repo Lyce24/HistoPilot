@@ -23,7 +23,7 @@ def clinical_fields(recipe):
 
 
 def _canonical(value, kind):
-    if value is None or isinstance(value, str) and not value.strip():
+    if value is None or (isinstance(value, str) and not value.strip()):
         return None
     if kind == "numeric":
         if isinstance(value, bool):

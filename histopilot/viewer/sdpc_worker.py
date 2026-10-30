@@ -13,8 +13,8 @@ from contextlib import ExitStack
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from histopilot.storage.project_lock import StorageError, reject_symlink_components  # noqa: E402
-from histopilot.viewer.slide_images import (  # noqa: E402
+from histopilot.storage.project_lock import StorageError, reject_symlink_components
+from histopilot.viewer.slide_images import (
     _inspect_open_slide,
     _open,
     _render_open_slide,

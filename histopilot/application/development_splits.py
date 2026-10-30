@@ -26,21 +26,27 @@ def training_split_issue(split):
     if mode == "nested_kfold":
         return (
             "NESTED_SELECTION_REQUIRED",
-            "Nested CV requires a separate search and selected refit inside each outer fold. "
-            "Batch planning for that dependency is not connected yet.",
+            (
+                "Nested CV requires a separate search and selected refit inside each outer fold. "
+                "Batch planning for that dependency is not connected yet."
+            ),
         )
     if mode not in TRAINABLE_MODES:
         return (
             "TRAINING_SPLIT_UNSUPPORTED",
-            "Monte Carlo designs assess a unit in several plans of one split seed, so their "
-            "out-of-fold predictions cannot be pooled. Choose k-fold, predefined folds, "
-            "leave-one-site-out or a held-out assessment.",
+            (
+                "Monte Carlo designs assess a unit in several plans of one split seed, so their "
+                "out-of-fold predictions cannot be pooled. Choose k-fold, predefined folds, "
+                "leave-one-site-out or a held-out assessment."
+            ),
         )
     if mode == "held_out" and len(split.get("seeds") or ()) != 1:
         return (
             "TRAINING_SPLIT_UNSUPPORTED",
-            "A held-out assessment trains with one split seed. Repeat it over training seeds, "
-            "or choose k-fold to assess every unit.",
+            (
+                "A held-out assessment trains with one split seed. Repeat it over training seeds, "
+                "or choose k-fold to assess every unit."
+            ),
         )
     return None
 
