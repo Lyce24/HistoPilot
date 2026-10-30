@@ -55,7 +55,7 @@ I built HistoPilot with Claude Code, Anthropic's coding agent, as a pair program
 What makes the code trustworthy is how it is checked, not who typed it:
 
 - **CI on every push** (`.github/workflows/checks.yml`): Ruff, the full backend suite (over 3,000 tests) on the CI's Python and core count, the MCP agent tests in their own environment, about 1,000 frontend unit tests, the production web build, and a wheel build that verifies the packaged UI and documentation.
-- **Reference parity.** CLAM, TransMIL, DSMIL, DTFD-MIL and ACMIL are checked against outputs recorded from the authors' own implementations with strict parameter-by-parameter loading (`tests/test_mil_parity.py`).
+- **Reference parity.** CLAM, TransMIL, DSMIL, DTFD-MIL and ACMIL are checked against outputs recorded from the authors' own implementations with strict parameter-by-parameter loading (`tests/test_mil_parity.py`), and the plain-PyTorch OceanPath Mamba-2 MIL against OceanPath's own model (`tests/test_oceanpath_parity.py`).
 - **Stored-contract tests.** Adapter names, worker entry points, archive protocol markers and the three canonical hash encodings are pinned, so a refactor cannot strand saved work (`tests/test_persisted_contracts.py`, `tests/test_storage_io.py`).
 - **Agent evaluations.** Scripted sessions check that the agent tools stay inside their token's scope (`tests/test_agent_evals.py`), and real models are run through the MCP server on a fixed task suite that includes requests to change things without approval ([agent evaluation](../evals/agents/README.md)).
 - **Independent recomputation.** Numbers HistoPilot reports on real studies have been checked against independent recomputations from its exported predictions.

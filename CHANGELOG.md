@@ -4,6 +4,11 @@ All notable changes to HistoPilot are recorded here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **OceanPath Mamba-2 MIL.** OceanPath's Mamba-2 slide aggregator as an image model, ported to plain PyTorch (no mamba-ssm or CUDA kernels) and checked against OceanPath's own model by golden outputs: embeddings, attention, losses, gradients and its random initialization. Patches are ordered along a Hilbert curve of their coordinates, as OceanPath does, so coordinates now travel with the features to models that read them.
+- **Pretrained aggregators.** An OceanPath Mamba-2 MIL configuration can start from an OceanPath aggregator checkpoint, such as OceanPath's self-supervised aggregators, with its own aggregator learning rate or a frozen aggregator. Review pins the file by SHA-256 in the frozen batch; launches, folds, refits and resumes refuse a changed or missing file (`MODEL_CHECKPOINT_CHANGED`). Controlled comparisons can set random and pretrained initializations against each other on the same folds and seeds.
+
 ## [0.1.0] - 2026-10-29
 
 The first release. HistoPilot is a local-first research workspace for computational pathology: it takes a slide table to cross-validated, compared and applied multiple instance learning (MIL) models on foundation-model features, and keeps every step frozen, versioned and reproducible. You drive it from the browser, the terminal or an AI agent, all through one local API.
