@@ -5,7 +5,7 @@ from collections import defaultdict
 import pytest
 from pydantic import ValidationError
 from test_target_splits import TARGET, TRAINING, frozen, publish_revised_rows, requested_settings
-from test_target_splits import construction as construction  # noqa: F401 - pytest fixture
+from test_target_splits import construction as construction  # pytest fixture
 
 from histopilot.schemas.protocols import SplitSpec
 from histopilot.storage.project_lock import StorageError

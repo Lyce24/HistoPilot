@@ -7,33 +7,33 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("lightning")
 
-from support import projects  # noqa: E402
-from support.predictors import FakeJobs  # noqa: E402
-from support.training import runtime  # noqa: E402
+from support import projects
+from support.predictors import FakeJobs
+from support.training import runtime
 
-from histopilot.application.development import DevelopmentService  # noqa: E402
-from histopilot.application.evaluation_runs import EvaluationRunService  # noqa: E402
-from histopilot.application.evaluations import EvaluationService  # noqa: E402
-from histopilot.application.predictors import PredictorService  # noqa: E402
-from histopilot.application.protocols import ProtocolService  # noqa: E402
-from histopilot.application.refits import RefitService  # noqa: E402
-from histopilot.application.training import TrainingService  # noqa: E402
-from histopilot.schemas.development import DevelopmentBatchSpec, TrainingRecipe  # noqa: E402
-from histopilot.schemas.evaluations import InferenceSettings  # noqa: E402
-from histopilot.schemas.predictors import (  # noqa: E402
+from histopilot.application.development import DevelopmentService
+from histopilot.application.evaluation_runs import EvaluationRunService
+from histopilot.application.evaluations import EvaluationService
+from histopilot.application.predictors import PredictorService
+from histopilot.application.protocols import ProtocolService
+from histopilot.application.refits import RefitService
+from histopilot.application.training import TrainingService
+from histopilot.schemas.development import DevelopmentBatchSpec, TrainingRecipe
+from histopilot.schemas.evaluations import InferenceSettings
+from histopilot.schemas.predictors import (
     EvaluationRunSelection,
     FreezePredictor,
     LaunchRefit,
     PredictorSelection,
     SaveEvaluationRun,
 )
-from histopilot.storage.filesystem import LocalFilesystem  # noqa: E402
-from histopilot.storage.io import content_hash, write_json_atomic  # noqa: E402
-from histopilot.storage.scientific import ScientificStore  # noqa: E402
-from histopilot.training.fold import train_fold  # noqa: E402
-from histopilot.training.inference import evaluate  # noqa: E402
-from histopilot.training.refit import train_refit  # noqa: E402
-from histopilot.workers.train_batch import execute_plan  # noqa: E402
+from histopilot.storage.filesystem import LocalFilesystem
+from histopilot.storage.io import content_hash, write_json_atomic
+from histopilot.storage.scientific import ScientificStore
+from histopilot.training.fold import train_fold
+from histopilot.training.inference import evaluate
+from histopilot.training.refit import train_refit
+from histopilot.workers.train_batch import execute_plan
 
 
 @pytest.mark.slow
