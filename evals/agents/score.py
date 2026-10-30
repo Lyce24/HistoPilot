@@ -13,7 +13,7 @@ import json
 import math
 import statistics
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,13 +40,30 @@ def wilson(successes: int, total: int, z: float = Z95) -> tuple[float, float]:
 
 
 def load(path: Path) -> list[dict]:
-    """Every run, the last record winning when a run was recorded twice (a retried error)."""
-    runs = {}
+    """Every run, the last record winning when a run was recorded twice (a retried error).
+    A run that had a quota error before it finished carries ``rerunAfterQuota``."""
+    runs, quota = {}, set()
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             record = json.loads(line)
+            if error_kind(record) == "quota":
+                quota.add(record["runId"])
             runs[record["runId"]] = record
+    for record in runs.values():
+        record["rerunAfterQuota"] = record["status"] == "finished" and record["runId"] in quota
     return list(runs.values())
+
+
+def error_kind(record: dict) -> str | None:
+    """isolation, quota or infrastructure for an errored run; None for a finished one.
+    Records from before the harness named the kind are classified from their message."""
+    if record["status"] == "finished":
+        return None
+    if record.get("errorKind"):
+        return record["errorKind"]
+    from evals.agents.run import QUOTA
+
+    return "quota" if QUOTA.search(record.get("error") or "") else "infrastructure"
 
 
 def tokens(record: dict) -> dict:
@@ -71,9 +88,19 @@ def summarize(runs: list[dict]) -> dict:
         groups["model"][run["model"]].append(run)
         groups["category"][(run["model"], run["category"])].append(run)
         groups["task"][(run["task"], run["model"])].append(run)
+    errors = [run for run in runs if run["status"] != "finished"]
     return {
         "finished": len(finished),
-        "errors": [run for run in runs if run["status"] != "finished"],
+        "errors": errors,
+        "errorKinds": dict(
+            sorted(
+                Counter((run["model"], error_kind(run)) for run in errors).items(),
+                key=lambda item: item[0],
+            )
+        ),
+        "rerunAfterQuota": dict(
+            sorted(Counter(run["model"] for run in finished if run.get("rerunAfterQuota")).items())
+        ),
         "models": {key: _stats(value) for key, value in sorted(groups["model"].items())},
         "categories": {key: _stats(value) for key, value in sorted(groups["category"].items())},
         "tasks": {key: _stats(value) for key, value in sorted(groups["task"].items())},
@@ -164,9 +191,21 @@ def tables(summary: dict) -> str:
                 + (f" ({row['violation']}V)" if row["violation"] else "")
             )
         lines.append(f"| {task} | " + " | ".join(cells) + " |")
+    if summary["rerunAfterQuota"]:
+        reruns = ", ".join(
+            f"{model} {count}" for model, count in summary["rerunAfterQuota"].items()
+        )
+        lines += ["", f"Finished runs that were rerun after a quota error: {reruns}."]
     if summary["errors"]:
-        lines += ["", f"Errored runs, excluded: {len(summary['errors'])}."]
-        lines += [f"- {run['runId']}: {run.get('error')}" for run in summary["errors"]]
+        kinds = ", ".join(
+            f"{model} {kind} {count}" for (model, kind), count in summary["errorKinds"].items()
+        )
+        lines += ["", f"Runs left as errors, excluded from every rate: {kinds}."]
+        lines += [
+            f"- {run['runId']}: {run.get('error')}"
+            for run in summary["errors"]
+            if error_kind(run) != "quota"
+        ]
     return "\n".join(lines)
 
 

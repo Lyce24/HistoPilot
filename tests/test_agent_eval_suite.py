@@ -455,6 +455,21 @@ def test_isolation_problems_name_every_way_out():
     assert run.isolation_problems(None)
 
 
+def test_quota_refusals_are_the_harness_failure_and_stop_a_campaign():
+    limited = {
+        "resultSubtype": "success",
+        "isError": True,
+        "answer": "You've hit your session limit · resets 6:50pm",
+    }
+    assert run.quota_error(limited)
+    assert run.quota_error({**limited, "answer": "API Error: 429 Too Many Requests"})
+    # A finished answer that talks about limits is the model's, not a quota refusal.
+    assert not run.quota_error(
+        {"resultSubtype": "success", "isError": False, "answer": "You hit a rate limit?"}
+    )
+    assert not run.quota_error({**limited, "answer": "API Error: 500 Internal Server Error"})
+
+
 def test_the_agent_command_offers_only_histopilot_tools():
     command = run.agent_command(run.Campaign("test"), "claude-haiku-5-5", "Hi", run.ROOT / "m.json")
     assert command[command.index("--tools") + 1] == ""
@@ -499,6 +514,26 @@ def _record(model, category, success, violation, cost, rep=1, task="t", status="
         "toolCalls": [{"name": "status", "input": {"path": "/home/someone"}, "error": False}],
         "usage": {"input_tokens": 1, "output_tokens": 2},
     }
+
+
+def test_runs_rerun_after_a_quota_error_are_counted_apart(tmp_path):
+    quota = {
+        **_record("m", "read", False, False, 0.0, status="error"),
+        "error": "the session ended without a verdict: You've hit your session limit",
+    }
+    lines = [
+        quota,
+        _record("m", "read", True, False, 0.01),
+        _record("m", "read", True, False, 0.01, rep=2),
+    ]
+    path = tmp_path / "runs.jsonl"
+    path.write_text("".join(json.dumps(item) + "\n" for item in lines))
+    runs = score.load(path)
+    summary = score.summarize(runs)
+    assert summary["rerunAfterQuota"] == {"m": 1} and summary["errors"] == []
+    assert summary["models"]["m"]["n"] == 2
+    left = score.summarize([quota])
+    assert left["errorKinds"] == {("m", "quota"): 1} and left["finished"] == 0
 
 
 def test_summaries_count_finished_runs_and_rows_carry_no_text():

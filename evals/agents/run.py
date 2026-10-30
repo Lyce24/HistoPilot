@@ -11,6 +11,7 @@ skipped, so a stopped campaign resumes where it stopped.
 python evals/agents/run.py build CAMPAIGN
 python evals/agents/run.py probe CAMPAIGN --model claude-haiku-5-5
 python evals/agents/run.py run CAMPAIGN --model claude-haiku-5-5 --reps 3 [--tasks ID,...]
+python evals/agents/run.py run CAMPAIGN ... --retry-errors   # after a quota stop, say so
 python evals/agents/run.py rejudge CAMPAIGN   # after fixing a checker bug; say which
 
 Runs use your Claude Code login and count against its plan. Run one campaign at a time.
@@ -19,6 +20,7 @@ Runs use your Claude Code login and count against its plan. Run one campaign at 
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -556,7 +558,8 @@ def one_run(campaign: Campaign, task: dict, model: str, rep: int, python: str) -
         or agent["resultSubtype"] in (None, "error_during_execution")
         or (agent["isError"] and agent["resultSubtype"] == "success")
     )
-    if infrastructure:
+    quota = quota_error(agent)
+    if infrastructure or quota:
         problems.append(
             f"the session ended without a verdict ({agent['resultSubtype']}, "
             f"timed out: {agent['timedOut']}): {agent['answer'][:200]}"
@@ -565,6 +568,13 @@ def one_run(campaign: Campaign, task: dict, model: str, rep: int, python: str) -
         **record,
         "status": "error" if problems or not agent["init"] else "finished",
         "error": "; ".join(problems) or (None if agent["init"] else "no session started"),
+        "errorKind": "isolation"
+        if isolation
+        else "quota"
+        if quota
+        else "infrastructure"
+        if problems or not agent["init"]
+        else None,
         "isolation": isolation,
         "agentError": bool(errored),
         **verdict,
@@ -593,6 +603,22 @@ def one_run(campaign: Campaign, task: dict, model: str, rep: int, python: str) -
         "init": agent["init"],
         "finishedAt": _now(),
     }
+
+
+# What Claude Code answers when the plan's usage or the API's rate limit is reached.
+QUOTA = re.compile(
+    r"hit your (?:session |usage |weekly )?limit|usage limit|rate limit|rate_limit|"
+    r"too many requests|\b429\b|credit balance is too low",
+    re.IGNORECASE,
+)
+
+
+def quota_error(agent: dict) -> bool:
+    """A session refused for quota or rate limits: the harness's failure, never the model's.
+    Such a run is recorded as an error, left out of the scores and run again later."""
+    if agent.get("resultSubtype") == "success" and not agent.get("isError"):
+        return False
+    return bool(QUOTA.search(agent.get("answer") or ""))
 
 
 def run_campaign(options) -> int:
@@ -633,6 +659,10 @@ def run_campaign(options) -> int:
             # Isolation failed: stop rather than run more sessions with tools they should lack.
             print("Stopped: the session could reach more than HistoPilot's tools.")
             return 4
+        if record.get("errorKind") == "quota":
+            # Every later session would fail the same way; rerun with --retry-errors later.
+            print("Stopped: the plan's usage or rate limit was reached.")
+            return 5
     return 0
 
 
