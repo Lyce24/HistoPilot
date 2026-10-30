@@ -289,7 +289,11 @@ class ComputeSampler:
         proc = Path("/proc")
         counters = parse_cpu_times(_read(proc / "stat"))
         utilization, interval = None, None
-        if counters is not None and self._cpu_previous is not None:
+        if (
+            counters is not None
+            and self._cpu_previous is not None
+            and self._cpu_sampled_at is not None
+        ):
             total, idle = (new - old for new, old in zip(counters, self._cpu_previous, strict=True))
             if total > 0 and 0 <= idle <= total:
                 utilization = _percent(total - idle, total)

@@ -76,6 +76,8 @@ dev = [
     "httpx>=0.28,<1",
     "ruff>=0.11,<1",
     "pytest-xdist>=3.6,<4",
+    # Exact: each pyright release adds checks, so an upgrade is a deliberate change.
+    "pyright==1.1.414",
 ]
 
 [tool.setuptools.packages.find]
@@ -111,3 +113,26 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.pyright]
+# The service's core. Other packages are read only for the types the core imports from them.
+include = ["histopilot/domain", "histopilot/application", "histopilot/api"]
+# The oldest supported Python, on the platform HistoPilot runs on.
+pythonVersion = "3.11"
+pythonPlatform = "Linux"
+# Most of the service predates annotations: strict mode's unknown-type, missing-annotation
+# and type-argument rules would report every unannotated parameter (over 2,000), so the
+# service is checked in standard mode plus the strict rules below, which hold today. Two
+# strict rules stay off for good reasons: the unnecessary isinstance and comparison rules
+# report the runtime checks that guard API boundaries, where annotations are not enforced,
+# and tests/test_private_imports.py already ratchets private imports across modules.
+typeCheckingMode = "standard"
+# The domain package is fully annotated and checked in strict mode.
+strict = ["histopilot/domain"]
+reportDeprecated = "error"
+reportMatchNotExhaustive = "error"
+reportUnnecessaryCast = "error"
+# An ignore that no longer suppresses anything is reported, so ignores cannot go stale.
+reportUnnecessaryTypeIgnoreComment = "error"
+reportUnusedClass = "error"
+reportUnusedFunction = "error"

@@ -126,6 +126,8 @@ class ImportService:
                     os.close(descriptor)
             filename = path.name
         else:
+            # TableSource requires inline content, and its file name, when it has no path.
+            assert source.contentBase64 is not None and filename is not None
             try:
                 content = base64.b64decode(source.contentBase64, validate=True)
             except (ValueError, binascii.Error) as error:

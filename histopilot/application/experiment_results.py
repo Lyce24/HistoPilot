@@ -571,15 +571,14 @@ def _confusion(complete: list[dict], classes: list[str]) -> dict | None:
             [matrix[i][j] / sum(matrix[i]) if sum(matrix[i]) else None for j in range(size)]
             for matrix in matrices
         ]
-        rates.append(
-            [
-                statistics.fmean(row[j] for row in rows)
-                if all(row[j] is not None for row in rows)
-                else None
-                for j in range(size)
-            ]
-        )
+        rates.append([_mean_unless_missing([row[j] for row in rows]) for j in range(size)])
     return {"meanCounts": mean, "rowRates": rates, "seeds": len(matrices)}
+
+
+def _mean_unless_missing(values: list[float | None]) -> float | None:
+    """The mean of the values, or None when any of them is missing."""
+    present = [value for value in values if value is not None]
+    return statistics.fmean(present) if len(present) == len(values) else None
 
 
 def _intervals(

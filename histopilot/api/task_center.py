@@ -45,7 +45,7 @@ class CapacityUpdate(TaskCenterAction):
 def task_center_router(center: TaskCenterService) -> APIRouter:
     router = APIRouter(prefix="/api/v1/task-center")
 
-    def require_own(project: str | None, owner: dict, what: str) -> None:
+    def require_own(project: str | None, owner: dict | None, what: str) -> None:
         if project is not None and (owner or {}).get("projectId") != project:
             raise missing_work(what)
 
@@ -70,6 +70,7 @@ def task_center_router(center: TaskCenterService) -> APIRouter:
 
     @router.get("/rollup")
     def rollup(
+        request: Request,
         owner: str | None = Query(None, max_length=200),
         ownerKind: str | None = Query(None, max_length=100),  # noqa: N803 - query name
         ownerId: str | None = Query(None, max_length=500),  # noqa: N803
@@ -79,10 +80,9 @@ def task_center_router(center: TaskCenterService) -> APIRouter:
         project: str | None = Query(None, max_length=4096),
         kinds: str | None = Query(None, max_length=500),
         batchIds: str | None = Query(None, max_length=40_000),  # noqa: N803
-        request: Request = None,
     ):
         """A stage page's run status: counts, state, queue place, ETA and last failure."""
-        scoped = token_project(request) if request is not None else None
+        scoped = token_project(request)
         if scoped is not None:
             return center.rollup(project=scoped, kinds=kinds)
         return center.rollup(
@@ -99,28 +99,28 @@ def task_center_router(center: TaskCenterService) -> APIRouter:
 
     @router.get("/history")
     def history(
+        request: Request,
         project: str | None = Query(None, max_length=4096),
         kind: str | None = Query(None, max_length=500),
         state: str | None = Query(None, max_length=500),
         limit: int = Query(25, ge=1, le=200),
         offset: int = Query(0, ge=0, le=1_000_000),
-        request: Request = None,
     ):
         """Finished tasks grouped by owner, newest first."""
-        project = (token_project(request) if request is not None else None) or project
+        project = token_project(request) or project
         return center.history(project=project, kind=kind, state=state, limit=limit, offset=offset)
 
     @router.get("/tasks")
     def tasks(
+        request: Request,
         state: str | None = Query(None, max_length=500),
         owner: str | None = Query(None, max_length=200),
         project: str | None = Query(None, max_length=4096),
         kind: str | None = Query(None, max_length=500),
         limit: int = Query(200, ge=1, le=2000),
         offset: int | None = Query(None, ge=0, le=1_000_000),
-        request: Request = None,
     ):
-        project = (token_project(request) if request is not None else None) or project
+        project = token_project(request) or project
         return center.tasks(
             state=state, owner=owner, project=project, kind=kind, limit=limit, offset=offset
         )
@@ -133,18 +133,18 @@ def task_center_router(center: TaskCenterService) -> APIRouter:
 
     @router.get("/tasks/{task_id}/log")
     def task_log(
+        request: Request,
         task_id: str,
         download: bool = False,
         offset: int | None = Query(None, ge=0),
         limit: int = Query(LOG_READ_BYTES, ge=1, le=LOG_READ_BYTES),
-        request: Request = None,
     ):
         """The task's whole log as text, streamed (the detail view carries only its tail).
 
         With ``offset``, up to ``limit`` bytes from that byte offset, and the log's size and
         the next offset in headers, so a client can follow a growing log without rereading.
         """
-        scoped = token_project(request) if request is not None else None
+        scoped = token_project(request)
         if scoped is not None:
             require_own(scoped, center.task(task_id).get("owner"), "task")
         stream, name = center.log_file(task_id)
@@ -221,7 +221,7 @@ def task_center_router(center: TaskCenterService) -> APIRouter:
     @router.put("/capacity")
     def update_capacity(payload: CapacityUpdate):
         changes = payload.model_dump(exclude={"operationId"}, exclude_unset=True)
-        if changes.get("defaults") is not None:
+        if payload.defaults is not None:
             changes["defaults"] = payload.defaults.model_dump(exclude_unset=True)
         return center.update_capacity(changes, payload.operationId)
 

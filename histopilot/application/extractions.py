@@ -184,7 +184,8 @@ class ExtractionService:
         elif content is not None and dataset is not None:
             root = self._slide_root(dataset)
         if content is None and root is None:
-            if records is None:
+            # Records are read exactly when a dataset is selected.
+            if records is None or dataset is None:
                 raise StorageError("Choose a slide folder or a slide list.", "INVALID_SLIDES", 422)
             rows = self._dataset_slides(records, finding)
             # The dataset is the source here; report it the same way as any other selection.
@@ -291,7 +292,7 @@ class ExtractionService:
 
         records = (
             json.loads(self.store.read_artifact(spec.datasetId, "records.json"))
-            if dataset is not None
+            if spec.datasetId is not None
             else None
         )
         rows, slide_list = self._select_slides(spec, values, dataset, records, finding)

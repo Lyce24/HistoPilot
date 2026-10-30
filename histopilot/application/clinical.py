@@ -325,7 +325,9 @@ def _calibration(labels, scores, bins):
                 "count": len(group),
                 "meanPredicted": predicted,
                 "observedFraction": observed,
-                "absoluteError": abs(predicted - observed) if group else None,
+                "absoluteError": abs(predicted - observed)
+                if predicted is not None and observed is not None
+                else None,
             }
         )
     return result
@@ -668,6 +670,7 @@ class ClinicalService:
         ):
             raise _invalid("Clinical utility requires a cohort without development overlap.")
         content = self.evaluations.artifact(selection.evaluationId, "predictions.json")
+        metrics, metrics_content = None, None
         if standard:
             metrics = self.evaluations.reference_metrics(selection.evaluationId, standard["id"])
             metrics_hash = content_hash(metrics)
@@ -685,7 +688,7 @@ class ClinicalService:
             metrics_hash = hashlib.sha256(metrics_content).hexdigest()
         try:
             predictions = json.loads(content)
-            if not serviced:
+            if metrics_content is not None:
                 metrics = json.loads(metrics_content)
             if not isinstance(metrics, dict):
                 raise ValueError

@@ -132,8 +132,10 @@ class InterpretationService:
                 value = value.get("decisionThreshold")
             except StorageError:
                 value = None
-            valid = isinstance(value, (int, float)) and not isinstance(value, bool)
-            thresholds[predictor_id] = value if valid and 0 < value < 1 else 0.5
+            valid = (
+                isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value < 1
+            )
+            thresholds[predictor_id] = value if valid else 0.5
         return thresholds[predictor_id]
 
     def presented(self, document, thresholds=None):
@@ -1192,7 +1194,9 @@ class InterpretationService:
                 **metadata,
                 **attention_page(path, expected, row, offset=offset, limit=limit, region=region),
             }
+        assert patches is not None  # attention saved without arrays carries its patches
         if region:
+            x, y, width, height = region
             patches = [
                 patch
                 for patch in patches
@@ -1220,6 +1224,7 @@ class InterpretationService:
         if expected:
             ranking = attention_top(path, expected, row, limit=limit)
         else:
+            assert patches is not None  # attention saved without arrays carries its patches
             selected = heapq.nsmallest(
                 limit, patches, key=lambda patch: (-patch["weight"], patch["index"])
             )

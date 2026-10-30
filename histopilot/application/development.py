@@ -399,6 +399,8 @@ class DevelopmentService:
             or item["recipe"].get("bagSizeMode") == "training_median"
             for item in candidates
         ):
+            # Candidates exist only when the inputs could be planned, which loads the protocol.
+            assert protocol is not None
             feature = self.store.get_configuration(binding["featureSetId"])
             files = {row["slideId"]: row for row in feature["manifest"]["files"]}
             groups = {plan["id"]: [] for plan in plans}

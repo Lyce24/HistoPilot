@@ -53,6 +53,7 @@ def read_slide_list_source(source: SlideListSource, resolve_path) -> tuple[bytes
     if source.path is not None:
         path = resolve_path(source.path)
         return read_file_bounded(path, MAX_SLIDE_LIST_BYTES), str(path)
+    assert source.contentBase64 is not None  # SlideListSource requires a path or the content
     try:
         content = base64.b64decode(source.contentBase64, validate=True)
     except (binascii.Error, ValueError) as error:

@@ -540,13 +540,13 @@ class EvaluationRunService:
             binary = target["task"] == "binary_classification"
             positive = classes.index(target["positiveClass"]) if binary else None
             try:
-                if binary:
+                if positive is not None:
                     parameters = fit_platt(
                         [row[positive] for row in development_probabilities],
                         [label == positive for label in development_labels],
                     )
 
-                    def recalibrate(values):
+                    def recalibrate(values: list[list[float]]) -> list[list[float]]:
                         risk = apply_platt([row[positive] for row in values], **parameters)
                         other = 1 - positive
                         rows = [[0.0, 0.0] for _ in values]
@@ -556,7 +556,7 @@ class EvaluationRunService:
                 else:
                     parameters = fit_temperature(development_probabilities, development_labels)
 
-                    def recalibrate(values):
+                    def recalibrate(values: list[list[float]]) -> list[list[float]]:
                         return apply_temperature(values, **parameters).tolist()
             except ValueError as error:
                 raise StorageError(str(error), "RECALIBRATION_UNAVAILABLE", 409) from error

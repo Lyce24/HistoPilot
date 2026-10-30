@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
@@ -34,6 +35,9 @@ from histopilot.storage.project_lock import (
     fsync_directory,
     writer_lock,
 )
+
+if TYPE_CHECKING:
+    from histopilot.storage.scientific import ScientificStore
 
 ALGORITHM = "histopilot-target-training-testing-v2"
 # A failed test-cohort step is kept beside, never inside, the content-addressed version.
@@ -958,9 +962,9 @@ class TargetSplitService:
         prior = self.store.configuration_publication(operation)
         if prior:
             return prior
-        preview = ProtocolService(_PreviewStore(self.store, spec), self.filesystem).preview(
-            "derived", 1
-        )
+        # The stand-in answers as the store does, with the derived draft in place.
+        store = cast("ScientificStore", _PreviewStore(self.store, spec))
+        preview = ProtocolService(store, self.filesystem).preview("derived", 1)
         if not preview["canFreeze"]:
             messages = "; ".join(
                 item["message"] for item in preview["findings"] if item["severity"] == "error"
