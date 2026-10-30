@@ -90,6 +90,15 @@ def environment(folder: Path) -> dict:
     }
 
 
+def _without_gpus() -> None:
+    """The sandbox reports no GPUs and never runs nvidia-smi. Nothing in it trains, and the
+    Task Center's host probe can block for minutes in the driver while the machine's GPUs
+    are busy with other work. No agent tool shows GPU telemetry."""
+    import histopilot.taskcenter.capacity as capacity
+
+    capacity.gpu_snapshot = lambda: {"gpus": []}
+
+
 def _settings(folder: Path, port: int):
     from histopilot.config import Settings
 
@@ -116,6 +125,7 @@ def build(folder: Path, port: int) -> dict:
     from histopilot.agent import evals
     from histopilot.api.app import create_app
 
+    _without_gpus()
     settings = _settings(folder, port)
     url = f"http://127.0.0.1:{port}"
     with TestClient(create_app(settings), base_url=url) as http:
@@ -814,6 +824,7 @@ def serve(folder: Path, port: int) -> None:
 
     from histopilot.api.app import create_app
 
+    _without_gpus()
     uvicorn.run(
         create_app(_settings(folder, port)),
         host="127.0.0.1",
