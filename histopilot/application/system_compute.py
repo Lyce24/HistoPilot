@@ -161,6 +161,49 @@ def parse_gpu_csv(output: str, fields: tuple[str, ...] = _GPU_FIELDS) -> list[di
     return devices
 
 
+# A probe the driver still holds after its timeout (see _run_bounded).
+_LINGERING_PROBE: subprocess.Popen | None = None
+_PROBE_LOCK = threading.Lock()
+
+
+def _run_bounded(command: list[str], *, timeout: float) -> subprocess.CompletedProcess:
+    """Run a short read-only probe and never wait past ``timeout``.
+
+    subprocess.run kills a child that times out and then waits for it to exit. A
+    child blocked inside the GPU driver (uninterruptible sleep, seen under WSL2
+    while CUDA jobs run) cannot exit until the driver answers, so that wait can last
+    minutes and stalls every reader of GPU telemetry. Here a timed-out child is
+    killed and left to a daemon thread that reaps it, and no new probe starts while
+    one still lingers: each call either answers within ``timeout`` or raises
+    TimeoutExpired at once.
+    """
+    global _LINGERING_PROBE
+    with _PROBE_LOCK:
+        if _LINGERING_PROBE is not None:
+            if _LINGERING_PROBE.poll() is None:
+                raise subprocess.TimeoutExpired(command, timeout)
+            _LINGERING_PROBE = None
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        with _PROBE_LOCK:
+            _LINGERING_PROBE = process
+        threading.Thread(
+            target=process.communicate, name="probe-reaper", daemon=True
+        ).start()
+        raise
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
 def read_gpus() -> dict:
     executable = shutil.which("nvidia-smi")
     if executable is None:
@@ -174,14 +217,9 @@ def read_gpus() -> dict:
         }
     try:
         for fields in (_GPU_FIELDS, _GPU_BASE_FIELDS):
-            result = subprocess.run(
+            result = _run_bounded(
                 [executable, f"--query-gpu={','.join(fields)}", "--format=csv,noheader,nounits"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 timeout=1.5,
-                check=False,
             )
             if result.returncode == 0:
                 devices = parse_gpu_csv(result.stdout, fields)

@@ -1,7 +1,9 @@
 """Host telemetry handles unavailable counters without inventing healthy readings."""
 
 import subprocess
+import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -90,7 +92,7 @@ def test_gpu_failure_is_bounded_and_does_not_claim_no_gpus(monkeypatch, failure)
             stderr="driver inaccessible",
         )
 
-    monkeypatch.setattr(compute.subprocess, "run", run)
+    monkeypatch.setattr(compute, "_run_bounded", run)
     result = compute.read_gpus()
     assert result["status"] == "error"
     assert result["devices"] == []
@@ -112,7 +114,7 @@ def test_gpu_retries_only_unsupported_fields_and_supports_wsl_executable(monkeyp
             returncode=0, stdout="0, Test GPU, GPU-a, 555.0, 90, 1000, 750, 250", stderr=""
         )
 
-    monkeypatch.setattr(compute.subprocess, "run", run)
+    monkeypatch.setattr(compute, "_run_bounded", run)
     result = compute.read_gpus()
     assert result["status"] == "available"
     assert len(calls) == 2
@@ -125,8 +127,8 @@ def test_gpu_retries_only_unsupported_fields_and_supports_wsl_executable(monkeyp
 def test_explicit_nvidia_no_devices_can_be_reported_as_empty(monkeypatch):
     monkeypatch.setattr(compute.shutil, "which", lambda _name: "/usr/bin/nvidia-smi")
     monkeypatch.setattr(
-        compute.subprocess,
-        "run",
+        compute,
+        "_run_bounded",
         lambda *_a, **_kw: SimpleNamespace(
             returncode=6,
             stdout="No devices were found",
@@ -186,3 +188,56 @@ def test_concurrent_clients_share_one_probe(monkeypatch, tmp_path):
         release.set()
         assert first.result() == second.result() == third.result() == {"sampledAt": "test"}
     assert len(calls) == 1
+
+
+def test_bounded_probe_returns_a_real_child_output(monkeypatch):
+    monkeypatch.setattr(compute, "_LINGERING_PROBE", None)
+    result = compute._run_bounded([sys.executable, "-c", "print('ok')"], timeout=30)
+    assert (result.returncode, result.stdout.strip()) == (0, "ok")
+
+
+def test_bounded_probe_times_out_on_a_slow_child(monkeypatch):
+    monkeypatch.setattr(compute, "_LINGERING_PROBE", None)
+    start = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        compute._run_bounded([sys.executable, "-c", "import time; time.sleep(60)"], timeout=0.2)
+    assert time.monotonic() - start < 5
+
+
+def test_bounded_probe_never_waits_for_a_child_the_driver_holds(monkeypatch):
+    """A killed nvidia-smi that cannot exit (blocked inside the GPU driver) must not
+    stall the caller, and no second probe may start while it lingers."""
+    released = threading.Event()
+    spawned = []
+
+    class HeldChild:
+        def __init__(self, command, **_kwargs):
+            spawned.append(command)
+            self.returncode = None
+
+        def communicate(self, timeout=None):
+            if not released.is_set():
+                if timeout is not None:
+                    raise subprocess.TimeoutExpired(self, timeout)
+                released.wait()  # the reaper returns only once the driver lets go
+            self.returncode = 0
+            return "answer", ""
+
+        def kill(self):
+            pass  # the SIGKILL stays pending until the driver answers
+
+        def poll(self):
+            return 0 if released.is_set() else None
+
+    monkeypatch.setattr(compute, "_LINGERING_PROBE", None)
+    monkeypatch.setattr(compute.subprocess, "Popen", HeldChild)
+    start = time.monotonic()
+    for _ in range(3):
+        with pytest.raises(subprocess.TimeoutExpired):
+            compute._run_bounded(["nvidia-smi"], timeout=0.05)
+    assert time.monotonic() - start < 1
+    assert len(spawned) == 1
+
+    released.set()
+    assert compute._run_bounded(["nvidia-smi"], timeout=0.05).stdout == "answer"
+    assert len(spawned) == 2

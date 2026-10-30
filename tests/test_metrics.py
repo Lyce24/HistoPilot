@@ -304,7 +304,7 @@ def test_each_gpu_reports_utilization_and_memory(http, monkeypatch):
         calls.append(command)
         return SimpleNamespace(returncode=0, stdout="\n".join(rows), stderr="")
 
-    monkeypatch.setattr(system_compute.subprocess, "run", run)  # this module's stand-in
+    monkeypatch.setattr(system_compute, "_run_bounded", run)
     families = scrape(http)
     scrape(http)  # within the cache window: nvidia-smi is not asked again
     assert len(calls) == 1
