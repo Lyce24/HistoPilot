@@ -76,6 +76,7 @@ dev = [
     "httpx>=0.28,<1",
     "ruff>=0.11,<1",
     "pytest-xdist>=3.6,<4",
+    "pytest-cov>=6,<8",
     # Exact: each pyright release adds checks, so an upgrade is a deliberate change.
     "pyright==1.1.414",
 ]
@@ -162,6 +163,10 @@ allow-dict-calls-with-keyword-arguments = true
 [tool.ruff.lint.flake8-bugbear]
 # Typer declares parameters through calls in their defaults.
 extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
+[tool.coverage.run]
+# `pytest --cov` measures the package; scripts/coverage_summary.py reports it per subpackage.
+source = ["histopilot"]
 
 [tool.pyright]
 # The service's core. Other packages are read only for the types the core imports from them.

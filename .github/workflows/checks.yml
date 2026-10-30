@@ -25,7 +25,11 @@ jobs:
       - name: Type coverage
         shell: bash
         run: uv run python scripts/type_coverage.py | tee -a "$GITHUB_STEP_SUMMARY"
-      - run: uv run pytest -n auto --dist worksteal
+      - name: Tests, with coverage
+        shell: bash
+        run: |
+          uv run pytest -n auto --dist worksteal --cov --cov-report=
+          uv run python scripts/coverage_summary.py | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Agent tools with the agent extra
         run: |
           UV_PROJECT_ENVIRONMENT=.venv-agent uv sync --locked --extra agent

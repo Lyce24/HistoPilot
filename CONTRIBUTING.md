@@ -24,9 +24,12 @@ uv run pytest -n auto --dist worksteal                 # full suite, about 8 min
 uv run ruff check .
 uv run pyright                                         # type check, about 20 seconds
 uv run python scripts/type_coverage.py                 # how much of the core is typed
+uv run pytest -n auto --dist worksteal --cov --cov-report= && uv run python scripts/coverage_summary.py
 ```
 
-Tests marked `slow` train real models or drive the real Task Center runner. Run the fast tier while you work and the full suite before you hand a change over. CI runs Ruff, pyright and the type coverage report, the full suite, the agent tests with the `agent` extra, the frontend tests and build, and a wheel packaging check.
+Tests marked `slow` train real models or drive the real Task Center runner. Run the fast tier while you work and the full suite before you hand a change over. CI runs Ruff, pyright and the type coverage report, the full suite with test coverage, the agent tests with the `agent` extra, the frontend tests and build, and a wheel packaging check.
+
+`scripts/coverage_summary.py` turns the `.coverage` data of a `--cov` run into line coverage per package; CI adds it to the job summary and never fails on the numbers. CI installs neither Torch nor the agent extra, so its numbers leave out the model and worker code those tests reach, and work done in worker subprocesses is never measured.
 
 ### Lint
 
