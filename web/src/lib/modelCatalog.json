@@ -760,6 +760,228 @@
     "reference": "Zhang et al., ECCV 2024"
   },
   {
+    "name": "oceanpath_mamba2",
+    "label": "OceanPath Mamba-2 MIL",
+    "summary": "Mamba-2 state space layers over Hilbert-ordered patches with gated attention pooling; can start from OceanPath's pretrained aggregators.",
+    "featureKind": "patch",
+    "supportsAttention": true,
+    "structuredOutput": false,
+    "honorsCheckpointSelection": false,
+    "windowedSampling": false,
+    "optionPrefix": "mamba2",
+    "reads": [
+      "inputDropout"
+    ],
+    "readsEnabledWhen": {},
+    "options": [
+      {
+        "key": "mamba2Initialization",
+        "label": "Initialization",
+        "kind": "choice",
+        "default": "random",
+        "help": "Random: PyTorch's and Mamba-2's initializers, as OceanPath trains from scratch. Checkpoint: the aggregator starts from an OceanPath aggregator state dict, such as one of its self-supervised pretrained aggregators; the classifier starts at random.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [
+          {
+            "value": "random",
+            "label": "Random"
+          },
+          {
+            "value": "checkpoint",
+            "label": "OceanPath aggregator checkpoint"
+          }
+        ],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2Checkpoint",
+        "label": "Aggregator checkpoint",
+        "kind": "text",
+        "default": "",
+        "help": "Absolute path of the aggregator state dict (.pt) inside a configured data root. Its SHA-256 is pinned when the batch is frozen, and runs refuse a changed or missing file. Its shape must match the settings below; OceanPath's pretrained aggregators use the defaults with 1,536-dimensional UNI2-h features.",
+        "minimum": null,
+        "maximum": 4096,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": {
+          "key": "mamba2Initialization",
+          "values": [
+            "checkpoint"
+          ]
+        }
+      },
+      {
+        "key": "mamba2AggregatorLearningRate",
+        "label": "Aggregator learning rate",
+        "kind": "number",
+        "default": 1e-05,
+        "help": "Learning rate of the checkpoint's aggregator; the classifier trains at the recipe's learning rate and schedule. OceanPath fine-tunes with 1e-5 here and 1e-4 for the classifier. A random aggregator trains at the recipe's rate.",
+        "minimum": 0,
+        "maximum": 1,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": {
+          "key": "mamba2Initialization",
+          "values": [
+            "checkpoint"
+          ]
+        }
+      },
+      {
+        "key": "mamba2FreezeAggregator",
+        "label": "Freeze aggregator",
+        "kind": "boolean",
+        "default": false,
+        "help": "Train the classifier only and keep the aggregator's initial weights: a linear probe of a pretrained aggregator, or of a random one as its control.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2EmbedDim",
+        "label": "Embedding dimensions",
+        "kind": "integer",
+        "default": 384,
+        "help": "Width of the patch embedding and the Mamba-2 layers.",
+        "minimum": 1,
+        "maximum": 4096,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2Layers",
+        "label": "Mamba-2 layers",
+        "kind": "integer",
+        "default": 2,
+        "help": "Mamba-2 blocks, each with a residual connection, as COBRA uses two.",
+        "minimum": 1,
+        "maximum": 12,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2StateDim",
+        "label": "State dimensions",
+        "kind": "integer",
+        "default": 64,
+        "help": "Size of each head's state in the selective scan.",
+        "minimum": 1,
+        "maximum": 512,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2Expand",
+        "label": "Expansion",
+        "kind": "integer",
+        "default": 2,
+        "help": "Inner width of each block as a multiple of the embedding dimensions.",
+        "minimum": 1,
+        "maximum": 8,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2HeadDim",
+        "label": "Head dimensions",
+        "kind": "integer",
+        "default": 64,
+        "help": "Channels per scan head; they must divide expansion × embedding dimensions.",
+        "minimum": 1,
+        "maximum": 1024,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2ConvWidth",
+        "label": "Convolution width",
+        "kind": "integer",
+        "default": 4,
+        "help": "Width of the causal depthwise convolution before the scan (2 to 4, as Mamba-2's kernels allow).",
+        "minimum": 2,
+        "maximum": 4,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2AttentionDim",
+        "label": "Attention dimensions",
+        "kind": "integer",
+        "default": 256,
+        "help": "Hidden width of the gated attention pooling.",
+        "minimum": 1,
+        "maximum": 8192,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": true,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2Dropout",
+        "label": "Attention dropout",
+        "kind": "number",
+        "default": 0.1,
+        "help": "Dropout in the gated attention pooling.",
+        "minimum": 0,
+        "maximum": 1,
+        "maximumExclusive": true,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2Hilbert",
+        "label": "Hilbert ordering",
+        "kind": "boolean",
+        "default": true,
+        "help": "Sort each slide's patches along a Hilbert curve of their coordinates before the Mamba-2 layers, as OceanPath pretrains and fine-tunes. Needs patch coordinates, which H5 features and packs carry. Off, patches keep their order in the feature file.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      },
+      {
+        "key": "mamba2CobraPooling",
+        "label": "COBRA pooling when predicting",
+        "kind": "boolean",
+        "default": false,
+        "help": "When predicting, pool the patch embeddings from before the Mamba-2 layers with the attention the layers produce (COBRA's Eq. 6, OceanPath's use_cobra_inference). Fitting always pools the Mamba-2 outputs.",
+        "minimum": null,
+        "maximum": null,
+        "maximumExclusive": false,
+        "choices": [],
+        "memory": false,
+        "enabledWhen": null
+      }
+    ],
+    "auxiliaryLoss": false,
+    "requiresClassLogits": false,
+    "attentionNote": "Each member's map is its gated attention over the patches after the Mamba-2 layers, the weights that pool its slide embedding.",
+    "reference": "OceanPath, after COBRA (Lenz et al., 2025) and Mamba-2 (Dao and Gu, ICML 2024)"
+  },
+  {
     "name": "mean_pool",
     "label": "Mean pooling MIL",
     "summary": "Mean of patch embeddings with a classifier head.",

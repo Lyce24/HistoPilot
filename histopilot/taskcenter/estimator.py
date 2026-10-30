@@ -227,6 +227,19 @@ def gpu_estimate(workload: dict, *, evaluation_only: bool = False) -> float:
         train_width = 4 * embed * layers + depth * (8 * embed + kernels)
         eval_width = 6 * embed + kernels
         parameters = projection + depth * 4 * embed * embed
+    elif model == "oceanpath_mamba2":
+        # Each layer keeps its projections and, per scan chunk of 64 positions, one decay and
+        # score matrix per head and the chunk states; the scan stays float32 under AMP.
+        embed = options["mamba2EmbedDim"]
+        inner = options["mamba2Expand"] * embed
+        heads = max(1, inner // options["mamba2HeadDim"])
+        state, chunk = options["mamba2StateDim"], 64
+        scan = (6 * heads * chunk + 2 * inner * state // chunk) * 4 / activation_bytes
+        width = options["mamba2AttentionDim"]
+        train_width = 4 * embed + options["mamba2Layers"] * (16 * inner + scan) + 4 * width
+        eval_width = 2 * embed + 6 * inner + scan + 2 * width
+        layer = embed * (3 * inner + 2 * state + heads) + 6 * (inner + 2 * state)
+        parameters = dim * embed + options["mamba2Layers"] * layer + embed * (embed + 2 * width)
     elif model == "dsmil":
         query = options["dsmilQueryDim"]
         train_width, eval_width = 4 * embed * layers + 4 * query, 2 * embed + 2 * query

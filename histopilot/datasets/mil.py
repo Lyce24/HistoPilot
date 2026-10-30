@@ -136,6 +136,7 @@ class _OceanPathMemmap:
     def __init__(self, path, layout):
         meta = layout["meta"]
         self.slides = {row["slideId"]: row for row in layout["slides"]}
+        self.path, self.total, self.coords = Path(path), meta["total_patches"], None
         self.array = np.memmap(
             Path(path) / "features.bin",
             mode="r",
@@ -148,8 +149,19 @@ class _OceanPathMemmap:
         values = self.array[entry["offset"] : entry["offset"] + entry["patchCount"]]
         return np.array(values if rows is None else values[rows], copy=True)
 
+    def read_coords(self, slide_id, rows=None):
+        if self.coords is None:
+            self.coords = np.memmap(
+                self.path / "coords.bin", mode="r", dtype="<i4", shape=(self.total, 2)
+            )
+        entry = self.slides[slide_id]
+        values = self.coords[entry["offset"] : entry["offset"] + entry["patchCount"]]
+        return np.array(values if rows is None else values[rows], copy=True)
+
     def close(self):
         self.array._mmap.close()
+        if self.coords is not None:
+            self.coords._mmap.close()
 
 
 class SlideDataset(Dataset):
@@ -174,6 +186,9 @@ class SlideDataset(Dataset):
             )
         self.bag_size = self.recipe["bagSize"]
         self.eval_bag_size = self.recipe.get("evalBagSize")
+        # Coordinates travel with the features only for models that read them; inference
+        # sets this per checkpoint, before each pass copies the dataset to its workers.
+        self.coordinates = catalog.reads_coordinates(self.recipe)
         self.dimensions = plan["featureDim"]
         for name, value, minimum in (
             ("trainingSeed", self.training_seed, 0),
@@ -321,9 +336,10 @@ class SlideDataset(Dataset):
         # Sorted indices satisfy HDF5's indexing contract and preserve source row order.
         return np.sort(rng.choice(count, size=cap, replace=False))
 
-    def _augment(self, values, identity, epoch, ordinal=0):
+    def _augment(self, values, identity, epoch, ordinal=0, coords=None):
+        """Instance dropout and feature noise; dropped patches leave ``coords`` as well."""
         if not self.training or not (self.instance_dropout or self.feature_noise_std):
-            return values
+            return values, coords
         if catalog.windowed_sampling(self.recipe.get("model")):
             identity = json.dumps(["nnmil-augmentation", identity, ordinal], ensure_ascii=False)
         # Local streams preserve model/dropout RNG and exact worker/resume replay.
@@ -333,10 +349,31 @@ class SlideDataset(Dataset):
             if not keep.any():
                 keep[rng.integers(len(values))] = True
             values = values[keep]
+            coords = None if coords is None else coords[keep]
         if self.feature_noise_std:
             noise = rng.standard_normal(values.shape, dtype=np.float32)
             values = values + noise * self.feature_noise_std
-        return values
+        return values, coords
+
+    def _native_coords(self, entry, selection):
+        """Patch coordinates of an H5 feature file, or of its separate coordinate file."""
+        path = Path(entry.get("coordinatePath") or entry["path"])
+        if path.suffix.lower() not in {".h5", ".hdf5"}:
+            raise MILDataError(
+                f"{entry.get('slideId', 'Slide')}: this model orders patches by their "
+                f"coordinates, and {path.suffix or 'these'} features carry none. Use H5 "
+                "features with coordinates, or turn the model's coordinate ordering off."
+            )
+        stamp = entry.get("coordinateFile", {}) if entry.get("coordinatePath") else entry
+        with open_source(path, stamp) as (stream, _stamp):
+            with h5py.File(stream, "r") as handle:
+                coords = embedded_dataset(handle, "coords")
+                if coords.shape != (entry["patchCount"], 2) or coords.dtype.kind not in "iu":
+                    raise MILDataError(
+                        f"{entry.get('slideId', 'Slide')}: coords must hold one integer XY "
+                        "pair per patch."
+                    )
+                return np.asarray(coords[:] if selection is None else coords[selection])
 
     def _native(self, entry, selection):
         path = Path(entry["path"])
@@ -397,9 +434,10 @@ class SlideDataset(Dataset):
                 self._pack = _OceanPathMemmap(self.pack_path, self._pack_layout)
             self._pack_pid = os.getpid()
         values = self._pack.read_features(identity, selection)
+        coords = self._pack.read_coords(identity, selection) if self.coordinates else None
         if pack_file_stamps(Path(self.pack_path)) != self.pack_stamps:
             raise MILDataError("The selected feature pack changed during a read.")
-        return values
+        return values if coords is None else (values, coords)
 
     def __getitem__(self, index):
         # Epoch travels with each sampled index across worker/prefetch boundaries.
@@ -415,12 +453,16 @@ class SlideDataset(Dataset):
             return self._example(row, torch.zeros((1, self.dimensions), dtype=torch.float32))
         entry = self.files[row["slideId"]]
         selection = self._selection(entry["patchCount"], row["slideId"], epoch, ordinal)
+        coords = None
         try:
-            values = (
-                self._native(entry, selection)
-                if self.policy == "native"
-                else self._packed(row["slideId"], selection)
-            )
+            if self.policy == "native":
+                values = self._native(entry, selection)
+                if self.coordinates:
+                    coords = self._native_coords(entry, selection)
+            else:
+                values = self._packed(row["slideId"], selection)
+                if self.coordinates:
+                    values, coords = values
         except (PackedStoreError, OSError, KeyError) as error:
             raise MILDataError(
                 f"{row['slideId']}: cannot read the frozen features: {error}"
@@ -435,18 +477,21 @@ class SlideDataset(Dataset):
                 f"{row['slideId']}: features must be nonempty finite [patches, dimensions]."
             )
         values = np.asarray(values, dtype=np.float32, order="C")
-        values = self._augment(values, row["slideId"], epoch, ordinal)
+        values, coords = self._augment(values, row["slideId"], epoch, ordinal, coords)
         if not values.flags.writeable:
             values = values.copy()
         if not np.isfinite(values).all():
             raise MILDataError(
                 f"{row['slideId']}: feature values exceed float32 training precision."
             )
-        return self._example(row, torch.from_numpy(values))
+        if coords is not None:
+            coords = torch.from_numpy(np.asarray(coords, dtype=np.int64))
+        return self._example(row, torch.from_numpy(values), coords)
 
-    def _example(self, row, features):
+    def _example(self, row, features, coords=None):
         return {
             "features": features,
+            **({"coords": coords} if coords is not None else {}),
             "label": row["labelIndex"],
             "slideId": row["slideId"],
             "patientId": row["patientId"],
@@ -515,9 +560,16 @@ def collate_mil(batch):
             count = lengths[index]
             features[index, :count] = item["features"]
             mask[index, :count] = True
+    coords = None
+    if "coords" in batch[0]:
+        # Padding rows get (0, 0); models that read coordinates ignore masked patches.
+        coords = torch.zeros((len(batch), max(lengths), 2), dtype=torch.long)
+        for index, item in enumerate(batch):
+            coords[index, : lengths[index]] = item["coords"]
     return {
         "features": features,
         "mask": mask,
+        **({"coords": coords} if coords is not None else {}),
         "labels": torch.tensor([item["label"] for item in batch], dtype=torch.long),
         "lossWeights": torch.tensor([item["lossWeight"] for item in batch], dtype=torch.float32),
         "lengths": torch.tensor(lengths, dtype=torch.long),

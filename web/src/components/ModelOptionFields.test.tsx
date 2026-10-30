@@ -123,5 +123,24 @@ describe('architecture options', () => {
     expect(isBatchEditorDraft(draft(recipe('dtfd', { dtfdDistill: 'median' as never })))).toBe(false);
     expect(isBatchEditorDraft(draft(recipe('transmil', { transmilLayers: '2' as never })))).toBe(false);
     expect(isBatchEditorDraft(draft(recipe('transmil', { transmilPositionEncoding: 'yes' as never })))).toBe(false);
+    // A checkpoint path may be long, but it is text.
+    const pretrained = { mamba2Initialization: 'checkpoint' as const, mamba2Checkpoint: `/data/${'nested/'.repeat(40)}aggregator.pt` };
+    expect(isBatchEditorDraft(draft(recipe('oceanpath_mamba2', pretrained)))).toBe(true);
+    expect(isBatchEditorDraft(draft(recipe('oceanpath_mamba2', { mamba2Checkpoint: 42 as never })))).toBe(false);
+  });
+
+  it('asks for an OceanPath checkpoint path only for checkpoint initialization', () => {
+    const random = renderToStaticMarkup(<ModelOptionFields value={recipe('oceanpath_mamba2')} onChange={() => {}} />);
+    expect(random).toContain('OceanPath Mamba-2 MIL settings');
+    expect(random).toMatch(/Aggregator checkpoint<input[^>]*type="text"[^>]*disabled=""/);
+    expect(random).toMatch(/Aggregator learning rate<input[^>]*disabled=""/);
+    const pretrained = recipe('oceanpath_mamba2', { mamba2Initialization: 'checkpoint', mamba2Checkpoint: '/data/aggregator.pt' });
+    const html = renderToStaticMarkup(<ModelOptionFields value={pretrained} onChange={() => {}} />);
+    expect(html).toMatch(/Aggregator checkpoint<input[^>]*value="\/data\/aggregator.pt"/);
+    expect(html).not.toMatch(/Aggregator checkpoint<input[^>]*disabled=""/);
+    expect(modelOptionSummary(pretrained, 'changed')).toEqual(['Initialization OceanPath aggregator checkpoint', 'Aggregator checkpoint /data/aggregator.pt']);
+    expect(modelOptionSummary(recipe('oceanpath_mamba2'), 'all')).toContain('Aggregator checkpoint none');
+    // The shared patch projection is not this model's: it has its own embedding width.
+    expect(readsField('oceanpath_mamba2', 'embedDim')).toBe(false);
   });
 });

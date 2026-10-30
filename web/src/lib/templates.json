@@ -119,7 +119,21 @@
       "acmilMaskedPatches": 10,
       "acmilMaskDrop": 0.6,
       "acmilAttentionDim": 128,
-      "acmilDropout": 0.0
+      "acmilDropout": 0.0,
+      "mamba2Initialization": "random",
+      "mamba2Checkpoint": "",
+      "mamba2AggregatorLearningRate": 1e-05,
+      "mamba2FreezeAggregator": false,
+      "mamba2EmbedDim": 384,
+      "mamba2Layers": 2,
+      "mamba2StateDim": 64,
+      "mamba2Expand": 2,
+      "mamba2HeadDim": 64,
+      "mamba2ConvWidth": 4,
+      "mamba2AttentionDim": 256,
+      "mamba2Dropout": 0.1,
+      "mamba2Hilbert": true,
+      "mamba2CobraPooling": false
     },
     "presets": {
       "nnmil": {

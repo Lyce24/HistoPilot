@@ -14,6 +14,7 @@ export function optionValue(recipe: TrainingRecipe, option: ModelOption): Option
 export function optionValueLabel(option: ModelOption, value: OptionValue): string {
   if (option.kind === 'choice') return option.choices.find((choice) => choice.value === value)?.label ?? String(value);
   if (option.kind === 'boolean') return value ? 'on' : 'off';
+  if (option.kind === 'text') return String(value) || 'none';
   return String(value);
 }
 
@@ -42,6 +43,9 @@ function OptionField({ option, value, disabled, onChange }: { option: ModelOptio
       ? <label className="label">{option.label}<select className="field" value={String(value)} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
         {option.choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
       </select></label>
+      : option.kind === 'text'
+        ? <label className="label">{option.label}<input className="field" type="text" value={String(value)} disabled={disabled} spellCheck={false}
+          maxLength={option.maximum ?? undefined} placeholder="/path/to/file" onChange={(event) => onChange(event.target.value)} /></label>
       : <NumericField label={option.label} value={Number(value)} integer={option.kind === 'integer'} disabled={disabled}
         min={option.minimum ?? undefined} max={option.maximum ?? undefined} maxExclusive={option.maximumExclusive} onChange={onChange} />;
   return <div className="batch-check-with-hint">{control}<small>{option.help}</small></div>;

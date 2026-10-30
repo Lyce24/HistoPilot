@@ -16,6 +16,7 @@ from histopilot.cv_summary import evaluation_metrics
 from histopilot.datasets.datamodule import _worker_init
 from histopilot.datasets.mil import SlideDataset, collate_mil
 from histopilot.inference_summary import describe, patient_member_probabilities, summarize
+from histopilot.models import catalog
 from histopilot.scoring import patient_predictions
 from histopilot.storage.io import content_hash, read_file_bounded, write_json_atomic
 from histopilot.storage.project_lock import ensure_managed_directory, reject_symlink_components
@@ -472,6 +473,8 @@ def evaluate(plan, output_dir):
                 if "trainingSeed" in checkpoint:
                     # Loader workers copy the dataset when each member's pass starts.
                     dataset.training_seed = checkpoint["trainingSeed"]
+                # So do models that read patch coordinates with the features.
+                dataset.coordinates = catalog.reads_coordinates(model.recipe)
                 collected, log_collected, observed, uncertainty_collected = [], [], [], []
                 with torch.inference_mode():
                     for batch in loader:
@@ -486,6 +489,11 @@ def evaluate(plan, output_dir):
                                 batch["features"].to(device),
                                 batch["mask"].to(device),
                                 **({"clinical": batch["clinical"]} if "clinical" in batch else {}),
+                                **(
+                                    {"coords": batch["coords"].to(device)}
+                                    if "coords" in batch
+                                    else {}
+                                ),
                             )
                             logits = output["logits"]
                         logits = class_logits(logits, target)

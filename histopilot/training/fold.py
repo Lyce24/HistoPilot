@@ -215,6 +215,7 @@ def _predict(model, loader, target, device, precision="32-true"):
                 dtype=torch.float16 if precision == "16-mixed" else torch.bfloat16,
                 enabled=precision != "32-true",
             ):
+                coords = {"coords": batch["coords"].to(device)} if "coords" in batch else {}
                 if catalog.uses_structured_output(
                     model.recipe.get("model"), model.recipe.get("inputMode", "image")
                 ):
@@ -222,11 +223,12 @@ def _predict(model, loader, target, device, precision="32-true"):
                         batch["features"].to(device),
                         batch["mask"].to(device),
                         **({"clinical": batch["clinical"]} if "clinical" in batch else {}),
+                        **coords,
                     )
                     logits = output["logits"]
                 else:
                     output = {}
-                    logits = model(batch["features"].to(device), batch["mask"].to(device))
+                    logits = model(batch["features"].to(device), batch["mask"].to(device), **coords)
             if not bool(torch.isfinite(logits).all()):
                 raise FloatingPointError(
                     "The selected checkpoint produced nonfinite probabilities."
