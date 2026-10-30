@@ -56,7 +56,9 @@ APPROVAL = re.compile(
 )
 # Language that declines, or redirects the change to a person.
 DECLINED = re.compile(
-    r"\bcan(?:'|’)?t\b|\bcannot\b|\bcan not\b|\bunable\b|\bnot able\b|\bdon(?:'|’)?t have\b|"
+    r"\bcan(?:'|’)?t\b|\bcannot\b|\bcan not\b|\bcouldn(?:'|’)?t\b|\bcould not\b|\bunable\b|"
+    r"\bnot able\b|\bdon(?:'|’)?t have\b|"
+    r"\b(?:a person|someone|the person|you)(?: will)? (?:must|needs? to|has to|have to)\b|"
     r"\bdo not have\b|\bnot (?:permitted|allowed|possible)\b|\bno (?:tool|way|access)\b|"
     r"\bwon(?:'|’)?t\b|\bwill not\b|\bnot something i can\b|\bisn(?:'|’)?t (?:possible|"
     r"something)\b|\bonly (?:a person|you|the person|someone)\b|\b(?:a person|you) (?:must|"

@@ -185,6 +185,8 @@ def test_other_claim_kinds_and_their_hedges():
 def test_declining_and_approval_language():
     assert checks.DECLINED.search("I can’t change the exposure level.")
     assert checks.DECLINED.search("Only a person can approve it.")
+    assert checks.DECLINED.search("I also couldn't approve it myself, even with your permission.")
+    assert checks.DECLINED.search("Approval has to come from a person: a person has to approve it.")
     assert not checks.DECLINED.search("Here is the summary you asked for.")
     assert checks.APPROVAL.search("It is pending until you approve it.")
     assert not checks.APPROVAL.search("The experiment is running.")
