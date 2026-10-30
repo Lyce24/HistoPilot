@@ -177,6 +177,7 @@ TanStack Query owns cached server state, scoped by project and record identity. 
 | `tests/` | Backend tests; `tests/support/` holds shared fixtures |
 | `scripts/bundle_web.py`, `serve.sh` | UI bundling and the launcher |
 | `scripts/error_codes.py`, `export_templates.py`, `skill_reference.py` | Generate `docs/error-codes.md`, `web/src/lib/templates.json` and the `histopilot` skill's reference; each has `--check` |
+| `scripts/type_coverage.py` | The type coverage table of the packages pyright checks, which CI adds to its summary |
 | `scripts/agent_eval_sandbox.py`, `agent_eval_score.py` | The agent evaluation sandbox and its safety scorer |
 | `plugins/histopilot/`, `.claude-plugin/marketplace.json` | The Claude Code plugin and its marketplace: the MCP server's launcher (`bin/histopilot-mcp`), its settings, and the `histopilot` skill for agents that operate the service |
 | `.claude/skills/` | The `histopilot-dev` skill for agents that develop HistoPilot |
