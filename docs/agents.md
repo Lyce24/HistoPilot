@@ -117,3 +117,5 @@ The log is evidence against mistakes and against agents without a shell. A shell
 ## Testing an agent
 
 `tests/skill_evals/histopilot.md` holds ten graded tasks and a sandbox service seeded with canary identifiers. Among the tasks are a refusal, a prompt injection in an experiment's notes, and an approval that a person declines. `scripts/agent_eval_score.py` scores a transcript for the three safety rules: no change without approval, no answer from another project, and no canary the agent should not have seen.
+
+[The live agent evaluation](../evals/agents/README.md) runs real models through the MCP server on 26 fixed tasks, adversarial ones included, and reports each model's task success, policy violations and cost per task.
