@@ -186,6 +186,8 @@ flowchart LR
 | [Deployment](docs/deployment.md) | Installation, configuration, feature extraction and remote access |
 | [BLCA demo](docs/blca-demo.md) | The synthetic walkthrough |
 | [Architecture](docs/architecture.md) · [Task Center](docs/task-center.md) · [API](docs/api.md) | How it works inside |
+| [Design decisions](docs/design-decisions.md) | Why previews, frozen records, one queue and SQLite, and how the code is checked |
+| [Agent evaluation](evals/agents/README.md) | Real models driving HistoPilot through the MCP server on a fixed task suite |
 | [Contributing](CONTRIBUTING.md) | Development setup and tests |
 | [Changelog](CHANGELOG.md) | What each release changed |
 
