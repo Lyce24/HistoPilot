@@ -2,9 +2,10 @@
 
 The session token is unaffected. A scoped token reaches read and preview routes of its own
 project, within its scopes; admin routes and routes this table does not know are refused.
-Its commits are parked for a person to approve (docs/cli-contract.md, docs/agents.md). On a
-project shared at the `metadata` level, JSON answers are redacted and files are refused.
-Every scoped request, and every commit or admin request from anyone, is audited.
+Its commits are parked for a person to approve (docs/cli-contract.md, docs/agents.md), once
+the commit's own checks pass (api/filing.py). On a project shared at the `metadata` level,
+JSON answers are redacted and files are refused. Every scoped request, and every commit or
+admin request from anyone, is audited.
 """
 
 import json
@@ -14,10 +15,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
 from histopilot.api import audit
+from histopilot.api.filing import FilingChecks
 from histopilot.api.redaction import Redactor
 from histopilot.api.responses import coded_response, refusal
 from histopilot.api.route_classes import ADMIN, COMMIT, route_class, route_template
@@ -86,12 +90,14 @@ def missing_work(what: str) -> StorageError:
 
 
 class ScopeGate:
-    def __init__(self, projects, tokens, database, *, work_project=None):
+    def __init__(self, projects, tokens, database, *, work_project=None, filing=None):
         self.projects = projects
         self.tokens = tokens
         self.database = database
         # (what, key) -> the project that owns a Task Center task or owner, or None.
         self.work_project = work_project
+        # The checks a commit runs before it is parked; the routers register them.
+        self.filing: FilingChecks = filing or FilingChecks()
         # project -> (its datasets, the redactor built from their identifiers)
         self._redactors: dict[str, tuple[tuple, Redactor]] = {}
         self._lock = threading.Lock()
@@ -117,7 +123,7 @@ class ScopeGate:
                 response = _exposure_refusal(exposure, path)
             if response is None and kind == COMMIT:
                 await run_in_threadpool(self._own_work, path, project)
-                response = await self._park(request, token)
+                response = await self._file(request, token, exposure, document, folder)
                 parked = response.status_code == 202
             elif response is None:
                 response = await self._forward(
@@ -204,12 +210,51 @@ class ScopeGate:
 
     # Parked commits --------------------------------------------------------------------
 
-    async def _park(self, request, token) -> JSONResponse:
+    async def _file(self, request, token, exposure, document, folder) -> JSONResponse:
+        """Check a commit as the commit itself would, then park it for a person. A request
+        the commit would refuse gets the commit's own answer, and nothing is parked."""
         raw = await request.body()
         try:
             body = json.loads(raw) if raw else None
         except ValueError:
             return refusal("The request body is not JSON.", "REQUEST_INVALID", 422)
+        store = ScientificStore(folder, document["id"])
+        roots = await run_in_threadpool(self._roots, document, folder, store)
+        refused = await run_in_threadpool(
+            self._checked, request.method, request.url.path, body, roots
+        )
+        if refused is not None:
+            if exposure == "metadata":
+                return await run_in_threadpool(self._redacted, store, refused)
+            return refused
+        return await self._park(request, token, body)
+
+    def _checked(self, method: str, path: str, body, roots) -> JSONResponse | None:
+        """The commit's refusal, as its route would answer it; None when its checks pass.
+        They read within the project's folders, as the request itself would."""
+        scope = SCOPED_ROOTS.set(roots)
+        try:
+            self.filing.check(method, path, body)
+        except CODED as error:
+            return coded_response(error)
+        except RequestValidationError as error:
+            # As the service answers a body or path its route's models refuse.
+            return JSONResponse(
+                {"detail": jsonable_encoder(error.errors()), "code": "REQUEST_INVALID"},
+                status_code=422,
+            )
+        finally:
+            SCOPED_ROOTS.reset(scope)
+        return None
+
+    def _redacted(self, store: ScientificStore, response: JSONResponse) -> JSONResponse:
+        """A refusal for a project shared at the metadata level: its findings can name cases."""
+        document = json.loads(bytes(response.body))
+        return JSONResponse(
+            self.redactor(store).document(document), status_code=response.status_code
+        )
+
+    async def _park(self, request, token, body) -> JSONResponse:
         now = _now()
         entry = {
             "id": f"request-{uuid.uuid4().hex}",

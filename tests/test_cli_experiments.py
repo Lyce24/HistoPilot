@@ -243,7 +243,7 @@ def test_an_edited_design_updates_its_draft_instead_of_making_another(study, tmp
     assert refused.code == 3 and refused.envelope["error"]["code"] == "EXPERIMENT_SETUP_FROZEN"
 
 
-def test_an_agent_revises_the_draft_it_previewed(study, tmp_path):
+def test_an_agent_revises_the_draft_it_saved(study, tmp_path):
     from histopilot.agent import tools
     from histopilot.client import Client
 
@@ -252,12 +252,50 @@ def test_an_agent_revises_the_draft_it_previewed(study, tmp_path):
     project = service.cli("use", "--json").envelope["data"]["project"]
     access = {"projectId": project, "scopes": ["read", "preview"], "exposure": "full"}
     agent = tools.AgentSession(Client(transport=service.transport), access)
-    first = tools.preview_design(agent, design)
+    first = tools.save_design(agent, design)
+    assert first["saved"] is True
     design["notes"] = "Revised by the agent"
-    second = tools.preview_design(agent, design, experiment=first["experimentId"])
-    assert second["experimentId"] == first["experimentId"]
+    second = tools.save_design(agent, design, experiment=first["experimentId"])
+    assert second["experimentId"] == first["experimentId"] and second["saved"] is True
     assert second["revision"] > first["revision"] and second["canFreeze"] is True
     assert len(tools.list_records(agent, "experiment")["items"]) == 1
+
+
+def test_an_agent_previews_a_saved_draft_without_changing_it(study, tmp_path):
+    from histopilot.agent import tools
+    from histopilot.client import Client
+
+    service, ids = study
+    design = design_file(service, ids, tmp_path / "design.yaml")
+    project = service.cli("use", "--json").envelope["data"]["project"]
+    access = {"projectId": project, "scopes": ["read", "preview"], "exposure": "full"}
+    agent = tools.AgentSession(Client(transport=service.transport), access)
+    saved = tools.save_design(agent, design)
+    experiment = saved["experimentId"]
+    for _ in range(2):
+        previewed = tools.preview_design(agent, "CLI study")
+        assert previewed["experimentId"] == experiment
+        assert (previewed["revision"], previewed["previewHash"]) == (
+            saved["revision"],
+            saved["previewHash"],
+        )
+    # Saving the same design again, as an agent re-reads it, writes nothing either: a design
+    # that leaves out fields at their defaults is the same design.
+    again = {**design, "inputs": {**design["inputs"]}}
+    again["inputs"]["trainingSplit"] = {
+        key: value
+        for key, value in design["inputs"]["trainingSplit"].items()
+        if key not in ("imported", "domainField")
+    }
+    resaved = tools.save_design(agent, again, experiment=experiment)
+    assert resaved["saved"] is False
+    assert (resaved["revision"], resaved["previewHash"]) == (
+        saved["revision"],
+        saved["previewHash"],
+    )
+    review = service.cli("experiment", "preview", experiment, "--json")
+    assert review.envelope["data"]["revision"] == saved["revision"]
+    assert review.envelope["data"]["previewHash"] == saved["previewHash"]
 
 
 def test_a_person_freezes_exactly_the_preview_an_agent_handed_over(study, tmp_path):
@@ -277,14 +315,14 @@ def test_a_person_freezes_exactly_the_preview_an_agent_handed_over(study, tmp_pa
     ).json()["token"]
     client = Client(transport=service.transport, token=token)
     agent = tools.AgentSession(client, client.get("/access"))
-    first = tools.preview_design(agent, design)
+    first = tools.save_design(agent, design)
     experiment = first["experimentId"]
     # The person's own preview, unredacted, confirms the same hash.
     review = service.cli("experiment", "preview", experiment, "--json")
     assert review.envelope["data"]["previewHash"] == first["previewHash"]
 
     design["notes"] = "Revised by the agent"
-    second = tools.preview_design(agent, design, experiment=experiment)
+    second = tools.save_design(agent, design, experiment=experiment)
     assert second["previewHash"] != first["previewHash"]
     stale = service.cli(
         "experiment",
@@ -307,6 +345,74 @@ def test_a_person_freezes_exactly_the_preview_an_agent_handed_over(study, tmp_pa
     )
     assert frozen.code == 0, frozen.stdout
     assert frozen.envelope["data"]["result"]["frozenSetupId"]
+
+
+def test_an_agent_files_only_what_a_person_can_approve(study, tmp_path):
+    from histopilot.agent import tools
+    from histopilot.api import audit
+    from histopilot.client import Client, ClientError
+
+    service, ids = study
+    design = design_file(service, ids, tmp_path / "design.yaml")
+    project = service.cli("use", "--json").envelope["data"]["project"]
+    exposed = service.http.put(
+        f"/api/v1/projects/{project}/ai-exposure",
+        json={"level": "full", "expectedLevel": "none"},
+    )
+    assert exposed.status_code == 200, exposed.text
+    token = service.http.post(
+        "/api/v1/tokens",
+        json={"projectId": project, "scopes": ["read", "preview", "commit"], "name": "agent"},
+    ).json()["token"]
+    client = Client(transport=service.transport, token=token)
+    agent = tools.AgentSession(client, client.get("/access"))
+    saved = tools.save_design(agent, design)
+    experiment, revision = saved["experimentId"], saved["revision"]
+
+    def refused(tool, revision):
+        with pytest.raises(ClientError) as raised:
+            tool(agent, experiment, revision)
+        return raised.value.code
+
+    # Nobody froze the design, so a start could only fail: it is refused when filed, with
+    # the code starting would give, and so is a freeze at a revision that moved on.
+    assert refused(tools.request_start, revision) == "EXPERIMENT_SETUP_REQUIRED"
+    assert refused(tools.request_freeze, revision - 1) == "REVISION_CONFLICT"
+    freeze = tools.request_freeze(agent, experiment, revision)
+    assert freeze["state"] == "pending"
+    # A start filed beside the freeze would name the revision the freeze replaces.
+    assert refused(tools.request_start, revision) == "EXPERIMENT_SETUP_REQUIRED"
+    pending = service.http.get("/api/v1/agent-requests").json()["requests"]
+    assert [row["id"] for row in pending] == [freeze["requestId"]]
+    record = service.cli("experiment", "show", experiment, "--json").envelope["data"]
+    assert record["revision"] == revision and not record.get("frozenSetupId")
+
+    # Once a person approved the freeze, the start is filed at the frozen revision.
+    approved = service.cli("confirm", "approve", freeze["requestId"], "--yes", "--json")
+    assert approved.code == 0, approved.stdout
+    frozen = service.cli("experiment", "show", experiment, "--json").envelope["data"]
+    assert frozen["frozenSetupId"] and frozen["revision"] == revision + 1
+    assert refused(tools.request_freeze, frozen["revision"]) == "EXPERIMENT_SETUP_FROZEN"
+    assert refused(tools.request_start, revision) == "REVISION_CONFLICT"
+    start = tools.request_start(agent, experiment, frozen["revision"])
+    assert start["state"] == "pending"
+    shown = service.cli("experiment", "show", experiment, "--json").envelope["data"]
+    assert not shown.get("submission")
+    # The service's log, oldest first, tells the refused filings from the two it parked.
+    lines = [
+        line
+        for line in reversed(audit.read(service.settings.workspace / "projects" / "Study"))
+        if line["actor"]["kind"] == "agent" and line["class"] == "commit"
+    ]
+    assert [(line["status"], bool(line.get("parked"))) for line in lines] == [
+        (409, False),
+        (409, False),
+        (202, True),
+        (409, False),
+        (409, False),
+        (409, False),
+        (202, True),
+    ]
 
 
 def test_comparisons_take_catalog_names_and_errors_list_them(study):

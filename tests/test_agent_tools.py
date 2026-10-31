@@ -62,18 +62,17 @@ def test_templates_come_from_the_shared_starters(session):
         tools.template(agent, "nonsense")
 
 
-def test_waiting_reports_a_stopped_runner_instead_of_hanging(session):
-    agent, service = session
-    folder = service.settings.workspace / "projects" / "Study"
+def enqueue_task(project, folder, identity):
+    """One queued fold of an experiment of ``project``; the runner never starts it."""
     owner = {
         "kind": "experiment",
         "id": "e",
-        "projectId": agent.project,
+        "projectId": project,
         "projectFolder": str(folder),
         "title": "E",
     }
     task = {
-        "id": "task-1",
+        "id": identity,
         "kind": "mil-fold",
         "adapter": "generic",
         "title": "Fold",
@@ -83,10 +82,15 @@ def test_waiting_reports_a_stopped_runner_instead_of_hanging(session):
         "command": {
             "argv": [sys.executable, "-c", "pass"],
             "cwd": str(folder),
-            "log": str(folder / "logs" / "task-1.log"),
+            "log": str(folder / "logs" / f"{identity}.log"),
         },
     }
     default_client().store.enqueue(owner, [task])
+
+
+def test_waiting_reports_a_stopped_runner_instead_of_hanging(session):
+    agent, service = session
+    enqueue_task(agent.project, service.settings.workspace / "projects" / "Study", "task-1")
     result = tools.wait(agent, "task", "task-1", timeout_seconds=5)
     # Queued work under a stopped runner has not settled; the wait ends with the reason.
     assert result == {
@@ -111,17 +115,23 @@ def test_the_server_offers_only_what_the_token_and_exposure_allow(session):
     from histopilot.agent import server
 
     agent, _ = session
+    access = agent.access
     offered = names(server.build(agent))
-    assert {"status", "list_records", "preview_design", "apply_preview"} <= offered
-    agent.access = {**agent.access, "scopes": ["read"]}
-    assert not {"preview_design", "apply_preview"} & names(server.build(agent))
-    agent.access = {**agent.access, "exposure": "none"}
+    assert {"status", "list_records", "save_design", "preview_design", "apply_preview"} <= offered
+    agent.access = {**access, "scopes": ["read"]}
+    assert not {"save_design", "preview_design", "apply_preview"} & names(server.build(agent))
+    agent.access = {**access, "exposure": "none"}
     assert names(server.build(agent)) == set()
     # No tool can freeze, start, cancel or delete: those need a person.
+    agent.access = access
     annotations = {
-        tool.name: tool.annotations for tool in asyncio.run(server.build(session[0]).list_tools())
+        tool.name: tool.annotations for tool in asyncio.run(server.build(agent).list_tools())
     }
+    assert offered <= set(annotations)
     assert all(not (hint and hint.destructiveHint) for hint in annotations.values())
+    # Saving a draft writes; previewing one does not.
+    assert not annotations["save_design"].readOnlyHint
+    assert annotations["preview_design"].readOnlyHint
 
 
 def test_tools_run_through_mcp_and_errors_come_back_as_tool_errors(session):
@@ -228,7 +238,8 @@ def test_the_server_connects_with_a_scoped_token_and_offers_its_tools(tmp_path, 
         agent = server.connect("http://127.0.0.1:8787", token, transport=service.transport)
         assert agent.project == project and agent.exposure == "metadata"
         offered = names(server.build(agent))
-        assert "list_records" in offered and "preview_design" not in offered
+        assert "list_records" in offered
+        assert not {"save_design", "preview_design"} & offered
         status = asyncio.run(server.build(agent).call_tool("status", {}))
         blocks = status[0] if isinstance(status, tuple) else status
         assert "metadata" in json.dumps([getattr(block, "text", "") for block in blocks])
@@ -272,9 +283,18 @@ def test_requests_are_filed_for_a_person_and_change_nothing(tmp_path, monkeypatc
         client = Client(transport=service.transport, token=token)
         agent = tools.AgentSession(client, client.get("/access"))
 
-        filed = tools.request_freeze(agent, created["id"], created["revision"])
+        # The experiment has no inputs, so freezing it could only fail: nothing is filed, and
+        # the agent hears why, with the freeze's own code.
+        with pytest.raises(ClientError) as doomed:
+            tools.request_freeze(agent, created["id"], created["revision"])
+        assert doomed.value.code == "EXPERIMENT_SETUP_INPUTS_REQUIRED"
+        assert service.http.get("/api/v1/agent-requests").json()["requests"] == []
+        folder = service.settings.workspace / "projects" / "Study"
+        enqueue_task(project, folder, "task-own")
+        filed = tools.request_task_action(agent, "task-own", "cancel")
         assert filed["state"] == "pending" and filed["requestId"].startswith("request-")
         assert f"histopilot confirm approve {filed['requestId']}" in filed["message"]
+        assert service.http.get("/api/v1/task-center/tasks/task-own").json()["state"] == "queued"
         record = service.http.get(f"{path}/{created['id']}").json()
         assert not record.get("frozenSetupId") and record["revision"] == created["revision"]
         pending = service.http.get("/api/v1/agent-requests").json()["requests"]
@@ -418,6 +438,59 @@ def test_experiment_results_summarize_seeds_and_intervals():
     results["batches"][0]["configurations"][0]["perClass"] = per_class
     kept = tools._results_summary(results)["batches"][0]["configurations"][0]
     assert kept["perClass"] == per_class
+    assert "comparison" not in tools._results_summary(results)["batches"][0]
+
+
+def test_experiment_results_summary_keeps_the_arms_against_the_reference():
+    contrast = {
+        "armId": "candidate-2",
+        "armNumber": 2,
+        "model": "transmil",
+        "inputMode": "image",
+        "difference": "reference_minus_arm",
+        "available": True,
+        "oof": {"auroc": {"left": 0.81, "right": 0.9, "difference": -0.09}},
+        "oofInterval": {
+            "unit": "patient",
+            "units": 40,
+            "available": True,
+            "intervals": {"auroc": {"lower": -0.14, "upper": -0.05}},
+        },
+        "folds": {"auroc": {"n": 5, "better": 1, "worse": 4, "values": [0.1, -0.2, -0.1, -0.3]}},
+        "pValue": 0.001,
+        "pValueHolm": 0.002,
+    }
+    comparison = {
+        "referenceId": "candidate-1",
+        "referenceNumber": 1,
+        "primaryMetric": "auroc",
+        "adjustment": "holm",
+        "contrasts": [contrast, {**contrast, "armId": "candidate-3", "available": False}],
+    }
+    results = {
+        "batches": [
+            {"batchId": "batch-1", "configurations": [], "comparison": comparison},
+            {"batchId": "batch-2", "configurations": []},
+        ]
+    }
+    first, second = tools._results_summary(results)["batches"]
+    shown = first["comparison"]
+    assert {key: shown[key] for key in ("referenceId", "referenceNumber", "adjustment")} == {
+        "referenceId": "candidate-1",
+        "referenceNumber": 1,
+        "adjustment": "holm",
+    }
+    arm = shown["contrasts"][0]
+    assert arm["difference"] == "reference_minus_arm" and arm["model"] == "transmil"
+    assert arm["oof"]["auroc"]["difference"] == -0.09
+    assert arm["oofInterval"]["intervals"]["auroc"] == {"lower": -0.14, "upper": -0.05}
+    assert (arm["pValue"], arm["pValueHolm"]) == (0.001, 0.002)
+    # The fold agreement stays; the per-fold differences are `detail="full"`'s.
+    assert arm["folds"] == {"auroc": {"n": 5, "better": 1, "worse": 4}}
+    assert [row["available"] for row in shown["contrasts"]] == [True, False]
+    assert "comparison" not in second
+    # Nothing was taken from the service's own answer.
+    assert "values" in comparison["contrasts"][0]["folds"]["auroc"]
 
 
 def test_case_review_needs_the_full_level(session):

@@ -4,6 +4,7 @@ from typing import Literal
 
 from fastapi import APIRouter
 
+from histopilot.api.filing import FilingChecks
 from histopilot.application.experiment_results import experiment_headlines, experiment_results
 from histopilot.application.model_experiments import ModelExperimentService
 from histopilot.schemas.model_experiments import (
@@ -18,11 +19,30 @@ from histopilot.schemas.predictors import PredictorAction
 from histopilot.storage.project_lock import StorageError
 
 
-def model_experiments_router(projects, filesystem):
+def model_experiments_router(projects, filesystem, filing: FilingChecks | None = None):
     router = APIRouter(prefix="/api/v1/projects/{identity}/model-experiments")
 
     def service(identity):
         return ModelExperimentService(projects.scientific_store(identity), filesystem)
+
+    if filing is not None:
+        # An agent's freeze or start is checked as these routes check it before it is filed.
+        filing.add(
+            "POST",
+            "{P}/model-experiments/{experiment_id}/freeze-setup",
+            FreezeModelExperimentSetup,
+            lambda found, payload: service(found["identity"]).check_freeze_setup(
+                found["experiment_id"], payload
+            ),
+        )
+        filing.add(
+            "POST",
+            "{P}/model-experiments/{experiment_id}/submit",
+            SubmitModelExperiment,
+            lambda found, payload: service(found["identity"]).check_submit(
+                found["experiment_id"], payload
+            ),
+        )
 
     @router.get("")
     def experiments(

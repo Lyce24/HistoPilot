@@ -334,7 +334,11 @@ def experiment_results(session: AgentSession, experiment: str, detail: str = "su
     configuration's seed-averaged metrics with their intervals, per-class results averaged
     over the training seeds, the seed ensemble (the mean of the seeds' out-of-fold
     probabilities) with its intervals, every seed's out-of-fold result and the paired
-    comparisons between batches; `detail="full"` adds every test fold of every seed."""
+    comparisons between batches. A batch that is a controlled comparison also carries
+    `comparison`: each arm against the reference arm on the same resamples (reference minus
+    arm), with the paired interval, the p-value and the Holm-adjusted p-value, and in how many
+    test folds the reference scored higher. `detail="full"` adds every test fold of every
+    seed."""
     client, project = session.client, session.project
     identity = resources.experiment_id(client, project, experiment)
     results = resources.experiment_results(client, project, identity)
@@ -394,6 +398,7 @@ def _results_summary(results: dict) -> dict:
                     "seeds": seeds,
                 }
             )
+        comparison = _controlled_comparison(batch.get("comparison"))
         batches.append(
             {
                 key: batch.get(key)
@@ -408,6 +413,7 @@ def _results_summary(results: dict) -> dict:
                 )
             }
             | {"configurations": configurations}
+            | ({"comparison": comparison} if comparison else {})
         )
     return {
         key: results.get(key)
@@ -423,6 +429,34 @@ def _results_summary(results: dict) -> dict:
     } | {
         "batches": batches,
         "detail": "summary; detail='full' adds every test fold of every seed",
+    }
+
+
+def _controlled_comparison(comparison: dict | None) -> dict | None:
+    """A controlled comparison as Results shows it: the reference arm, then each arm against
+    it with the difference, its paired interval, the p-values and the fold agreement. Only the
+    per-fold differences themselves stay out, as they do for the configurations."""
+    if not comparison:
+        return None
+    contrasts = []
+    for row in comparison.get("contrasts") or []:
+        folds = row.get("folds")
+        contrasts.append(
+            {key: value for key, value in row.items() if key != "folds"}
+            | (
+                {
+                    "folds": {
+                        metric: {key: value for key, value in summary.items() if key != "values"}
+                        for metric, summary in folds.items()
+                        if isinstance(summary, dict)
+                    }
+                }
+                if isinstance(folds, dict)
+                else {}
+            )
+        )
+    return {key: value for key, value in comparison.items() if key != "contrasts"} | {
+        "contrasts": contrasts
     }
 
 
@@ -682,22 +716,39 @@ def comparison_arms(
 # Previews ------------------------------------------------------------------------------
 
 
-def preview_design(session: AgentSession, design: dict, experiment: str | None = None) -> dict:
-    """Save a design as an experiment draft and preview every batch plan. To change the
-    design, pass the `experiment` a previous call returned: that draft is revised, and no
-    other is made. `@tag` names are read as the IDs `notes` names.
+def save_design(session: AgentSession, design: dict, experiment: str | None = None) -> dict:
+    """Save a design as an experiment draft, then preview every batch plan. Without
+    `experiment` it makes a new draft. To change a draft, name it in `experiment` (an ID or
+    a name): the design is saved over it and no other draft is made. Only what differs is
+    written, so saving an unchanged design keeps the draft's revision and preview hash;
+    `saved` says whether anything was written. `@tag` names are read as the IDs `notes` names.
 
     Nothing is frozen. Hand the experiment ID and the returned top-level previewHash to a
     person, who freezes it with `histopilot experiment freeze EXPERIMENT --preview-hash
-    HASH` and starts it."""
+    HASH` and starts it. To read a saved draft's preview hash, use `preview_design`."""
     checked, notes = designs.prepare(design, _resolver(session))
+    client, project = session.client, session.project
     if experiment:
-        identity = resources.experiment_id(session.client, session.project, experiment)
-        record = designs.revise(session.client, session.project, identity, checked)
+        identity = resources.experiment_id(client, project, experiment)
+        revision = resources.experiment(client, project, identity)["revision"]
+        record = designs.revise(client, project, identity, checked)
+        saved = record["revision"] != revision
     else:
-        record = designs.create(session.client, session.project, checked)
-    review = designs.preview(session.client, session.project, record["id"])
-    return bounded({"experimentId": record["id"], **review, "notes": notes})
+        record, saved = designs.create(client, project, checked), True
+    review = designs.preview(client, project, record["id"])
+    return bounded({"experimentId": record["id"], "saved": saved, **review, "notes": notes})
+
+
+def preview_design(session: AgentSession, experiment: str) -> dict:
+    """Preview every batch plan of a saved experiment draft, named by ID or name: its
+    findings, run counts, revision, whether the setup can be frozen, and the previewHash a
+    person confirms. It writes nothing, so a preview hash already handed over stays current.
+    To change the draft, use `save_design`.
+
+    Hand the experiment ID and the top-level previewHash to a person, who freezes it with
+    `histopilot experiment freeze EXPERIMENT --preview-hash HASH` and starts it."""
+    identity = resources.experiment_id(session.client, session.project, experiment)
+    return bounded(designs.preview(session.client, session.project, identity))
 
 
 def apply_preview(session: AgentSession, spec: dict) -> dict:
@@ -735,7 +786,9 @@ def _filed(send) -> dict:
 
 def request_freeze(session: AgentSession, experiment: str, revision: int) -> dict:
     """Needs a person's approval: ask to freeze an experiment's setup at the revision you
-    previewed. The service refuses the approval if the experiment changed since."""
+    previewed. The service checks the request as freezing would before it files it, and
+    refuses one that could not succeed, such as a revision that has moved on; it checks again
+    when a person approves."""
     identity = resources.experiment_id(session.client, session.project, experiment)
     return _filed(
         lambda: designs.freeze(session.client, session.project, identity, revision=revision)
@@ -743,7 +796,10 @@ def request_freeze(session: AgentSession, experiment: str, revision: int) -> dic
 
 
 def request_start(session: AgentSession, experiment: str, revision: int) -> dict:
-    """Needs a person's approval: ask to start training a frozen experiment's batches."""
+    """Needs a person's approval: ask to start training a frozen experiment's batches, at its
+    current revision. The service checks the request as starting would before it files it.
+    An experiment whose setup is not frozen yet cannot be started: file the freeze alone, and
+    ask for the start once a person has approved the freeze, which changes the revision."""
     identity = resources.experiment_id(session.client, session.project, experiment)
     return _filed(
         lambda: designs.start(session.client, session.project, identity, revision=revision)

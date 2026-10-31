@@ -178,7 +178,9 @@ class BulkEvaluationService:
         with lifecycle_guard(self.store.folder):
             return self._prepare(selection)
 
-    def run(self, request):
+    @staticmethod
+    def _requested(request):
+        """The selection a run request reviewed, and the request as its batch records it."""
         selection = BulkEvaluationSelection.model_validate(
             request.model_dump(include=set(BulkEvaluationSelection.model_fields))
         )
@@ -189,30 +191,51 @@ class BulkEvaluationService:
                 if getattr(request, key) is None
             }
         )
+        return selection, submitted_request
+
+    def _published(self, request, submitted_request) -> dict | None:
+        """The batch this request's operation already published, if any."""
+        prior = self.store.configuration_publication(request.operationId)
+        if prior and (
+            prior["manifest"].get("kind") != "evaluation-batch"
+            or prior["manifest"].get("request") != submitted_request
+        ):
+            raise StorageError(
+                "This operation belongs to another evaluation batch.", "OPERATION_CONFLICT"
+            )
+        return prior or None
+
+    def _runnable(self, request, selection) -> dict:
+        """The preview the request was reviewed on, still current and runnable."""
+        preview = self._prepare(selection, reviewed=request.reviewedPredictorIds)
+        if preview["previewHash"] != request.previewHash:
+            raise StorageError(
+                "Reviewed predictor or cohort inputs changed. Review this batch again.",
+                "PREVIEW_STALE",
+            )
+        if not preview["canRun"]:
+            raise StorageError(
+                "Choose compatible active predictors and remove deleted selections before running this batch.",
+                "EVALUATION_BATCH_BLOCKED",
+                422,
+            )
+        return preview
+
+    def check_run(self, request) -> None:
+        """What `run` checks before it publishes the batch, and nothing written: an Apply
+        models run an agent files for a person to approve is checked so, and one the run
+        would refuse is never filed."""
+        selection, submitted_request = self._requested(request)
         with lifecycle_guard(self.store.folder):
-            prior = self.store.configuration_publication(request.operationId)
-            if prior:
-                if (
-                    prior["manifest"].get("kind") != "evaluation-batch"
-                    or prior["manifest"].get("request") != submitted_request
-                ):
-                    raise StorageError(
-                        "This operation belongs to another evaluation batch.", "OPERATION_CONFLICT"
-                    )
-                batch = prior
-            else:
-                preview = self._prepare(selection, reviewed=request.reviewedPredictorIds)
-                if preview["previewHash"] != request.previewHash:
-                    raise StorageError(
-                        "Reviewed predictor or cohort inputs changed. Review this batch again.",
-                        "PREVIEW_STALE",
-                    )
-                if not preview["canRun"]:
-                    raise StorageError(
-                        "Choose compatible active predictors and remove deleted selections before running this batch.",
-                        "EVALUATION_BATCH_BLOCKED",
-                        422,
-                    )
+            if self._published(request, submitted_request) is None:
+                self._runnable(request, selection)
+
+    def run(self, request):
+        selection, submitted_request = self._requested(request)
+        with lifecycle_guard(self.store.folder):
+            batch = self._published(request, submitted_request)
+            if batch is None:
+                preview = self._runnable(request, selection)
                 token = content_hash(request.operationId)
                 members = []
                 for index, item in enumerate(preview["items"]):

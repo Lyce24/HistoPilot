@@ -172,7 +172,8 @@ def test_changed_or_archived_experiment_invalidates_new_batch_review(prepared):
     service, development, spec, experiment, _source = prepared
     preview = development.preview(spec)
     service.update(
-        experiment["id"], UpdateModelExperiment(name=experiment["name"], expectedRevision=1)
+        experiment["id"],
+        UpdateModelExperiment(name=experiment["name"], expectedRevision=1, notes="Changed"),
     )
     with pytest.raises(StorageError) as changed:
         development.freeze(spec, preview["previewHash"], "stale", {"tag": "Stale"})

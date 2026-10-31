@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Response
 
+from histopilot.api.filing import FilingChecks
 from histopilot.application.bulk_evaluations import BulkEvaluationService
 from histopilot.application.evaluation_runs import EvaluationRunService
 from histopilot.application.predictor_builds import PredictorBuildService
@@ -115,7 +116,7 @@ def predictor_router(projects, filesystem):
     return router
 
 
-def evaluation_run_router(projects, filesystem):
+def evaluation_run_router(projects, filesystem, filing: FilingChecks | None = None):
     router = APIRouter(prefix="/api/v1/projects/{identity}")
 
     def service(identity):
@@ -149,6 +150,15 @@ def evaluation_run_router(projects, filesystem):
     @router.post("/evaluation-runs/bulk/preview")
     def preview_batch(identity: str, payload: BulkEvaluationSelection):
         return bulk(identity).preview(stated(payload))
+
+    if filing is not None:
+        # An agent's Apply models run is checked as running it checks before it is filed.
+        filing.add(
+            "POST",
+            "{P}/evaluation-runs/bulk",
+            RunBulkEvaluation,
+            lambda found, payload: bulk(found["identity"]).check_run(stated(payload)),
+        )
 
     @router.post("/evaluation-runs/bulk", status_code=202)
     def run_batch(identity: str, payload: RunBulkEvaluation):

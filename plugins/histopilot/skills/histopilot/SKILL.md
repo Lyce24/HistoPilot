@@ -14,8 +14,10 @@ browser, with a scoped token that reaches one project.
 
 - **MCP tools** (this plugin's `histopilot` server): prefer them. `status` names your
   project; `roadmap`, `list_records`, `get_record`, `experiment_results`, `run_analysis`,
-  `tasks`, `task`, `wait` and `models` read; `propose_apply`, `apply_preview` and
-  `preview_design` prepare (pass `experiment` to revise the draft it made); with a
+  `tasks`, `task`, `wait` and `models` read; `propose_apply`, `apply_preview`,
+  `save_design` and `preview_design` prepare. `save_design` saves an experiment draft (pass
+  `experiment` to save over the draft it made rather than make another), and
+  `preview_design` reads a saved draft's preview hash without changing it. With a
   commit-scope token the `request_` tools file a change for a person to approve.
   `list_records` takes `experiment` (an ID or a name) for batches, predictors and runs,
   and `cohort` for runs; `run_analysis` with `summary` and `comparison` compares two runs.
