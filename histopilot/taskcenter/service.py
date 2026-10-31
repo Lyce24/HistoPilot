@@ -2235,13 +2235,22 @@ class TaskCenterService:
         with self._serialized(operation_id):
             return self._call(self._task_action, task_id, action, operation_id)
 
-    def _task_action(self, task_id: str, action: str, operation_id: str) -> dict:
+    def check_task_action(self, task_id: str, action: str, operation_id: str) -> None:
+        """What `task_action` checks before it acts, and nothing done: an agent's request to
+        act on a task is checked so before it is filed for a person."""
+        *_, request = self._call(self._task_request, task_id, action)
+        self._call(self._receipt, request, operation_id)
+
+    def _task_request(self, task_id: str, action: str):
         if action not in TASK_ACTIONS:
             raise StorageError(f"Unknown task action: {action}.", "TASK_ACTION_INVALID", 422)
         task = self._require_task(task_id)
         owner = self.store.owner(task["ownerKey"])
         project_id = self._workspace_project(owner)
-        request = {"scope": "task", "task": task_id, "action": action}
+        return task, owner, project_id, {"scope": "task", "task": task_id, "action": action}
+
+    def _task_action(self, task_id: str, action: str, operation_id: str) -> dict:
+        task, owner, project_id, request = self._task_request(task_id, action)
         if not self._replayed(request, operation_id):
             awaiting = awaiting_requeue(task)
             if action == "cancel" and (task["state"] in LIVE or awaiting):
@@ -2257,21 +2266,33 @@ class TaskCenterService:
         with self._serialized(operation_id):
             return self._call(self._owner_action, key, action, operation_id, position)
 
-    def _owner_action(self, key, action, operation_id, position) -> dict:
+    def check_owner_action(
+        self, key: str, action: str, operation_id: str, *, position: str | None = None
+    ) -> None:
+        """What `owner_action` checks before it acts, and nothing done: an agent's request to
+        act on a task owner is checked so before it is filed for a person."""
+        *_, request = self._call(self._owner_request, key, action, position)
+        self._call(self._receipt, request, operation_id)
+
+    def _owner_request(self, key, action, position):
         if action not in OWNER_ACTIONS:
             raise StorageError(f"Unknown owner action: {action}.", "TASK_ACTION_INVALID", 422)
         if action == "move" and position not in MOVE_POSITIONS:
             raise StorageError(
                 "Move an owner to top, up, down or bottom.", "TASK_ACTION_INVALID", 422
             )
-        store = self.store
-        owner = store.owner(key)
+        owner = self.store.owner(key)
         if owner is None:
             raise StorageError("This task owner does not exist.", "TASK_OWNER_NOT_FOUND", 404)
         project_id = self._workspace_project(owner)
         request = {"scope": "owner", "owner": key, "action": action}
         if action == "move":
             request["position"] = position
+        return owner, project_id, request
+
+    def _owner_action(self, key, action, operation_id, position) -> dict:
+        store = self.store
+        owner, project_id, request = self._owner_request(key, action, position)
         if not self._replayed(request, operation_id):
             if action == "hold":
                 store.hold_owner(key, True)

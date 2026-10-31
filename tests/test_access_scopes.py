@@ -300,12 +300,78 @@ def test_agents_file_task_center_changes_only_for_their_own_work(service):
         f"{API}/task-center/owners/nothing-here/hold", json={"operationId": "y"}, headers=agent
     )
     assert missing.status_code == 404 and code(missing) == "TASK_OWNER_NOT_FOUND"
+    # What the actions themselves would refuse is refused when filed, as they refuse it.
+    unknown = service.http.post(
+        f"{API}/task-center/tasks/task-own/hold", json={"operationId": "w"}, headers=agent
+    )
+    assert unknown.status_code == 422 and code(unknown) == "REQUEST_INVALID"
+    assert unknown.json()["detail"][0]["loc"] == ["path", "action"]
+    bodiless = service.http.post(f"{API}/task-center/tasks/task-own/cancel", headers=agent)
+    assert bodiless.status_code == 422 and code(bodiless) == "REQUEST_INVALID"
+    owner = default_client().store.get("task-own")["ownerKey"]
+    nowhere = service.http.post(
+        f"{API}/task-center/owners/{owner}/move", json={"operationId": "v"}, headers=agent
+    )
+    assert nowhere.status_code == 422 and code(nowhere) == "TASK_ACTION_INVALID"
     parked = service.http.post(
         f"{API}/task-center/tasks/task-own/cancel", json={"operationId": "z"}, headers=agent
     )
     assert parked.status_code == 202 and code(parked) == "CONFIRMATION_PENDING"
     pending = service.http.get(f"{API}/agent-requests", headers=agent).json()["requests"]
     assert [row["path"] for row in pending] == [f"{API}/task-center/tasks/task-own/cancel"]
+
+
+def test_filing_checks_name_commit_routes_the_service_serves(service):
+    from histopilot.api.filing import FilingChecks
+    from histopilot.api.route_classes import COMMIT, ROUTE_CLASSES
+
+    # The in-process schema lists every route the service serves.
+    served = {
+        (method.upper(), path)
+        for path, operations in service.http.app.openapi()["paths"].items()
+        for method in operations
+    }
+    checked = service.http.app.state.filing.routes()
+    # The commits the agent tools file are all checked when filed.
+    assert {
+        ("POST", f"{API}/projects/{{identity}}/model-experiments/{{experiment_id}}/freeze-setup"),
+        ("POST", f"{API}/projects/{{identity}}/model-experiments/{{experiment_id}}/submit"),
+        ("POST", f"{API}/projects/{{identity}}/evaluation-runs/bulk"),
+        ("POST", f"{API}/task-center/tasks/{{task_id}}/{{action}}"),
+    } <= checked
+    for route in checked:
+        assert route in served and ROUTE_CLASSES[route] == COMMIT, route
+    with pytest.raises(ValueError, match="not a commit route"):
+        FilingChecks().add("POST", "{P}/evaluation-runs/bulk/preview", object, print)
+
+
+def test_a_refused_filing_is_redacted_on_metadata_projects(service):
+    from histopilot.storage.project_lock import StorageError
+
+    project = service.create_project("Shared")
+    store = ScientificStore(service.settings.workspace / "projects" / "Shared", project)
+    rows = [{"slideId": CANARY_SLIDE, "patientId": CANARY_PATIENT, "attributes": {"label": "1"}}]
+    data, _ = fixtures.dataset(store, rows=rows)
+    expose(service, project, "metadata")
+    agent = as_agent(token_for(service, project, scopes=("read", "preview", "commit")))
+    from pydantic import BaseModel
+
+    class Label(BaseModel):
+        tag: str
+
+    def refuse(found, payload):
+        raise StorageError(f"Slide {CANARY_SLIDE} has no label {payload.tag}.", "X_REFUSED", 409)
+
+    service.http.app.state.filing.add("PUT", "{P}/datasets/{dataset_id}/label", Label, refuse)
+    refused = service.http.put(
+        f"{API}/projects/{project}/datasets/{data['id']}/label", json={"tag": "v2"}, headers=agent
+    )
+    assert refused.status_code == 409 and code(refused) == "X_REFUSED"
+    assert CANARY_SLIDE not in refused.text and "S-" in refused.json()["detail"]
+    assert service.http.get(f"{API}/agent-requests").json()["requests"] == []
+    entries = audit.read(service.settings.workspace / "projects" / "Shared")
+    filed = [entry for entry in entries if entry["actor"]["kind"] == "agent"]
+    assert [(entry["status"], entry.get("parked")) for entry in filed] == [(409, None)]
 
 
 def test_the_planning_settings_cannot_carry_the_exposure_level(service):

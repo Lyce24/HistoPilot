@@ -6,8 +6,10 @@ batches and saved plans remain readable without rewriting their evidence.
 """
 
 import sqlite3
+from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
+from typing import NamedTuple
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -332,6 +334,29 @@ def require_execution_contract(expected, actual):
             "EXPERIMENT_RUNTIME_CHANGED",
             409,
         )
+
+
+class SetupFreeze(NamedTuple):
+    """A checked freeze request: the record it read, its operation, and either the setup it
+    already published or the manifest to publish once the feature files are checked again."""
+
+    record: dict
+    operation: str
+    prior: dict | None
+    manifest: dict | None = None
+    freshness: Callable[[], object] | None = None
+
+
+class PlannedSubmission(NamedTuple):
+    """A checked start request: what its receipt records, before the machine is checked."""
+
+    record: dict
+    frozen_setup: dict | None
+    experiment_record: dict
+    batches: list[dict]
+    publications: list[dict]
+    # Each plan's batch manifest, for the training preflight.
+    manifests: list[dict]
 
 
 class ModelExperimentService:
@@ -836,154 +861,20 @@ class ModelExperimentService:
         return document
 
     def freeze_setup(self, identity, request):
-        from histopilot.application.development import DevelopmentService
-        from histopilot.application.mil_inputs import MILInputService
-
         with lifecycle_guard(self.store.folder):
-            record = self.require_editable(identity, metadata_only=True)
-            previous = record["payload"].get("setupFreeze")
-            if record["payload"].get("frozenSetupId"):
-                if previous != request.model_dump():
-                    raise StorageError(
-                        "This setup is already frozen. Copy it to make changes.",
-                        "EXPERIMENT_SETUP_FROZEN",
-                        409,
-                    )
-                self._frozen_setup(record)
+            step = self._setup_freeze(identity, request)
+            if step is None:
                 return self.get(identity)
-            record = self.require_editable(identity, request.expectedRevision)
-            payload = record["payload"]
-            if not payload.get("setupDesign") or not payload.get("inputs"):
-                raise StorageError(
-                    "Save the dataset, target split, features and training design first.",
-                    "EXPERIMENT_SETUP_INPUTS_REQUIRED",
-                    422,
-                )
-            operation = "experiment-setup-" + content_hash(
-                {"experimentId": identity, "operationId": request.operationId}
+            frozen = step.prior or self.store.publish_configuration(
+                manifest=step.manifest, operation_id=step.operation, before_publish=step.freshness
             )
-            prior = self.store.configuration_publication(operation)
-            if prior:
-                manifest = prior["manifest"]
-                if (
-                    manifest.get("experimentId") != identity
-                    or manifest.get("setupFreeze") != request.model_dump()
-                ):
-                    raise StorageError(
-                        "This operation belongs to another setup request.",
-                        "OPERATION_CONFLICT",
-                        409,
-                    )
-                for key in ("setupDesign", "inputs", "predictorPolicy"):
-                    if manifest.get(key) != payload.get(key):
-                        raise StorageError(
-                            "The setup changed after its publication.",
-                            "EXPERIMENT_SETUP_CHANGED",
-                            409,
-                        )
-                frozen = prior
-            else:
-                self._require_input_compatibility(
-                    MILInputService(self.store, self.filesystem).preview(
-                        MILInputSpec.model_validate(payload["inputs"])
-                    )
-                )
-                target_split = self.store.get_configuration(payload["setupDesign"]["targetSplitId"])
-                if target_split["manifest"].get("datasetId") != payload["setupDesign"]["datasetId"]:
-                    raise StorageError(
-                        "The target split belongs to a different dataset.",
-                        "EXPERIMENT_DATASET_MISMATCH",
-                        422,
-                    )
-                plans = self._normalize_plans(
-                    payload.get("batchPlans", []),
-                    identity=identity,
-                    revision=record["revision"],
-                    name=record["name"],
-                    inputs=payload["inputs"],
-                    predictor_policy=payload.get("predictorPolicy"),
-                )
-                states = self.store.lifecycle.read()["records"]
-                batches = [
-                    batch
-                    for batch in self._owned_batches(identity)
-                    if states.get(f"configuration:{batch['id']}", {}).get("state", "active")
-                    == "active"
-                ]
-                if not plans and not batches:
-                    raise StorageError(
-                        "Save at least one batch plan before freezing setup.",
-                        "EXPERIMENT_BATCHES_REQUIRED",
-                        422,
-                    )
-                development = DevelopmentService(self.store, self.filesystem)
-                previews = []
-                for plan in plans:
-                    preview = development._preview(
-                        DevelopmentBatchSpec.model_validate(plan["spec"], context={"legacy": True}),
-                        experiment_record=record,
-                    )
-                    if not preview["canFreeze"]:
-                        raise StorageError(
-                            "Resolve batch findings before freezing setup: "
-                            + "; ".join(
-                                row["message"]
-                                for row in preview["findings"]
-                                if row["severity"] == "error"
-                            ),
-                            "BATCH_PREFLIGHT_BLOCKED",
-                            422,
-                            findings=preview["findings"],
-                        )
-                    previews.append({"planId": plan["id"], "previewHash": preview["previewHash"]})
-                if any(
-                    batch["manifest"].get("spec", {}).get("inputs") != payload["inputs"]
-                    for batch in batches
-                ):
-                    raise StorageError(
-                        "Existing batches use different experiment inputs.",
-                        "EXPERIMENT_BATCH_INPUTS_MISMATCH",
-                        409,
-                    )
-                manifest = {
-                    "kind": "experiment-setup",
-                    "version": 1,
-                    "experimentId": identity,
-                    "datasetId": payload["setupDesign"]["datasetId"],
-                    "setupDesign": deepcopy(payload["setupDesign"]),
-                    "inputs": deepcopy(payload["inputs"]),
-                    "inputSnapshot": input_snapshot(self.store, payload["inputs"]),
-                    "targetSplit": {key: target_split[key] for key in ("id", "contentHash")},
-                    "batchPlans": plans,
-                    "batchPreviews": previews,
-                    "batches": [
-                        {key: batch[key] for key in ("id", "contentHash")} for batch in batches
-                    ],
-                    "predictorPolicy": deepcopy(payload.get("predictorPolicy")),
-                    "setupFreeze": request.model_dump(),
-                    "experiment": {
-                        "id": identity,
-                        "revision": record["revision"],
-                        "name": record["name"],
-                        "payload": {
-                            key: deepcopy(payload.get(key, [] if key == "tags" else ""))
-                            for key in ("notes", "tags")
-                        },
-                    },
-                }
-                bundle_service = FeatureBundleService(self.store, self.filesystem)
-                bundle = bundle_service.get(payload["inputs"]["featureBundleId"])
-                feature = self.store.get_configuration(bundle["manifest"]["spec"]["featureSetId"])
-                freshness = bundle_service._freshness_guard(feature, bundle["manifest"])
-                frozen = self.store.publish_configuration(
-                    manifest=manifest, operation_id=operation, before_publish=freshness
-                )
+            record = step.record
             self.store.update_draft(
                 identity,
                 expected_revision=record["revision"],
                 name=record["name"],
                 payload={
-                    **payload,
+                    **record["payload"],
                     "setupVersion": 1,
                     "batchPlans": frozen["manifest"]["batchPlans"],
                     "frozenSetupId": frozen["id"],
@@ -991,6 +882,152 @@ class ModelExperimentService:
                 },
             )
             return self.get(identity)
+
+    def check_freeze_setup(self, identity, request) -> None:
+        """Everything `freeze_setup` checks, and nothing written: a freeze an agent files for a
+        person to approve is checked so, and one the freeze would refuse is never filed."""
+        with lifecycle_guard(self.store.folder):
+            step = self._setup_freeze(identity, request)
+            if step is not None and step.prior is None and step.freshness is not None:
+                # What publishing checks last: the feature files the bundle pins.
+                step.freshness()
+
+    def _setup_freeze(self, identity, request) -> SetupFreeze | None:
+        """Check a freeze request and say what it publishes; None when this request already
+        froze the setup, so the freeze replays as done."""
+        from histopilot.application.development import DevelopmentService
+        from histopilot.application.mil_inputs import MILInputService
+
+        record = self.require_editable(identity, metadata_only=True)
+        previous = record["payload"].get("setupFreeze")
+        if record["payload"].get("frozenSetupId"):
+            if previous != request.model_dump():
+                raise StorageError(
+                    "This setup is already frozen. Copy it to make changes.",
+                    "EXPERIMENT_SETUP_FROZEN",
+                    409,
+                )
+            self._frozen_setup(record)
+            return None
+        record = self.require_editable(identity, request.expectedRevision)
+        payload = record["payload"]
+        if not payload.get("setupDesign") or not payload.get("inputs"):
+            raise StorageError(
+                "Save the dataset, target split, features and training design first.",
+                "EXPERIMENT_SETUP_INPUTS_REQUIRED",
+                422,
+            )
+        operation = "experiment-setup-" + content_hash(
+            {"experimentId": identity, "operationId": request.operationId}
+        )
+        prior = self.store.configuration_publication(operation)
+        if prior:
+            manifest = prior["manifest"]
+            if (
+                manifest.get("experimentId") != identity
+                or manifest.get("setupFreeze") != request.model_dump()
+            ):
+                raise StorageError(
+                    "This operation belongs to another setup request.",
+                    "OPERATION_CONFLICT",
+                    409,
+                )
+            for key in ("setupDesign", "inputs", "predictorPolicy"):
+                if manifest.get(key) != payload.get(key):
+                    raise StorageError(
+                        "The setup changed after its publication.",
+                        "EXPERIMENT_SETUP_CHANGED",
+                        409,
+                    )
+            return SetupFreeze(record, operation, prior)
+        self._require_input_compatibility(
+            MILInputService(self.store, self.filesystem).preview(
+                MILInputSpec.model_validate(payload["inputs"])
+            )
+        )
+        target_split = self.store.get_configuration(payload["setupDesign"]["targetSplitId"])
+        if target_split["manifest"].get("datasetId") != payload["setupDesign"]["datasetId"]:
+            raise StorageError(
+                "The target split belongs to a different dataset.",
+                "EXPERIMENT_DATASET_MISMATCH",
+                422,
+            )
+        plans = self._normalize_plans(
+            payload.get("batchPlans", []),
+            identity=identity,
+            revision=record["revision"],
+            name=record["name"],
+            inputs=payload["inputs"],
+            predictor_policy=payload.get("predictorPolicy"),
+        )
+        states = self.store.lifecycle.read()["records"]
+        batches = [
+            batch
+            for batch in self._owned_batches(identity)
+            if states.get(f"configuration:{batch['id']}", {}).get("state", "active") == "active"
+        ]
+        if not plans and not batches:
+            raise StorageError(
+                "Save at least one batch plan before freezing setup.",
+                "EXPERIMENT_BATCHES_REQUIRED",
+                422,
+            )
+        development = DevelopmentService(self.store, self.filesystem)
+        previews = []
+        for plan in plans:
+            preview = development._preview(
+                DevelopmentBatchSpec.model_validate(plan["spec"], context={"legacy": True}),
+                experiment_record=record,
+            )
+            if not preview["canFreeze"]:
+                raise StorageError(
+                    "Resolve batch findings before freezing setup: "
+                    + "; ".join(
+                        row["message"] for row in preview["findings"] if row["severity"] == "error"
+                    ),
+                    "BATCH_PREFLIGHT_BLOCKED",
+                    422,
+                    findings=preview["findings"],
+                )
+            previews.append({"planId": plan["id"], "previewHash": preview["previewHash"]})
+        if any(
+            batch["manifest"].get("spec", {}).get("inputs") != payload["inputs"]
+            for batch in batches
+        ):
+            raise StorageError(
+                "Existing batches use different experiment inputs.",
+                "EXPERIMENT_BATCH_INPUTS_MISMATCH",
+                409,
+            )
+        manifest = {
+            "kind": "experiment-setup",
+            "version": 1,
+            "experimentId": identity,
+            "datasetId": payload["setupDesign"]["datasetId"],
+            "setupDesign": deepcopy(payload["setupDesign"]),
+            "inputs": deepcopy(payload["inputs"]),
+            "inputSnapshot": input_snapshot(self.store, payload["inputs"]),
+            "targetSplit": {key: target_split[key] for key in ("id", "contentHash")},
+            "batchPlans": plans,
+            "batchPreviews": previews,
+            "batches": [{key: batch[key] for key in ("id", "contentHash")} for batch in batches],
+            "predictorPolicy": deepcopy(payload.get("predictorPolicy")),
+            "setupFreeze": request.model_dump(),
+            "experiment": {
+                "id": identity,
+                "revision": record["revision"],
+                "name": record["name"],
+                "payload": {
+                    key: deepcopy(payload.get(key, [] if key == "tags" else ""))
+                    for key in ("notes", "tags")
+                },
+            },
+        }
+        bundle_service = FeatureBundleService(self.store, self.filesystem)
+        bundle = bundle_service.get(payload["inputs"]["featureBundleId"])
+        feature = self.store.get_configuration(bundle["manifest"]["spec"]["featureSetId"])
+        freshness = bundle_service._freshness_guard(feature, bundle["manifest"])
+        return SetupFreeze(record, operation, None, manifest, freshness)
 
     def require_training_action(self, identity, batch_id, *, resume=False):
         record = self.require_editable(identity, metadata_only=True)
@@ -1026,6 +1063,164 @@ class ModelExperimentService:
             payload={**record["payload"], "submission": deepcopy(submission)},
         )
 
+    def check_submit(self, identity, request) -> None:
+        """What `submit` checks about the request, the experiment and its frozen setup, and
+        nothing written: a start an agent files for a person to approve is checked so, and one
+        the start would refuse is never filed. The training preflight, which starts the
+        training runtime and reads this machine's capacity, runs when the person approves."""
+        with lifecycle_guard(self.store.folder, timeout=5):
+            record = self.require_editable(identity, metadata_only=True)
+            submission = record["payload"].get("submission")
+            if submission:
+                if submission["operationId"] != request.operationId:
+                    raise StorageError(
+                        "This experiment is already submitted. Retry its original submission or resume an unfinished batch.",
+                        "EXPERIMENT_ALREADY_SUBMITTED",
+                        409,
+                    )
+                return
+            self._plan_submission(identity, request, record)
+
+    def _plan_submission(self, identity, request, record) -> PlannedSubmission:
+        """Check a start request against the experiment and its frozen setup, and say what
+        its receipt records."""
+        from histopilot.application.development import DevelopmentService
+
+        pipeline = bool(
+            record["payload"].get("setupVersion") or record["payload"].get("setupDesign")
+        )
+        frozen_setup = self._frozen_setup(record)["manifest"] if pipeline else None
+        record = self.require_editable(identity, request.expectedRevision, metadata_only=pipeline)
+        experiment_record = frozen_setup["experiment"] if frozen_setup else record
+        if (
+            frozen_setup
+            and input_snapshot(self.store, frozen_setup["inputs"]) != frozen_setup["inputSnapshot"]
+        ):
+            raise StorageError(
+                "The frozen setup inputs changed. Copy the setup and review the current inputs.",
+                "EXPERIMENT_SETUP_CHANGED",
+                409,
+            )
+        if not record["payload"].get("inputs"):
+            raise StorageError(
+                "Choose experiment inputs before submission.",
+                "EXPERIMENT_INPUTS_REQUIRED",
+                422,
+            )
+        plans = (
+            deepcopy(frozen_setup["batchPlans"])
+            if frozen_setup
+            else self._normalize_plans(
+                record["payload"].get("batchPlans", []),
+                identity=identity,
+                revision=record["revision"],
+                name=record["name"],
+                inputs=record["payload"]["inputs"],
+                predictor_policy=record["payload"].get("predictorPolicy"),
+            )
+        )
+        states = self.store.lifecycle.read()["records"]
+        owned_batches = self._owned_batches(identity)
+        batches = [
+            batch
+            for batch in owned_batches
+            if states.get(f"configuration:{batch['id']}", {}).get("state", "active") == "active"
+        ]
+        if frozen_setup:
+            batches = []
+            for expected in frozen_setup["batches"]:
+                batch = self.store.get_configuration(expected["id"])
+                if (
+                    batch["contentHash"] != expected["contentHash"]
+                    or states.get(f"configuration:{batch['id']}", {}).get("state", "active")
+                    != "active"
+                ):
+                    raise StorageError(
+                        "A batch in this frozen setup changed or is inactive.",
+                        "EXPERIMENT_SETUP_CHANGED",
+                        409,
+                    )
+                batches.append(batch)
+        if any(
+            batch["manifest"].get("spec", {}).get("inputs") != record["payload"]["inputs"]
+            for batch in batches
+        ):
+            raise StorageError(
+                "An existing frozen batch uses different inputs from this experiment. Archive that batch during planning, then add its settings as an editable batch with the current inputs, or copy the experiment.",
+                "EXPERIMENT_BATCH_INPUTS_MISMATCH",
+                409,
+            )
+        if not plans and not batches:
+            raise StorageError(
+                "Save at least one batch plan before submission.",
+                "EXPERIMENT_BATCHES_REQUIRED",
+                422,
+            )
+        development = DevelopmentService(self.store, self.filesystem)
+        publications, manifests = [], []
+        for plan in plans:
+            spec = DevelopmentBatchSpec.model_validate(plan["spec"], context={"legacy": True})
+            preview = (
+                development._preview(spec, experiment_record=experiment_record)
+                if frozen_setup
+                else development.preview(spec)
+            )
+            if not preview["canFreeze"]:
+                raise StorageError(
+                    "Resolve batch findings before submission: "
+                    + "; ".join(
+                        row["message"] for row in preview["findings"] if row["severity"] == "error"
+                    ),
+                    "BATCH_PREFLIGHT_BLOCKED",
+                    409,
+                    findings=preview["findings"],
+                )
+            if (
+                frozen_setup
+                and {"planId": plan["id"], "previewHash": preview["previewHash"]}
+                not in frozen_setup["batchPreviews"]
+            ):
+                raise StorageError(
+                    "The batch no longer matches the experiment's frozen design.",
+                    "EXPERIMENT_SETUP_CHANGED",
+                    409,
+                )
+            manifest = {
+                key: value for key, value in preview.items() if key not in {"canFreeze", "findings"}
+            }
+            for existing in owned_batches:
+                existing_state = states.get(f"configuration:{existing['id']}", {}).get(
+                    "state", "active"
+                )
+                if existing_state != "active" and existing["manifest"] == manifest:
+                    raise StorageError(
+                        f"Batch '{spec.batchName}' already exists in the {existing_state} "
+                        "state with these exact settings. Restore that batch to Active "
+                        "or change this plan before submitting the experiment.",
+                        "EXPERIMENT_BATCH_INACTIVE",
+                        409,
+                    )
+            manifests.append(manifest)
+            publications.append(
+                {
+                    "planId": plan["id"],
+                    "spec": spec.model_dump(),
+                    "previewHash": preview["previewHash"],
+                    "operationId": "experiment-batch-"
+                    + content_hash(
+                        {
+                            "experiment": identity,
+                            "operation": request.operationId,
+                            "plan": plan["id"],
+                        }
+                    ),
+                    "batchId": None,
+                }
+            )
+        return PlannedSubmission(
+            record, frozen_setup, experiment_record, batches, publications, manifests
+        )
+
     def submit(self, identity, request):
         from histopilot.application.development import DevelopmentService
 
@@ -1043,130 +1238,13 @@ class ModelExperimentService:
                     self._start_predictors(identity, submission)
                     return self.get(identity)
             else:
-                pipeline = bool(
-                    record["payload"].get("setupVersion") or record["payload"].get("setupDesign")
-                )
-                frozen_setup = self._frozen_setup(record)["manifest"] if pipeline else None
-                record = self.require_editable(
-                    identity, request.expectedRevision, metadata_only=pipeline
-                )
-                experiment_record = frozen_setup["experiment"] if frozen_setup else record
-                if (
-                    frozen_setup
-                    and input_snapshot(self.store, frozen_setup["inputs"])
-                    != frozen_setup["inputSnapshot"]
-                ):
-                    raise StorageError(
-                        "The frozen setup inputs changed. Copy the setup and review the current inputs.",
-                        "EXPERIMENT_SETUP_CHANGED",
-                        409,
-                    )
-                if not record["payload"].get("inputs"):
-                    raise StorageError(
-                        "Choose experiment inputs before submission.",
-                        "EXPERIMENT_INPUTS_REQUIRED",
-                        422,
-                    )
-                plans = (
-                    deepcopy(frozen_setup["batchPlans"])
-                    if frozen_setup
-                    else self._normalize_plans(
-                        record["payload"].get("batchPlans", []),
-                        identity=identity,
-                        revision=record["revision"],
-                        name=record["name"],
-                        inputs=record["payload"]["inputs"],
-                        predictor_policy=record["payload"].get("predictorPolicy"),
-                    )
-                )
-                states = self.store.lifecycle.read()["records"]
-                owned_batches = self._owned_batches(identity)
-                batches = [
-                    batch
-                    for batch in owned_batches
-                    if states.get(f"configuration:{batch['id']}", {}).get("state", "active")
-                    == "active"
-                ]
-                if frozen_setup:
-                    batches = []
-                    for expected in frozen_setup["batches"]:
-                        batch = self.store.get_configuration(expected["id"])
-                        if (
-                            batch["contentHash"] != expected["contentHash"]
-                            or states.get(f"configuration:{batch['id']}", {}).get("state", "active")
-                            != "active"
-                        ):
-                            raise StorageError(
-                                "A batch in this frozen setup changed or is inactive.",
-                                "EXPERIMENT_SETUP_CHANGED",
-                                409,
-                            )
-                        batches.append(batch)
-                if any(
-                    batch["manifest"].get("spec", {}).get("inputs") != record["payload"]["inputs"]
-                    for batch in batches
-                ):
-                    raise StorageError(
-                        "An existing frozen batch uses different inputs from this experiment. Archive that batch during planning, then add its settings as an editable batch with the current inputs, or copy the experiment.",
-                        "EXPERIMENT_BATCH_INPUTS_MISMATCH",
-                        409,
-                    )
-                if not plans and not batches:
-                    raise StorageError(
-                        "Save at least one batch plan before submission.",
-                        "EXPERIMENT_BATCHES_REQUIRED",
-                        422,
-                    )
-                development = DevelopmentService(self.store, self.filesystem)
-                publications, freshness_checks, contracts = [], [], []
-                for plan in plans:
-                    spec = DevelopmentBatchSpec.model_validate(
-                        plan["spec"], context={"legacy": True}
-                    )
-                    preview = (
-                        development._preview(spec, experiment_record=experiment_record)
-                        if frozen_setup
-                        else development.preview(spec)
-                    )
-                    if not preview["canFreeze"]:
-                        raise StorageError(
-                            "Resolve batch findings before submission: "
-                            + "; ".join(
-                                row["message"]
-                                for row in preview["findings"]
-                                if row["severity"] == "error"
-                            ),
-                            "BATCH_PREFLIGHT_BLOCKED",
-                            409,
-                            findings=preview["findings"],
-                        )
-                    if (
-                        frozen_setup
-                        and {"planId": plan["id"], "previewHash": preview["previewHash"]}
-                        not in frozen_setup["batchPreviews"]
-                    ):
-                        raise StorageError(
-                            "The batch no longer matches the experiment's frozen design.",
-                            "EXPERIMENT_SETUP_CHANGED",
-                            409,
-                        )
-                    manifest = {
-                        key: value
-                        for key, value in preview.items()
-                        if key not in {"canFreeze", "findings"}
-                    }
-                    for existing in owned_batches:
-                        existing_state = states.get(f"configuration:{existing['id']}", {}).get(
-                            "state", "active"
-                        )
-                        if existing_state != "active" and existing["manifest"] == manifest:
-                            raise StorageError(
-                                f"Batch '{spec.batchName}' already exists in the {existing_state} "
-                                "state with these exact settings. Restore that batch to Active "
-                                "or change this plan before submitting the experiment.",
-                                "EXPERIMENT_BATCH_INACTIVE",
-                                409,
-                            )
+                planned = self._plan_submission(identity, request, record)
+                record, experiment_record = planned.record, planned.experiment_record
+                frozen_setup, batches = planned.frozen_setup, planned.batches
+                publications, freshness_checks, contracts = planned.publications, [], []
+                # The training preflight: the runtime and this machine's capacity, then what
+                # each run will read.
+                for manifest in planned.manifests:
                     _plan, freshness = self.training._prepare(
                         {
                             "id": "submission-preflight",
@@ -1176,22 +1254,6 @@ class ModelExperimentService:
                     )
                     freshness_checks.append(freshness)
                     contracts.append(execution_contract(_plan))
-                    publications.append(
-                        {
-                            "planId": plan["id"],
-                            "spec": spec.model_dump(),
-                            "previewHash": preview["previewHash"],
-                            "operationId": "experiment-batch-"
-                            + content_hash(
-                                {
-                                    "experiment": identity,
-                                    "operation": request.operationId,
-                                    "plan": plan["id"],
-                                }
-                            ),
-                            "batchId": None,
-                        }
-                    )
                 for batch in batches:
                     _plan, freshness = self.training._prepare(batch)
                     freshness_checks.append(freshness)

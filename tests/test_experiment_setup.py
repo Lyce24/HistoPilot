@@ -346,6 +346,54 @@ def test_saving_what_is_already_saved_keeps_the_revision(managed_setup):
     assert service.update(record["id"], retitled)["revision"] == revision + 2
 
 
+def test_checks_refuse_what_freezing_and_starting_would_and_write_nothing(
+    managed_setup, task_center
+):
+    service, _, _, _, _, training = managed_setup
+    record = configure(managed_setup)
+    revision = record["revision"]
+
+    def refused(check, revision, operation="filed"):
+        request = (
+            FreezeModelExperimentSetup
+            if check == service.check_freeze_setup
+            else SubmitModelExperiment
+        )(expectedRevision=revision, operationId=operation)
+        with pytest.raises(StorageError) as raised:
+            check(record["id"], request)
+        return raised.value.code
+
+    # Nobody froze the design yet, so a start could only fail, now or after a freeze.
+    assert refused(service.check_submit, revision) == "EXPERIMENT_SETUP_REQUIRED"
+    assert refused(service.check_freeze_setup, revision - 1) == "REVISION_CONFLICT"
+    service.check_freeze_setup(
+        record["id"], FreezeModelExperimentSetup(expectedRevision=revision, operationId="filed")
+    )
+    unchanged = service.get(record["id"])
+    assert (unchanged["revision"], unchanged["frozenSetupId"]) == (revision, None)
+    assert service.store.list_configurations("experiment-setup") == []
+
+    frozen = freeze(service, record)
+    assert frozen["revision"] == revision + 1
+    # A start at the revision the freeze replaced is refused as the start refuses it.
+    assert refused(service.check_submit, revision) == "REVISION_CONFLICT"
+    assert refused(service.check_freeze_setup, frozen["revision"]) == "EXPERIMENT_SETUP_FROZEN"
+    service.check_submit(
+        record["id"], SubmitModelExperiment(expectedRevision=frozen["revision"], operationId="go")
+    )
+    # Checking starts nothing and leaves the machine's preflight to the start itself.
+    assert service.get(record["id"])["submission"] is None
+    assert launched(task_center) == [] and preflights(training) == 0
+    started = submit(service, frozen)
+    assert started["submission"]["operationId"] == "execute"
+    assert refused(service.check_submit, frozen["revision"]) == "EXPERIMENT_ALREADY_SUBMITTED"
+    # The same start, sent again, replays as done.
+    service.check_submit(
+        record["id"],
+        SubmitModelExperiment(expectedRevision=frozen["revision"], operationId="execute"),
+    )
+
+
 def test_freeze_recovers_publication_before_draft_receipt_without_duplicate(
     managed_setup, monkeypatch
 ):

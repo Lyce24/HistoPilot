@@ -189,27 +189,33 @@ def test_scripted_agents_stay_inside_their_tokens(study):
 
 
 def test_a_declined_request_changes_nothing(study):
-    # T10: with commit scope the agent asks to start; the person declines.
+    # T10: with commit scope the agent asks to cancel the queued task; the person declines.
     agent = study.agent("public", ("read", "preview", "commit"))
     experiment = study.experiments["public"]
-    filed = study.use(agent, tools.request_start, experiment["id"], experiment["revision"])
+    # Study's design was never frozen, so a start could only fail: it is refused when filed.
+    refused = study.use(agent, tools.request_start, experiment["id"], experiment["revision"])
+    assert refused["code"] == "EXPERIMENT_SETUP_REQUIRED"
+    filed = study.use(agent, tools.request_task_action, "task-public", "cancel")
     assert filed["state"] == "pending"
     declined = study.service.http.post(
         f"{API}/agent-requests/{filed['requestId']}/resolve", json={"outcome": "declined"}
     )
     assert declined.status_code == 200 and declined.json()["state"] == "declined"
+    task = study.service.http.get(f"{API}/task-center/tasks/task-public").json()
+    assert task["state"] == "queued"
     record = study.service.http.get(
         f"{API}/projects/{study.projects['public']}/model-experiments/{experiment['id']}"
     ).json()
     assert record["revision"] == experiment["revision"] and not record.get("submission")
     # The agent cannot approve its own request.
-    with pytest.raises(ClientError) as refused:
+    with pytest.raises(ClientError) as denied:
         agent.client.request(
             "POST", f"/agent-requests/{filed['requestId']}/resolve", body={"outcome": "approved"}
         )
-    assert refused.value.code == "SCOPE_MISSING"
+    assert denied.value.code == "SCOPE_MISSING"
     parked = [entry for entry in study.traffic if entry["status"] == 202]
     assert len(parked) == 1 and parked[0]["method"] == "POST"
+    assert parked[0]["path"].endswith("/task-center/tasks/task-public/cancel")
     assert passed(study.scores()) and passed(study.audited())
 
 

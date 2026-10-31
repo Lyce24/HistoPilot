@@ -41,6 +41,7 @@ from histopilot.storage.project_lock import StorageError
 from . import login
 from .access import access_router, token_project
 from .demo_mode import configure_demo_boundary
+from .filing import FilingChecks
 from .lifecycle import lifecycle_router
 from .monitoring import RequestLog, monitoring_router
 from .responses import coded_response
@@ -112,6 +113,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return None
         return (found or {}).get("projectId")
 
+    # What a commit checks, run when an agent files one; the routers below register them.
+    filing = FilingChecks()
+    app.state.filing = filing
     if settings.demo:
         # Read-only, for anyone: the demo's own boundary replaces the loopback one.
         configure_demo_boundary(app, token)
@@ -120,7 +124,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app,
             settings,
             token,
-            scoped=ScopeGate(projects, tokens, database, work_project=work_project),
+            scoped=ScopeGate(projects, tokens, database, work_project=work_project, filing=filing),
             after_session=audited,
             login_secret=login.ensure_secret(settings.port) if settings.login else None,
         )
@@ -428,14 +432,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Machine-wide queue: the store is opened lazily on the first request.
     task_center = TaskCenterService(projects, filesystem, settings.workspace)
     app.state.task_center = task_center
-    app.include_router(task_center_router(task_center))
+    app.include_router(task_center_router(task_center, filing))
     app.include_router(monitoring_router(task_center, http_metrics, revision=revision))
     app.include_router(mil_router(projects, filesystem))
     app.include_router(evaluation_router(projects, filesystem))
-    app.include_router(model_experiments_router(projects, filesystem))
+    app.include_router(model_experiments_router(projects, filesystem, filing))
     app.include_router(objectives_router(projects, filesystem))
     app.include_router(predictor_router(projects, filesystem))
-    app.include_router(evaluation_run_router(projects, filesystem))
+    app.include_router(evaluation_run_router(projects, filesystem, filing))
     app.include_router(clinical_router(projects, filesystem))
     app.include_router(interpretation_router(projects, filesystem))
     app.include_router(slide_review_router(projects, filesystem))

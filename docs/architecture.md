@@ -149,7 +149,7 @@ TanStack Query owns cached server state, scoped by project and record identity. 
 
 | Location | Responsibility |
 | --- | --- |
-| `histopilot/api/` | FastAPI routers and the local security boundary (`security.py`, with the optional sign-in in `login.py`); every route's class (`route_classes.py`) and every error code's kind (`error_codes.py`); agent access: scoped tokens and approvals (`access.py`), the scope gate (`scopes.py`), metadata redaction (`redaction.py`) and the audit log (`audit.py`); request IDs, access lines and the metrics route (`monitoring.py`) |
+| `histopilot/api/` | FastAPI routers and the local security boundary (`security.py`, with the optional sign-in in `login.py`); every route's class (`route_classes.py`) and every error code's kind (`error_codes.py`); agent access: scoped tokens and approvals (`access.py`), the scope gate (`scopes.py`), the checks a parked commit gets when it is filed (`filing.py`), metadata redaction (`redaction.py`) and the audit log (`audit.py`); request IDs, access lines and the metrics route (`monitoring.py`) |
 | `histopilot/schemas/` | Pydantic request and record contracts |
 | `histopilot/application/` | Services: imports, targets and splits, features, setups and experiments, training, predictors, cohorts and runs (Apply models), clinical utility, interpretation, lifecycle, operations, the BLCA demo |
 | `histopilot/storage/` | Scientific and central stores, locks, lifecycle sidecar, filesystem confinement, packed features, attention packs, SHA-256 pins of pretrained weights (`model_weights.py`); `io.py` holds canonical JSON, content hashes, timestamps and bounded, atomic JSON files |

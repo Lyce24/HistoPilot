@@ -57,6 +57,8 @@ The browser's **AI agent access** panel creates read-and-preview tokens and revo
 
 With `commit` scope, an agent's change does not run. The service keeps it as a request for 24 hours and answers `202 CONFIRMATION_PENDING` with the request's ID; the CLI exits 7.
 
+Before it keeps a request, the service runs the change's own checks, writing nothing, so it never asks you to approve something that could only fail. A request they refuse gets the answer the change itself would give and is not filed: for example, starting an experiment whose design is not frozen (`EXPERIMENT_SETUP_REQUIRED`), freezing at a revision that has since moved on (`REVISION_CONFLICT`), or applying predictors after the reviewed preview changed (`PREVIEW_STALE`). An agent therefore files a start only once you have approved the freeze, since freezing changes the experiment's revision. This covers the requests the MCP tools file: freeze, start, Apply models, and task and task-owner actions; other changes are filed unchecked. What your machine needs to run the change, such as the training runtime, is checked when you approve it.
+
 ```bash
 histopilot confirm list
 histopilot confirm show request-4f…

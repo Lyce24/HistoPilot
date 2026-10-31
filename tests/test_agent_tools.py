@@ -62,18 +62,17 @@ def test_templates_come_from_the_shared_starters(session):
         tools.template(agent, "nonsense")
 
 
-def test_waiting_reports_a_stopped_runner_instead_of_hanging(session):
-    agent, service = session
-    folder = service.settings.workspace / "projects" / "Study"
+def enqueue_task(project, folder, identity):
+    """One queued fold of an experiment of ``project``; the runner never starts it."""
     owner = {
         "kind": "experiment",
         "id": "e",
-        "projectId": agent.project,
+        "projectId": project,
         "projectFolder": str(folder),
         "title": "E",
     }
     task = {
-        "id": "task-1",
+        "id": identity,
         "kind": "mil-fold",
         "adapter": "generic",
         "title": "Fold",
@@ -83,10 +82,15 @@ def test_waiting_reports_a_stopped_runner_instead_of_hanging(session):
         "command": {
             "argv": [sys.executable, "-c", "pass"],
             "cwd": str(folder),
-            "log": str(folder / "logs" / "task-1.log"),
+            "log": str(folder / "logs" / f"{identity}.log"),
         },
     }
     default_client().store.enqueue(owner, [task])
+
+
+def test_waiting_reports_a_stopped_runner_instead_of_hanging(session):
+    agent, service = session
+    enqueue_task(agent.project, service.settings.workspace / "projects" / "Study", "task-1")
     result = tools.wait(agent, "task", "task-1", timeout_seconds=5)
     # Queued work under a stopped runner has not settled; the wait ends with the reason.
     assert result == {
@@ -279,9 +283,18 @@ def test_requests_are_filed_for_a_person_and_change_nothing(tmp_path, monkeypatc
         client = Client(transport=service.transport, token=token)
         agent = tools.AgentSession(client, client.get("/access"))
 
-        filed = tools.request_freeze(agent, created["id"], created["revision"])
+        # The experiment has no inputs, so freezing it could only fail: nothing is filed, and
+        # the agent hears why, with the freeze's own code.
+        with pytest.raises(ClientError) as doomed:
+            tools.request_freeze(agent, created["id"], created["revision"])
+        assert doomed.value.code == "EXPERIMENT_SETUP_INPUTS_REQUIRED"
+        assert service.http.get("/api/v1/agent-requests").json()["requests"] == []
+        folder = service.settings.workspace / "projects" / "Study"
+        enqueue_task(project, folder, "task-own")
+        filed = tools.request_task_action(agent, "task-own", "cancel")
         assert filed["state"] == "pending" and filed["requestId"].startswith("request-")
         assert f"histopilot confirm approve {filed['requestId']}" in filed["message"]
+        assert service.http.get("/api/v1/task-center/tasks/task-own").json()["state"] == "queued"
         record = service.http.get(f"{path}/{created['id']}").json()
         assert not record.get("frozenSetupId") and record["revision"] == created["revision"]
         pending = service.http.get("/api/v1/agent-requests").json()["requests"]

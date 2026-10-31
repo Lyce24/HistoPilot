@@ -786,7 +786,9 @@ def _filed(send) -> dict:
 
 def request_freeze(session: AgentSession, experiment: str, revision: int) -> dict:
     """Needs a person's approval: ask to freeze an experiment's setup at the revision you
-    previewed. The service refuses the approval if the experiment changed since."""
+    previewed. The service checks the request as freezing would before it files it, and
+    refuses one that could not succeed, such as a revision that has moved on; it checks again
+    when a person approves."""
     identity = resources.experiment_id(session.client, session.project, experiment)
     return _filed(
         lambda: designs.freeze(session.client, session.project, identity, revision=revision)
@@ -794,7 +796,10 @@ def request_freeze(session: AgentSession, experiment: str, revision: int) -> dic
 
 
 def request_start(session: AgentSession, experiment: str, revision: int) -> dict:
-    """Needs a person's approval: ask to start training a frozen experiment's batches."""
+    """Needs a person's approval: ask to start training a frozen experiment's batches, at its
+    current revision. The service checks the request as starting would before it files it.
+    An experiment whose setup is not frozen yet cannot be started: file the freeze alone, and
+    ask for the start once a person has approved the freeze, which changes the revision."""
     identity = resources.experiment_id(session.client, session.project, experiment)
     return _filed(
         lambda: designs.start(session.client, session.project, identity, revision=revision)

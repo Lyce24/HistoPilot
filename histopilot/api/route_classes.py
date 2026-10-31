@@ -275,12 +275,14 @@ _TABLE = {
 }
 
 
-def _expand(path: str) -> str:
+def expand(path: str) -> str:
+    """A path as the table writes it, relative to /api/v1 with `{P}` for a project's routes,
+    as the service declares it."""
     return API_PREFIX + (PROJECT_PREFIX + path[3:] if path.startswith("{P}") else path)
 
 
 ROUTE_CLASSES: dict[tuple[str, str], str] = {
-    (method, _expand(path)): route_class for (method, path), route_class in _TABLE.items()
+    (method, expand(path)): route_class for (method, path), route_class in _TABLE.items()
 }
 
 

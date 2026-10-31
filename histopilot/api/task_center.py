@@ -1,7 +1,7 @@
 """Workspace-level Task Center: queue, capacity and runner control for this machine."""
 
 import os
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request
@@ -9,6 +9,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import Field, StrictBool, StrictInt
 
 from histopilot.api.access import token_project
+from histopilot.api.filing import FilingChecks, choice
 from histopilot.api.scopes import missing_work
 from histopilot.schemas.workspace import RequestModel
 from histopilot.taskcenter.service import TaskCenterService
@@ -18,6 +19,8 @@ LOG_CHUNK_BYTES = 256 * 1024
 LOG_READ_BYTES = 4 * 1024 * 1024
 GpuIndex = Annotated[str, Field(pattern=r"^[0-9]{1,3}$")]
 GpuSlotCount = Annotated[StrictInt, Field(ge=1, le=16)]
+TaskAction = Literal["cancel", "retry"]
+OwnerActionName = Literal["hold", "release", "stop", "cancel", "retry", "move"]
 
 
 class TaskCenterAction(RequestModel):
@@ -42,7 +45,7 @@ class CapacityUpdate(TaskCenterAction):
     defaults: CapacityDefaults | None = None
 
 
-def task_center_router(center: TaskCenterService) -> APIRouter:
+def task_center_router(center: TaskCenterService, filing: FilingChecks | None = None) -> APIRouter:
     router = APIRouter(prefix="/api/v1/task-center")
 
     def require_own(project: str | None, owner: dict | None, what: str) -> None:
@@ -181,7 +184,7 @@ def task_center_router(center: TaskCenterService) -> APIRouter:
     def task_action(
         request: Request,
         task_id: str,
-        action: Literal["cancel", "retry"],
+        action: TaskAction,
         payload: TaskCenterAction,
     ):
         # The audit log of the project whose work this is.
@@ -208,11 +211,34 @@ def task_center_router(center: TaskCenterService) -> APIRouter:
     def owner_action(
         request: Request,
         key: str,
-        action: Literal["hold", "release", "stop", "cancel", "retry", "move"],
+        action: OwnerActionName,
         payload: OwnerAction,
     ):
         request.state.audit_project = center.owner(key).get("projectId")
         return center.owner_action(key, action, payload.operationId, position=payload.position)
+
+    if filing is not None:
+        # An agent's change to its project's work is checked as these routes check it
+        # before it is filed.
+        filing.add(
+            "POST",
+            "/task-center/tasks/{task_id}/{action}",
+            TaskCenterAction,
+            lambda found, payload: center.check_task_action(
+                found["task_id"], choice(found, "action", get_args(TaskAction)), payload.operationId
+            ),
+        )
+        filing.add(
+            "POST",
+            "/task-center/owners/{key}/{action}",
+            OwnerAction,
+            lambda found, payload: center.check_owner_action(
+                found["key"],
+                choice(found, "action", get_args(OwnerActionName)),
+                payload.operationId,
+                position=payload.position,
+            ),
+        )
 
     @router.get("/capacity")
     def capacity():

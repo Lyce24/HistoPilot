@@ -10,11 +10,11 @@ For the system as a whole, read [architecture](architecture.md) first.
 
 **Decision.** Every command that changes state comes in two steps. The **preview** computes what would happen (the folds, coverage of every training slide by the features, overlap between development and testing patients, which tasks would be queued) and returns it with a `previewHash`. The **commit** carries that hash, and the service recomputes the preview and refuses with `PREVIEW_STALE` (409) if anything changed in between. The browser, the CLI and the agent tools all use the same pair. In the CLI, `--yes` only answers the confirmation prompt: blocking findings still stop the command, and `--preview-hash` makes the commit run only if the preview is still the one that was reviewed ([CLI contract](cli-contract.md)).
 
-The same mechanism is what makes AI agents safe to connect. A scoped agent token can preview and save drafts; with the `commit` scope its change still does not run but is parked as a request (`202 CONFIRMATION_PENDING`). A person approves it, and the service replays it under that person's session, rechecking the preview, so a request for something that has since changed is refused. An agent cannot approve its own requests ([AI agents](agents.md#approvals)).
+The same mechanism is what makes AI agents safe to connect. A scoped agent token can preview and save drafts; with the `commit` scope its change still does not run but is parked as a request (`202 CONFIRMATION_PENDING`). Filing it runs the commit's own checks first, so a request that could only fail, such as starting a design nobody froze, is refused at once with the commit's error instead of waiting for a person. A person approves it, and the service replays it under that person's session, rechecking the preview, so a request for something that has since changed is refused. An agent cannot approve its own requests ([AI agents](agents.md#approvals)).
 
 **Cost.** Two round trips for every change, and preview code that must stay exactly in step with commit code. Reviews also do real work (coverage checks read every bundle's index), which is why they are cached by file identity where the inputs cannot change unseen.
 
-**Where.** `histopilot/application/*` (each service's `preview_*` and commit pair), `api/access.py` (parked requests and approvals), `client/` (the shared CLI and agent client), `docs/cli-contract.md`.
+**Where.** `histopilot/application/*` (each service's `preview_*` and commit pair), `api/access.py` (parked requests and approvals), `api/filing.py` (the checks a request gets when it is filed), `client/` (the shared CLI and agent client), `docs/cli-contract.md`.
 
 ## 2. Scientific records are frozen, content-addressed versions
 

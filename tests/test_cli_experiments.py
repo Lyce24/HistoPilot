@@ -347,6 +347,74 @@ def test_a_person_freezes_exactly_the_preview_an_agent_handed_over(study, tmp_pa
     assert frozen.envelope["data"]["result"]["frozenSetupId"]
 
 
+def test_an_agent_files_only_what_a_person_can_approve(study, tmp_path):
+    from histopilot.agent import tools
+    from histopilot.api import audit
+    from histopilot.client import Client, ClientError
+
+    service, ids = study
+    design = design_file(service, ids, tmp_path / "design.yaml")
+    project = service.cli("use", "--json").envelope["data"]["project"]
+    exposed = service.http.put(
+        f"/api/v1/projects/{project}/ai-exposure",
+        json={"level": "full", "expectedLevel": "none"},
+    )
+    assert exposed.status_code == 200, exposed.text
+    token = service.http.post(
+        "/api/v1/tokens",
+        json={"projectId": project, "scopes": ["read", "preview", "commit"], "name": "agent"},
+    ).json()["token"]
+    client = Client(transport=service.transport, token=token)
+    agent = tools.AgentSession(client, client.get("/access"))
+    saved = tools.save_design(agent, design)
+    experiment, revision = saved["experimentId"], saved["revision"]
+
+    def refused(tool, revision):
+        with pytest.raises(ClientError) as raised:
+            tool(agent, experiment, revision)
+        return raised.value.code
+
+    # Nobody froze the design, so a start could only fail: it is refused when filed, with
+    # the code starting would give, and so is a freeze at a revision that moved on.
+    assert refused(tools.request_start, revision) == "EXPERIMENT_SETUP_REQUIRED"
+    assert refused(tools.request_freeze, revision - 1) == "REVISION_CONFLICT"
+    freeze = tools.request_freeze(agent, experiment, revision)
+    assert freeze["state"] == "pending"
+    # A start filed beside the freeze would name the revision the freeze replaces.
+    assert refused(tools.request_start, revision) == "EXPERIMENT_SETUP_REQUIRED"
+    pending = service.http.get("/api/v1/agent-requests").json()["requests"]
+    assert [row["id"] for row in pending] == [freeze["requestId"]]
+    record = service.cli("experiment", "show", experiment, "--json").envelope["data"]
+    assert record["revision"] == revision and not record.get("frozenSetupId")
+
+    # Once a person approved the freeze, the start is filed at the frozen revision.
+    approved = service.cli("confirm", "approve", freeze["requestId"], "--yes", "--json")
+    assert approved.code == 0, approved.stdout
+    frozen = service.cli("experiment", "show", experiment, "--json").envelope["data"]
+    assert frozen["frozenSetupId"] and frozen["revision"] == revision + 1
+    assert refused(tools.request_freeze, frozen["revision"]) == "EXPERIMENT_SETUP_FROZEN"
+    assert refused(tools.request_start, revision) == "REVISION_CONFLICT"
+    start = tools.request_start(agent, experiment, frozen["revision"])
+    assert start["state"] == "pending"
+    shown = service.cli("experiment", "show", experiment, "--json").envelope["data"]
+    assert not shown.get("submission")
+    # The service's log, oldest first, tells the refused filings from the two it parked.
+    lines = [
+        line
+        for line in reversed(audit.read(service.settings.workspace / "projects" / "Study"))
+        if line["actor"]["kind"] == "agent" and line["class"] == "commit"
+    ]
+    assert [(line["status"], bool(line.get("parked"))) for line in lines] == [
+        (409, False),
+        (409, False),
+        (202, True),
+        (409, False),
+        (409, False),
+        (409, False),
+        (202, True),
+    ]
+
+
 def test_comparisons_take_catalog_names_and_errors_list_them(study):
     service, _ = study
     compared = service.cli("experiment", "template", "--compare-model", "mean_pool", "--json")
