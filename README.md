@@ -18,6 +18,7 @@
   <a href="#one-question-three-cockpits"><b>Three cockpits</b></a> ·
   <a href="#fly-it-your-way"><b>Browser · Terminal · Agent</b></a> ·
   <a href="#how-it-fits-together"><b>Concepts</b></a> ·
+  <a href="#how-it-is-built"><b>Engineering</b></a> ·
   <a href="#documentation"><b>Docs</b></a>
 </p>
 
@@ -173,7 +174,15 @@ flowchart LR
 - **Frozen and versioned.** Each step ends in an immutable record. Freezing never starts compute, and a change makes a new version.
 - **Preview, then confirm.** The browser, the CLI and the agent all show a change before a person confirms it.
 - **One queue.** Training, feature extraction, predictor runs and attention maps share one queue per machine. Work can be held, cancelled and resumed.
-- **Models.** ABMIL, nnMIL, mean- and max-pooling MIL, and linear and MLP probes on slide embeddings, reading the image, clinical variables or both.
+- **Models.** ABMIL, CLAM, TransMIL, DSMIL, DTFD-MIL, ACMIL, nnMIL, OceanPath's Mamba-2 MIL (from scratch or from its self-supervised checkpoints), mean- and max-pooling MIL, and linear and MLP probes on slide embeddings, reading the image, clinical variables or both.
+
+## How it is built
+
+- **Checked against reference code.** CLAM, TransMIL, DSMIL, DTFD-MIL and ACMIL reproduce outputs recorded from the authors' implementations, loaded parameter by parameter. The plain-PyTorch Mamba-2 MIL reproduces OceanPath's model on its fused CUDA kernels within 1e-5 (15 parity tests), and trains at 332 ms per step for 32 slides of 2,048 patches on one RTX A5000.
+- **Tested and typed.** 3,927 backend tests at 89% line coverage, and about 900 frontend tests. Pyright checks the service core, strictly for the domain model, and Ruff runs bug-finding rules. CI runs all of it on every push.
+- **Agents, measured.** Real models drove HistoPilot through its MCP server on a fixed task suite that includes requests to change things without approval: 286 sessions, no policy violations, 96–100% of tasks completed, $0.003–0.12 per task ([agent evaluation](evals/agents/README.md)).
+- **Reproducible by construction.** Records are content-addressed, submitted work runs from a pinned copy of the code with a fingerprint of its runtime, and every change is committed against the preview a person reviewed ([design decisions](docs/design-decisions.md)).
+- **Operable.** Structured JSON logs carry request and task IDs, and `/api/v1/metrics` exports queue depth, task durations, failures and GPU use for Prometheus. A wheel ships the UI, and two images run the service (CPU) and the training workers (CUDA).
 
 ## Documentation
 
