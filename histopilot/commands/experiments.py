@@ -129,10 +129,70 @@ def _results_text(data: dict) -> str:
             left = names.get(pair.get("leftBatchId")) or pair.get("leftBatchId")
             right = names.get(pair.get("rightBatchId")) or pair.get("rightBatchId")
             pairs.append(f"  {left} − {right}: {' · '.join(parts)}")
+    unit = ((data.get("design") or {}).get("resamplingUnit") or "unit") + "s"
     if pairs:
-        unit = ((data.get("design") or {}).get("resamplingUnit") or "unit") + "s"
         lines += ["", f"Paired differences, out of fold ({ci}, resampling {unit}):", *pairs]
+    for batch in data.get("batches") or []:
+        lines += _contrast_lines(batch, ci, unit)
     return "\n".join(lines)
+
+
+# Metric names as a controlled comparison's heading gives its primary metric.
+METRIC_NAMES = {"auprc": "AUPRC", "macroF1": "macro F1", "accuracy": "accuracy"} | dict(
+    PAIRED_METRICS
+)
+
+
+def _p_value(value) -> str:
+    """Three significant figures, or "< 0.001" below that, as Results shows a p-value."""
+    if value is None:
+        return "—"
+    return "< 0.001" if value < 0.001 else f"{value:#.3g}"
+
+
+def _contrast_lines(batch: dict, ci: str, unit: str) -> list[str]:
+    """A controlled comparison as Results shows it: each arm against the reference arm on the
+    primary metric, reference minus arm, with the paired interval and both p-values."""
+    comparison = batch.get("comparison")
+    if not comparison or not comparison.get("contrasts"):
+        return []
+    metric = comparison.get("primaryMetric") or "auroc"
+    reference = next(
+        (
+            row
+            for row in batch.get("configurations") or []
+            if row.get("candidateId") == comparison.get("referenceId")
+        ),
+        {},
+    )
+    lines = []
+    for row in comparison["contrasts"]:
+        arm = f"#{row.get('armNumber')} {row.get('model') or row.get('inputMode')}"
+        if not row.get("available"):
+            lines.append(f"  {arm}: {row.get('reason') or 'not available yet'}")
+            continue
+        difference = ((row.get("oof") or {}).get(metric) or {}).get("difference")
+        bounds = row.get("oofInterval") or {}
+        spread = _interval((bounds.get("intervals") or {}).get(metric), signed=True)
+        parts = [
+            ("—" if difference is None else f"{difference:+.3f}")
+            + (f" ({spread})" if spread else " (no interval)"),
+            f"p {_p_value(row.get('pValue'))}",
+            f"Holm p {_p_value(row.get('pValueHolm'))}",
+        ]
+        folds = ((row.get("folds") or {}).get(metric) or {}).get("n")
+        if folds:
+            better = row["folds"][metric].get("better") or 0
+            parts.append(f"reference better in {better} of {folds} folds")
+        lines.append(f"  {arm}: {' · '.join(parts)}")
+    name = METRIC_NAMES.get(metric, metric)
+    shown = reference.get("model") or reference.get("inputMode") or "?"
+    heading = (
+        f"Controlled comparison, {batch.get('name')}: reference "
+        f"#{comparison.get('referenceNumber')} {shown} minus each arm, {name} "
+        f"({ci}, resampling {unit}):"
+    )
+    return ["", heading, *lines]
 
 
 def _saved(ctx, project: str, record: dict, verb: str, notes: list[dict]) -> Result:
@@ -298,7 +358,8 @@ def register(app: typer.Typer) -> typer.Typer:
     def results(ctx, experiment: str = typer.Argument(..., help="Experiment ID or name.")):
         """Show cross-validated results: each configuration's seed-averaged AUROC and interval.
 
-        Also the seed ensemble, recall by class and the paired comparisons between batches."""
+        Also the seed ensemble, recall by class, the paired comparisons between batches and,
+        for a controlled comparison, each arm against the reference arm."""
         data = resources.experiment_results(ctx.client, ctx.project(), ctx.experiment(experiment))
         findings = data.get("findings") or []
         return Result(

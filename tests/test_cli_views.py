@@ -133,6 +133,63 @@ def test_results_show_intervals_ensembles_class_recall_and_paired_differences(an
     assert "Paired differences, out of fold (95% CI, resampling slides):" in text
     assert "  Other − Baseline: AUROC +0.044 (+0.021 to +0.067)" in text
     assert "balanced accuracy -0.013 (-0.042 to +0.017)" in text
+    assert "Controlled comparison" not in text
+
+
+def test_results_show_each_arm_against_the_reference_arm(answers):
+    reference = {**configuration("abmil", 0.807, None, 0.81, {}), "candidateId": "candidate-1"}
+    arm = {
+        **configuration("transmil", 0.895, None, 0.9, {}),
+        "candidateId": "candidate-2",
+        "number": 2,
+        "selected": False,
+    }
+    contrast = {
+        "armId": "candidate-2",
+        "armNumber": 2,
+        "model": "transmil",
+        "inputMode": "image",
+        "available": True,
+        "oof": {"auroc": {"left": 0.807, "right": 0.895, "difference": -0.0884}},
+        "oofInterval": {"intervals": {"auroc": {"lower": -0.1364, "upper": -0.048}}},
+        "folds": {"auroc": {"n": 5, "better": 1}},
+        "pValue": 0.0004,
+        "pValueHolm": 0.0019,
+    }
+    answers["/model-experiments/draft-1/results"] = {
+        "policy": {"confidenceLevel": 0.95},
+        "design": {"resamplingUnit": "patient"},
+        "findings": [],
+        "comparisons": [],
+        "batches": [
+            {
+                "batchId": BATCH_A,
+                "name": "Architectures",
+                "configurations": [reference, arm],
+                "comparison": {
+                    "referenceId": "candidate-1",
+                    "referenceNumber": 1,
+                    "primaryMetric": "auroc",
+                    "adjustment": "holm",
+                    "contrasts": [
+                        contrast,
+                        {"armNumber": 3, "model": "mean_pool", "available": False},
+                    ],
+                },
+            }
+        ],
+    }
+    code, text = cli("experiment", "results", "draft-1")
+    assert code == 0, text
+    assert (
+        "Controlled comparison, Architectures: reference #1 abmil minus each arm, AUROC "
+        "(95% CI, resampling patients):" in text
+    )
+    assert (
+        "  #2 transmil: -0.088 (-0.136 to -0.048) · p < 0.001 · Holm p 0.00190 · reference "
+        "better in 1 of 5 folds" in text
+    )
+    assert "  #3 mean_pool: not available yet" in text
 
 
 def test_batches_list_with_their_experiment_name_and_execution_state(answers):

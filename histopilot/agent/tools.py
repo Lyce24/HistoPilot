@@ -334,7 +334,11 @@ def experiment_results(session: AgentSession, experiment: str, detail: str = "su
     configuration's seed-averaged metrics with their intervals, per-class results averaged
     over the training seeds, the seed ensemble (the mean of the seeds' out-of-fold
     probabilities) with its intervals, every seed's out-of-fold result and the paired
-    comparisons between batches; `detail="full"` adds every test fold of every seed."""
+    comparisons between batches. A batch that is a controlled comparison also carries
+    `comparison`: each arm against the reference arm on the same resamples (reference minus
+    arm), with the paired interval, the p-value and the Holm-adjusted p-value, and in how many
+    test folds the reference scored higher. `detail="full"` adds every test fold of every
+    seed."""
     client, project = session.client, session.project
     identity = resources.experiment_id(client, project, experiment)
     results = resources.experiment_results(client, project, identity)
@@ -394,6 +398,7 @@ def _results_summary(results: dict) -> dict:
                     "seeds": seeds,
                 }
             )
+        comparison = _controlled_comparison(batch.get("comparison"))
         batches.append(
             {
                 key: batch.get(key)
@@ -408,6 +413,7 @@ def _results_summary(results: dict) -> dict:
                 )
             }
             | {"configurations": configurations}
+            | ({"comparison": comparison} if comparison else {})
         )
     return {
         key: results.get(key)
@@ -423,6 +429,34 @@ def _results_summary(results: dict) -> dict:
     } | {
         "batches": batches,
         "detail": "summary; detail='full' adds every test fold of every seed",
+    }
+
+
+def _controlled_comparison(comparison: dict | None) -> dict | None:
+    """A controlled comparison as Results shows it: the reference arm, then each arm against
+    it with the difference, its paired interval, the p-values and the fold agreement. Only the
+    per-fold differences themselves stay out, as they do for the configurations."""
+    if not comparison:
+        return None
+    contrasts = []
+    for row in comparison.get("contrasts") or []:
+        folds = row.get("folds")
+        contrasts.append(
+            {key: value for key, value in row.items() if key != "folds"}
+            | (
+                {
+                    "folds": {
+                        metric: {key: value for key, value in summary.items() if key != "values"}
+                        for metric, summary in folds.items()
+                        if isinstance(summary, dict)
+                    }
+                }
+                if isinstance(folds, dict)
+                else {}
+            )
+        )
+    return {key: value for key, value in comparison.items() if key != "contrasts"} | {
+        "contrasts": contrasts
     }
 
 

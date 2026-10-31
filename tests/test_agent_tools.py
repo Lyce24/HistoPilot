@@ -418,6 +418,59 @@ def test_experiment_results_summarize_seeds_and_intervals():
     results["batches"][0]["configurations"][0]["perClass"] = per_class
     kept = tools._results_summary(results)["batches"][0]["configurations"][0]
     assert kept["perClass"] == per_class
+    assert "comparison" not in tools._results_summary(results)["batches"][0]
+
+
+def test_experiment_results_summary_keeps_the_arms_against_the_reference():
+    contrast = {
+        "armId": "candidate-2",
+        "armNumber": 2,
+        "model": "transmil",
+        "inputMode": "image",
+        "difference": "reference_minus_arm",
+        "available": True,
+        "oof": {"auroc": {"left": 0.81, "right": 0.9, "difference": -0.09}},
+        "oofInterval": {
+            "unit": "patient",
+            "units": 40,
+            "available": True,
+            "intervals": {"auroc": {"lower": -0.14, "upper": -0.05}},
+        },
+        "folds": {"auroc": {"n": 5, "better": 1, "worse": 4, "values": [0.1, -0.2, -0.1, -0.3]}},
+        "pValue": 0.001,
+        "pValueHolm": 0.002,
+    }
+    comparison = {
+        "referenceId": "candidate-1",
+        "referenceNumber": 1,
+        "primaryMetric": "auroc",
+        "adjustment": "holm",
+        "contrasts": [contrast, {**contrast, "armId": "candidate-3", "available": False}],
+    }
+    results = {
+        "batches": [
+            {"batchId": "batch-1", "configurations": [], "comparison": comparison},
+            {"batchId": "batch-2", "configurations": []},
+        ]
+    }
+    first, second = tools._results_summary(results)["batches"]
+    shown = first["comparison"]
+    assert {key: shown[key] for key in ("referenceId", "referenceNumber", "adjustment")} == {
+        "referenceId": "candidate-1",
+        "referenceNumber": 1,
+        "adjustment": "holm",
+    }
+    arm = shown["contrasts"][0]
+    assert arm["difference"] == "reference_minus_arm" and arm["model"] == "transmil"
+    assert arm["oof"]["auroc"]["difference"] == -0.09
+    assert arm["oofInterval"]["intervals"]["auroc"] == {"lower": -0.14, "upper": -0.05}
+    assert (arm["pValue"], arm["pValueHolm"]) == (0.001, 0.002)
+    # The fold agreement stays; the per-fold differences are `detail="full"`'s.
+    assert arm["folds"] == {"auroc": {"n": 5, "better": 1, "worse": 4}}
+    assert [row["available"] for row in shown["contrasts"]] == [True, False]
+    assert "comparison" not in second
+    # Nothing was taken from the service's own answer.
+    assert "values" in comparison["contrasts"][0]["folds"]["auroc"]
 
 
 def test_case_review_needs_the_full_level(session):

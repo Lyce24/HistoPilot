@@ -31,7 +31,7 @@ Commands are grouped by what they act on: `histopilot <noun> <verb>`. `histopilo
 | Noun | Reads | Records |
 | --- | --- | --- |
 | `project` | `list`, `show`, `roadmap`, `exposure` | Projects known to this service (`rename` is a change, below) |
-| `experiment` | `list`, `show`, `results`, `preview`, `batches list` | Experiments; `results` shows each configuration's seed-averaged AUROC with its interval, the seed ensemble, recall by class and the paired comparisons |
+| `experiment` | `list`, `show`, `results`, `preview`, `batches list` | Experiments; `results` shows each configuration's seed-averaged AUROC with its interval, the seed ensemble, recall by class, the paired comparisons between batches and, for a controlled comparison, each arm against the reference arm |
 | `dataset` | `list`, `show`, `records`, `inspect` | Frozen datasets and their per-slide records; `inspect` reads a table before importing it |
 | `targets` | `list`, `show` | Targets & splits versions |
 | `features` | `list`, `show`, `validation` | Attached feature sources |
