@@ -8,6 +8,17 @@ All notable changes to HistoPilot are recorded here. The format follows [Keep a 
 
 - **OceanPath Mamba-2 MIL.** OceanPath's Mamba-2 slide aggregator as an image model, ported to plain PyTorch (no mamba-ssm or CUDA kernels) and checked against OceanPath's own model by golden outputs: embeddings, attention, losses, gradients and its random initialization. Patches are ordered along a Hilbert curve of their coordinates, as OceanPath does, so coordinates now travel with the features to models that read them.
 - **Pretrained aggregators.** An OceanPath Mamba-2 MIL configuration can start from an OceanPath aggregator checkpoint, such as OceanPath's self-supervised aggregators, with its own aggregator learning rate or a frozen aggregator. Review pins the file by SHA-256 in the frozen batch; launches, folds, refits and resumes refuse a changed or missing file (`MODEL_CHECKPOINT_CHANGED`). Controlled comparisons can set random and pretrained initializations against each other on the same folds and seeds.
+- **`save_design` agent tool.** Saves an experiment design as a draft, or saves it over the draft it names, writing only what changed, and says whether it wrote anything.
+
+### Changed
+
+- **Agents' requests are checked when they are filed.** A commit from a scoped token with `commit` scope first runs the commit's own checks, writing nothing: freezing or starting an experiment, Apply models runs and Task Center actions that could only fail when a person approves them are refused at once with the commit's error and code, such as `EXPERIMENT_SETUP_REQUIRED` for a start of a design nobody froze, and nothing is parked. Approval still checks everything again, the training runtime included.
+- **`preview_design` writes nothing.** The agent tool now previews a saved experiment draft, named by ID or name, and returns the preview hash a person confirms; saving moved to `save_design`. MCP clients that passed a design to `preview_design` pass it to `save_design` instead.
+- **Controlled comparisons in results summaries.** `experiment_results` summaries for agents keep each arm against the reference arm (reference − arm, paired interval, p-value, Holm-adjusted p-value and fold agreement), and `histopilot experiment results` prints them.
+
+### Fixed
+
+- **Saving an unchanged experiment draft keeps its revision.** A save through the browser, the CLI or an agent that changes nothing no longer makes a new revision, so preview hashes and pending requests made for the draft stay current.
 
 ## [0.1.0] - 2026-10-29
 
