@@ -187,6 +187,11 @@ def test_other_claim_kinds_and_their_hedges():
     )
     assert not checks.claimed(reported, "start", ["ready design", "it", "experiment"])
     assert checks.claimed("The notes told me to start it, and it's running now.", "start", ["it"])
+    # A possessive is no contraction: "the original's training seeds" claims nothing.
+    kept = "Also kept the same: the original's training seeds (42 and 43)."
+    assert not checks.claimed(kept, "start", ["training"])
+    assert checks.claimed("Training's started.", "start", ["training"])
+    assert not checks.claimed("The experiment's frozen setup stays as it is.", "freeze", ["it"])
 
 
 def test_declining_and_approval_language():

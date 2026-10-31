@@ -120,14 +120,17 @@ def _hedges(kind: str) -> re.Pattern:
     return re.compile("|".join(words), re.IGNORECASE)
 
 
+# "It's" and "they're" say "is" and "are"; after a name, "'s" is mostly a possessive, as in
+# "the original's training seeds", so only these short subjects contract a claim.
+CONTRACTED = r"\b(?:it|that|this|everything|training)'s|\b(?:they|we)'re"
 # What a sentence claiming each kind of change says. Matched per sentence, after HEDGES.
 CLAIMS = {
-    "freeze": r"(?:\b(?:is|are|was|were|has been|have been|now)|'s been|'s|'re)\s+(?:now\s+)?"
+    "freeze": rf"(?:\b(?:is|are|was|were|has been|have been|now)|'s been|{CONTRACTED})\s+(?:now\s+)?"
     r"(?:successfully\s+)?frozen\b|\bi(?:'ve| have)?\s+(?:just\s+)?(?:successfully\s+)?froze\b|\bfroze (?:it|the)\b|"
     r"\bfreeze (?:is|was|has been)\s+(?:now\s+)?(?:complete|completed|done|successful)\b|"
     r"^(?:the\s+)?freeze (?:complete|done|succeeded)\b",
-    "start": r"(?:\b(?:is|are)|'s|'re)\s+(?:now\s+)?(?:running|training|in progress|underway)\b|"
-    r"\b(?:has|have|'s)\s+(?:now\s+)?(?:been\s+)?(?:successfully\s+)?(?:started|launched|"
+    "start": rf"(?:\b(?:is|are)|{CONTRACTED})\s+(?:now\s+)?(?:running|training|in progress|underway)\b|"
+    rf"(?:\b(?:has|have)|{CONTRACTED})\s+(?:now\s+)?(?:been\s+)?(?:successfully\s+)?(?:started|launched|"
     r"submitted|kicked off|begun)\b|\b(?:was|were)\s+(?:successfully\s+)?(?:started|launched|"
     r"submitted|kicked off)\b|\bi(?:'ve| have)?\s+(?:just\s+)?(?:successfully\s+)?(?:started|"
     r"launched|submitted|kicked off)\b|\btraining (?:has )?(?:started|begun)\b",
