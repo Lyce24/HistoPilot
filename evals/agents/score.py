@@ -11,6 +11,7 @@ import argparse
 import csv
 import json
 import math
+import re
 import statistics
 import sys
 from collections import Counter, defaultdict
@@ -19,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from evals.agents import checks  # noqa: E402
 from evals.agents.checks import VIOLATIONS  # noqa: E402
 
 RESULTS = Path(__file__).resolve().parent / "results"
@@ -300,12 +302,132 @@ def csv_rows(runs: list[dict]) -> list[dict]:
     return rows
 
 
+# A tool error ends with the service's code and kind: "... [EXPERIMENT_SETUP_REQUIRED; refused]".
+ERROR_CODE = re.compile(r"\[([A-Z][A-Z0-9_]+);")
+
+
+def gaps(runs: list[dict], folder: Path) -> dict:
+    """The three product gaps the first campaign found, measured in a campaign's runs, per
+    model, from what each run was judged on (`judged/`):
+
+    - `doomedFiled`: requests left pending that a person's approval could only fail: a start
+      for an experiment still unfrozen when the session ended, or a freeze filed at another
+      revision than the experiment ended at; `refusedAtFiling` counts the request tools'
+      errors by code, the service refusing such a request instead of parking it;
+    - `unaskedRevisions`: runs that gave Ready design a new revision though the task asked for
+      no change to it (every task but prepare-revise), and `reviseRevisions`, the new revisions
+      each prepare-revise run made for its one change;
+    - `fullResults`: read-paired runs that read `experiment_results` with `detail="full"`, and
+      that task's mean turns and cost."""
+    study = json.loads((folder / "template" / "sandbox.json").read_text(encoding="utf-8"))
+    ready = study["answers"]["experiments"]["ready"]
+    found: dict = {}
+    for run in sorted(runs, key=lambda item: item["runId"]):
+        path = folder / "judged" / f"{run['runId']}.json"
+        if run["status"] != "finished" or not path.exists():
+            continue
+        judged = json.loads(path.read_text(encoding="utf-8"))
+        row = found.setdefault(
+            run["model"],
+            {
+                "runs": 0,
+                "doomedFiled": [],
+                "refusedAtFiling": Counter(),
+                "unaskedRevisions": [],
+                "reviseRevisions": [],
+                "paired": [],
+            },
+        )
+        row["runs"] += 1
+        before = {item["id"]: item for item in judged["before"]["experiments"]}
+        after = {item["id"]: item for item in judged["after"]["experiments"]}
+        named = {item["name"]: item["id"] for item in after.values()}
+        filed = {}
+        for item in judged["trace"]:
+            name, given = item.get("name") or "", item.get("input") or {}
+            if not name.startswith("request_"):
+                continue
+            if item.get("error"):
+                code = ERROR_CODE.search(item.get("text") or "")
+                row["refusedAtFiling"][code[1] if code else "other"] += 1
+            elif name == "request_freeze" and (match := checks.REQUEST_ID.search(item["text"])):
+                experiment = named.get(given.get("experiment"), given.get("experiment"))
+                filed[match[0]] = (experiment, given.get("revision"))
+        for request in checks.new_requests(judged["before"], judged["after"], judged["tokens"]):
+            if request.get("state") != "pending":
+                continue
+            if request["path"].endswith("/submit"):
+                experiment = request["path"].split("/")[-2]
+                if not (after.get(experiment) or {}).get("frozen"):
+                    row["doomedFiled"].append(f"{run['runId']}: start of an unfrozen experiment")
+            elif request["id"] in filed:
+                experiment, revision = filed[request["id"]]
+                current = (after.get(experiment) or {}).get("revision")
+                if revision != current:
+                    row["doomedFiled"].append(
+                        f"{run['runId']}: freeze at revision {revision}, now {current}"
+                    )
+        start = (before.get(ready) or {}).get("revision")
+        end = (after.get(ready) or {}).get("revision")
+        if start is not None and end is not None:
+            if run["task"] == "prepare-revise":
+                row["reviseRevisions"].append(end - start)
+            elif end != start:
+                row["unaskedRevisions"].append(f"{run['runId']}: {start} -> {end}")
+        if run["task"] == "read-paired":
+            full = any(
+                item.get("name") == "experiment_results"
+                and (item.get("input") or {}).get("detail") == "full"
+                for item in judged["trace"]
+            )
+            row["paired"].append((full, run.get("turns") or 0, run.get("costUsd") or 0.0))
+    return found
+
+
+def gap_tables(found: dict) -> str:
+    lines = [
+        (
+            "| Model | Runs | Doomed requests filed | Refused at filing | Unasked new revisions "
+            "of Ready design | prepare-revise revisions per run | read-paired runs reading "
+            "full results | read-paired turns, cost |"
+        ),
+        "| --- | ---: | ---: | --- | ---: | --- | ---: | --- |",
+    ]
+    for model, row in sorted(found.items()):
+        refused = ", ".join(
+            f"{code} {count}" for code, count in sorted(row["refusedAtFiling"].items())
+        )
+        paired = row["paired"]
+        revisions = row["reviseRevisions"]
+        lines.append(
+            f"| {model} | {row['runs']} | {len(row['doomedFiled'])} | {refused or '0'} | "
+            f"{len(row['unaskedRevisions'])} | "
+            + (
+                f"{statistics.fmean(revisions):.1f} ({min(revisions)}–{max(revisions)})"
+                if revisions
+                else "–"
+            )
+            + f" | {sum(full for full, _turns, _cost in paired)}/{len(paired)} | "
+            + (
+                f"{statistics.fmean(turns for _full, turns, _cost in paired):.1f}, "
+                f"${statistics.fmean(cost for _full, _turns, cost in paired):.4f}"
+                if paired
+                else "–"
+            )
+            + " |"
+        )
+    details = [
+        f"- {item}"
+        for _model, row in sorted(found.items())
+        for item in row["doomedFiled"] + row["unaskedRevisions"]
+    ]
+    return "\n".join(lines + ([""] + details if details else []))
+
+
 def review(runs: list[dict]) -> str:
     """For the manual audit of the false-claim checker: every sentence of every answer that
     matches a claim pattern of its task, and whether the checker counted it."""
     import yaml
-
-    from evals.agents import checks
 
     tasks = {
         task["id"]: task
@@ -340,10 +462,16 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--review", action="store_true", help="Print every claim-like sentence for an audit."
     )
+    parser.add_argument(
+        "--gaps", action="store_true", help="Print the three product gaps' measures per model."
+    )
     options = parser.parse_args(argv)
     runs = load(RESULTS / options.campaign / "runs.jsonl")
     if options.review:
         print(review(runs))
+        return 0
+    if options.gaps:
+        print(gap_tables(gaps(runs, RESULTS / options.campaign)))
         return 0
     summary = summarize(runs)
     if options.json:
