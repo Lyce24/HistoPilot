@@ -243,7 +243,7 @@ def test_an_edited_design_updates_its_draft_instead_of_making_another(study, tmp
     assert refused.code == 3 and refused.envelope["error"]["code"] == "EXPERIMENT_SETUP_FROZEN"
 
 
-def test_an_agent_revises_the_draft_it_previewed(study, tmp_path):
+def test_an_agent_revises_the_draft_it_saved(study, tmp_path):
     from histopilot.agent import tools
     from histopilot.client import Client
 
@@ -252,12 +252,50 @@ def test_an_agent_revises_the_draft_it_previewed(study, tmp_path):
     project = service.cli("use", "--json").envelope["data"]["project"]
     access = {"projectId": project, "scopes": ["read", "preview"], "exposure": "full"}
     agent = tools.AgentSession(Client(transport=service.transport), access)
-    first = tools.preview_design(agent, design)
+    first = tools.save_design(agent, design)
+    assert first["saved"] is True
     design["notes"] = "Revised by the agent"
-    second = tools.preview_design(agent, design, experiment=first["experimentId"])
-    assert second["experimentId"] == first["experimentId"]
+    second = tools.save_design(agent, design, experiment=first["experimentId"])
+    assert second["experimentId"] == first["experimentId"] and second["saved"] is True
     assert second["revision"] > first["revision"] and second["canFreeze"] is True
     assert len(tools.list_records(agent, "experiment")["items"]) == 1
+
+
+def test_an_agent_previews_a_saved_draft_without_changing_it(study, tmp_path):
+    from histopilot.agent import tools
+    from histopilot.client import Client
+
+    service, ids = study
+    design = design_file(service, ids, tmp_path / "design.yaml")
+    project = service.cli("use", "--json").envelope["data"]["project"]
+    access = {"projectId": project, "scopes": ["read", "preview"], "exposure": "full"}
+    agent = tools.AgentSession(Client(transport=service.transport), access)
+    saved = tools.save_design(agent, design)
+    experiment = saved["experimentId"]
+    for _ in range(2):
+        previewed = tools.preview_design(agent, "CLI study")
+        assert previewed["experimentId"] == experiment
+        assert (previewed["revision"], previewed["previewHash"]) == (
+            saved["revision"],
+            saved["previewHash"],
+        )
+    # Saving the same design again, as an agent re-reads it, writes nothing either: a design
+    # that leaves out fields at their defaults is the same design.
+    again = {**design, "inputs": {**design["inputs"]}}
+    again["inputs"]["trainingSplit"] = {
+        key: value
+        for key, value in design["inputs"]["trainingSplit"].items()
+        if key not in ("imported", "domainField")
+    }
+    resaved = tools.save_design(agent, again, experiment=experiment)
+    assert resaved["saved"] is False
+    assert (resaved["revision"], resaved["previewHash"]) == (
+        saved["revision"],
+        saved["previewHash"],
+    )
+    review = service.cli("experiment", "preview", experiment, "--json")
+    assert review.envelope["data"]["revision"] == saved["revision"]
+    assert review.envelope["data"]["previewHash"] == saved["previewHash"]
 
 
 def test_a_person_freezes_exactly_the_preview_an_agent_handed_over(study, tmp_path):
@@ -277,14 +315,14 @@ def test_a_person_freezes_exactly_the_preview_an_agent_handed_over(study, tmp_pa
     ).json()["token"]
     client = Client(transport=service.transport, token=token)
     agent = tools.AgentSession(client, client.get("/access"))
-    first = tools.preview_design(agent, design)
+    first = tools.save_design(agent, design)
     experiment = first["experimentId"]
     # The person's own preview, unredacted, confirms the same hash.
     review = service.cli("experiment", "preview", experiment, "--json")
     assert review.envelope["data"]["previewHash"] == first["previewHash"]
 
     design["notes"] = "Revised by the agent"
-    second = tools.preview_design(agent, design, experiment=experiment)
+    second = tools.save_design(agent, design, experiment=experiment)
     assert second["previewHash"] != first["previewHash"]
     stale = service.cli(
         "experiment",

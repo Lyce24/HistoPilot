@@ -57,7 +57,9 @@ CATALOG = [
     # Paths are withheld at the metadata level, and a features spec is a path.
     (tools.features_from_extraction, "read", "full", READ),
     (tools.target_from_field, "preview", "metadata", PREVIEW),
-    (tools.preview_design, "preview", "metadata", PREVIEW),
+    (tools.save_design, "preview", "metadata", PREVIEW),
+    # Previews a saved draft and writes nothing.
+    (tools.preview_design, "preview", "metadata", READ),
     (tools.apply_preview, "preview", "metadata", PREVIEW),
     (tools.request_freeze, "commit", "metadata", REQUEST),
     (tools.request_start, "commit", "metadata", REQUEST),
@@ -85,9 +87,10 @@ about another project, by name or ID, say that you can reach only {name}; never 
 about {name} in its place.
 """
 WITHOUT_COMMIT = """\
-You cannot freeze, start, cancel or delete anything: prepare the work with the preview
-tools, then give a person the experiment ID and preview hash to confirm with
-`histopilot experiment freeze EXPERIMENT --preview-hash HASH`.
+You cannot freeze, start, cancel or delete anything: prepare the work with `save_design` and
+the preview tools, then give a person the experiment ID and preview hash to confirm with
+`histopilot experiment freeze EXPERIMENT --preview-hash HASH`. `preview_design` reads a saved
+draft's preview hash and changes nothing.
 """
 WITH_COMMIT = """\
 The `request_` tools ask for a change; none of them makes it. Each files a request that a
@@ -119,8 +122,9 @@ PROMPTS = {
         "Prepare an experiment for a person to start",
         (
             "Start from `template` kind experiment, fill in the dataset, Targets & splits and "
-            "feature bundle IDs from `list_records`, and call `preview_design`. Fix every blocking "
-            "finding, then hand the person the experiment ID and the preview."
+            "feature bundle IDs from `list_records`, and call `save_design`, which saves a draft "
+            "and previews it. Fix every blocking finding by saving the corrected design over the "
+            "same experiment, then hand the person the experiment ID and the preview hash."
         ),
     ),
     "apply_models": (

@@ -317,6 +317,35 @@ def test_freeze_checks_revision_and_requires_saved_batches(managed_setup):
     assert service.store.list_configurations("experiment-setup") == []
 
 
+def test_saving_what_is_already_saved_keeps_the_revision(managed_setup):
+    service, record, request, *_ = managed_setup
+    record = configure(managed_setup)
+    revision = record["revision"]
+    same_inputs = request.model_copy(update={"expectedRevision": revision})
+    assert service.setup_inputs(record["id"], same_inputs)["revision"] == revision
+    same_plans = UpdateModelExperiment(
+        name=record["name"], expectedRevision=revision, batchPlans=record["batchPlans"]
+    )
+    assert service.update(record["id"], same_plans)["revision"] == revision
+    named = UpdateModelExperiment(name=record["name"], expectedRevision=revision)
+    assert service.update(record["id"], named)["revision"] == revision
+    # A save that changes nothing still names the revision it read.
+    with pytest.raises(StorageError) as stale:
+        service.update(
+            record["id"], UpdateModelExperiment(name=record["name"], expectedRevision=revision - 1)
+        )
+    assert stale.value.code == "REVISION_CONFLICT"
+    # A real change makes a new revision, and its plans name it.
+    noted = service.update(
+        record["id"],
+        UpdateModelExperiment(name=record["name"], expectedRevision=revision, notes="Changed"),
+    )
+    assert noted["revision"] == revision + 1
+    assert {plan["spec"]["experimentRevision"] for plan in noted["batchPlans"]} == {revision + 1}
+    retitled = UpdateModelExperiment(name="Renamed", expectedRevision=revision + 1)
+    assert service.update(record["id"], retitled)["revision"] == revision + 2
+
+
 def test_freeze_recovers_publication_before_draft_receipt_without_duplicate(
     managed_setup, monkeypatch
 ):

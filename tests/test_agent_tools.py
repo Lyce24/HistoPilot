@@ -111,17 +111,23 @@ def test_the_server_offers_only_what_the_token_and_exposure_allow(session):
     from histopilot.agent import server
 
     agent, _ = session
+    access = agent.access
     offered = names(server.build(agent))
-    assert {"status", "list_records", "preview_design", "apply_preview"} <= offered
-    agent.access = {**agent.access, "scopes": ["read"]}
-    assert not {"preview_design", "apply_preview"} & names(server.build(agent))
-    agent.access = {**agent.access, "exposure": "none"}
+    assert {"status", "list_records", "save_design", "preview_design", "apply_preview"} <= offered
+    agent.access = {**access, "scopes": ["read"]}
+    assert not {"save_design", "preview_design", "apply_preview"} & names(server.build(agent))
+    agent.access = {**access, "exposure": "none"}
     assert names(server.build(agent)) == set()
     # No tool can freeze, start, cancel or delete: those need a person.
+    agent.access = access
     annotations = {
-        tool.name: tool.annotations for tool in asyncio.run(server.build(session[0]).list_tools())
+        tool.name: tool.annotations for tool in asyncio.run(server.build(agent).list_tools())
     }
+    assert offered <= set(annotations)
     assert all(not (hint and hint.destructiveHint) for hint in annotations.values())
+    # Saving a draft writes; previewing one does not.
+    assert not annotations["save_design"].readOnlyHint
+    assert annotations["preview_design"].readOnlyHint
 
 
 def test_tools_run_through_mcp_and_errors_come_back_as_tool_errors(session):
@@ -228,7 +234,8 @@ def test_the_server_connects_with_a_scoped_token_and_offers_its_tools(tmp_path, 
         agent = server.connect("http://127.0.0.1:8787", token, transport=service.transport)
         assert agent.project == project and agent.exposure == "metadata"
         offered = names(server.build(agent))
-        assert "list_records" in offered and "preview_design" not in offered
+        assert "list_records" in offered
+        assert not {"save_design", "preview_design"} & offered
         status = asyncio.run(server.build(agent).call_tool("status", {}))
         blocks = status[0] if isinstance(status, tuple) else status
         assert "metadata" in json.dumps([getattr(block, "text", "") for block in blocks])

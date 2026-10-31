@@ -7,6 +7,7 @@ batches and saved plans remain readable without rewriting their evidence.
 
 import sqlite3
 from copy import deepcopy
+from functools import partial
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -693,25 +694,43 @@ class ModelExperimentService:
                 for key, value in request.model_dump(exclude={"expectedRevision", "name"}).items()
                 if key in request.model_fields_set
             }
+            plans = None
             if not locked:
-                plans = values.get("batchPlans", record["payload"].get("batchPlans", []))
-                values["batchPlans"] = self._normalize_plans(
-                    plans,
+                plans = partial(
+                    self._normalize_plans,
+                    values.get("batchPlans", record["payload"].get("batchPlans", [])),
                     identity=identity,
-                    revision=record["revision"] + 1,
                     name=request.name,
                     inputs=values.get("inputs", record["payload"].get("inputs")),
                     predictor_policy=values.get(
                         "predictorPolicy", record["payload"].get("predictorPolicy")
                     ),
                 )
-            self.store.update_draft(
+            return self._save_draft(
                 identity,
+                record,
                 expected_revision=request.expectedRevision,
                 name=request.name,
                 payload={**record["payload"], **values},
+                plans=plans,
             )
+
+    def _save_draft(self, identity, record, *, expected_revision, name, payload, plans=None):
+        """Save an experiment's new name and payload. Batch plans name the experiment revision
+        they belong to, so ``plans(revision=...)`` normalizes them for one. A save that changes
+        nothing writes nothing: the experiment keeps its revision, so a preview hash that a
+        person or an agent already holds stays current."""
+        if plans is not None:
+            unchanged = {**payload, "batchPlans": plans(revision=record["revision"])}
+            payload = {**payload, "batchPlans": plans(revision=record["revision"] + 1)}
+        else:
+            unchanged = payload
+        if name == record["name"] and unchanged == record["payload"]:
             return self.get(identity)
+        self.store.update_draft(
+            identity, expected_revision=expected_revision, name=name, payload=payload
+        )
+        return self.get(identity)
 
     def setup_inputs(self, identity, request):
         from histopilot.application.mil_inputs import MILInputService
@@ -753,16 +772,17 @@ class ModelExperimentService:
                 "splitUnit": manifest["spec"].get("splitUnit", "patient"),
                 "trainingSplit": request.trainingSplit.model_dump(mode="json"),
             }
-            plans = self._normalize_plans(
+            plans = partial(
+                self._normalize_plans,
                 record["payload"].get("batchPlans", []),
                 identity=identity,
-                revision=record["revision"] + 1,
                 name=record["name"],
                 inputs=inputs.model_dump(),
                 predictor_policy=record["payload"].get("predictorPolicy"),
             )
-            self.store.update_draft(
+            return self._save_draft(
                 identity,
+                record,
                 expected_revision=request.expectedRevision,
                 name=record["name"],
                 payload={
@@ -771,10 +791,9 @@ class ModelExperimentService:
                     "setupVersion": 1,
                     "setupDesign": design,
                     "inputs": inputs.model_dump(),
-                    "batchPlans": plans,
                 },
+                plans=plans,
             )
-            return self.get(identity)
 
     @staticmethod
     def _require_input_compatibility(review):

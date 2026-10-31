@@ -716,22 +716,39 @@ def comparison_arms(
 # Previews ------------------------------------------------------------------------------
 
 
-def preview_design(session: AgentSession, design: dict, experiment: str | None = None) -> dict:
-    """Save a design as an experiment draft and preview every batch plan. To change the
-    design, pass the `experiment` a previous call returned: that draft is revised, and no
-    other is made. `@tag` names are read as the IDs `notes` names.
+def save_design(session: AgentSession, design: dict, experiment: str | None = None) -> dict:
+    """Save a design as an experiment draft, then preview every batch plan. Without
+    `experiment` it makes a new draft. To change a draft, name it in `experiment` (an ID or
+    a name): the design is saved over it and no other draft is made. Only what differs is
+    written, so saving an unchanged design keeps the draft's revision and preview hash;
+    `saved` says whether anything was written. `@tag` names are read as the IDs `notes` names.
 
     Nothing is frozen. Hand the experiment ID and the returned top-level previewHash to a
     person, who freezes it with `histopilot experiment freeze EXPERIMENT --preview-hash
-    HASH` and starts it."""
+    HASH` and starts it. To read a saved draft's preview hash, use `preview_design`."""
     checked, notes = designs.prepare(design, _resolver(session))
+    client, project = session.client, session.project
     if experiment:
-        identity = resources.experiment_id(session.client, session.project, experiment)
-        record = designs.revise(session.client, session.project, identity, checked)
+        identity = resources.experiment_id(client, project, experiment)
+        revision = resources.experiment(client, project, identity)["revision"]
+        record = designs.revise(client, project, identity, checked)
+        saved = record["revision"] != revision
     else:
-        record = designs.create(session.client, session.project, checked)
-    review = designs.preview(session.client, session.project, record["id"])
-    return bounded({"experimentId": record["id"], **review, "notes": notes})
+        record, saved = designs.create(client, project, checked), True
+    review = designs.preview(client, project, record["id"])
+    return bounded({"experimentId": record["id"], "saved": saved, **review, "notes": notes})
+
+
+def preview_design(session: AgentSession, experiment: str) -> dict:
+    """Preview every batch plan of a saved experiment draft, named by ID or name: its
+    findings, run counts, revision, whether the setup can be frozen, and the previewHash a
+    person confirms. It writes nothing, so a preview hash already handed over stays current.
+    To change the draft, use `save_design`.
+
+    Hand the experiment ID and the top-level previewHash to a person, who freezes it with
+    `histopilot experiment freeze EXPERIMENT --preview-hash HASH` and starts it."""
+    identity = resources.experiment_id(session.client, session.project, experiment)
+    return bounded(designs.preview(session.client, session.project, identity))
 
 
 def apply_preview(session: AgentSession, spec: dict) -> dict:
