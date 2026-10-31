@@ -8565,7 +8565,7 @@
  ],
  "operations": "fused mamba-ssm CUDA and Triton kernels; float32 with TF32 off and TRITON_F32_DEFAULT=ieee",
  "sources": {
-  "OceanPath": "https://github.com/Lyce24/OceanPath 962d80d",
+  "OceanPath": "https://github.com/Lyce24/OceanPath 06cc2d9",
   "causal-conv1d": "1.6.1",
   "files": {
    "src/oceanpath/models/__init__.py": "3809112623dc89cdf6136230d270a2bcf90a60f88f58e5741b0b9cd617203212",
