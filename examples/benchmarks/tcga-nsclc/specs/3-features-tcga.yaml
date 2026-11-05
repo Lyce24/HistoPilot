@@ -1,0 +1,11 @@
+# UNI2-h patch features (MahmoodLab release), written as [N, 1536] float16 + [N, 2] coords.
+kind: features
+specVersion: 1
+datasetId: '@nsclc-v1'
+path: /data/tcga-nsclc/features/TCGA
+encoderId: uni_v2
+fileSuffix: .h5
+idSuffix: ''
+recursive: true
+layout: flat
+featureKind: patch

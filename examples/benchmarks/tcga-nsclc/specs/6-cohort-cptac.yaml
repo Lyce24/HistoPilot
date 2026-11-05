@@ -1,0 +1,30 @@
+# CPTAC-NSCLC, the external cohort: every CPTAC slide of the dataset except the two whose
+# release features use 512-pixel level-0 patches (a different patch geometry from the rest).
+kind: cohort
+specVersion: 1
+protocolId: '@tcga-train-cptac-test'
+developmentFeatureBundleId: '@bundle-tcga'
+datasetId: '@nsclc-v1'
+featureBundleId: '@bundle-cptac'
+target:
+  field: subtype
+  task: binary_classification
+  unit: patient
+  classes: [LUAD, LUSC]
+  labels: {LUAD: LUAD, LUSC: LUSC}
+  positiveClass: LUSC
+  missing: block
+  unmapped: block
+eligibility:
+- {field: cohort, op: eq, value: CPTAC}
+- {field: slideId, op: not_in, value: [C3L-03717-21, C3L-03721-21]}
+patientIdentifiers: shared
+inference:
+  loadingPolicy: per_slide
+  packArtifactId: null
+  batchSize: 1
+  numWorkers: 0
+  device: auto
+  precision: float32
+  patientAggregation: mean
+  decisionThreshold: 0.5

@@ -1,0 +1,22 @@
+# LUSC vs LUAD per patient. Train on TCGA-NSCLC; CPTAC-NSCLC is the held-out external cohort.
+kind: targets
+specVersion: 1
+datasetId: '@nsclc-v1'
+splitUnit: patient
+target:
+  field: subtype
+  task: binary_classification
+  unit: patient
+  classes: [LUAD, LUSC]
+  labels: {LUAD: LUAD, LUSC: LUSC}
+  positiveClass: LUSC
+  missing: block
+  unmapped: block
+predictors: []
+eligibility: []
+split:
+  method: imported
+  partitionField: cohort
+  trainValues: [TCGA]
+  testValues: [CPTAC]
+  seed: 42

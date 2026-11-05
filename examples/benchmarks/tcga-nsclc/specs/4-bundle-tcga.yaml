@@ -1,0 +1,4 @@
+kind: feature-bundle
+specVersion: 1
+featureSetId: '@uni2h-tcga'
+packArtifactIds: []
