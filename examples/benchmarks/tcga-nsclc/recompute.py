@@ -15,6 +15,7 @@ import csv
 import json
 import sys
 from collections import defaultdict
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -116,15 +117,29 @@ def main():
                 slides = json.loads(row["slideIds"])
                 subtypes = {table[slide]["Subtype"] for slide in slides if slide in table}
                 if len(subtypes) == 1:
-                    rows.append((slides, int(subtypes.pop() == POSITIVE), float(row[f"probability:{POSITIVE}"])))
+                    rows.append(
+                        (
+                            slides,
+                            int(subtypes.pop() == POSITIVE),
+                            float(row[f"probability:{POSITIVE}"]),
+                        )
+                    )
         value, text = cell([r[1] for r in rows], [r[2] for r in rows])
         metrics_path = job / "service-metrics.json"
-        stored = read_json(metrics_path)["metrics"]["patient"]["auroc"] if metrics_path.exists() else None
+        stored = (
+            read_json(metrics_path)["metrics"]["patient"]["auroc"]
+            if metrics_path.exists()
+            else None
+        )
         if stored is not None:
             mismatches += abs(stored - value) > 1e-9
         model = NAMES.get("/".join(sorted(models)), "/".join(sorted(models)))
         external[model] = rows
-        print(f"| {model} | {len(rows)} | {text} | {stored:.4f} |" if stored is not None else f"| {model} | {len(rows)} | {text} | — |")
+        print(
+            f"| {model} | {len(rows)} | {text} | {stored:.4f} |"
+            if stored is not None
+            else f"| {model} | {len(rows)} | {text} | — |"
+        )
 
     # Dataset shift: atypicality of each CPTAC slide against the development slides.
     reports = [
@@ -143,7 +158,9 @@ def main():
             f"{summary['cohortSlides']} slides ({summary['beyond']['fraction']:.1%})"
         )
         slides = {row["slideId"]: row for row in report["slides"] if row["set"] == "cohort"}
-        print("\n| Model | Least atypical third | Middle third | Most atypical third | Within range | Beyond range |")
+        print(
+            "\n| Model | Least atypical third | Middle third | Most atypical third | Within range | Beyond range |"
+        )
         print("| --- | --- | --- | --- | --- | --- |")
         for model, rows in sorted(external.items()):
             scored = sorted(
@@ -160,9 +177,11 @@ def main():
             scored.sort(key=lambda item: (item[0], item[4]))
             n = len(scored)
             edges = [0, n // 3 + (n % 3 > 0), 2 * n // 3 + (n % 3 > 1), n]
-            groups = [scored[a:b] for a, b in zip(edges, edges[1:])]
+            groups = [scored[a:b] for a, b in pairwise(edges)]
             groups += [[r for r in scored if not r[1]], [r for r in scored if r[1]]]
-            cells = [cell([r[2] for r in g], [r[3] for r in g])[1] + f", n={len(g)}" for g in groups]
+            cells = [
+                cell([r[2] for r in g], [r[3] for r in g])[1] + f", n={len(g)}" for g in groups
+            ]
             print(f"| {model} | " + " | ".join(cells) + " |")
 
     print(f"\n{mismatches} recomputed AUROC(s) differ from the stored values.", file=sys.stderr)

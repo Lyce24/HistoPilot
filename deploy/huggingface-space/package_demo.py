@@ -53,7 +53,9 @@ def main() -> int:
                 if left_out(path):
                     skipped += 1
                     continue
-                archive.add(path, arcname=f"demo-projects/{project.name}/{path.relative_to(project)}")
+                archive.add(
+                    path, arcname=f"demo-projects/{project.name}/{path.relative_to(project)}"
+                )
                 kept += 1
     size = args.out.stat().st_size / 1e6
     print(f"Wrote {args.out}: {kept} files, {skipped} left out, {size:.1f} MB.")
