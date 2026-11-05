@@ -29,6 +29,7 @@ import { StageRecordManageButton, StageViews } from './StageWorkflow';
 import { ErrorNotice } from './ui';
 import './InferenceResults.css';
 import './ApplyRunDetail.css';
+import { useReadOnly } from '../lib/readOnly';
 
 type Unit = 'selected' | 'slide' | 'patient';
 type Review = (query: Partial<CaseQuery>) => void;
@@ -78,6 +79,8 @@ export default function ApplyRunDetail({ project, record, runs, predictors, expe
   reference?: string; onReferenceChange: (reference: string | undefined, tab?: RunTab) => void;
   initialAnalysis?: string;
 }) {
+  // A public demo's packaged project shows its records and offers nothing that changes them.
+  const publicDemo = useReadOnly();
   const trashed = record.lifecycleState === 'trashed';
   const shouldPoll = !trashed || computeActive(record.execution);
   // Shared with the job controls; read on mount, since the list may predate a Task Center change.
@@ -112,7 +115,7 @@ export default function ApplyRunDetail({ project, record, runs, predictors, expe
           : sources.length ? <select className="field" aria-labelledby={`run-labels-${record.id}`} value={source?.id ?? ''} onChange={(event) => onReferenceChange(event.target.value || undefined)}>{sources.map((item) => <option key={item.id ?? 'cohort'} value={item.id ?? ''}>{item.name}{item.standard && item.standard.lifecycleState === 'archived' ? ' (archived)' : ''}</option>)}</select>
           : 'No labels · predictions only'}
         <small>{waiting ? null : source?.standard ? `Reference standard · ${source.standard.manifest.summary.labeledSlides.toLocaleString()} of ${source.standard.manifest.summary.slides.toLocaleString()} slides labeled` : source ? 'The labels frozen with the cohort' : 'Add a reference standard when labels arrive.'}
-          {canAdd && !adding ? <> · <button type="button" className="text-button" onClick={() => setAdding(true)}>Add reference standard</button></> : null}</small>
+          {canAdd && !adding && !publicDemo ? <> · <button type="button" className="text-button" onClick={() => setAdding(true)}>Add reference standard</button></> : null}</small>
       </dd></div>
     </dl>
     <ErrorNotice error={standards.error} />
@@ -130,7 +133,7 @@ export default function ApplyRunDetail({ project, record, runs, predictors, expe
         {shown === 'compare' ? <CompareView project={project} record={{ ...record, execution: current ?? undefined }} runs={runs} source={source} onReview={openCases} /> : null}
       </div>
       <div className="inline-actions run-actions">
-        <a className="btn btn-secondary" href={evidenceLink('interpretation', { experimentId: record.manifest.experimentId, predictorId: record.manifest.predictorId, evaluationId: record.id })}>Open in Model interpretation</a>
+        {publicDemo ? null : <a className="btn btn-secondary" href={evidenceLink('interpretation', { experimentId: record.manifest.experimentId, predictorId: record.manifest.predictorId, evaluationId: record.id })}>Open in Model interpretation</a>}
         <button className="btn btn-secondary" type="button" onClick={() => downloadJSON(`${record.manifest.name}.json`, { ...record, execution: current })}>Export run record</button>
       </div>
     </> : !completed ? <p>{execution.isError ? 'Results cannot be verified. Resolve the execution error before viewing them.' : 'No completed predictions yet. Run this job to predict every slide in its cohort.'}</p> : null}

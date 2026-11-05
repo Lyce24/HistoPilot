@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { StageBackButton, StageContinueButton, StageCreateButton } from './StageActions';
+import { ReadOnlyContext } from '../lib/readOnly';
 
 describe('stage action contract', () => {
   it('keeps navigation from submitting a form and retains explicit submit actions', () => {
@@ -22,5 +23,11 @@ describe('stage action contract', () => {
     const back = renderToStaticMarkup(<StageBackButton>Back to datasets</StageBackButton>);
     expect(back).toContain('btn-secondary');
     expect(back.indexOf('<svg')).toBeLessThan(back.indexOf('Back to datasets'));
+  });
+
+  it('offers nothing to create in a read-only project, and keeps its navigation', () => {
+    const html = renderToStaticMarkup(<ReadOnlyContext.Provider value><StageCreateButton>Create experiment</StageCreateButton><StageBackButton>Back to experiments</StageBackButton></ReadOnlyContext.Provider>);
+    expect(html).not.toContain('Create experiment');
+    expect(html).toContain('Back to experiments');
   });
 });

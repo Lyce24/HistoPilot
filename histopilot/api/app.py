@@ -18,7 +18,7 @@ from histopilot import __version__
 from histopilot.adapters.trident import discover_runtime
 from histopilot.application import creations
 from histopilot.application.blca_demo import demo_summary
-from histopilot.application.project_workspace import ProjectWorkspace, WorkspaceError
+from histopilot.application.project_workspace import DESCRIPTOR, ProjectWorkspace, WorkspaceError
 from histopilot.application.system_compute import ComputeSampler
 from histopilot.config import Settings, load_settings
 from histopilot.doctor import system_report
@@ -35,6 +35,7 @@ from histopilot.schemas.workspace import (
 )
 from histopilot.storage.database import SCHEMA_VERSION, Database
 from histopilot.storage.filesystem import FilesystemError, LocalFilesystem
+from histopilot.storage.io import read_json_bounded
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError
 
@@ -58,11 +59,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     projects = ProjectWorkspace(database, filesystem, storage)
     compute_sampler = ComputeSampler(settings.workspace, settings.data_roots)
     token = token_urlsafe(32)
+    # A demo's packaged projects, by identity: registered once the workspace exists, then
+    # served read-only through the full application (api/demo_mode.py).
+    demo_projects = {
+        read_json_bounded(folder / DESCRIPTOR)["id"]: folder for folder in settings.demo_projects
+    }
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
             database.initialize()
+            for folder in demo_projects.values():
+                projects.open(str(folder))
             yield
         finally:
             from histopilot.viewer.image_cache import SLIDE_IMAGES
@@ -118,7 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.filing = filing
     if settings.demo:
         # Read-only, for anyone: the demo's own boundary replaces the loopback one.
-        configure_demo_boundary(app, token)
+        configure_demo_boundary(app, token, frozenset(demo_projects))
     else:
         configure_browser_boundary(
             app,
@@ -221,8 +229,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/projects")
     def list_projects(request: Request):
         if settings.demo:
-            # The demo alone: the workspace's own path describes this machine.
-            return {"projects": [demo_summary()], "defaultStoragePath": "", "demoOnly": True}
+            # The demo and its packaged projects alone, without the paths that describe this
+            # machine: the workspace's, and the folders each project came from.
+            packaged = [
+                {**{k: v for k, v in item.items() if k != "sources"}, "storagePath": ""}
+                for item in projects.list_projects()["projects"]
+                if item["id"] in demo_projects
+            ]
+            return {
+                "projects": [*packaged, demo_summary()],
+                "defaultStoragePath": "",
+                "demoOnly": True,
+            }
         listed = projects.list_projects()
         own = token_project(request)
         if own is not None:
@@ -240,7 +258,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/projects/{identity}/workspace")
     def project_workspace(identity: str):
-        return projects.workspace(identity)
+        workspace = projects.workspace(identity)
+        if identity in demo_projects:
+            # The browser hides what changes a project, and says it is a public demo.
+            workspace = {**workspace, "readOnly": True}
+        return workspace
 
     @app.patch("/api/v1/projects/{identity}")
     def update_project(identity: str, payload: ProjectUpdateRequest):

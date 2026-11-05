@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import RunStatusChip, { actionShown, describeRollup, rollupSettled, segmentText } from './RunStatusChip';
+import { ReadOnlyContext } from '../lib/readOnly';
 import { taskCenterKeys, type RollupScope } from '../api/taskCenter';
 import { fixtureRollup } from '../testFixtures/taskCenter';
 
@@ -64,6 +65,14 @@ describe('RunStatusChip', () => {
     return renderToStaticMarkup(<QueryClientProvider client={client}><RunStatusChip scope={scope} {...props} /></QueryClientProvider>);
   };
   const scope = { ownerKind: 'experiment', ownerId: 'exp', project: 'project' };
+
+  it('shows no Task Center status in a read-only project: its records keep their own', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    clients.push(client);
+    client.setQueryData(taskCenterKeys.rollup(scope), fixtureRollup());
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><ReadOnlyContext.Provider value><RunStatusChip scope={scope} label="Training" /></ReadOnlyContext.Provider></QueryClientProvider>);
+    expect(html).toBe('');
+  });
 
   it('links to the filtered Task Center view and offers the page action only when it applies', () => {
     const running = render(scope, fixtureRollup(), { label: 'Training', primaryAction: <button type="button">Resume</button> });

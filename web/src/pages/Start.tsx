@@ -283,7 +283,9 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
           <p>
             {view === 'welcome'
               ? demoOnly
-                ? 'This public demo is read-only. Explore a synthetic study from slide records to applied models; nothing you open here is saved.'
+                ? savedProjects.length
+                  ? 'This public demo is read-only. Browse a real study on public data in the full application, or follow a synthetic walkthrough; nothing you open here is saved.'
+                  : 'This public demo is read-only. Explore a synthetic study from slide records to applied models; nothing you open here is saved.'
                 : 'Bring your data, shape your experiment, and keep every step in one place.'
               : view === 'new'
                 ? 'Give your project a home. You can add data and choose the details as you go.'
@@ -314,10 +316,30 @@ export default function Start({ onOpen }: { onOpen: (id: string, page?: Page) =>
         ) : null}
 
         {view === 'welcome' && !connecting && demoOnly ? (
-          <div className="start-actions">
+          <div className={`start-actions${savedProjects.length ? ' start-actions-demo' : ''}`}>
+            {/* A demo's packaged projects: real studies, read-only in the full application. */}
+            {savedProjects.map((project) => (
+              <button
+                key={project.id}
+                type="button"
+                className="start-action-card start-action-new"
+                onClick={() => onOpen(project.id)}
+              >
+                <span className="start-action-icon">
+                  <Icon name="experiments" size={26} />
+                </span>
+                <span className="start-action-copy">
+                  <strong>{project.name}</strong>
+                  <span>{project.description || 'A real study on public data, read-only.'}</span>
+                </span>
+                <span className="start-action-link">
+                  Explore the study <Icon name="arrow" size={18} />
+                </span>
+              </button>
+            ))}
             <button
               type="button"
-              className="start-action-card start-action-new"
+              className={`start-action-card ${savedProjects.length ? 'start-action-load' : 'start-action-new'}`}
               onClick={() => onOpen(DEMO_PROJECT_ID)}
             >
               <span className="start-action-icon">

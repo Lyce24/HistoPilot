@@ -84,6 +84,20 @@ describe('the kind of service', () => {
     }
   });
 
+  it('leads with the packaged studies of a public demo, then the walkthrough and the code', () => {
+    const packaged = { id: 'nsclc', name: 'TCGA-NSCLC public study', description: 'LUAD vs LUSC on public data.', mode: 'local' as const, storagePath: '', available: true };
+    const html = render({ projects: [packaged, ...demo], defaultStoragePath: '', demoOnly: true });
+    expect(html).toContain('start-actions-demo');
+    expect(html).toContain('TCGA-NSCLC public study');
+    expect(html).toContain('LUAD vs LUSC on public data.');
+    expect(html).toContain('Explore the study');
+    expect(html).toContain('Browse a real study on public data');
+    expect(html.indexOf('TCGA-NSCLC public study')).toBeLessThan(html.indexOf('Open the BLCA demo'));
+    for (const missing of ['Start a new project', 'Load an existing project', 'Recent projects', 'Local workspace']) {
+      expect(html).not.toContain(missing);
+    }
+  });
+
   it('keeps every local action on a local service', () => {
     const html = render({ projects, defaultStoragePath: '/projects' });
     for (const present of ['Start a new project', 'Load an existing project', 'Recent projects', 'Local workspace', 'Open BLCA demo']) {

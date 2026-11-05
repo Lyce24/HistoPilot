@@ -5,6 +5,7 @@ import { cleanupPollInterval, lifecycle, lifecycleLabel } from '../api/lifecycle
 import ExperimentLifecycle from './ExperimentLifecycle';
 import { Badge, ErrorNotice, PageHeader } from './ui';
 import { neutralRecordKindLabel } from '../lib/recordKinds';
+import { useReadOnly } from '../lib/readOnly';
 
 interface RecordSelection { recordKey: string; name: string }
 const ManagementContext = createContext<((record: RecordSelection) => void) | null>(null);
@@ -66,6 +67,8 @@ function RecordManagementPage({ project, record, backLabel, locked, onClose, onL
 
 export function RecordManageButton({ recordKey, name }: RecordSelection) {
   const open = useContext(ManagementContext);
+  // Archive, trash, rename and copy all change a project; a read-only one offers none.
+  if (useReadOnly()) return null;
   return <button type="button" className="btn btn-secondary btn-small" data-record-key={recordKey} aria-label={`Manage ${name}`}
     disabled={!open} onClick={() => open?.({ recordKey, name })}>Manage</button>;
 }

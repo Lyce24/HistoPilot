@@ -21,10 +21,15 @@ class Settings:
     static_dir: Path = field(default_factory=lambda: Path(__file__).parent / "static")
     # Serve only the UI and the synthetic BLCA demo, read-only, to anyone; see api/demo_mode.py.
     demo: bool = False
+    # With demo: project folders, copied into the throwaway workspace, that the demo also
+    # serves read-only through the full application (cli.py copies them there).
+    demo_projects: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.demo, bool):
             raise ValueError("demo must be true or false")
+        if self.demo_projects and not self.demo:
+            raise ValueError("Packaged demo projects are served by demo mode only.")
         if self.demo:
             # Any address: a demo service is meant to be reached from other machines.
             if not isinstance(self.host, str) or not self.host.strip():

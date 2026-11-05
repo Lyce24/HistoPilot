@@ -10,6 +10,7 @@ import CurveChart from './CurveChart';
 import { StageRecordManageButton } from './StageWorkflow';
 import { ErrorNotice } from './ui';
 import '../pages/ClinicalInsights.css';
+import { useReadOnly } from '../lib/readOnly';
 
 const DEFAULTS = { name: 'Clinical utility analysis', unit: 'selected' as ClinicalSelection['unit'], threshold: '', bins: '10', thresholdMin: '0.01', thresholdMax: '0.99', thresholdSteps: '99' };
 
@@ -25,6 +26,8 @@ export function RunClinicalUtility({ project, record, metrics, reference, initia
   /** The reference standard supplying outcomes; absent for the cohort's own labels. */
   reference?: { id: string; name: string }; initialAnalysis?: string;
 }) {
+  // A public demo's packaged project shows its records and offers nothing that changes them.
+  const publicDemo = useReadOnly();
   const client = useQueryClient();
   const saved = useQuery({ queryKey: ['clinical-analyses', project, 'all'], queryFn: () => clinicalAnalyses.list(project, true) });
   const referenceId = reference?.id ?? null;
@@ -69,7 +72,7 @@ export function RunClinicalUtility({ project, record, metrics, reference, initia
   const report = publication.review?.preview.manifest?.report ?? (!editing ? open?.manifest.report : undefined);
   return <section className="run-section clinical-insights" aria-labelledby={`clinical-${record.id}`}>
     <div className="run-section-heading"><h3 id={`clinical-${record.id}`}>Clinical utility</h3>
-      {!editing ? <button type="button" className="btn btn-secondary btn-small" disabled={publication.locked || record.lifecycleState !== 'active'} onClick={() => start()}>New analysis</button> : null}</div>
+      {!editing && !publicDemo ? <button type="button" className="btn btn-secondary btn-small" disabled={publication.locked || record.lifecycleState !== 'active'} onClick={() => start()}>New analysis</button> : null}</div>
     <p className="muted">Calibration, operating characteristics and decision curves from this run&rsquo;s saved predictions{reference ? `, with outcomes from ${reference.name}` : ''}. An exploratory threshold never changes the frozen predictor or its metrics.</p>
     <ErrorNotice error={publication.error ?? saved.error ?? downloadError} />
     {analyses.length > 1 && !editing ? <label className="label">Saved analysis<select className="field" value={open?.id ?? ''} onChange={(event) => { publication.reset(); setOpenId(event.target.value); }}>{analyses.map((item) => <option key={item.id} value={item.id}>{item.manifest.name} · {item.manifest.report.positiveClass} · {item.manifest.report.unit}</option>)}</select></label> : null}
