@@ -118,6 +118,7 @@ Every command takes `--json`, `--url`, `--project` and `--timeout SECONDS`. Comm
 | `histopilot pack show RECORD` | Show one record. |
 | `histopilot pack template` | Write a starting spec file with every science field written out. |
 | `histopilot pack-features FEATURE_SET_ID` | Validate, create, or verify an existing pack in a durable CPU worker. |
+| `histopilot predictor card PREDICTOR` | A predictor's model card: model, task, development and evaluation evidence, limits. |
 | `histopilot predictor choices` | List the experiment results that can produce a predictor. |
 | `histopilot predictor list` | List frozen predictors: fold ensembles, seed ensembles and refits. |
 | `histopilot predictor seed-ensemble` | Publish a seed-ensemble predictor from a completed configuration; nothing trains. |
@@ -153,6 +154,9 @@ Every command takes `--json`, `--url`, `--project` and `--timeout SECONDS`. Comm
 | `histopilot run metrics RUN` | Show a completed run's metrics, against its cohort's labels or a reference. |
 | `histopilot run recalibration RUN` | Calibration as predicted and after recalibration on development predictions. |
 | `histopilot run resume RECORD` | Resume stopped or failed work; finished parts are kept. |
+| `histopilot run shift RUN` | The run's dataset shift: its cohort against its predictor's development slides. |
+| `histopilot run shift-analyze RUN` | Queue the run's dataset shift analysis: a CPU task that reads features, no labels. |
+| `histopilot run shift-performance RUN` | Performance within thirds of atypicality, and within or beyond the development range. |
 | `histopilot run show RECORD` | Show one record. |
 | `histopilot run subgroups RUN` | Performance within each value of an attribute, over the records the run scores. |
 | `histopilot run summary RUN` | A label-free summary of the run's predictions, for any run, labeled or not. |
