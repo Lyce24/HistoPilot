@@ -55,6 +55,29 @@ def test_the_training_leg_fails_on_a_test_skipped_for_want_of_torch(tmp_path, ca
     assert "`tests.test_task_center_training::test_fold`: runs real training workers" in out
 
 
+def test_a_parity_module_skipped_at_collection_fails_the_training_leg(tmp_path, capsys):
+    # As pytest reports a module whose module-level importorskip("torch") skipped it.
+    collection = (
+        '<testcase classname="" name="tests.test_mil_parity" time="0">'
+        '<skipped type="pytest.skip" message="collection skipped">'
+        "('/ci/tests/test_mil_parity.py', 11, \"Skipped: could not import 'torch': "
+        "No module named 'torch'\")</skipped></testcase>"
+    )
+    report = tmp_path / "pytest.xml"
+    report.write_text(JUNIT.format(extra=collection))
+    found = script["cases"](str(report))
+    assert found[-1] == script["Case"](
+        "tests.test_mil_parity",
+        "tests.test_mil_parity",
+        "skipped",
+        "could not import 'torch': No module named 'torch'",
+    )
+    assert script["main"]([str(report), "--leg", "training"]) == 1
+    out = capsys.readouterr().out
+    assert "| could not import 'torch': No module named 'torch' | 1 |" in out
+    assert "`tests.test_mil_parity::tests.test_mil_parity`: could not import 'torch'" in out
+
+
 def test_the_lean_leg_only_reports_those_skips(tmp_path, capsys):
     report = tmp_path / "pytest.xml"
     report.write_text(JUNIT.format(extra=TORCH_SKIP + MARKER_SKIP))

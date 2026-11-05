@@ -31,6 +31,10 @@ PARITY = {
 WANTS_TRAINING = re.compile(
     r"\b(torch|lightning|sklearn|histopilot\.training)\b|training extra", re.I
 )
+# A module skipped while it was collected (a module-level importorskip) is reported with the
+# message "collection skipped", no class name, the module as its name, and the reason in its text:
+# ('/path/tests/test_mil_parity.py', 11, "Skipped: could not import 'torch': ...")
+COLLECTION_REASON = re.compile(r"Skipped: (.*?)['\"]?\)?$", re.S)
 
 
 @dataclass(frozen=True)
@@ -41,18 +45,28 @@ class Case:
     reason: str = ""
 
 
+def skip_reason(skipped: ET.Element) -> str:
+    message = (skipped.get("message") or "").strip()
+    text = (skipped.text or "").strip()
+    if message in {"", "collection skipped"}:
+        found = COLLECTION_REASON.search(text)
+        if found:
+            return found.group(1).strip()
+    return message or text
+
+
 def cases(path: str) -> list[Case]:
     found = []
     for case in ET.parse(path).getroot().iter("testcase"):
-        module = case.get("classname") or ""
+        name = case.get("name") or ""
+        module = case.get("classname") or name
         skipped = case.find("skipped")
         if case.find("failure") is not None or case.find("error") is not None:
-            found.append(Case(module, case.get("name") or "", "failed"))
+            found.append(Case(module, name, "failed"))
         elif skipped is not None:
-            reason = skipped.get("message") or skipped.text or ""
-            found.append(Case(module, case.get("name") or "", "skipped", reason.strip()))
+            found.append(Case(module, name, "skipped", skip_reason(skipped)))
         else:
-            found.append(Case(module, case.get("name") or "", "passed"))
+            found.append(Case(module, name, "passed"))
     return found
 
 
