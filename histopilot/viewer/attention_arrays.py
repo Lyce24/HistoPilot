@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import Lock
 
 from histopilot.storage.attention_inputs import file_stamp
-from histopilot.storage.packed import open_source
+from histopilot.storage.packed import open_source, same_stamp
 from histopilot.storage.project_lock import StorageError
 from histopilot.storage.receipts import receipt_names
 
@@ -71,7 +71,7 @@ def _attention_array(path, expected, slide):
                     raise ValueError(
                         "Attention array dimensions or dtype differ from the frozen slide."
                     )
-                if file_stamp(path) != {"path": str(path), **stamp}:
+                if not same_stamp(file_stamp(path), {"path": str(path), **stamp}):
                     raise ValueError("Attention array changed while opening its viewport.")
                 yield array
             finally:
