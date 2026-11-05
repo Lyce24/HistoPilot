@@ -51,3 +51,18 @@ python recompute.py /path/to/the/project/folder nsclc_dataset.csv
 ```
 
 `recompute.py` exits nonzero if any recomputed AUROC differs from the value HistoPilot stored.
+
+## 4. More seeds, more architectures
+
+With one training seed the controlled comparison has no paired intervals, so it cannot say whether two arms differ. Those intervals resample training seeds. To get them, and to bring in the rest of HistoPilot's aggregators, write a comparison design with every arm against ABMIL, then copy the inputs from `specs/5-experiment.yaml` and set `trainingSeeds: [42, 43, 44]`:
+
+```bash
+histopilot experiment template --preset baseline \
+  --compare-model clam_sb --compare-model clam_mb --compare-model transmil \
+  --compare-model dsmil --compare-model dtfd --compare-model acmil --compare-model nnmil \
+  --compare-model oceanpath_mamba2 --compare-model mean_pool --compare-model max_pool \
+  -o design.yaml
+histopilot experiment create --from design.yaml
+```
+
+That is 11 arms × 3 seeds × 5 folds = 165 runs: about a day and a half on one RTX A5000 if the new arms train as fast as the five measured here, 12.5 minutes a run on average. A [feature pack](../../../docs/user-guide.md#2-slide-features) of the TCGA features shortens it.
