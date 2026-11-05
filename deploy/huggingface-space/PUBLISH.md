@@ -1,42 +1,35 @@
 # Publish the demo as a Hugging Face Space
 
-This folder is a Docker Space: `README.md` holds the Space's settings in its front matter, and `Dockerfile` installs a released HistoPilot wheel and runs `histopilot serve --demo` on port 7860. The Space serves the synthetic BLCA demo read-only and refuses everything else; see [public read-only demo](../../docs/deployment.md#public-read-only-demo).
+This folder is a Docker Space. `README.md` holds the Space's settings in its front matter. `Dockerfile` installs a HistoPilot wheel, unpacks the packaged studies and runs `histopilot serve --demo` on port 7860. The Space serves the synthetic BLCA walkthrough and the packaged real studies read-only, and refuses everything else; see [public read-only demo](../../docs/deployment.md#public-read-only-demo).
 
 ## Before you start
 
-- A GitHub Release `v0.1.0` with the asset `histopilot-0.1.0-py3-none-any.whl`. The wheel must contain the built UI (`histopilot/static/index.html`); [build a wheel](../../docs/deployment.md#build-a-wheel) runs `scripts/bundle_web.py` before `uv build` for that. Check the asset from any machine:
+- **A wheel** with the built UI. Download a release's `histopilot-X.Y.Z-py3-none-any.whl` from GitHub, or build one: `cd web && npm ci && npm run build && cd .. && python scripts/bundle_web.py && uv build --wheel` (see [build a wheel](../../docs/deployment.md#build-a-wheel)). Check that it contains `histopilot/static/index.html`.
+- **The studies.** Stop the service that owns them, then package their folders:
 
   ```bash
-  curl -fsSLo /tmp/histopilot.whl \
-    https://github.com/Lyce24/HistoPilot/releases/download/v0.1.0/histopilot-0.1.0-py3-none-any.whl
-  unzip -l /tmp/histopilot.whl | grep 'histopilot/static/index.html'
+  python deploy/huggingface-space/package_demo.py demo-projects.tar.gz /path/to/projects/tcga-nsclc
   ```
 
-  For another version, change `ARG HISTOPILOT_VERSION` in the `Dockerfile` to match the tag without its `v`.
-- The front matter declares `license: mit`. Add the matching license to the repository first, or change the field.
-- A Hugging Face account with an access token that can write (huggingface.co, **Settings → Access Tokens**). Git asks for it as the password when you push.
+  It leaves out model checkpoints, feature packs, per-slide feature embeddings and slide images. A visitor's reads never open them, and a public page must not carry features whose license forbids redistribution. Read the license of every feature set you package: the TCGA-NSCLC study's UNI2-h features are CC-BY-NC-ND 4.0, so the Space shows results derived from them and none of the features.
+- **A Hugging Face access token that can write** (Settings → Access Tokens), and the Space's owner and name, for example `histopilot`.
 
-## Create the Space
+## Create and push the Space
 
-1. Open <https://huggingface.co/new-space>.
-2. Choose the owner and a name, for example `histopilot`. The app's own address is then usually `https://OWNER-histopilot.hf.space`; the Space's **Embed this Space** menu shows the exact one.
-3. **License**: MIT. **Space SDK**: Docker, with the **Blank** template. **Hardware**: CPU basic, the free tier, is enough. **Visibility**: Public.
-4. Select **Create Space**. It stays empty until the first push.
-
-## Push the files
-
-From the root of the HistoPilot repository, replacing `OWNER`:
+Put the four files in one folder and upload it:
 
 ```bash
-git clone https://huggingface.co/spaces/OWNER/histopilot /tmp/histopilot-space
-cp deploy/huggingface-space/README.md deploy/huggingface-space/Dockerfile /tmp/histopilot-space/
-cd /tmp/histopilot-space
-git add README.md Dockerfile
-git commit -m "Serve the HistoPilot demo"
-git push
+mkdir space && cp deploy/huggingface-space/{README.md,Dockerfile} space/
+cp dist/histopilot-*-py3-none-any.whl demo-projects.tar.gz space/
+python - <<'PY'
+from huggingface_hub import HfApi
+api = HfApi()
+api.create_repo("OWNER/histopilot", repo_type="space", space_sdk="docker", exist_ok=True)
+api.upload_folder(folder_path="space", repo_id="OWNER/histopilot", repo_type="space")
+PY
 ```
 
-The push replaces the template's `README.md`; its front matter carries the Space's settings, so keep it at the top of the file.
+The front matter declares `license: mit` for HistoPilot itself. The Space card's last paragraph credits the feature release; keep it.
 
 ## Watch it start
 
@@ -44,23 +37,25 @@ The Space builds the image, then starts it. Follow both in **Logs** (Build, then
 
 ```text
 HistoPilot · public demo, read-only
-...
+Serves     the synthetic BLCA demo and 1 packaged project to anyone who reaches this port; …
 INFO:     Uvicorn running on http://0.0.0.0:7860 (Press CTRL+C to quit)
 ```
 
 ## Check it
 
-The Space's page shows the start page with **Open the BLCA demo** and no way to create or load a project. From a terminal:
+The start page offers each packaged study, then the BLCA walkthrough and the code. From a terminal:
 
 ```bash
 SPACE=https://OWNER-histopilot.hf.space
-curl -s $SPACE/api/v1/health                      # {"status":"ok",...}
-curl -s -X POST $SPACE/api/v1/projects            # 403 DEMO_MODE_READ_ONLY
-curl -s $SPACE/api/v1/filesystem/roots            # 403 DEMO_MODE_ROUTE_UNAVAILABLE
+curl -s $SPACE/api/v1/health                                  # {"status":"ok",...}
+TOKEN=$(curl -s $SPACE/api/v1/session | python -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+curl -s -H "X-HistoPilot-Token: $TOKEN" $SPACE/api/v1/projects   # the studies and the demo
+curl -s -X POST $SPACE/api/v1/projects                        # 403 DEMO_MODE_READ_ONLY
+curl -s $SPACE/api/v1/filesystem/roots                        # 403 DEMO_MODE_ROUTE_UNAVAILABLE
 ```
 
 ## Later
 
-- **A new release**: change `ARG HISTOPILOT_VERSION` in both copies of the `Dockerfile` and push to the Space. A rebuild without a change (**Settings → Factory rebuild**) also picks up newer versions of the wheel's dependencies within its declared ranges.
+- **A new version or new results**: rebuild the wheel or the archive, replace the file in the Space folder and upload again; the Space rebuilds.
 - **Sleep**: a Space on free hardware sleeps after a period without visitors and wakes on the next visit, which takes about a minute.
 - **Taking it down**: the Space's **Settings** can pause or delete it.
