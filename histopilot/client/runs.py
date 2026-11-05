@@ -84,3 +84,28 @@ def predictions_csv(client, project, run, *, unit="selected", attributes=None) -
 def compare(client: Client, project: str, left: str, right: str) -> dict:
     body = {"leftEvaluationId": left, "rightEvaluationId": right}
     return _post(client, f"{project_path(project)}/evaluation-runs/compare", body)
+
+
+def shift(client: Client, project: str, run: str) -> dict:
+    """The run's dataset shift analysis: whether it exists, its job and its report."""
+    return client.request("GET", f"{_run(project, run)}/shift")
+
+
+def shift_preview(client: Client, project: str, run: str) -> dict:
+    return _post(client, f"{_run(project, run)}/shift/preview", {})
+
+
+def shift_start(client: Client, project: str, run: str, preview: dict, *, operation_id: str):
+    return _post(
+        client,
+        f"{_run(project, run)}/shift",
+        {"previewHash": preview["previewHash"], "operationId": operation_id},
+    )
+
+
+def shift_performance(client, project, run, *, unit="selected", reference=None) -> dict:
+    return _post(
+        client,
+        f"{_run(project, run)}/shift/performance",
+        {"unit": unit, "referenceId": reference},
+    )

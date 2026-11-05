@@ -85,7 +85,7 @@ describe('the kind of service', () => {
   });
 
   it('leads with the packaged studies of a public demo, then the walkthrough and the code', () => {
-    const packaged = { id: 'nsclc', name: 'TCGA-NSCLC public study', description: 'LUAD vs LUSC on public data.', mode: 'local' as const, storagePath: '', available: true };
+    const packaged: ProjectSummary = { id: 'nsclc', name: 'TCGA-NSCLC public study', description: 'LUAD vs LUSC on public data.', mode: 'local', storagePath: '', available: true, createdAt: '2026-10-30', updatedAt: '2026-10-30', config: {}, sources: [] };
     const html = render({ projects: [packaged, ...demo], defaultStoragePath: '', demoOnly: true });
     expect(html).toContain('start-actions-demo');
     expect(html).toContain('TCGA-NSCLC public study');

@@ -25,6 +25,8 @@ import PatientAnalysisResults from './PatientAnalysisResults';
 import ReferenceStandardEditor from './ReferenceStandardEditor';
 import RunAgreement from './RunAgreement';
 import RunRecalibration from './RunRecalibration';
+import RunDatasetShift from './RunDatasetShift';
+import { downloadModelCard } from '../api/shift';
 import { StageRecordManageButton, StageViews } from './StageWorkflow';
 import { ErrorNotice } from './ui';
 import './InferenceResults.css';
@@ -250,12 +252,14 @@ function PerformanceView({ project, record, current, source, onReview, initialAn
     <PatientAnalysisResults value={metrics.patientAnalysis} />
     <SubgroupPerformance project={project} record={record} unit={unit} referenceId={referenceId} attributes={summary.data?.attributes ?? []} />
     <RunRecalibration project={project} record={record} unit={unit} referenceId={referenceId} />
+    <RunDatasetShift project={project} record={record} unit={unit} referenceId={referenceId} />
     <RunClinicalUtility project={project} record={record} metrics={metrics} reference={source.standard ? { id: source.standard.id, name: source.name } : undefined} initialAnalysis={initialAnalysis} />
     <div className="inference-section"><h3>Downloads</h3>
       <div className="inference-downloads">
         <button type="button" className="btn btn-secondary" disabled={download.busy} onClick={() => void fetchFile('slide-predictions.csv')}>Scored slide table (CSV)</button>
         {hasPatientPredictions(result) || (referenceId && !patient) ? <button type="button" className="btn btn-secondary" disabled={download.busy} onClick={() => void fetchFile('patient-predictions.csv')}>Scored patient table (CSV)</button> : null}
         <button type="button" className="btn btn-secondary" disabled={download.busy} onClick={() => void fetchFile('metrics.json')}>Metrics (JSON)</button>
+        <button type="button" className="btn btn-secondary" disabled={download.busy} onClick={() => void download.run(() => downloadModelCard(project, record.manifest.predictorId, record.manifest.name))}>Model card (Markdown)</button>
       </div>
       <p className="muted">The tables carry each record&rsquo;s label{referenceId ? ` from ${source.name}` : ''}, prediction and class probabilities, and whether it counts toward the metrics.</p>
     </div>

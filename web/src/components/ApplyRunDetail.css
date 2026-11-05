@@ -33,3 +33,19 @@
 .reference-editor .reference-datasets legend { font-weight: 600; margin-bottom: .25rem; }
 .reference-editor .reference-datasets > p { margin: 0; }
 @media (max-width: 720px) { .run-context { grid-template-columns: minmax(0, 1fr); padding: 14px; } }
+
+/* Dataset shift: both sets in feature space, the cohort over the development slides. */
+.shift-plane svg { width: 100%; max-width: 720px; height: auto; display: block; }
+.shift-plane-frame { fill: var(--theme-soft, transparent); stroke: var(--line); }
+.shift-point-development { fill: var(--theme-muted, #8a8a8a); opacity: .45; }
+.shift-point-cohort { fill: var(--accent); opacity: .75; }
+.shift-point-beyond { fill: #c2410c; opacity: .9; }
+.shift-legend { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; font-size: .8rem; color: var(--theme-muted); }
+.shift-legend span { display: inline-flex; align-items: center; gap: .4rem; }
+.shift-swatch { display: inline-block; width: .65rem; height: .65rem; border-radius: 50%; }
+.shift-swatch.shift-point-development { background: var(--theme-muted, #8a8a8a); }
+.shift-swatch.shift-point-cohort { background: var(--accent); }
+.shift-swatch.shift-point-beyond { background: #c2410c; }
+.shift-verdict-strong { border-color: #c2410c; }
+.shift-verdict-moderate { border-color: #b45309; }
+.shift-performance-table small { display: block; color: var(--theme-muted); font-weight: 400; }

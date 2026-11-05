@@ -217,6 +217,65 @@ def register(group: typer.Typer) -> None:
         )
         return Result(data, warnings=notes, text=lambda: output.record(data))
 
+    @command(group, "shift")
+    def shift(ctx, run: str = typer.Argument(..., help="Run ID.")):
+        """The run's dataset shift: its cohort against its predictor's development slides."""
+        data = runs.shift(ctx.client, ctx.project(), run)
+        return Result(data, text=lambda: _shift_text(data))
+
+    @command(group, "shift-analyze", commit=True)
+    def shift_analyze(ctx, run: str = typer.Argument(..., help="Run ID.")):
+        """Queue the run's dataset shift analysis: a CPU task that reads features, no labels."""
+        project = ctx.project()
+        preview = runs.shift_preview(ctx.client, project, run)
+        findings = [
+            {"severity": row["severity"], "code": row["code"], "message": row["message"]}
+            for row in preview.get("findings", [])
+        ]
+        if preview.get("status") in {"queued", "running", "completed"}:
+            findings.append(
+                {
+                    "severity": "error",
+                    "code": "SHIFT_ALREADY_ANALYZED",
+                    "message": f"This run's analysis is {preview['status']}; read it with "
+                    f"`histopilot run shift {run}`.",
+                }
+            )
+        summary = (
+            f"Compare {preview['cohort']['slides']:,} cohort slides with "
+            f"{preview['development']['slides']:,} development slides "
+            f"({preview['featureDim']} feature dimensions)."
+        )
+        return ctx.commit(
+            preview,
+            lambda: runs.shift_start(
+                ctx.client, project, run, preview, operation_id=ctx.operation_id
+            ),
+            findings=findings,
+            summary=summary,
+        )
+
+    @command(group, "shift-performance")
+    def shift_performance(
+        ctx,
+        run: str = typer.Argument(..., help="Run ID."),
+        unit: str = UNIT,
+        reference: str | None = REFERENCE,
+    ):
+        """Performance within thirds of atypicality, and within or beyond the development range."""
+        reference, notes = _labels(ctx, run, reference)
+        data = runs.shift_performance(
+            ctx.client, ctx.project(), run, unit=_unit(unit), reference=reference
+        )
+        rows = [*data.get("thirds", []), *data.get("range", [])]
+        columns = [
+            ("GROUP", "group"),
+            ("UNITS", "count"),
+            ("AUROC", "auroc"),
+            ("BALANCED ACC", "balancedAccuracy"),
+        ]
+        return Result(data, warnings=notes, text=lambda: output.table(rows, columns))
+
     @command(group, "subgroups")
     def subgroups(
         ctx,
@@ -372,3 +431,27 @@ def register(group: typer.Typer) -> None:
                 )
             raise
         return Result(data, text=lambda: output.record(data))
+
+
+def _shift_text(data: dict) -> str:
+    report = data.get("report")
+    if report:
+        from histopilot.shift import describe
+
+        summary = report["summary"]
+        return output.fields(
+            [
+                ("Analysis", data["analysisId"]),
+                ("Development slides", f"{summary['developmentSlides']:,}"),
+                ("Cohort slides", f"{summary['cohortSlides']:,}"),
+                ("Shift", describe(summary)),
+            ]
+        )
+    execution = data.get("execution") or {}
+    state = execution.get("status", "not started")
+    if not data.get("exists"):
+        hint = "Queue it with `histopilot run shift-analyze RUN`."
+        return f"No dataset shift analysis for this run yet. {hint}"
+    return f"Dataset shift analysis {state}." + (
+        f" {execution['error']}" if execution.get("error") else ""
+    )
