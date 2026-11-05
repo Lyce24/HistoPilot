@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 import uvicorn
 
+from histopilot import __version__
 from histopilot.api import create_app
 from histopilot.config import Settings
 
@@ -59,7 +60,7 @@ def run(url, **options):
 
 
 def test_a_demo_service_passes_every_check(demo_url):
-    code, lines = run(demo_url, expected_version="0.1.0", wait=10)
+    code, lines = run(demo_url, expected_version=__version__, wait=10)
     assert code == 0, lines
     assert [line.split(":")[0] for line in lines[:-1]] == [
         "ok      service answers",
@@ -76,7 +77,7 @@ def test_a_demo_service_passes_every_check(demo_url):
 def test_a_different_version_fails_the_health_check(demo_url):
     code, lines = run(demo_url, expected_version="9.9.9", wait=10)
     assert code == 1
-    assert lines[-1].startswith("FAILED  health: version '0.1.0', expected '9.9.9'")
+    assert lines[-1].startswith(f"FAILED  health: version {__version__!r}, expected '9.9.9'")
 
 
 def test_a_service_that_never_answers_fails_after_the_wait():
