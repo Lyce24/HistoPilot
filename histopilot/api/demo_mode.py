@@ -95,7 +95,7 @@ def demo_refusal(method: str, path: str, projects: frozenset[str] = frozenset())
         return refusal("This public demo is read-only.", "DEMO_MODE_READ_ONLY")
     if (path == "/api" or path.startswith("/api/")) and path not in DEMO_ROUTES:
         return refusal(
-            "This public demo serves only the synthetic BLCA walkthrough.",
+            "This public demo does not serve this route.",
             "DEMO_MODE_ROUTE_UNAVAILABLE",
         )
     return None
