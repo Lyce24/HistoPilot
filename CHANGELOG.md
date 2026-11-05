@@ -4,6 +4,10 @@ All notable changes to HistoPilot are recorded here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed
+
+- **Containers.** Both images are smoke-tested before they are published: the CPU image must serve the public demo and the CUDA image must import its training stack. Every published image is also tagged `sha-<commit>`, a tag that never moves.
+
 ## [0.1.0] - 2026-10-31
 
 The first release. HistoPilot is a local-first research workspace for computational pathology: it takes a slide table to cross-validated, compared and applied multiple instance learning (MIL) models on foundation-model features, and keeps every step frozen, versioned and reproducible. You drive it from the browser, the terminal or an AI agent, all through one local API.
