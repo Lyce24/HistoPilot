@@ -13,6 +13,7 @@ from histopilot.schemas.training_controls import sampling_memberships
 from histopilot.scoring import patient_predictions
 from histopilot.storage.io import content_hash
 from histopilot.storage.project_lock import StorageError
+from histopilot.storage.receipts import moved_into
 
 
 def _invalid(message):
@@ -127,7 +128,9 @@ def verified_oof(store, batch_id, candidate_id, training_seed, split_seed):
                 or plan["memberships"].get(run["splitPlanId"]) != members
             ):
                 raise _invalid("A completed fold differs from its frozen execution evidence.")
-            evidence = read_evidence(receipt["predictions"]["assessment"], run_folder)
+            evidence = read_evidence(
+                moved_into(receipt["predictions"]["assessment"], run_folder), run_folder
+            )
             if (
                 not isinstance(receipt.get("bestCheckpointPath"), str)
                 or evidence.get("checkpointPath") != receipt["bestCheckpointPath"]

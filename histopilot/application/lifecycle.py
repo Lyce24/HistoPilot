@@ -286,7 +286,7 @@ class CleanupService:
                     coordinator = ExperimentPredictorService(self.store, self.filesystem)
                     execution = coordinator.status(record["id"], summary=True)
                     if execution:
-                        _plan, coordinator_state = coordinator._read(record["id"])
+                        _plan, coordinator_state = coordinator._read(record["id"], moved_ok=True)
                         alive = confirmed_live(
                             coordinator_state.get("process")
                         ) or coordinator._coordinator_running(coordinator_state)

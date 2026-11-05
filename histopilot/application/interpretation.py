@@ -35,6 +35,7 @@ from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.io import content_hash, read_file_bounded, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.project_lock import StorageError, ensure_managed_directory, writer_lock
+from histopilot.storage.receipts import receipt_names
 from histopilot.viewer.attention_arrays import attention_page, attention_top, coordinate_bounds
 from histopilot.viewer.slide_images import allowed_file, inspect_slide, render_slide
 
@@ -931,7 +932,7 @@ class InterpretationService:
             )
         expected = execution["result"].get("artifacts", {}).get(filename)
         path = self.jobs.folder(identity) / filename
-        if not expected or expected.get("path") != str(path):
+        if not expected or not receipt_names(expected.get("path"), path):
             raise StorageError(
                 "Attention artifact not found.", "INTERPRETATION_ARTIFACT_NOT_FOUND", 404
             )
@@ -987,7 +988,7 @@ class InterpretationService:
         try:
             if (
                 not expected
-                or expected.get("path") != str(path)
+                or not receipt_names(expected.get("path"), path)
                 or expected.get("bytes", 0) > MAX_LEGACY_VIEW_BYTES
             ):
                 self.artifact(identity, filename, max_bytes=MAX_LEGACY_VIEW_BYTES)

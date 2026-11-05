@@ -9,6 +9,7 @@ from threading import Lock
 from histopilot.storage.attention_inputs import file_stamp
 from histopilot.storage.packed import open_source
 from histopilot.storage.project_lock import StorageError
+from histopilot.storage.receipts import receipt_names
 
 _VERIFIED = OrderedDict()
 _VERIFIED_LOCK = Lock()
@@ -38,7 +39,10 @@ def _attention_array(path, expected, slide):
 
     path = Path(path)
     try:
-        if expected.get("path") != str(path) or not 0 < expected.get("bytes", 0) <= MAX_ARRAY_BYTES:
+        if (
+            not receipt_names(expected.get("path"), path)
+            or not 0 < expected.get("bytes", 0) <= MAX_ARRAY_BYTES
+        ):
             raise ValueError("Attention array receipt is invalid.")
         with open_source(path) as (stream, stamp):
             if stamp["sizeBytes"] != expected["bytes"]:

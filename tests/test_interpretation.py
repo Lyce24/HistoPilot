@@ -485,6 +485,32 @@ def test_mmap_attention_pages_verify_receipts_cache_stamps_and_reject_objects(
         attention_arrays.attention_page(path, receipt(), slide, offset=0, limit=1)
 
 
+def test_mmap_attention_receipt_from_a_moved_project_still_verifies(tmp_path):
+    from histopilot.viewer import attention_arrays
+
+    path = tmp_path / "interpretation-job" / "slide-0.npy"
+    path.parent.mkdir()
+    np.save(path, np.array([[0, 0, 0.2, 0.1], [100, 0, 0.3, 0.5]], dtype="<f8"))
+    content = path.read_bytes()
+    receipt = {
+        "path": f"/somewhere/else/interpretation-job/{path.name}",
+        "bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+    slide = {
+        "patchCount": 2,
+        "patchWidthLevel0": 100,
+        "patchHeightLevel0": 100,
+        "width": 200,
+        "height": 100,
+    }
+    page = attention_arrays.attention_page(path, receipt, slide, offset=0, limit=10)
+    assert page["total"] == 2
+    receipt["path"] = "/somewhere/else/another-job/slide-0.npy"
+    with pytest.raises(StorageError, match="invalid"):
+        attention_arrays.attention_page(path, receipt, slide, offset=0, limit=10)
+
+
 def test_service_serves_indexed_mean_and_member_without_parsing_json(managed_study, monkeypatch):
     service, _, task_center = managed_study
     document, _ = save_study(managed_study)
