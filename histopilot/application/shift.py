@@ -135,12 +135,14 @@ class ShiftService:
                 }
             )
         experiment = predictor["manifest"].get("experiment") or {}
+        label = (cohort.get("versionLabel") or {}).get("tag") or cohort["id"][:22]
+        # Names are labels beside frozen content, never part of it: renaming an experiment or
+        # retagging a cohort must not orphan its analysis. The title names the Task Center task.
+        title = f"Dataset shift · {label} against {experiment.get('name') or batch_id}"
         record = {
             "kind": KIND,
             "schemaVersion": 1,
             "datasetId": manifest["datasetId"],
-            "name": f"Dataset shift · {cohort['manifest'].get('name') or cohort['id']} against "
-            f"{experiment.get('name') or batch_id}",
             "method": method.METHOD,
             "featureDim": dimensions,
             "development": {
@@ -159,6 +161,7 @@ class ShiftService:
         }
         return {
             "run": run,
+            "title": title,
             "record": record,
             "identity": "configuration-"
             + hashlib.sha256(encode_document(record, MAX_CONFIGURATION_BYTES)).hexdigest(),
@@ -191,6 +194,7 @@ class ShiftService:
         return {
             "evaluationId": evaluation_id,
             "analysisId": inputs["identity"],
+            "title": inputs["title"],
             "exists": document is not None,
             "record": document,
             "execution": execution,
@@ -283,7 +287,11 @@ class ShiftService:
                 },
             }
             return self.jobs.launch(
-                identity, plan, operation_id, resume=state["status"] != "not_started"
+                identity,
+                plan,
+                operation_id,
+                resume=state["status"] != "not_started",
+                task_title=inputs["title"],
             )
 
     # Performance by atypicality -------------------------------------------------------
