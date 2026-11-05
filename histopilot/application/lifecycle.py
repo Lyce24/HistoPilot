@@ -352,6 +352,7 @@ class CleanupService:
                 "predictor-refit",
                 "model-evaluation",
                 "model-interpretation",
+                "shift-analysis",
             }:
                 execution = self.compute.status(record["id"], include_inactive=True, record=record)
                 if execution["status"] != "not_started":
@@ -643,7 +644,12 @@ class CleanupService:
                     if item["kind"] == "evaluation-batch"
                     else self.compute
                     if item["kind"]
-                    in {"predictor-refit", "model-evaluation", "model-interpretation"}
+                    in {
+                        "predictor-refit",
+                        "model-evaluation",
+                        "model-interpretation",
+                        "shift-analysis",
+                    }
                     else self.training
                 )
                 result = service.cancel(item["id"], request.operationId)

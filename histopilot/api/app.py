@@ -447,6 +447,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from histopilot.api.performance import performance_router
     from histopilot.api.predictors import evaluation_run_router, predictor_router
     from histopilot.api.references import references_router
+    from histopilot.api.shift import shift_router
     from histopilot.api.slide_reviews import slide_review_router
     from histopilot.api.task_center import task_center_router
     from histopilot.taskcenter.service import TaskCenterService
@@ -469,6 +470,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(case_review_router(projects, filesystem))
     app.include_router(inference_router(projects, filesystem))
     app.include_router(performance_router(projects, filesystem))
+    app.include_router(shift_router(projects, filesystem))
     app.include_router(references_router(projects, filesystem))
     app.include_router(operations_router(projects, filesystem))
     app.include_router(access_router(projects, tokens, database))

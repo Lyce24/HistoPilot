@@ -193,7 +193,7 @@ A code's kind groups codes by what the caller should do next, and the CLI turns 
 | `CREATED_BEFORE_TASK_CENTER` | refused | 409 | Created before the Task Center, so it can no longer run. Clone it, or preview it again, to run it in the Task Center. |
 | `DATASET_SLIDE_FOLDER_UNAVAILABLE` | refused | 422 | These features are scoped to a slide store, not a frozen dataset. Attach them to a dataset to open slides for interpretation. |
 | `DEMO_MODE_READ_ONLY` | refused | 403 | This public demo is read-only. |
-| `DEMO_MODE_ROUTE_UNAVAILABLE` | refused | 403 | This public demo serves only the synthetic BLCA walkthrough. |
+| `DEMO_MODE_ROUTE_UNAVAILABLE` | refused | 403 | This public demo does not serve this request. |
 | `DEMO_PROJECT_READ_ONLY` | refused | 409 | The BLCA demo is read only and has no local project folder. |
 | `DEMO_STORE_UNAVAILABLE` | refused | 409 | The synthetic demo has no local scientific store. |
 | `DEVELOPMENT_FEATURE_BINDING_MISMATCH` | refused | 409 | The development bundle differs from the feature version pinned by this protocol. |
@@ -399,6 +399,10 @@ A code's kind groups codes by what the caller should do next, and the CLI turns 
 | `SEED_ENSEMBLE_TOO_LARGE` | refused | 422 | A seed ensemble holds at most … fold models. |
 | `SESSION_NOT_FOR_TOKENS` | refused | 403 | An agent token cannot fetch the service's session; it reaches only its own project. |
 | `SHARED_PATIENT_NAMESPACE` | refused | 409 | The same dataset must use shared patient identifiers. |
+| `SHIFT_FEATURES_INCOMPATIBLE` | refused | 409 | Development features have … dimensions and the cohort's have …. |
+| `SHIFT_INPUTS_UNAVAILABLE` | refused | 409 | The predictor's training plan is unavailable, so its development slides are unknown. |
+| `SHIFT_NOT_COMPLETED` | refused | 409 | The dataset shift analysis has not finished. |
+| `SHIFT_RESULT_CHANGED` | refused | 409 | The dataset shift report is missing. |
 | `SLIDE_FORMAT_UNSUPPORTED` | refused | 422 | The whole-slide region cannot be read. |
 | `SLIDE_GEOMETRY_INVALID` | refused | 422 | The slide dimensions are invalid. |
 | `SLIDE_RASTER_TOO_LARGE` | refused | 422 | This image requires a pyramidal slide reader; raster decoding is bounded to 32 megapixels. |
