@@ -15,6 +15,11 @@ Real data in public, and the evidence engineers and reviewers ask for.
 - **Model cards.** Every frozen predictor has one, as JSON or Markdown, built only from the records that made and tested it (`histopilot predictor card`; [methods](docs/methods.md#model-cards)).
 - **Real studies in the public demo.** `histopilot serve --demo --demo-projects DIR` serves packaged projects read-only in the full application beside the synthetic walkthrough ([deployment](docs/deployment.md#packaged-projects)).
 
+### Changed
+
+- **CI runs the ML code.** Every push runs the backend suite twice: with Torch and Lightning on the runner's CPU, so the reference-parity and training tests run, and without them, so the service is proven to install lean. A Playwright test walks the public demo in Chromium, and the wheel, the release and both container images are smoke-tested before they are published.
+- **Containers.** Both images are smoke-tested before they are published: the CPU image must serve the public demo and the CUDA image must import its training stack. Every published image is also tagged `sha-<commit>`, a tag that never moves.
+
 ### Fixed
 
 - A project restored from an archive into another folder lost its scored runs, attention maps, recalibration and predictor status: readers compared each output's recorded absolute path with the current one. They now accept the same file below its own job folder, and still check its size and SHA-256.

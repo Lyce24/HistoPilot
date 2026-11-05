@@ -9,7 +9,7 @@ pytest.importorskip("lightning")
 
 from support import projects  # noqa: E402
 from support.predictors import FakeJobs  # noqa: E402
-from support.training import runtime  # noqa: E402
+from support.training import quiet_host, runtime  # noqa: E402
 
 from histopilot.application.development import DevelopmentService  # noqa: E402
 from histopilot.application.evaluation_runs import EvaluationRunService  # noqa: E402
@@ -35,6 +35,13 @@ from histopilot.training.inference import evaluate  # noqa: E402
 from histopilot.training.module import MILTrainModule  # noqa: E402
 from histopilot.training.refit import train_refit  # noqa: E402
 from histopilot.workers.train_batch import execute_plan  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _fixed_host(monkeypatch):
+    """Launch checks see a fixed 8-CPU host, so a 4-core CI runner does not refuse the default
+    recipe's threads and loader workers (TRAINING_RESOURCES_UNAVAILABLE)."""
+    quiet_host(monkeypatch)
 
 
 @pytest.mark.slow

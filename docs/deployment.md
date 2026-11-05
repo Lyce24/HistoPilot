@@ -243,7 +243,7 @@ Two images run HistoPilot from `uv.lock` without a source checkout, on a Linux h
 | `ghcr.io/lyce24/histopilot` | The service, browser UI and CLI on Python 3.11, without Torch | The synthetic demo, and opening projects and reading results without compute |
 | `ghcr.io/lyce24/histopilot-worker` | The same, with the `training` extra (Torch with CUDA 12.8) on an NVIDIA CUDA base | The Task Center runner and every task it starts, and the service of a setup that trains |
 
-Releases are tagged `X.Y.Z`, `X.Y` and `latest`; `main` follows the main branch. `docker/Dockerfile` and `docker/Dockerfile.worker` build them, and `compose.yaml` at the repository root runs them.
+Releases are tagged `X.Y.Z`, `X.Y` and `latest`; `main` follows the main branch, and every published image is also tagged `sha-<commit>`, a tag that never moves. Each image is smoke-tested before it is published. `docker/Dockerfile` and `docker/Dockerfile.worker` build them, and `compose.yaml` at the repository root runs them.
 
 ### Compose
 

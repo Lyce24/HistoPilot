@@ -27,9 +27,16 @@ uv run python scripts/type_coverage.py                 # how much of the core is
 uv run pytest -n auto --dist worksteal --cov --cov-report= && uv run python scripts/coverage_summary.py
 ```
 
-Tests marked `slow` train real models or drive the real Task Center runner. Run the fast tier while you work and the full suite before you hand a change over. CI runs Ruff, pyright and the type coverage report, the full suite with test coverage, the agent tests with the `agent` extra, the frontend tests and build, and a wheel packaging check.
+Tests marked `slow` train real models or drive the real Task Center runner. Run the fast tier while you work and the full suite before you hand a change over.
 
-`scripts/coverage_summary.py` turns the `.coverage` data of a `--cov` run into line coverage per package; CI adds it to the job summary and never fails on the numbers. CI installs neither Torch nor the agent extra, so its numbers leave out the model and worker code those tests reach, and work done in worker subprocesses is never measured.
+CI (`.github/workflows/checks.yml`) runs on every push and pull request:
+
+- **Lint and types**: Ruff, pyright and the type coverage report.
+- **Tests**, the full suite with test coverage, twice. The `lean` leg installs `--extra imaging` only, which proves that the service, the CLI and slide viewing work without ML packages, and runs the agent tests in their own environment with the `agent` extra. The `training` leg adds `--extra training`: Torch and Lightning on the runner's CPU, so the models, their parity tests and real training workers run too; it fails if any test still skips for want of the extra (`scripts/ci_test_report.py`). Tests that need a CUDA GPU skip on both.
+- **Web, wheel and demo smoke test**: the frontend tests and build, the wheel packaging check, then the wheel alone in a fresh environment serving the public demo, checked by `scripts/smoke_demo.py`.
+- **Browser test of the demo**: `npm run e2e` walks that wheel's demo in Chromium (see [Frontend](#frontend)).
+
+`scripts/coverage_summary.py` turns the `.coverage` data of a `--cov` run into line coverage per package; CI adds it to the job summary for each leg and never fails on the numbers. Work done in worker subprocesses is never measured, so the worker packages read lower than their tests exercise them.
 
 ### Lint
 
@@ -144,6 +151,10 @@ node web/scripts/verify-task-center.mjs
 node web/scripts/verify-blca-demo.mjs          # add --readme to refresh docs/assets/blca
 ```
 
+`npm run e2e` (in `web/`) is the one browser test against a real service: Playwright starts `histopilot serve --demo` and walks the public demo as a visitor would, every stage, record and step, checking that each step shows its content and that the page never sends or offers a change and logs no error. It uses the checkout's `.venv` by default, so bundle the UI first (`uv run python scripts/bundle_web.py`); `HISTOPILOT_E2E_SERVER` sets another command (CI runs the wheel it built), `HISTOPILOT_E2E_PORT` the port (default 8826), and `HISTOPILOT_E2E_URL` tests a demo that is already running, such as a Hugging Face Space. Install its browser once with `npx playwright install chromium`.
+
+`python scripts/smoke_demo.py URL` checks a running demo from outside: health and version, the session, the demo's records, the UI's files, and that changes and machine reads are refused. CI runs it against the wheel and against the CPU image before the image is published.
+
 `web/scripts/record-demo-gif.mjs` records `docs/assets/demo.gif`, the README's tour of the synthetic demo. Unlike the checks, it drives a running service, and only a [demo service](docs/deployment.md#public-read-only-demo): it refuses any other. It also needs `ffmpeg`.
 
 ```bash
@@ -159,9 +170,9 @@ Versions follow [semantic versioning](https://semver.org), and [CHANGELOG.md](CH
 
 1. Set the version in `pyproject.toml` and `histopilot/__init__.py`, run `uv lock`, and move the **Unreleased** notes under a new `## [X.Y.Z] - YYYY-MM-DD` heading, with its link at the bottom. `tests/test_release.py` checks that the three agree and that the notes exist; `python scripts/release_notes.py` prints them.
 2. Merge to `main`, then tag that commit and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. The **Release** workflow (`.github/workflows/release.yml`) refuses a tag that does not name the package version, builds and checks the wheel as CI does, and creates the GitHub release with the changelog section as its notes and the wheel attached. The **Container images** workflow (`images.yml`) publishes `ghcr.io/lyce24/histopilot` and `ghcr.io/lyce24/histopilot-worker` as `X.Y.Z`, `X.Y` and `latest`.
+3. The **Release** workflow (`.github/workflows/release.yml`) refuses a tag that does not name the package version, builds and checks the wheel as CI does, and creates the GitHub release with the changelog section as its notes and the wheel attached. The **Container images** workflow (`images.yml`) publishes `ghcr.io/lyce24/histopilot` and `ghcr.io/lyce24/histopilot-worker` as `X.Y.Z`, `X.Y` and `latest`, and each also as `sha-<commit>`.
 
-The image workflow builds both images on every push and pull request and publishes only tags and `main`. Docker itself is not needed to work on HistoPilot.
+The image workflow builds both images on every push and pull request and smoke-tests each before anything is published: the CPU image must serve the public demo and pass `scripts/smoke_demo.py`, and the CUDA image must import its training stack and start the CLI. It publishes the tested images for tags and `main` only. Docker itself is not needed to work on HistoPilot.
 
 ## Documentation and privacy
 
