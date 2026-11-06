@@ -180,7 +180,7 @@ Tasks run in their own process groups under the Task Center runner, so closing t
 
 ## Public read-only demo
 
-`histopilot serve --demo`, or `histopilot serve` with `HISTOPILOT_DEMO=1`, serves the browser UI and the synthetic [BLCA demo](blca-demo.md) to anyone who can reach the port, for a public demo such as a Hugging Face Space. It accepts any `--host`, such as `0.0.0.0`. It reads no configuration file, takes no data roots, sign-in or `--dev`, starts no Task Center runner, and keeps its workspace and Task Center state in a temporary folder that it removes when it stops.
+`histopilot serve --demo`, or `histopilot serve` with `HISTOPILOT_DEMO=1`, serves the browser UI, the synthetic [BLCA demo](blca-demo.md) and any [packaged projects](#packaged-projects) to anyone who can reach the port, for a public demo such as a Hugging Face Space. It accepts any `--host`, such as `0.0.0.0`. It reads no configuration file, takes no data roots, sign-in or `--dev`, starts no Task Center runner, and keeps its workspace and Task Center state in a temporary folder that it removes when it stops.
 
 A demo service is usually reached through a reverse proxy, so it trusts nothing about a request: not the client address, Host, Origin, fetch metadata or forwarded headers. It needs to trust nothing, because of what it answers:
 
@@ -196,6 +196,14 @@ A demo service is usually reached through a reverse proxy, so it trusts nothing 
 | `GET /api/v1/projects/blca-demo-v1/workspace` | The packaged synthetic fixture |
 
 No other origin is granted a cross-origin read. Pages may be framed by `https://huggingface.co` only, where a Space's page shows the app. A service started without `--demo` keeps every check in [local API protections](#local-api-protections); demo mode changes none of them.
+
+### Packaged projects
+
+`--demo-projects DIR` (or `HISTOPILOT_DEMO_PROJECTS`) adds real studies to a demo. Each project folder in `DIR` is copied into the demo's temporary workspace when the service starts, and listed on the start page before the synthetic walkthrough. The packaged folders themselves are never opened.
+
+Visitors browse such a project in the full application, read-only: datasets, targets and splits, experiments with their results and controlled comparisons, and applied models with their metrics, recalibration and dataset shift. For these projects the boundary answers exactly the routes that [route classes](cli-contract.md#route-classes) mark as reads, whatever their method, with the session token as usual. The exceptions are the reads that reach past the project's own records: a path on the machine, the training interpreter, and slide images rendered in a reader process. Every change, every other project and every machine-wide route stays refused. The browser shows a public-demo note on each page and leaves out the Task Center, cleanup, backups and system pages and every action that would change the study.
+
+A packaged project needs only its folder. Leave out checkpoints, feature packs and slides: reads never open them, and the copy is what visitors download. A project moved to another folder still reads its saved outputs; see [scientific records](architecture.md#scientific-records).
 
 [`deploy/huggingface-space/`](../deploy/huggingface-space/) holds a Docker Space that installs a released wheel and runs the demo; its `PUBLISH.md` lists the steps to create the Space.
 
@@ -235,7 +243,7 @@ Two images run HistoPilot from `uv.lock` without a source checkout, on a Linux h
 | `ghcr.io/lyce24/histopilot` | The service, browser UI and CLI on Python 3.11, without Torch | The synthetic demo, and opening projects and reading results without compute |
 | `ghcr.io/lyce24/histopilot-worker` | The same, with the `training` extra (Torch with CUDA 12.8) on an NVIDIA CUDA base | The Task Center runner and every task it starts, and the service of a setup that trains |
 
-Releases are tagged `X.Y.Z`, `X.Y` and `latest`; `main` follows the main branch. `docker/Dockerfile` and `docker/Dockerfile.worker` build them, and `compose.yaml` at the repository root runs them.
+Releases are tagged `X.Y.Z`, `X.Y` and `latest`; `main` follows the main branch, and every published image is also tagged `sha-<commit>`, a tag that never moves. Each image is smoke-tested before it is published. `docker/Dockerfile` and `docker/Dockerfile.worker` build them, and `compose.yaml` at the repository root runs them.
 
 ### Compose
 

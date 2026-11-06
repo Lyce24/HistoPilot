@@ -41,7 +41,12 @@ from histopilot.workers.training_process import (
 ACTIVE_STATUSES = {"queued", "running"}
 FINISHED_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 PROTOCOL_PATTERN = re.compile(rb"^TASK_CENTER_PROTOCOL\s*=\s*(\d+)\s*$", re.MULTILINE)
-KIND_TITLES = {"refit": "Refit", "evaluation": "Evaluation", "interpretation": "Attention"}
+KIND_TITLES = {
+    "refit": "Refit",
+    "evaluation": "Evaluation",
+    "interpretation": "Attention",
+    "shift": "Dataset shift",
+}
 INTERACTIVE_KINDS = frozenset({"evaluation", "interpretation"})
 DEFAULT_TASK_RAM_GB = 6.0
 EVALUATION_TASK_VRAM_GB = 2.0
@@ -334,9 +339,10 @@ class ComputeJobService:
             "model-evaluation",
             "predictor-refit",
             "model-interpretation",
+            "shift-analysis",
         }:
             raise StorageError(
-                "Select a predictor refit, run, or interpretation.",
+                "Select a predictor refit, run, interpretation or dataset shift analysis.",
                 "COMPUTE_NOT_FOUND",
                 404,
             )

@@ -49,6 +49,7 @@ from histopilot.storage.io import (
 from histopilot.storage.lifecycle import lifecycle_guard
 from histopilot.storage.pack_import import pack_layout
 from histopilot.storage.project_lock import StorageError
+from histopilot.storage.receipts import receipt_names
 
 EXECUTION_NOTE = (
     "Predict the frozen labeled cohort with the recorded bag, aggregation and decision-threshold "
@@ -1488,7 +1489,7 @@ class EvaluationRunService:
             )
         expected = artifacts.get(filename)
         path = self.jobs.folder(identity) / filename
-        if not expected or expected["path"] != str(path):
+        if not expected or not receipt_names(expected.get("path"), path):
             raise StorageError("Evaluation result provenance changed.", "EVALUATION_RESULT_CHANGED")
         content = read_file_bounded(path, 64 * 1024 * 1024)
         if (

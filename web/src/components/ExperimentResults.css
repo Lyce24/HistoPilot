@@ -99,7 +99,8 @@
 .exp-row-link { display: block; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .exp-row-link:hover strong, .exp-row-link:focus-visible strong { color: var(--brand-primary); text-decoration: underline; }
 .exp-batch-name { display: inline-flex; align-items: flex-start; gap: .5rem; }
-.exp-batch-name small { display: block; margin-top: .1rem; color: var(--theme-muted); font-size: .76rem; font-weight: 400; white-space: normal; }
+/* Outranks `.exp-table th small`, so a batch's model line wraps inside its column. */
+.exp-batch-name small, .exp-table .exp-batch-name small { display: block; margin-top: .1rem; color: var(--theme-muted); font-size: .76rem; font-weight: 400; white-space: normal; }
 .exp-swatch { display: inline-block; flex: 0 0 auto; width: 10px; height: 10px; margin-top: .3rem; border-radius: 3px; }
 .exp-controls .exp-swatch { margin-top: 0; }
 .exp-chip { display: inline-block; margin-left: .45rem; padding: 0 .45rem; border-radius: 999px; font-size: .7rem; font-weight: 600; background: var(--theme-accent-soft); color: var(--theme-next-ink); border: 1px solid var(--theme-accent-line); vertical-align: middle; }

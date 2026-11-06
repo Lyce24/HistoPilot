@@ -9,12 +9,21 @@ import { preparationLink, type PreparationContext } from '../lib/preparationRout
 import { StageLibrary, StageLibraryToolbar, StageRecordManageButton } from './StageWorkflow';
 import VisualQualityExplorer from './VisualQualityExplorer';
 import { formatDate } from '../lib/dates';
+import { useReadOnly } from '../lib/readOnly';
 
 type BundleStatus = '' | 'verified' | 'attention';
 type BundleSort = 'recent' | 'oldest' | 'name';
 export interface FeatureBundleLibraryFilters { search: string; status: BundleStatus; sort: BundleSort }
 const bundleLabel = (item: FeatureBundle) => versionLabelText(item, 'Feature bundle');
 const bundleUpdatedAt = (item: FeatureBundle) => item.versionLabel?.updatedAt || item.createdAt;
+
+/** A bundle's input status. A public demo ships no feature files, so it says so instead of
+ * warning about inputs that were verified when the study ran. */
+export function BundleStatusBadge({ current }: { current: boolean }) {
+  const readOnly = useReadOnly();
+  if (current) return <Badge tone="green">Verified inputs</Badge>;
+  return readOnly ? <Badge tone="neutral">Features not in demo</Badge> : <Badge tone="orange">Inputs need attention</Badge>;
+}
 
 export function filterFeatureBundles(items: FeatureBundle[], features: Configuration[], search: string, status: BundleStatus, sort: BundleSort) {
   const query = search.trim().toLocaleLowerCase();
@@ -69,7 +78,7 @@ export default function FeatureBundleLibrary({ project, items, features, selecte
         <th scope="row"><button type="button" className="text-button stage-record-name" aria-label={`Open ${bundleLabel(item)}`} onClick={() => { onSelect(item.id); setShowEvidence(false); }}>{bundleLabel(item)}</button>{item.versionLabel?.note ? <small className="muted">{item.versionLabel.note}</small> : null}</th>
         <td>{item.manifest.packs.length ? `Features + ${item.manifest.packs.length} pack(s)` : 'Features only'}</td>
         <td>{item.manifest.summary.slideCount.toLocaleString()}</td>
-        <td><Badge tone={item.current ? 'green' : 'orange'}>{item.current ? 'Verified inputs' : 'Inputs need attention'}</Badge></td>
+        <td><BundleStatusBadge current={item.current} /></td>
         <td><time dateTime={bundleUpdatedAt(item)}>{formatDate(bundleUpdatedAt(item))}</time></td>
         <td><StageRecordManageButton type="configuration" id={item.id} name={bundleLabel(item)} /></td>
       </tr>)}
@@ -85,7 +94,7 @@ export default function FeatureBundleLibrary({ project, items, features, selecte
   const source = features.find((item) => item.id === bundle.manifest.spec.featureSetId);
   const slideFeatures = (source?.manifest.spec as FeatureSpec | undefined)?.featureKind === 'slide';
   return <>
-    <div className="pfm-version-detail"><Panel title={bundleLabel(bundle)} subtitle="Select this bundle with frozen targets and splits in an experiment's inputs to check feature coverage and compatibility." actions={<Badge tone={bundle.current ? 'green' : 'orange'}>{bundle.current ? 'Verified inputs' : 'Inputs need attention'}</Badge>}>
+    <div className="pfm-version-detail"><Panel title={bundleLabel(bundle)} subtitle="Select this bundle with frozen targets and splits in an experiment's inputs to check feature coverage and compatibility." actions={<BundleStatusBadge current={bundle.current} />}>
       <div className="stack">
         <dl className="pfm-version-facts"><div><dt>Feature source</dt><dd>{source ? configurationVersionLabel(source) : bundle.manifest.feature.id}</dd></div><div><dt>Contents</dt><dd>{bundle.manifest.packs.length ? `Features + ${bundle.manifest.packs.length} verified pack(s)` : 'Features alone'}</dd></div><div><dt>Coverage</dt><dd>{bundle.manifest.summary.slideCount.toLocaleString()} slides · {bundle.manifest.summary.patchCount.toLocaleString()} {slideFeatures ? 'slide embeddings' : 'patches'} · {bundle.manifest.summary.dimensions} dimensions</dd></div></dl>
         {bundle.versionLabel?.note ? <p>{bundle.versionLabel.note}</p> : null}

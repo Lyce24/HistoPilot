@@ -142,6 +142,27 @@ def verify_plan_inputs(plan):
                 or (not packed and (plan["data"].get("packPath") or plan["data"].get("packStamps")))
             ):
                 raise ValueError("The test feature loading contract changed.")
+        elif plan["kind"] == "shift":
+            from histopilot.application.shift import KIND, cohort_inputs, training_inputs
+
+            development_hash, development, _ = training_inputs(
+                store, manifest["development"]["batchId"]
+            )
+            run_like = {
+                "cohortId": manifest["cohort"]["cohortId"],
+                "features": {"feature": {"id": manifest["cohort"]["featureId"]}},
+            }
+            cohort, feature, files, _ = cohort_inputs(store, run_like, development)
+            if (
+                manifest.get("kind") != KIND
+                or development_hash != manifest["development"]["planHash"]
+                or cohort["contentHash"] != manifest["cohort"]["cohortContentHash"]
+                or feature["contentHash"] != manifest["cohort"]["featureContentHash"]
+                or plan["data"]["featureDim"] != manifest["featureDim"]
+                or plan["data"]["development"]["featureFiles"] != development
+                or plan["data"]["cohort"]["featureFiles"] != files
+            ):
+                raise ValueError("The shift analysis inputs differ from its frozen record.")
         elif plan["kind"] == "interpretation":
             if manifest.get("method") == "pooled":
                 # Each pooled model must still be exactly its frozen predictor.
@@ -289,6 +310,10 @@ def execute(path):
                 from histopilot.training.attention import interpret
 
                 result = interpret(execution, folder)
+            elif plan["kind"] == "shift":
+                from histopilot.shift import analyze_plan
+
+                result = analyze_plan(execution, folder)
             else:
                 raise ValueError("Unsupported compute job kind.")
             if (folder / "cancel.requested").exists():

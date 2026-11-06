@@ -327,6 +327,10 @@ ERROR_CODES: dict[str, str] = {
     "PATH_UNRESOLVABLE": "refused",
     "PATIENT_AGGREGATION_UNSUPPORTED": "refused",
     "PERFORMANCE_REQUIRES_LABELS": "refused",
+    "SHIFT_FEATURES_INCOMPATIBLE": "refused",
+    "SHIFT_INPUTS_UNAVAILABLE": "refused",
+    "SHIFT_NOT_COMPLETED": "refused",
+    "SHIFT_RESULT_CHANGED": "refused",
     "PORTABILITY_CHECKSUM_MISMATCH": "refused",
     "PORTABILITY_INVALID": "refused",
     "PREDICTOR_BUILD_BLOCKED": "refused",
@@ -561,6 +565,8 @@ ERROR_CODES: dict[str, str] = {
 # runtime value, listed under the module that raises them. A module with no codes only
 # passes on the code of an error that was raised, and registered, elsewhere.
 COMPUTED: dict[str, tuple[str, ...]] = {
+    # Starting a dataset shift analysis refuses with its preview's blocking finding.
+    "histopilot/application/shift.py": ("SHIFT_FEATURES_INCOMPATIBLE", "SHIFT_INPUTS_UNAVAILABLE"),
     # Scores for a run without metrics repeat the stored scoring error's code.
     "histopilot/api/references.py": (),
     # Saving a run whose cohort review has a blocking finding raises that finding's code:

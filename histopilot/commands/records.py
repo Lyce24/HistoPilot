@@ -445,6 +445,25 @@ def register(app: typer.Typer) -> dict[str, typer.Typer]:
         rows = data.get("items") or []
         return Result(data, text=lambda: output.table(rows, CHOICE_COLUMNS))
 
+    @command(groups["predictor"], "card")
+    def predictor_card(
+        ctx,
+        predictor: str = typer.Argument(..., help="Predictor ID."),
+        out: Path | None = typer.Option(
+            None, "--out", "-o", help="Write the card's Markdown here."
+        ),
+    ):
+        """A predictor's model card: model, task, development and evaluation evidence, limits."""
+        path = f"{project_path(ctx.project())}/predictors/{segment(predictor)}/card"
+        data = ctx.client.get(path)
+        markdown = ctx.client.request("GET", path, query={"format": "markdown"}, accept="text")
+        if out is not None:
+            out.write_text(markdown, encoding="utf-8")
+        return Result(
+            data,
+            text=lambda: f"Wrote {out}." if out is not None else markdown.rstrip("\n"),
+        )
+
     _download_command(
         groups["run"],
         "run",

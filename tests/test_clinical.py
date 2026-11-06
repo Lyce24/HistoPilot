@@ -533,6 +533,23 @@ def test_service_rejects_tampered_or_unfinished_evaluation_evidence(service):
     assert current.preview(selection)["findings"][0]["code"] == "EVALUATION_RESULT_CHANGED"
 
 
+def test_saved_outputs_still_read_after_the_project_moved(service):
+    """A project restored into another folder keeps receipts that name the old folder."""
+    current, selection, folder, execution = service
+    artifacts = execution["result"]["artifacts"]
+    original = str(folder.parent.parent.parent)
+    for receipt in artifacts.values():
+        receipt["path"] = receipt["path"].replace(original, "/restored/from/an/archive", 1)
+    content = current.evaluations.artifact(selection.evaluationId, "predictions.json")
+    assert content == (folder / "predictions.json").read_bytes()
+    assert current.preview(selection)["canSave"]
+    # Size and checksum still decide; so does the name of the file and of its job folder.
+    artifacts["predictions.json"]["path"] = str(folder.parent / "another-job" / "predictions.json")
+    with pytest.raises(StorageError) as error:
+        current.evaluations.artifact(selection.evaluationId, "predictions.json")
+    assert error.value.code == "EVALUATION_RESULT_CHANGED"
+
+
 @pytest.mark.parametrize("service", ["fallback"], indirect=True)
 def test_clinical_uses_cohort_fallback_provenance_for_legacy_predictions(service):
     current, selection, folder, execution = service

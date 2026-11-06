@@ -6,6 +6,7 @@ import type { FrozenBatch, TrainingExecution, TrainingHistory, TrainingRun, Trai
 import DevelopmentExecution, { ResultsTable, TrainingControls } from './DevelopmentExecution';
 import { EpochProgress, LossHistory, ResourceCards, RunDetails, RunTable, metricValue, runLabel, runHistoryOptions, runStoppingMetric } from './ExperimentTracking';
 import { legacyRecordNote } from './LegacyRecordNote';
+import { modelLabel } from '../lib/modelCapabilities';
 
 const run: TrainingRun = { id: 'run-one', candidateId: 'configuration-one', splitPlanId: 'split-one', trainingSeed: 42, status: 'running', progress: { epoch: 2, maxEpochs: 10, globalStep: 20, trainingLoss: 0.0, validation: { loss: null } } };
 const batch = { id: 'batch-one', createdAt: '', manifest: {
@@ -165,6 +166,15 @@ describe('experiment tracking', () => {
     expect(html).toMatch(/experiment-run-cell is-planned[^>]*>.*Planned/);
     const many = Array.from({ length: 241 }, (_, index) => ({ ...batch.manifest.runs[0], id: `many-${index}`, trainingSeed: index % 5 }));
     expect(renderToStaticMarkup(<RunTable batch={{ ...batch, manifest: { ...batch.manifest, runs: many } }} execution={execution} />)).not.toContain('Runs by test fold and training seed');
+  });
+
+  it('names each configuration in the run map after its model', () => {
+    const configurations = [{ id: run.candidateId, number: 1, recipe: { ...defaultRecipe(), model: 'abmil' } }, { id: 'configuration-two', number: 2, recipe: { ...defaultRecipe(), model: 'transmil' } }];
+    const runs = configurations.map((item) => ({ ...batch.manifest.runs[0], id: `run-${item.number}`, candidateId: item.id }));
+    const html = renderToStaticMarkup(<RunTable batch={{ ...batch, manifest: { ...batch.manifest, configurations, runs } }} execution={{ ...execution, runs: [] }} />);
+    expect(html).toContain(`<figcaption>Configuration 1<small>${modelLabel('abmil')}</small></figcaption>`);
+    expect(html).toContain(`<figcaption>Configuration 2<small>${modelLabel('transmil')}</small></figcaption>`);
+    expect(modelLabel('transmil')).not.toBe('');
   });
 
   it('keeps checkpoint evidence and artifacts in separate accessible panels while overview is selected', () => {

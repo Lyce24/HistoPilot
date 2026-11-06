@@ -5,7 +5,7 @@ import { lifecycleLabel } from '../api/lifecycle';
 import { computeStatusLabel, type FrozenPredictor, type ModelEvaluation } from '../api/predictors';
 import { referenceFits, type ReferenceStandard } from '../api/references';
 import { formatStatistic } from '../api/statistics';
-import { batchNameLookup, cohortKindText, cohortLabeled, cohortName, modelDescription, runLabeled, unlabeledCohortText } from '../lib/applyModels';
+import { batchNameLookup, cohortKindText, cohortLabeled, cohortName, modelDescription, runLabeled, runTitle, unlabeledCohortText } from '../lib/applyModels';
 import { isUnitSummary, percent, predictedMix, unanimousShare } from '../lib/inference';
 import { experimentRoleLabel, experimentRoles, objectiveRankLabel, type ExperimentFiling, type Objective } from '../api/objectives';
 import { sectionByObjective } from '../lib/experimentLibrary';
@@ -127,7 +127,7 @@ export default function ApplyRunsTable({ runs, predictors, experiments, cohorts,
           {section.blocks.map((block) => <Fragment key={block.key}>
           {block.header ? <tr className="run-subgroup"><th colSpan={6}>{block.header}</th></tr> : null}
           {block.runs.map((run) => { const source = predictorById.get(run.manifest.predictorId); const cohort = cohortById.get(run.manifest.cohortId); return <tr key={run.id}>
-            <td><button type="button" className="text-button stage-record-name" onClick={() => onOpen(run.id)}>{run.manifest.name}</button>{run.manifest.purpose === 'review' ? <small>Earlier slide-review run</small> : null}</td>
+            <td><button type="button" className="text-button stage-record-name" onClick={() => onOpen(run.id)}>{runTitle(run.manifest.name)}</button>{run.manifest.purpose === 'review' ? <small>Earlier slide-review run</small> : null}</td>
             <td><a href={experimentPredictorLink(run.manifest.experimentId, run.manifest.predictorId)}>{experimentName(run)}</a><small>{source ? modelDescription(source, batchName) : 'Predictor unavailable'}</small></td>
             <td>{nameOf(run.manifest.cohortId)}<small>{(cohort ? cohortLabeled(cohort) : runLabeled(run)) ? 'Labeled · scored' : unlabeledCohortText(referenceCount(run.manifest.cohortId, run.manifest.target?.classes))}</small></td>
             <td><Badge>{computeStatusLabel(run.execution)}</Badge>{run.lifecycleState !== 'active' ? <small>{lifecycleLabel[run.lifecycleState]}</small> : null}</td>

@@ -689,6 +689,17 @@ tbody tr:last-child td {
   align-items: flex-start;
   gap: 10px;
 }
+.public-demo-note {
+  margin-bottom: 18px;
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--theme-ink);
+  font-size: 12px;
+}
+.public-demo-note svg {
+  color: var(--accent);
+  flex: none;
+}
 .callout-warning {
   background: var(--theme-canvas);
   color: var(--theme-muted);

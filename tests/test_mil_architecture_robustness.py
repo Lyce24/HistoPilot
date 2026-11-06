@@ -7,6 +7,7 @@ refits, pooled attention across architectures, and repeated fits that must be id
 
 import copy
 import json
+import os
 import runpy
 from pathlib import Path
 
@@ -174,11 +175,39 @@ EXTREMES = {
 }
 
 
-@pytest.mark.parametrize(
-    "name,options",
-    [(name, options) for name, cases in EXTREMES.items() for options in cases],
-    ids=lambda value: value if isinstance(value, str) else "-".join(map(str, value.values())),
-)
+def total_memory_gib() -> float:
+    try:
+        with open("/proc/meminfo") as meminfo:
+            for line in meminfo:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / 1024**2
+    except OSError:
+        pass
+    return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024**3
+
+
+def extreme_cases():
+    """Every limit case. TransMIL's Nyström attention pads each bag to its landmark count, as
+    the authors' code does, so at the 4,096-landmark limit every head works on 4,096 x 4,096
+    matrices: about 17 GB of RAM and many CPU minutes even for these tiny bags. A machine with
+    less memory, such as a 16 GB hosted CI runner, skips that one case."""
+    for name, cases in EXTREMES.items():
+        for options in cases:
+            marks = []
+            if name == "transmil" and options.get("transmilLandmarks") == 4096:
+                memory = total_memory_gib()
+                marks.append(
+                    pytest.mark.skipif(
+                        memory < 24,
+                        reason="TransMIL at 4,096 landmarks pads each bag to 4,096 tokens and "
+                        f"needs about 17 GB of RAM; this machine has {memory:.0f} GiB",
+                    )
+                )
+            label = "-".join(map(str, options.values()))
+            yield pytest.param(name, options, marks=marks, id=f"{name}-{label}")
+
+
+@pytest.mark.parametrize("name,options", list(extreme_cases()))
 def test_settings_at_the_limits_of_their_ranges_fit_and_predict(name, options):
     for classes in logit_counts(name)[-2:]:
         network = build(name, classes, **options)

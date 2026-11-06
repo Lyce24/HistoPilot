@@ -31,6 +31,7 @@ import { batchPredictorPolicy, includesRefit, predictorPolicyLabel, experimentPr
 import { ExperimentalSetupInputs, FreezeSetupControl } from '../components/ExperimentalSetupInputs';
 import './LocalExperiments.css';
 import { stageEyebrow } from '../lib/roadmap';
+import { useReadOnly } from '../lib/readOnly';
 
 const initialSpec = (): MILExperimentSpec => ({
   protocolId: '', featureBundleId: '', loadingPolicy: 'auto', packArtifactId: null,
@@ -99,6 +100,8 @@ export function ExperimentSubmissionControl({ project, record, disabledReason, o
 }
 
 export function ExperimentDetail({ workspace: w, record, initialTab, onBack, context = {} }: { workspace: Workspace; record: ModelExperiment; initialTab?: ExperimentPage; onBack: () => void; context?: PreparationContext }) {
+  // A public demo's packaged project shows its records and offers nothing that changes them.
+  const publicDemo = useReadOnly();
   const project = w.project.id;
   const protocols = useConfigurations(project, 'protocol');
   const targetVersions = useQuery({ queryKey: ['scientific', project, 'configurations', 'target-split'], queryFn: () => targetSplits.list(project), enabled: Boolean(record.setupDesign) });
@@ -164,7 +167,7 @@ export function ExperimentDetail({ workspace: w, record, initialTab, onBack, con
       {record.role ? <><span className="experiment-filing-separator" aria-hidden="true">·</span><span className="muted">Role</span> <strong title={experimentRoleHelp[record.role]}>{experimentRoleLabel[record.role]}</strong></> : null}
       {record.series ? <><span className="experiment-filing-separator" aria-hidden="true">·</span><span className="muted">Series</span> <strong>{record.series}{record.seriesMember ? ` › ${record.seriesMember}` : ''}</strong></> : null}
       {record.copiedFrom ? <><span className="experiment-filing-separator" aria-hidden="true">·</span><span className="muted">Copied from</span> <a href={preparationLink('experiments', context, { experiment: record.copiedFrom.id })}>{record.copiedFrom.name || record.copiedFrom.id}</a></> : null}
-      {record.state !== 'trashed' ? <button type="button" className="text-button" onClick={openFiling}>{record.objective || record.role || record.series ? 'Change' : 'File it'}</button> : null}
+      {record.state !== 'trashed' && !publicDemo ? <button type="button" className="text-button" onClick={openFiling}>{record.objective || record.role || record.series ? 'Change' : 'File it'}</button> : null}
     </p>
     {!planning && experimentStatusReason(record) ? <p className="experiment-detail-reason" role="status">{experimentStatusReason(record)}</p> : null}
     {record.legacy ? <p className="callout">This legacy record retains its original batch or draft identity. Use it as a template from the experiments list to organize new work; historical runs stay here.</p> : null}

@@ -1,5 +1,6 @@
 import type { ReactNode, ButtonHTMLAttributes, AnchorHTMLAttributes } from 'react';
 import { Icon } from './ui';
+import { useReadOnly } from '../lib/readOnly';
 import './StageActions.css';
 
 type StageActionProps = {
@@ -22,6 +23,9 @@ function StageAction({ kind, tone = kind === 'back' ? 'secondary' : 'primary', s
   return <button type="button" {...props as ButtonHTMLAttributes<HTMLButtonElement>} className={classes} data-stage-action={kind}>{content}</button>;
 }
 
-export function StageCreateButton(props: StageActionProps) { return <StageAction {...props} kind="create" />; }
+export function StageCreateButton(props: StageActionProps) {
+  // A read-only project (a public demo's) offers nothing to create.
+  return useReadOnly() ? null : <StageAction {...props} kind="create" />;
+}
 export function StageBackButton(props: StageActionProps) { return <StageAction {...props} kind="back" />; }
 export function StageContinueButton(props: StageActionProps) { return <StageAction {...props} kind="continue" />; }

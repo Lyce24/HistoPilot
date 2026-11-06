@@ -25,10 +25,13 @@ import PatientAnalysisResults from './PatientAnalysisResults';
 import ReferenceStandardEditor from './ReferenceStandardEditor';
 import RunAgreement from './RunAgreement';
 import RunRecalibration from './RunRecalibration';
+import RunDatasetShift from './RunDatasetShift';
+import { downloadModelCard } from '../api/shift';
 import { StageRecordManageButton, StageViews } from './StageWorkflow';
 import { ErrorNotice } from './ui';
 import './InferenceResults.css';
 import './ApplyRunDetail.css';
+import { useReadOnly } from '../lib/readOnly';
 
 type Unit = 'selected' | 'slide' | 'patient';
 type Review = (query: Partial<CaseQuery>) => void;
@@ -78,6 +81,8 @@ export default function ApplyRunDetail({ project, record, runs, predictors, expe
   reference?: string; onReferenceChange: (reference: string | undefined, tab?: RunTab) => void;
   initialAnalysis?: string;
 }) {
+  // A public demo's packaged project shows its records and offers nothing that changes them.
+  const publicDemo = useReadOnly();
   const trashed = record.lifecycleState === 'trashed';
   const shouldPoll = !trashed || computeActive(record.execution);
   // Shared with the job controls; read on mount, since the list may predate a Task Center change.
@@ -112,7 +117,7 @@ export default function ApplyRunDetail({ project, record, runs, predictors, expe
           : sources.length ? <select className="field" aria-labelledby={`run-labels-${record.id}`} value={source?.id ?? ''} onChange={(event) => onReferenceChange(event.target.value || undefined)}>{sources.map((item) => <option key={item.id ?? 'cohort'} value={item.id ?? ''}>{item.name}{item.standard && item.standard.lifecycleState === 'archived' ? ' (archived)' : ''}</option>)}</select>
           : 'No labels · predictions only'}
         <small>{waiting ? null : source?.standard ? `Reference standard · ${source.standard.manifest.summary.labeledSlides.toLocaleString()} of ${source.standard.manifest.summary.slides.toLocaleString()} slides labeled` : source ? 'The labels frozen with the cohort' : 'Add a reference standard when labels arrive.'}
-          {canAdd && !adding ? <> · <button type="button" className="text-button" onClick={() => setAdding(true)}>Add reference standard</button></> : null}</small>
+          {canAdd && !adding && !publicDemo ? <> · <button type="button" className="text-button" onClick={() => setAdding(true)}>Add reference standard</button></> : null}</small>
       </dd></div>
     </dl>
     <ErrorNotice error={standards.error} />
@@ -130,7 +135,7 @@ export default function ApplyRunDetail({ project, record, runs, predictors, expe
         {shown === 'compare' ? <CompareView project={project} record={{ ...record, execution: current ?? undefined }} runs={runs} source={source} onReview={openCases} /> : null}
       </div>
       <div className="inline-actions run-actions">
-        <a className="btn btn-secondary" href={evidenceLink('interpretation', { experimentId: record.manifest.experimentId, predictorId: record.manifest.predictorId, evaluationId: record.id })}>Open in Model interpretation</a>
+        {publicDemo ? null : <a className="btn btn-secondary" href={evidenceLink('interpretation', { experimentId: record.manifest.experimentId, predictorId: record.manifest.predictorId, evaluationId: record.id })}>Open in Model interpretation</a>}
         <button className="btn btn-secondary" type="button" onClick={() => downloadJSON(`${record.manifest.name}.json`, { ...record, execution: current })}>Export run record</button>
       </div>
     </> : !completed ? <p>{execution.isError ? 'Results cannot be verified. Resolve the execution error before viewing them.' : 'No completed predictions yet. Run this job to predict every slide in its cohort.'}</p> : null}
@@ -247,12 +252,14 @@ function PerformanceView({ project, record, current, source, onReview, initialAn
     <PatientAnalysisResults value={metrics.patientAnalysis} />
     <SubgroupPerformance project={project} record={record} unit={unit} referenceId={referenceId} attributes={summary.data?.attributes ?? []} />
     <RunRecalibration project={project} record={record} unit={unit} referenceId={referenceId} />
+    <RunDatasetShift project={project} record={record} unit={unit} referenceId={referenceId} />
     <RunClinicalUtility project={project} record={record} metrics={metrics} reference={source.standard ? { id: source.standard.id, name: source.name } : undefined} initialAnalysis={initialAnalysis} />
     <div className="inference-section"><h3>Downloads</h3>
       <div className="inference-downloads">
         <button type="button" className="btn btn-secondary" disabled={download.busy} onClick={() => void fetchFile('slide-predictions.csv')}>Scored slide table (CSV)</button>
         {hasPatientPredictions(result) || (referenceId && !patient) ? <button type="button" className="btn btn-secondary" disabled={download.busy} onClick={() => void fetchFile('patient-predictions.csv')}>Scored patient table (CSV)</button> : null}
         <button type="button" className="btn btn-secondary" disabled={download.busy} onClick={() => void fetchFile('metrics.json')}>Metrics (JSON)</button>
+        <button type="button" className="btn btn-secondary" disabled={download.busy} onClick={() => void download.run(() => downloadModelCard(project, record.manifest.predictorId, record.manifest.name))}>Model card (Markdown)</button>
       </div>
       <p className="muted">The tables carry each record&rsquo;s label{referenceId ? ` from ${source.name}` : ''}, prediction and class probabilities, and whether it counts toward the metrics.</p>
     </div>

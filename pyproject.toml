@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "histopilot"
-version = "0.1.0"
+version = "0.2.0"
 description = "Interactive PFM–MIL workflows for computational pathology"
 readme = "README.md"
 license = "MIT"

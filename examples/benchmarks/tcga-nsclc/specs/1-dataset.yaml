@@ -1,0 +1,22 @@
+# TCGA-NSCLC (training) and CPTAC-NSCLC (external test), one row per slide.
+# No slide images: the study works from UNI2-h patch features only.
+kind: import
+specVersion: 1
+source:
+  path: /data/tcga-nsclc/nsclc_dataset.csv
+slideIdColumn: Slide_ID
+patientIdColumn: Patient_ID
+recursive: true
+includeMissingSlides: true
+missingValues:
+- ''
+attributes:
+- key: subtype
+  sourceColumn: Subtype
+  type: categorical
+  categories: [LUAD, LUSC]
+- key: cohort
+  sourceColumn: Cohort
+  type: categorical
+  categories: [TCGA, CPTAC]
+patientIdFallback: unresolved

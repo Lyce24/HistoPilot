@@ -6,6 +6,7 @@ import { configurationChoice } from '../lib/applyModels';
 import { applyHref } from '../lib/applyRoutes';
 import { useSeedEnsembleBuild } from './useSeedEnsembleBuild';
 import { ErrorNotice } from './ui';
+import { useReadOnly } from '../lib/readOnly';
 
 /**
  * Apply the configuration shown in Results. With several seeds that is its seed ensemble, the
@@ -19,7 +20,9 @@ export default function ApplyConfiguration({ project, record, batchId, candidate
   const seeds = useQuery({ queryKey: ['seed-ensembles', project, record.id], queryFn: () => predictors.seedEnsembles(project, record.id) });
   const registry = useQuery({ queryKey: ['predictors', project], queryFn: () => predictors.list(project) });
   const { busy, error, pending, build } = useSeedEnsembleBuild(project, record);
-  if (!seeds.data || !registry.data) return null;
+  // Applying starts work; a read-only project (a public demo's) offers none.
+  const readOnly = useReadOnly();
+  if (readOnly || !seeds.data || !registry.data) return null;
   const plan = configurationChoice(seeds.data.items, registry.data.items, record, batchId, candidateId);
   const link = (predictor: string) => applyHref({ view: 'new', experiment: record.id, predictor });
   const detail = plan.detail;

@@ -233,6 +233,26 @@ def test_old_global_submissions_keep_version_one_plan_and_original_item_shape(
     assert service.status(identity)["counts"]["total"] == 4
 
 
+def test_a_moved_project_shows_its_predictor_plan_but_does_not_resume_it(
+    managed_integrated, task_center
+):
+    service, identity, _jobs, _selections = managed_integrated
+    service.launch(identity, "original-start")
+    folder = service.folder(identity)
+    plan = read_json_bounded(folder / "plan.json")
+    # The plan was written before the project was restored into this folder.
+    plan["projectFolder"] = "/restored/from/an/archive/project"
+    state = read_json_bounded(folder / "state.json")
+    state["planHash"] = content_hash(plan)
+    write_json_atomic(folder / "plan.json", plan)
+    write_json_atomic(folder / "state.json", state)
+    assert service.status(identity)["counts"]["total"] == 4
+    with pytest.raises(StorageError) as error:
+        service.launch(identity, "after-the-move", resume=True)
+    assert error.value.code == "EXPERIMENT_PREDICTOR_PLAN_CHANGED"
+    assert "another project folder" in str(error.value)
+
+
 def test_incomplete_frozen_policy_map_fails_closed(mixed):
     service, identity, _jobs, batches = mixed
     submission = copy.deepcopy(service.store.get_draft(identity)["payload"]["submission"])

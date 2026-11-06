@@ -86,6 +86,21 @@ def test_oof_csv_uses_frozen_labels_folds_and_class_order_without_torch(exports,
     assert ("slideIds" in rows[0]) == (unit == "patient")
 
 
+def test_oof_csv_still_exports_after_the_project_moved(exports):
+    """Fold receipts record absolute paths; a restored copy of the project keeps them."""
+    service, arguments, folder, _ = exports
+    state = read_json_bounded(folder / "state.json")
+    for run in state["runs"]:
+        predictions = run["result"]["predictions"]
+        predictions["assessment"] = predictions["assessment"].replace(
+            str(service.store.folder), "/restored/from/an/archive", 1
+        )
+        write_json_atomic(folder / "runs" / run["id"] / "result.json", run["result"])
+    write_json_atomic(folder / "state.json", state)
+    result = training_oof_csv(service.store, *arguments, "slide")
+    assert len(list(csv.DictReader(io.StringIO(result.decode())))) == 30
+
+
 def test_slide_level_design_exports_each_slides_own_fold(tc_execution, monkeypatch):
     """Slide-level designs record no patient folds, so the fold must come from the slide."""
     service, frozen, _ = tc_execution

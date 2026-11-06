@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EvaluationCohort } from '../api/evaluation';
-import { cohortObjectives } from './applyModels';
+import { cohortObjectives, runTitle } from './applyModels';
 
 const cohort = (id: string, sourceTargetSplitId?: string) => ({ id, manifest: { spec: { sourceTargetSplitId } } }) as unknown as EvaluationCohort;
 
@@ -15,5 +15,14 @@ describe('the objectives a cohort serves', () => {
     });
     expect(Object.fromEntries([...found].map(([id, objectives]) => [id, [...objectives].sort()]))).toEqual({ 'held-out': ['aim-1'], external: ['aim-1', 'aim-2'] });
     expect(found.has('unused')).toBe(false);
+  });
+});
+
+describe('run titles', () => {
+  it('shows an ellipsis for a saved name cut after a separator and leaves other names alone', () => {
+    expect(runTitle('Aggregators from scratch on CPTAC-NSCLC · config 3 · seed 42 /')).toBe('Aggregators from scratch on CPTAC-NSCLC · config 3 · seed 42…');
+    expect(runTitle('Evaluation · seed 42 ·')).toBe('Evaluation · seed 42…');
+    expect(runTitle('Evaluation · seed 42 / split 42')).toBe('Evaluation · seed 42 / split 42');
+    expect(runTitle('LUAD/LUSC')).toBe('LUAD/LUSC');
   });
 });

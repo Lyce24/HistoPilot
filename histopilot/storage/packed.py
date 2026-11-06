@@ -150,8 +150,22 @@ def _no_links(path: Path):
         raise PackedStoreError(f"Feature paths must not traverse symbolic links: {path}")
 
 
+# What identifies an unchanged file on its filesystem. Stamps still record the device number,
+# but it is not compared: WSL and Linux renumber disks across restarts (sdd becomes sdc),
+# while a file's inode, size and nanosecond modification and change times stay. Users cannot
+# set a change time, so no other file matches all four.
+IDENTITY_KEYS = ("sizeBytes", "mtimeNs", "ctimeNs", "inode")
+
+
+def same_stamp(actual: dict, expected: dict) -> bool:
+    """Whether two stamps name the same unchanged file (and the same path, when given)."""
+    if "path" in expected and actual.get("path") != expected["path"]:
+        return False
+    return all(actual.get(key) == expected[key] for key in IDENTITY_KEYS if key in expected)
+
+
 def require_same_stamp(actual: dict, expected: dict, path: Path):
-    if any(actual[key] != expected[key] for key in STAMP_KEYS if key in expected):
+    if not same_stamp(actual, {key: value for key, value in expected.items() if key != "path"}):
         raise PackedStoreError(f"Feature source changed since it was saved: {path}")
 
 

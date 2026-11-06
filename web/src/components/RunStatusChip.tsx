@@ -6,6 +6,7 @@ import {
   type RollupScope, type TaskRollup,
 } from '../api/taskCenter';
 import './RunStatusChip.css';
+import { useReadOnly } from '../lib/readOnly';
 
 export type RunStatusTone = 'idle' | 'active' | 'waiting' | 'attention' | 'done';
 export interface RunStatusSegment { label: string; kinds: string[] }
@@ -99,10 +100,12 @@ export function describeRollup(rollup: TaskRollup | undefined, { segments = [], 
 
 /** The rollup a stage chip shows; fast polling only while its work is live. */
 export function useRunRollup(scope: RollupScope | null, enabled = true) {
+  // A read-only project has no Task Center to ask: its records keep their own status.
+  const readOnly = useReadOnly();
   return useQuery({
     queryKey: taskCenterKeys.rollup(scope ?? {}),
     queryFn: () => taskCenter.rollup(scope ?? {}),
-    enabled: enabled && scope !== null,
+    enabled: enabled && !readOnly && scope !== null,
     refetchIntervalInBackground: false,
     refetchInterval: (query) => query.state.error ? 30000 : rollupPollInterval(query.state.data),
     // A service without the rollup (404) is not retried on every render.
@@ -145,6 +148,7 @@ export default function RunStatusChip({ scope, variant = 'chip', label, segments
   notStartedText?: string;
 }) {
   const query = useRunRollup(scope, enabled);
+  const readOnly = useReadOnly();
   const rollup = query.data;
   const previous = useRef<TaskRollup | undefined>(undefined);
   const settled = useRef(onSettled);
@@ -159,7 +163,7 @@ export default function RunStatusChip({ scope, variant = 'chip', label, segments
     if (before && before.state !== rollup.state) setAnnouncement(`${label ? `${label}: ` : ''}${copy.headline}`);
     if (rollupSettled(before, rollup)) settled.current?.(rollup);
   }, [rollup, label, copy.headline]);
-  if (!scope || (hideWhenNotStarted && rollup?.state === 'not-started')) return null;
+  if (!scope || readOnly || (hideWhenNotStarted && rollup?.state === 'not-started')) return null;
   const headline = rollup?.state === 'not-started' && notStartedText ? notStartedText : copy.headline;
   const href = rollup?.href ?? '#task-center';
   const showAction = Boolean(primaryAction) && actionShown(rollup);

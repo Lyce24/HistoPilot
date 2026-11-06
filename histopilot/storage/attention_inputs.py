@@ -6,7 +6,7 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 
-from histopilot.storage.packed import open_source, stat_stamp
+from histopilot.storage.packed import open_source, same_stamp, stat_stamp
 from histopilot.storage.project_lock import StorageError, reject_symlink_components
 
 MAX_PATCHES = 2_000_000
@@ -246,10 +246,10 @@ def verify_sources(slides):
             if pack_file_stamps(Path(slide["packPath"])) != slide.get("packStamps"):
                 raise ValueError("The selected feature pack changed after review.")
         expected = slide["slideSource"]
-        if file_stamp(expected["path"]) != expected:
+        if not same_stamp(file_stamp(expected["path"]), expected):
             raise ValueError("The selected slide image changed after review.")
         for path, expected in slide["sourceStamps"].items():
-            if file_stamp(path) != expected:
+            if not same_stamp(file_stamp(path), expected):
                 raise ValueError("The selected features or coordinates changed after review.")
 
 

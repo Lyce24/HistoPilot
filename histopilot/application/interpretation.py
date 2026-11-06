@@ -34,7 +34,9 @@ from histopilot.storage.attention_inputs import (
 from histopilot.storage.filesystem import LocalFilesystem
 from histopilot.storage.io import content_hash, read_file_bounded, write_json_atomic
 from histopilot.storage.lifecycle import lifecycle_guard
+from histopilot.storage.packed import same_stamp
 from histopilot.storage.project_lock import StorageError, ensure_managed_directory, writer_lock
+from histopilot.storage.receipts import receipt_names
 from histopilot.viewer.attention_arrays import attention_page, attention_top, coordinate_bounds
 from histopilot.viewer.slide_images import allowed_file, inspect_slide, render_slide
 
@@ -174,7 +176,7 @@ class InterpretationService:
         path = allowed_file(self.filesystem, value)
         stamp = file_stamp(path)
         content = render_slide(path, max_size=max_size)
-        if file_stamp(path) != stamp:
+        if not same_stamp(file_stamp(path), stamp):
             raise StorageError(
                 "The slide changed while its thumbnail was rendered.",
                 "INTERPRETATION_INPUTS_CHANGED",
@@ -931,7 +933,7 @@ class InterpretationService:
             )
         expected = execution["result"].get("artifacts", {}).get(filename)
         path = self.jobs.folder(identity) / filename
-        if not expected or expected.get("path") != str(path):
+        if not expected or not receipt_names(expected.get("path"), path):
             raise StorageError(
                 "Attention artifact not found.", "INTERPRETATION_ARTIFACT_NOT_FOUND", 404
             )
@@ -960,10 +962,10 @@ class InterpretationService:
         _, _, row = self._slide(identity, slide_id)
         path = allowed_file(self.filesystem, row["slidePath"])
         try:
-            if file_stamp(path) != row["slideSource"]:
+            if not same_stamp(file_stamp(path), row["slideSource"]):
                 raise ValueError("Slide image changed after review; create a new interpretation.")
             image = render_slide(path, max_size=max_size, region=region)
-            if file_stamp(path) != row["slideSource"]:
+            if not same_stamp(file_stamp(path), row["slideSource"]):
                 raise ValueError("Slide image changed during rendering.")
             return image
         except StorageError:
@@ -987,7 +989,7 @@ class InterpretationService:
         try:
             if (
                 not expected
-                or expected.get("path") != str(path)
+                or not receipt_names(expected.get("path"), path)
                 or expected.get("bytes", 0) > MAX_LEGACY_VIEW_BYTES
             ):
                 self.artifact(identity, filename, max_bytes=MAX_LEGACY_VIEW_BYTES)
@@ -1009,7 +1011,7 @@ class InterpretationService:
                         else []
                     )
                     if selected or (mode[0] == "patch" and mode[1] >= row["patchCount"]):
-                        if file_stamp(path) != stamp:
+                        if not same_stamp(file_stamp(path), stamp):
                             raise ValueError("Attention JSON changed while selecting its patch.")
                         _LEGACY_RANKS.move_to_end(signature)
                         return {
@@ -1053,7 +1055,7 @@ class InterpretationService:
                 source["coordinateBounds"] = coordinate_bounds(
                     row, minimum_x, minimum_y, maximum_x, maximum_y
                 )
-                if file_stamp(path) != stamp:
+                if not same_stamp(file_stamp(path), stamp):
                     raise ValueError("Attention JSON changed while reading its patches.")
                 top = heapq.nsmallest(
                     20, legacy, key=lambda patch: (-patch["weight"], patch["index"])

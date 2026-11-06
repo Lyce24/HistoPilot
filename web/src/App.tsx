@@ -10,6 +10,7 @@ import { downloadJSON } from './lib/download';
 import ProjectRoadmap, { moduleIcons, completedModuleLabel, type Roadmap } from './pages/ProjectRoadmap';
 import { useRoadmap } from './components/useRoadmap';
 import WorkspaceErrorBoundary from './components/WorkspaceErrorBoundary';
+import { ReadOnlyContext } from './lib/readOnly';
 // Cleanup's review panel is also used by the shared record-management scope.
 import WorkspaceCleanup from './pages/WorkspaceCleanup';
 import { RecordManagementScope } from './components/RecordManagement';
@@ -69,6 +70,13 @@ export function projectFromUrl(href = window.location.href): string | null {
   const params = new URL(href).searchParams;
   return params.get('project') ?? params.get('experiment');
 }
+/** The sidebar's closing note: which kind of workspace this is. */
+export function WorkspaceNote({ mode, publicDemo }: { mode: Workspace['mode']; publicDemo: boolean }) {
+  if (publicDemo) return <><div className="prototype-label"><span />Public demo <b>read-only</b></div><p>A real study on public data.<br /><a href="https://github.com/Lyce24/HistoPilot#quick-start" target="_blank" rel="noreferrer">Run HistoPilot on your own slides</a></p></>;
+  if (mode === 'synthetic-demo') return <><div className="prototype-label"><span />Synthetic demo <b>illustrative</b></div><p>Generated records, not a real study.<br />Every step, traceable.</p></>;
+  return <><div className="prototype-label"><span />Local workspace</div><p>Your data. Your infrastructure.<br />Every step, traceable.</p></>;
+}
+
 export function moduleForPage(page: Page) {
   if (page === 'legacy-protocol') return 'cohort';
   return ['selection', 'predictor', 'post-development', 'source-cv'].includes(page) ? 'experiments' : page;
@@ -104,6 +112,8 @@ export function Content({ page, workspace, roadmap }: { page: Page; workspace: W
     ? <RecordManagementScope key={`${workspace.project.id}:${stage}`} project={workspace.project.id} backLabel={`Back to ${stageName}`}><StageContent page={page} workspace={workspace} roadmap={roadmap} /></RecordManagementScope>
     : <StageContent page={page} workspace={workspace} roadmap={roadmap} />}</Suspense>;
 }
+/** Tools a read-only project (a public demo's) leaves out: each manages the machine or the project. */
+const READ_ONLY_ABSENT: Page[] = ['cleanup', 'task-center', 'operations', 'system'];
 function StageContent({ page, workspace, roadmap }: { page: Page; workspace: Workspace; roadmap: Roadmap }) {
   if (workspace.mode === 'synthetic-demo' && workspace.demoPipeline) {
     const moduleId = moduleForPage(page);
@@ -112,6 +122,11 @@ function StageContent({ page, workspace, roadmap }: { page: Page; workspace: Wor
     // its orientation instead of exposing unrelated examples or live tools.
     return module ? <BlcaDemo key={module.id} pipeline={workspace.demoPipeline} module={module.id} /> : <BlcaDemoOverview workspace={workspace} />;
   }
+  if (workspace.readOnly && READ_ONLY_ABSENT.includes(page)) return <div className="roadmap-loading" role="status">
+    <h1>Not part of the public demo</h1>
+    <p>{pages[page]} manages this machine and its projects. Install HistoPilot to use it with your own slides.</p>
+    <a className="btn btn-secondary" href="#overview">Back to roadmap</a>
+  </div>;
   if (page === 'cleanup' && workspace.mode === 'local') return <WorkspaceCleanup workspace={workspace} />;
   // The Task Center is machine-wide, so it stays reachable from a project in Trash.
   if (page === 'task-center' && workspace.mode === 'local') return <TaskCenter workspace={workspace} />;
@@ -181,9 +196,18 @@ function ExperimentWorkspace({ projectId, onExit }: { projectId: string; onExit:
   </main>;
   return <WorkspaceShell workspace={workspace.data} onExit={onExit} />;
 }
+/** What a visitor of a public demo is looking at, on every page of its packaged project. */
+function PublicDemoNote() {
+  return <div className="callout public-demo-note" role="note">
+    <Icon name="system" size={16} />
+    <span><strong>Public demo, read-only.</strong> Every record, result and curve here was produced by HistoPilot on public data. Slide images, features and checkpoints are not included, so nothing can be changed or rerun.</span>
+  </div>;
+}
 function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit: () => void }) {
   const roadmap = useRoadmap(w);
   const blcaDemo = w.mode === 'synthetic-demo' && Boolean(w.demoPipeline);
+  // A public demo's packaged project: the full application, read-only, without machine tools.
+  const publicDemo = Boolean(w.readOnly);
   const [page, setPage] = useState(currentPage);
   const shownPage = useRef(page);
   const [menu, setMenu] = useState(false);
@@ -221,8 +245,8 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
   const showState = roadmap.hasData;
   // The floating job tray overlays the page; reserve a matching scroll gutter so
   // it never covers the last actions or the footer.
-  const floatingJobTray = !blcaDemo && page !== 'dataset' && page !== 'cohort' && page !== 'task-center';
-  return <>
+  const floatingJobTray = !blcaDemo && !publicDemo && page !== 'dataset' && page !== 'cohort' && page !== 'task-center';
+  return <ReadOnlyContext.Provider value={publicDemo}>
     <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); main.current?.focus(); }}>Skip to content</a>
     <div className={`app-shell research-shell ${menu ? 'nav-open' : ''}${floatingJobTray ? ' has-job-tray' : ''}`}>
       <aside className="sidebar" id="sidebar" aria-label="Workspace navigation" inert={mobile && !menu}>
@@ -238,30 +262,31 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
             return locked ? <div key={item.id} className="nav-link nav-locked" aria-disabled="true" title={showState ? `Requires ${item.blockers.map((id) => roadmap.modules.find((m) => m.id === id)?.shortTitle).join(' + ') || 'compatible frozen inputs'}` : 'Checking prerequisites'}>{contents}</div>
               : <a key={item.id} className={`nav-link ${module?.id === item.id ? 'active' : ''}`} href={`#${item.id}`} onClick={(event) => { if ((w.mode === 'local' || blcaDemo) && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && module?.id === item.id && ['dataset', 'cohort', 'features', 'experiments', 'source-cv', 'apply'].includes(page)) { event.preventDefault(); window.dispatchEvent(new Event('histopilot:stage-library')); } }} aria-current={module?.id === item.id ? 'page' : undefined}>{contents}</a>;
           })}
-          {!blcaDemo ? <div className="nav-label nav-system">PROJECT TOOLS</div> : null}
-          {w.mode === 'local' ? <a className={`nav-link ${page === 'cleanup' ? 'active' : ''}`} href="#cleanup" aria-current={page === 'cleanup' ? 'page' : undefined}><Icon name="folder" size={16} /><span>Workspace cleanup</span></a> : null}
-          {(w.mode === 'local' ? ['task-center', 'operations', 'system'] as const : []).map((id) => <a key={id} className={`nav-link ${page === id ? 'active' : ''}`} href={`#${id}`} aria-current={page === id ? 'page' : undefined}><Icon name={toolIcons[id] ?? id} size={16} /><span>{pages[id]}</span></a>)}
+          {!blcaDemo && !publicDemo ? <div className="nav-label nav-system">PROJECT TOOLS</div> : null}
+          {w.mode === 'local' && !publicDemo ? <a className={`nav-link ${page === 'cleanup' ? 'active' : ''}`} href="#cleanup" aria-current={page === 'cleanup' ? 'page' : undefined}><Icon name="folder" size={16} /><span>Workspace cleanup</span></a> : null}
+          {(w.mode === 'local' && !publicDemo ? ['task-center', 'operations', 'system'] as const : []).map((id) => <a key={id} className={`nav-link ${page === id ? 'active' : ''}`} href={`#${id}`} aria-current={page === id ? 'page' : undefined}><Icon name={toolIcons[id] ?? id} size={16} /><span>{pages[id]}</span></a>)}
         </nav>
-        <div className="sidebar-bottom"><div className="prototype-label"><span />Local workspace <b>v0.1</b></div><p>Your data. Your infrastructure.<br />Every step, traceable.</p></div>
+        <div className="sidebar-bottom"><WorkspaceNote mode={w.mode} publicDemo={publicDemo} /></div>
       </aside>
       {mobile && menu ? <button className="nav-backdrop" aria-label="Close navigation overlay" onClick={() => setMenu(false)} /> : null}
       <div className="main-shell">
-        <header className="topbar"><div className="breadcrumbs"><button ref={menuButton} className="icon-button mobile-menu" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="menu" /></button><button type="button" className="breadcrumb-home" onClick={onExit}>Projects</button><Icon name="chevron" size={12} /><a href="#overview" className="breadcrumb-project">{w.project.name}</a><Icon name="chevron" size={12} /><strong>{page === 'overview' ? 'Roadmap' : module?.shortTitle ?? pages[page]}</strong></div><div className="topbar-actions">{w.mode === 'local' && !blcaDemo && ['overview', 'experiments', 'apply', 'interpretation'].includes(moduleForPage(page)) ? <TopbarObjectiveScope project={w.project.id} /> : null}{w.project.aiExposure ? <a href="#operations" className="ai-exposure-indicator" title="What AI agents may see of this project">AI: {w.project.aiExposure}</a> : null}<span className="demo-indicator"><span />{w.mode === 'synthetic-demo' ? 'Synthetic demo' : 'Saved locally'}</span><button className="btn btn-secondary btn-small" aria-label="Export workspace" onClick={() => { if (w.mode === 'local') window.location.hash = 'operations'; else downloadJSON('histopilot-workspace.json', { schema_version: '0.1.0', executable: false, ...w }); }}><Icon name="download" size={15} /><span>Export</span></button></div></header>
+        <header className="topbar"><div className="breadcrumbs"><button ref={menuButton} className="icon-button mobile-menu" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="menu" /></button><button type="button" className="breadcrumb-home" onClick={onExit}>Projects</button><Icon name="chevron" size={12} /><a href="#overview" className="breadcrumb-project">{w.project.name}</a><Icon name="chevron" size={12} /><strong>{page === 'overview' ? 'Roadmap' : module?.shortTitle ?? pages[page]}</strong></div><div className="topbar-actions">{w.mode === 'local' && !blcaDemo && ['overview', 'experiments', 'apply', 'interpretation'].includes(moduleForPage(page)) ? <TopbarObjectiveScope project={w.project.id} /> : null}{w.project.aiExposure ? <a href="#operations" className="ai-exposure-indicator" title="What AI agents may see of this project">AI: {w.project.aiExposure}</a> : null}<span className="demo-indicator"><span />{w.mode === 'synthetic-demo' ? 'Synthetic demo' : publicDemo ? 'Public demo · read-only' : 'Saved locally'}</span>{publicDemo ? null : <button className="btn btn-secondary btn-small" aria-label="Export workspace" onClick={() => { if (w.mode === 'local') window.location.hash = 'operations'; else downloadJSON('histopilot-workspace.json', { schema_version: '0.1.0', executable: false, ...w }); }}><Icon name="download" size={15} /><span>Export</span></button>}</div></header>
         <main className={`content ${page === 'overview' ? 'roadmap-content' : 'module-content'}${['dataset', 'cohort', 'features', 'experiments', 'source-cv', 'apply'].includes(page) ? ' stage-workspace' : ''}`} id="main-content" tabIndex={-1} ref={main}>
           {/* Module progress now belongs to the roadmap, and each library states its
               own records' status. A module-level chip beside a record editor described
               the wrong thing, so this strip is only the way back and the demo label. */}
           {page !== 'overview' ? <div className="module-context"><a href="#overview"><span className="back-arrow"><Icon name="arrow" size={16} /></span>Back to roadmap</a>{blcaDemo ? <div><Badge>Illustrative</Badge></div> : null}</div> : null}
           {page !== 'overview' && roadmap.error ? <div className="callout callout-warning roadmap-refresh-warning" role="status"><span>Some project progress could not refresh. Your open module remains available.</span><button className="text-button" onClick={() => void roadmap.refetch()}>Retry</button></div> : null}
+          {publicDemo ? <PublicDemoNote /> : null}
           {!blcaDemo && page !== 'overview' && module?.unlocked ? <ModulePrerequisites module={module} roadmap={roadmap} /> : null}
           <WorkspaceErrorBoundary key={page} onExit={onExit}>
             <Content page={page} workspace={w} roadmap={roadmap} />
           </WorkspaceErrorBoundary>
-          {!blcaDemo && (page === 'dataset' || page === 'cohort') ? <JobTray inline /> : null}
-          <footer className="content-footer"><span>HistoPilot <span className="footer-dot">·</span> Interactive PFM–MIL workflows</span><span>{w.mode === 'synthetic-demo' ? 'Synthetic data · Demonstration workspace' : 'Saved in your project folder'}</span></footer>
+          {!blcaDemo && !publicDemo && (page === 'dataset' || page === 'cohort') ? <JobTray inline /> : null}
+          <footer className="content-footer"><span>HistoPilot <span className="footer-dot">·</span> Interactive PFM–MIL workflows</span><span>{w.mode === 'synthetic-demo' ? 'Synthetic data · Demonstration workspace' : publicDemo ? 'Public demo · real public data, read-only' : 'Saved in your project folder'}</span></footer>
         </main>
       </div>
     </div>
     {floatingJobTray ? <JobTray /> : null}
-  </>;
+  </ReadOnlyContext.Provider>;
 }

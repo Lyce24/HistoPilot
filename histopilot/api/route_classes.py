@@ -171,6 +171,7 @@ _TABLE = {
     ("POST", "{P}/predictors/seed-ensembles"): COMMIT,
     ("POST", "{P}/predictors/seed-ensembles/preview"): PREVIEW,
     ("GET", "{P}/predictors/{predictor_id}"): READ,
+    ("GET", "{P}/predictors/{predictor_id}/card"): READ,
     # Cohorts and runs
     ("GET", "{P}/evaluation-cohorts"): READ,
     ("GET", "{P}/evaluation-cohorts/{configuration_id}"): READ,
@@ -202,6 +203,10 @@ _TABLE = {
     ): READ,
     ("POST", "{P}/evaluation-runs/{evaluation_id}/resume"): COMMIT,
     ("POST", "{P}/evaluation-runs/{evaluation_id}/scores"): READ,
+    ("GET", "{P}/evaluation-runs/{evaluation_id}/shift"): READ,
+    ("POST", "{P}/evaluation-runs/{evaluation_id}/shift"): COMMIT,
+    ("POST", "{P}/evaluation-runs/{evaluation_id}/shift/performance"): READ,
+    ("POST", "{P}/evaluation-runs/{evaluation_id}/shift/preview"): PREVIEW,
     ("GET", "{P}/reference-standards"): READ,
     ("POST", "{P}/reference-standards"): COMMIT,
     ("POST", "{P}/reference-standards/preview"): PREVIEW,

@@ -249,7 +249,13 @@ class ExperimentPredictorService:
             )
         return record, submission
 
-    def _read(self, identity):
+    def _read(self, identity, *, moved_ok=False):
+        """The frozen plan and its state, verified against the submission.
+
+        ``moved_ok`` is for reads only: a project copied or restored into another folder
+        keeps plans that name the old one. Anything that acts on the plan keeps refusing,
+        because the coordinator would work in the folder the plan names.
+        """
         folder = self.folder(identity)
         plan, state = (
             read_json_bounded(folder / "plan.json"),
@@ -260,7 +266,6 @@ class ExperimentPredictorService:
             state.get("planHash") != content_hash(plan)
             or plan.get("experimentId") != identity
             or plan.get("projectId") != self.store.project_id
-            or plan.get("projectFolder") != str(self.store.folder)
             or plan.get("submissionOperationId") != submission["operationId"]
             or (
                 plan.get("policies") != submission_policies(submission)
@@ -278,6 +283,13 @@ class ExperimentPredictorService:
         ):
             raise StorageError(
                 "The frozen experiment predictor plan changed.",
+                "EXPERIMENT_PREDICTOR_PLAN_CHANGED",
+                409,
+            )
+        if not moved_ok and plan.get("projectFolder") != str(self.store.folder):
+            raise StorageError(
+                "This predictor plan was written in another project folder. Restore the "
+                "project at its original location to continue it, or copy the experiment.",
                 "EXPERIMENT_PREDICTOR_PLAN_CHANGED",
                 409,
             )
@@ -336,7 +348,7 @@ class ExperimentPredictorService:
         folder = self.folder(identity)
         if not (folder / "state.json").exists():
             return None
-        _plan, state = self._read(identity)
+        _plan, state = self._read(identity, moved_ok=True)
         if self._legacy(state):
             # Nothing runs a coordinator from before the Task Center any more.
             if state["status"] in ACTIVE:

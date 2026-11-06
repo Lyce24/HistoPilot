@@ -31,6 +31,7 @@ from histopilot.application.model_experiments import ModelExperimentService
 from histopilot.storage import read_sessions
 from histopilot.storage.io import read_json_bounded
 from histopilot.storage.project_lock import StorageError
+from histopilot.storage.receipts import moved_into
 
 DEFAULT_RESAMPLES = 2000
 DEFAULT_SEED = 42
@@ -155,8 +156,10 @@ def _load(folder: Path, batch: dict) -> dict:
             wanted = comparison is not None or candidate["candidateId"] == reported
             if not candidate.get("complete") or not path or not wanted:
                 continue
-            resolved = Path(path).resolve()
-            # Results name their own files; anything outside the batch folder is ignored.
+            # Results name their own files. A project copied or restored elsewhere keeps the
+            # paths of the folder it trained in, so they are read from this batch folder;
+            # anything else outside the batch folder is ignored.
+            resolved = moved_into(path, folder).resolve()
             if (
                 resolved.parent != root
                 or not resolved.name.startswith("oof-")
@@ -308,7 +311,12 @@ def _arm_contrasts(summary, hidden, reference, comparison, policy) -> dict:
             continue
         left = hidden["draws"].get(reference["candidateId"]) or {}
         right = hidden["draws"].get(arm["candidateId"]) or {}
-        row = _compare((summary, reference, left), (summary, arm, right), policy)
+        row = _compare(
+            (summary, reference, left),
+            (summary, arm, right),
+            policy,
+            pair="The arm and the reference",
+        )
         p_value = None
         a, b = left.get("draws") or {}, right.get("draws") or {}
         if (
@@ -667,7 +675,7 @@ def _comparisons(batches: list[dict], internals: list[dict], policy: dict) -> li
     return rows
 
 
-def _compare(left, right, policy: dict) -> dict:
+def _compare(left, right, policy: dict, pair: str = "The two batches") -> dict:
     (left_batch, left_config, left_hidden), (right_batch, right_config, right_hidden) = left, right
     row = {
         "leftBatchId": left_batch["batchId"],
@@ -706,10 +714,15 @@ def _compare(left, right, policy: dict) -> dict:
                 a, resamples=policy["resamples"], level=CONFIDENCE_LEVEL, difference=difference
             ),
         }
+    elif not left_draws.get("identities") or not right_draws.get("identities"):
+        row["oofInterval"] = {
+            "available": False,
+            "reason": f"{pair} need saved out-of-fold predictions before their draws can be paired.",
+        }
     else:
         row["oofInterval"] = {
             "available": False,
-            "reason": "The two batches scored different assessment units, so draws cannot be paired.",
+            "reason": f"{pair} scored different assessment units, so draws cannot be paired.",
         }
     left_folds, right_folds = (
         (left_hidden or {}).get("foldMetrics", {}),

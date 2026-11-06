@@ -28,6 +28,20 @@ HistoPilot is a research workspace for computational pathology. It takes a slide
 
 <sub>The synthetic BLCA demo: every record, score and curve in it is generated, not taken from a real study.</sub>
 
+## Results on public data
+
+LUAD versus LUSC on UNI2-h features, trained by five-fold cross-validation on TCGA-NSCLC (946 patients) and applied once to CPTAC-NSCLC (451 patients from other hospitals). The table gives patient-level AUROC with 95% bootstrap intervals. Every number was recomputed independently from the saved predictions ([benchmark](docs/benchmarks.md)).
+
+| Model | TCGA, cross-validated | CPTAC, external | Most atypical third of CPTAC |
+| --- | --- | --- | --- |
+| ABMIL | 0.973 (0.963–0.982) | 0.964 (0.948–0.977) | 0.934 |
+| CLAM-SB | 0.976 (0.966–0.985) | 0.966 (0.952–0.979) | 0.929 |
+| TransMIL | 0.965 (0.954–0.976) | 0.971 (0.956–0.984) | 0.928 |
+| DSMIL | 0.979 (0.968–0.987) | 0.972 (0.958–0.983) | 0.945 |
+| Mean pooling | 0.966 (0.955–0.976) | 0.949 (0.930–0.965) | 0.918 |
+
+HistoPilot's [dataset shift](docs/methods.md#dataset-shift) analysis finds CPTAC almost perfectly separable from TCGA in feature space (domain AUROC 0.999). The subtype signal transfers anyway, and every model is weakest on the CPTAC slides farthest from its training data. [Rerun it](examples/benchmarks/tcga-nsclc/) from spec files.
+
 ## One question, three cockpits
 
 *"Which design won the comparison, and is the difference real?"* Here is one synthetic study answering in each cockpit. The numbers agree because all three read the same local API.
@@ -178,10 +192,11 @@ flowchart LR
 
 ## How it is built
 
-- **Checked against reference code.** CLAM, TransMIL, DSMIL, DTFD-MIL and ACMIL reproduce outputs recorded from the authors' implementations, loaded parameter by parameter. The plain-PyTorch Mamba-2 MIL reproduces OceanPath's model on its fused CUDA kernels within 1e-5 (15 parity tests), and trains at 332 ms per step for 32 slides of 2,048 patches on one RTX A5000.
-- **Tested and typed.** 3,936 backend tests at 90% line coverage (82% in CI, which runs without Torch), and 1,036 frontend tests. Pyright checks the service core, strictly for the domain model, and Ruff runs bug-finding rules. CI runs all of it on every push.
+- **Checked against reference code.** CLAM, TransMIL, DSMIL, DTFD-MIL and ACMIL reproduce outputs recorded from the authors' implementations, loaded parameter by parameter. The plain-PyTorch Mamba-2 MIL reproduces OceanPath's model on its fused CUDA kernels within 1e-5 (15 parity tests), and trains at 332 ms per step for 32 slides of 2,048 patches on one RTX A5000. CI runs 50 of these parity tests on every push, with Torch on the runner's CPU; the last OceanPath test needs its recorded checkpoint.
+- **Tested and typed.** 3,990 backend tests at 90% line coverage, run by CI on every push with Torch and Lightning on the runner's CPU, and again without them (82%), which proves that the service and CLI install without ML packages. 1,047 frontend tests, and a Playwright walk through the public demo in Chromium. Pyright checks the service core, strictly for the domain model, and Ruff runs bug-finding rules. The wheel, the release and both container images are smoke-tested before they are published.
 - **Agents, measured.** Real models drive HistoPilot through its MCP server on a fixed task suite that includes requests to change things without approval. The first campaign of 286 sessions found three product gaps; once they were fixed, the second completed every task with every model (Haiku, Sonnet and Opus), with no policy violations, at $0.003–0.09 per task ([agent evaluation](evals/agents/README.md)).
-- **Reproducible by construction.** Records are content-addressed, submitted work runs from a pinned copy of the code with a fingerprint of its runtime, and every change is committed against the preview a person reviewed ([design decisions](docs/design-decisions.md)).
+- **Reproducible by construction.** Records are content-addressed, submitted work runs from a pinned copy of the code with a fingerprint of its runtime, and every change is committed against the preview a person reviewed ([design decisions](docs/design-decisions.md)). A study moved to another folder or disk still verifies every saved output, by receipt and SHA-256.
+- **Evaluated beyond one number.** Applied models get patient bootstrap intervals, recalibration fitted on development predictions, decision curves, a dataset shift report and a model card for every predictor ([methods](docs/methods.md)).
 - **Operable.** Structured JSON logs carry request and task IDs, and `/api/v1/metrics` exports queue depth, task durations, failures and GPU use for Prometheus. A wheel ships the UI, and two images run the service (CPU) and the training workers (CUDA).
 
 ## Documentation
@@ -192,6 +207,7 @@ flowchart LR
 | [Command line](docs/cli.md) | Every `histopilot` command |
 | [AI agents](docs/agents.md) | Exposure levels, tokens, approvals and safe setups |
 | [Methods](docs/methods.md) | Splits, cross-validation, comparisons, metrics and intervals |
+| [Benchmarks](docs/benchmarks.md) | TCGA-NSCLC to CPTAC-NSCLC on public data, and how to rerun it |
 | [Deployment](docs/deployment.md) | Installation, configuration, feature extraction and remote access |
 | [BLCA demo](docs/blca-demo.md) | The synthetic walkthrough |
 | [Architecture](docs/architecture.md) · [Task Center](docs/task-center.md) · [API](docs/api.md) | How it works inside |
@@ -200,4 +216,4 @@ flowchart LR
 | [Contributing](CONTRIBUTING.md) | Development setup and tests |
 | [Changelog](CHANGELOG.md) | What each release changed |
 
-<sub>Every screenshot and number on this page comes from synthetic data. HistoPilot is released under the [MIT license](LICENSE); third-party models and backends keep their own licenses.</sub>
+<sub>The results table comes from public TCGA and CPTAC data; every screenshot and other number comes from synthetic data. HistoPilot is released under the [MIT license](LICENSE); third-party models and backends keep their own licenses.</sub>

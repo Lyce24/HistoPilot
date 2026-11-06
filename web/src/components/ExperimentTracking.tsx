@@ -1,5 +1,5 @@
 import PatientAnalysisResults from './PatientAnalysisResults';
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { queryOptions, useQuery } from '@tanstack/react-query';
 import { development, splitPlanLabel } from '../api/development';
 import type { FrozenBatch, PlannedRun, TrainingExecution, TrainingHistory, TrainingMetricDetails, TrainingMetrics, TrainingRecipe, TrainingRun } from '../api/development';
@@ -10,6 +10,7 @@ import { Badge, ErrorNotice } from './ui';
 import './ExperimentTracking.css';
 import { pollDelay } from '../api/client';
 import { statusLabel } from '../lib/statusLabels';
+import { modelLabel } from '../lib/modelCapabilities';
 
 export { ResourceCards } from './RunResourceUsage';
 
@@ -196,7 +197,7 @@ export function RunMap({ batch, execution, selected, onSelect }: { batch: Frozen
   if (!splits.length || !seeds.length || batch.manifest.runs.length > RUN_MAP_LIMIT || seeds.length > 12) return null;
   return <div className="experiment-run-map">
     {configurations.map((configuration) => <figure key={configuration.id}>
-      {configurations.length > 1 ? <figcaption>Configuration {configuration.number}</figcaption> : null}
+      {configurations.length > 1 ? <figcaption>Configuration {configuration.number}{configuration.recipe?.model ? <small>{modelLabel(configuration.recipe.model)}</small> : null}</figcaption> : null}
       <div className="experiment-run-map-scroll"><table>
         <caption className="sr-only">Runs by test fold and training seed{configurations.length > 1 ? ` for configuration ${configuration.number}` : ''}</caption>
         <thead><tr><th scope="col">Test fold</th>{seeds.map((seed) => <th scope="col" key={seed}>Seed {seed}</th>)}</tr></thead>
@@ -226,6 +227,10 @@ export function RunTable({ batch, execution, project, histories, illustrative = 
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selection, setSelection] = useState<string | null>(null);
+  // Choosing a cell in the run map opens that run's details below the table; bring them into view.
+  const [reveal, setReveal] = useState(0);
+  const detailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (reveal) detailRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); }, [reveal]);
   const id = useId();
   const actual = new Map(execution?.runs.map((run) => [run.id, run]) ?? []);
   const query = search.trim().toLocaleLowerCase();
@@ -239,7 +244,7 @@ export function RunTable({ batch, execution, project, histories, illustrative = 
     <div className="experiment-tracking-heading"><div><h3>Runs <span className="muted">({batch.manifest.runs.length})</span></h3><p className="experiment-tracking-hint">Select a run to inspect its metrics, checkpoints, and diagnostics.</p></div></div>
     <RunMap batch={batch} execution={execution} selected={selected?.id} onSelect={(runId) => {
       // Show the chosen run even when a filter or another page hides it.
-      setFilter('all'); setSearch(''); setPage(Math.max(0, Math.floor(batch.manifest.runs.findIndex((planned) => planned.id === runId) / 50))); setSelection(runId);
+      setFilter('all'); setSearch(''); setPage(Math.max(0, Math.floor(batch.manifest.runs.findIndex((planned) => planned.id === runId) / 50))); setSelection(runId); setReveal((count) => count + 1);
     }} />
     <div className="experiment-run-toolbar">
       <label className="experiment-run-search" htmlFor={`${id}-search`}><span>Search runs</span><input type="search" id={`${id}-search`} className="field" placeholder="Configuration, fold, seed, or run ID" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} /></label>
@@ -254,6 +259,6 @@ export function RunTable({ batch, execution, project, histories, illustrative = 
     {!filtered.length ? <p className="muted">No runs match these filters.</p> : null}
     <p className="experiment-tracking-hint">Epoch progress counts completed epochs; early stopping can finish before the maximum.</p>
     {pages > 1 ? <div className="inline-actions"><button type="button" className="btn btn-secondary btn-small" disabled={!current} onClick={() => setPage(current - 1)}>Previous</button><span>Page {current + 1} of {pages}</span><button type="button" className="btn btn-secondary btn-small" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>Next</button></div> : null}
-    {selected ? <RunDetails key={selected.id} project={project} batch={batch} run={actual.get(selected.id)} peakRamGb={execution?.telemetry?.peak.runRssGb[selected.id]} history={histories?.[selected.id]} illustrative={illustrative} taskCenterHref={taskCenterHref} /> : null}
+    {selected ? <div ref={detailRef} className="experiment-run-detail-anchor"><RunDetails key={selected.id} project={project} batch={batch} run={actual.get(selected.id)} peakRamGb={execution?.telemetry?.peak.runRssGb[selected.id]} history={histories?.[selected.id]} illustrative={illustrative} taskCenterHref={taskCenterHref} /></div> : null}
   </div>;
 }

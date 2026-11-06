@@ -239,6 +239,14 @@ def serve(
         "for a public demo such as a Hugging Face Space. Any --host is accepted; it uses a "
         "throwaway workspace, no data roots and no runner. See docs/deployment.md.",
     ),
+    demo_projects: Path | None = typer.Option(
+        None,
+        "--demo-projects",
+        envvar="HISTOPILOT_DEMO_PROJECTS",
+        help="With --demo: a folder of HistoPilot project folders to serve read-only beside "
+        "the synthetic demo, through the full application. Each is copied into the throwaway "
+        "workspace when the service starts.",
+    ),
 ) -> None:
     """Start one local control service and serve the packaged browser application."""
     import uvicorn
@@ -264,8 +272,11 @@ def serve(
                 err=True,
             )
             raise typer.Exit(1)
-        _serve_demo(host, port, browser)
+        _serve_demo(host, port, browser, demo_projects)
         return
+    if demo_projects is not None:
+        typer.echo("Cannot start HistoPilot: --demo-projects needs --demo.", err=True)
+        raise typer.Exit(1)
     try:
         settings = load_settings(
             config,
@@ -360,11 +371,39 @@ def serve(
         raise typer.Exit(1) from exc
 
 
-def _serve_demo(host: str | None, port: int | None, browser: bool) -> None:
+def _copy_demo_projects(source: Path, target: Path) -> tuple[Path, ...]:
+    """Copy each project folder in `source` into the demo's throwaway workspace.
+
+    The demo opens these copies, so whatever its reads cache lands in the workspace and is
+    removed with it; the packaged folders themselves are never opened.
+    """
+    import shutil
+
+    from histopilot.application.project_workspace import DESCRIPTOR
+
+    source = source.expanduser()
+    folders = (
+        sorted(child for child in source.iterdir() if (child / DESCRIPTOR).is_file())
+        if source.is_dir()
+        else []
+    )
+    if not folders:
+        raise ValueError(f"--demo-projects: no HistoPilot project folders in {source}.")
+    copies = []
+    for folder in folders:
+        destination = target / folder.name
+        shutil.copytree(folder, destination)
+        copies.append(destination)
+    return tuple(copies)
+
+
+def _serve_demo(
+    host: str | None, port: int | None, browser: bool, demo_projects: Path | None = None
+) -> None:
     """The read-only public demo, from a workspace and a state folder made for this run.
 
     Nothing is read from the configuration file or the machine's Task Center state, and both
-    folders are removed when the service stops.
+    folders are removed when the service stops. Packaged projects are copied in first.
     """
     import shutil
     import signal
@@ -389,11 +428,17 @@ def _serve_demo(host: str | None, port: int | None, browser: bool) -> None:
         state.mkdir(mode=0o700)
         # Anything that reaches for machine-level state finds this empty folder.
         os.environ[STATE_ENV] = str(state)
+        packaged = (
+            _copy_demo_projects(demo_projects, scratch / "workspace" / "demo-projects")
+            if demo_projects is not None
+            else ()
+        )
         settings = Settings(
             workspace=scratch / "workspace",
             host=host or "127.0.0.1",
             port=port or 8787,
             demo=True,
+            demo_projects=packaged,
         )
         if not (settings.static_dir / "index.html").is_file():
             raise ValueError(
@@ -404,8 +449,14 @@ def _serve_demo(host: str | None, port: int | None, browser: bool) -> None:
             typer.echo(
                 "HistoPilot · public demo, read-only\n"
                 f"Browser    {url}\n"
-                "Serves     the synthetic BLCA demo to anyone who reaches this port; every "
-                "change and every other route is refused\n"
+                "Serves     the synthetic BLCA demo"
+                + (
+                    f" and {len(packaged)} packaged project{'s' if len(packaged) != 1 else ''}"
+                    if packaged
+                    else ""
+                )
+                + " to anyone who reaches this port; every change and every other route is "
+                "refused\n"
                 f"Workspace  {settings.workspace} (temporary; removed on exit)\n"
                 "Compute    none: no data roots and no Task Center runner"
             )

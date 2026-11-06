@@ -300,3 +300,33 @@ A scored run's Performance view shows how well its risks match outcomes, as pred
 **Source predictions.** A fold-ensemble or refit predictor uses the OOF predictions of its source configuration, training seed and split seed; a seed ensemble averages the OOF predictions of its seed groups as it averages their models. Each group is verified as for its OOF export. A refit model is not one of the fold models whose predictions fit the map, so its map is an approximation.
 
 **What changes.** Only risks. Decisions, the frozen threshold and ranking metrics keep the original probabilities: a Platt slope a > 0 keeps every binary ranking, and temperature scaling keeps every decision. For the cohort, and in-sample for development, the report gives the Brier score (summed over classes for multiclass targets), log loss, ECE over 10 equal-width bins, observed ÷ expected, and the calibration slope and intercept of outcome ~ logit(risk), which are unavailable when the outcome is separable. For multiclass targets the risk is the predicted class's confidence and the outcome whether it is right. Labels come from the cohort or the chosen reference standard, and development patients are left out, as from every metric. Reports are kept beside the run by a key of its predictions, predictor, labels and unit.
+
+## Dataset shift
+
+`histopilot/shift.py`, `application/shift.py`
+
+A run's dataset shift compares its cohort with the slides its predictor was developed on, in the feature space every MIL model here reads. It explains a drop in performance on a new cohort, or warns that one may come. It tests nothing and corrects nothing.
+
+- **Slides.** The development slides are exactly those in the predictor's training batch plan (the members of every fold, verified by the plan's hash). The cohort slides are the cohort's, as the run reads them, minus any development slide. Each slide is represented by the mean of its patch features, accumulated in float64.
+- **Atypicality.** A slide's mean cosine distance to its 10 nearest development slides; a development slide leaves itself out. The threshold is the 99th percentile of the development slides' own distances, so by construction about 1% of development slides lie beyond it. A cohort slide past the threshold lies *beyond the development range*. The share of cohort slides beyond it carries a Wilson 95% interval, and each slide's percentile is the share of development distances at or below its own.
+- **Separability (domain AUROC).** Development slides are labelled 0 and cohort slides 1. In each of 5 stratified folds, the training fold is standardized and reduced to its 32 leading principal components (dropping components with no variance), and a logistic regression with an L2 penalty of 1 (intercept unpenalized) is fitted by Newton's method. Held-out slides are scored in that space. The out-of-fold scores give the AUROC, and its 95% interval resamples slides within each set 1,000 times, holding the scores fixed. A value of 0.5 means a linear model cannot tell the two sets apart.
+- **Plane.** Both sets projected on the development slides' first two principal components.
+- **Verdict.** Descriptive. *Strong* when the domain AUROC is at least 0.85 or at least 25% of cohort slides lie beyond the range; *moderate* when it is at least 0.65 or at least 5%; otherwise *little*.
+- **Performance by atypicality.** For a scored run, the service (never the job) joins the per-slide distances with the run's labeled units. A unit's atypicality is the mean percentile of its slides. Units are ordered by it and cut into thirds, and separately split into those with any slide beyond the range and the rest. Each group gets the run's metrics, over exactly the records the run scores. Small groups give unstable estimates.
+- **Record and job.** An analysis is a frozen `shift-analysis` record, content-addressed by the training batch (with its plan hash) and by the cohort and feature records (by content hash). Runs that share these share one analysis; names stay outside the record. Its job is a Task Center CPU task that re-verifies every feature file's stamp before and after reading it, reads no label, and writes `shift.json` and `slide-embeddings.npz` with SHA-256 receipts. The service serves the report only through its receipt.
+
+## Model cards
+
+`application/model_cards.py`
+
+A frozen predictor's model card puts on one page what a methods supplement or a model registry asks of a model:
+
+- the architecture and its checkpoints (SHA-256);
+- the task;
+- development performance (out of fold, with the patient bootstrap intervals of the experiment's results);
+- every run of Apply models, with its metrics and intervals, calibration as predicted, and dataset shift;
+- an intended-use statement (research use only);
+- limitations drawn from that evidence, such as a single training seed or cohorts with moderate or strong shift;
+- provenance: content hashes, the training plan hash and runtime versions.
+
+Nothing on it is computed for the card. Each figure is one HistoPilot reports elsewhere, named by its record.

@@ -13,7 +13,7 @@ import ApplyRunsTable, { newRunFilters } from '../components/ApplyRunsTable';
 import BulkEvaluationRunner, { EvaluationBatchStatus, batchMemberStatus } from '../components/BulkEvaluationRunner';
 import { StageBackButton, StageCreateButton, StageLibrary, StageLibraryTabs, StageLibraryToolbar, StageRecordManageButton, useStageLibrary } from '../components/StageWorkflow';
 import { Badge, EmptyState, ErrorNotice, LoadFailed, PageHeader, Panel } from '../components/ui';
-import { cohortKindText, cohortName, cohortObjectives, runLabeled } from '../lib/applyModels';
+import { cohortKindText, cohortName, cohortObjectives, runLabeled, runTitle } from '../lib/applyModels';
 import { experimentRoleLabel, objectiveRankLabel, objectives as objectiveRecords, type ExperimentFiling, type Objective } from '../api/objectives';
 import { sectionByObjective, sharedObjective } from '../lib/experimentLibrary';
 import { inObjectiveScope, useObjectiveScope } from '../lib/objectiveScope';
@@ -146,7 +146,7 @@ export default function LocalApplyModels({ workspace }: { workspace: Workspace }
           : <ApplyRunsTable runs={runs} predictors={predictorItems} experiments={experimentItems} cohorts={cohortItems} references={standards.data?.items ?? []} objectives={objectiveItems} filings={filings} objectiveScope={objectiveScope} onClearScope={clearScope} loading={records.isPending} error={records.error} onRetry={() => void records.refetch()} onOpen={openRun} onCreate={create} filters={runFilters} onFiltersChange={setRunFilters} actions={libraryActions} />);
   } else if (view === 'run') {
     content = <div className="clinical-workspace model-chains apply-models">
-      <PageHeader eyebrow={stageEyebrow('apply')} title={record?.manifest.name ?? 'Run'}
+      <PageHeader eyebrow={stageEyebrow('apply')} title={record ? runTitle(record.manifest.name) : 'Run'}
         description={!record ? 'One predictor applied to one cohort.' : runLabeled(record) ? 'Predicted without reading labels, then scored against the cohort’s frozen labels or a reference standard added later.' : 'Predictions for an unlabeled cohort, read without labels. A reference standard added when labels arrive scores them.'}
         actions={<div className="inline-actions"><StageBackButton onClick={() => go({})}>Back to runs</StageBackButton>{record ? <StageRecordManageButton type="configuration" id={record.id} name={record.manifest.name} /> : null}</div>} />
       {errors}

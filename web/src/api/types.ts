@@ -70,6 +70,8 @@ export interface Workspace {
   project: ProjectSummary;
   mode: 'local' | 'synthetic-demo';
   executionEnabled: boolean;
+  /** A packaged project of a public demo: shown read-only, without machine-wide tools. */
+  readOnly?: boolean;
   demoPipeline?: DemoPipeline;
   /** Local projects only: storage diagnostics (not shown in the interface) and record counts. */
   scientificStorage?: Record<string, unknown>;

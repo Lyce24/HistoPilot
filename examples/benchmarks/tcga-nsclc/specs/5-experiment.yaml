@@ -1,0 +1,239 @@
+kind: experiment
+specVersion: 1
+name: MIL aggregators from scratch
+notes: Five MIL aggregators trained from scratch on UNI2-h patch features with HistoPilot's
+  default recipes, over the same five TCGA folds. The external CPTAC-NSCLC cohort
+  is scored afterwards with each configuration's fold ensemble.
+tags:
+- public-study
+- tcga-nsclc
+predictorPolicy:
+  method: ensemble
+  refitPercentile: null
+objectiveId: null
+role: null
+series: null
+seriesMember: null
+inputs:
+  datasetId: '@nsclc-v1'
+  targetSplitId: '@tcga-train-cptac-test'
+  featureBundleId: '@bundle-tcga'
+  loadingPolicy: auto
+  packArtifactId: null
+  trainingSplit:
+    version: 4
+    pools:
+      source: rules
+      trainSelection: remaining
+      validationSource: training_fraction
+      rules:
+        train: []
+        val: []
+        test: []
+    mode: kfold
+    folds: 5
+    seeds:
+    - 42
+    stratify: true
+    validationFraction: 0.15
+    testFraction: 0.2
+    repeats: 5
+    outerFolds: 5
+    innerFolds: 3
+    domainPolicy: all
+    heldOutDomains: []
+    heldOutSource: fractions
+    ratios:
+      train: 0.8
+      val: 0.2
+      test: 0
+    rules:
+      train: []
+      val: []
+      test: []
+batches:
+- id: aggregators
+  version: 1
+  mode: explicit
+  configurations:
+  - &id001
+    model: abmil
+    embedDim: 512
+    attentionDim: 384
+    numFcLayers: 1
+    gatedAttention: true
+    dropout: 0.25
+    inputDropout: 0.0
+    gradientCheckpointing: false
+    precision: 32-true
+    gradientClipNorm: 0.0
+    accumulateGradBatches: 1
+    learningRate: 0.0003
+    weightDecay: 0.0001
+    maxEpochs: 40
+    optimizer: adamw
+    lrScheduler: none
+    warmupEpochs: 0
+    finalLrFraction: 0.01
+    batchSize: 1
+    bagSize: 4096
+    earlyStopping: true
+    patience: 8
+    earlyStoppingMinDelta: 0.0
+    minEpochs: 1
+    checkpointMetric: validation_auroc
+    analysis:
+      version: 1
+      confidenceLevel: 0.95
+      bootstrapResamples: 2000
+      bootstrapSeed: 42
+      oneSlideSeed: 42
+    decisionThreshold: 0.5
+  - model: clam_sb
+    embedDim: 512
+    attentionDim: 384
+    numFcLayers: 1
+    gatedAttention: true
+    dropout: 0.25
+    inputDropout: 0.0
+    gradientCheckpointing: false
+    precision: 32-true
+    gradientClipNorm: 0.0
+    accumulateGradBatches: 1
+    learningRate: 0.0003
+    weightDecay: 0.0001
+    maxEpochs: 40
+    optimizer: adamw
+    lrScheduler: none
+    warmupEpochs: 0
+    finalLrFraction: 0.01
+    batchSize: 1
+    bagSize: 4096
+    earlyStopping: true
+    patience: 8
+    earlyStoppingMinDelta: 0.0
+    minEpochs: 1
+    checkpointMetric: validation_auroc
+    analysis:
+      version: 1
+      confidenceLevel: 0.95
+      bootstrapResamples: 2000
+      bootstrapSeed: 42
+      oneSlideSeed: 42
+    decisionThreshold: 0.5
+  - model: transmil
+    embedDim: 512
+    attentionDim: 384
+    numFcLayers: 1
+    gatedAttention: true
+    dropout: 0.25
+    inputDropout: 0.0
+    gradientCheckpointing: false
+    precision: 32-true
+    gradientClipNorm: 0.0
+    accumulateGradBatches: 1
+    learningRate: 0.0003
+    weightDecay: 0.0001
+    maxEpochs: 40
+    optimizer: adamw
+    lrScheduler: none
+    warmupEpochs: 0
+    finalLrFraction: 0.01
+    batchSize: 1
+    bagSize: 4096
+    earlyStopping: true
+    patience: 8
+    earlyStoppingMinDelta: 0.0
+    minEpochs: 1
+    checkpointMetric: validation_auroc
+    analysis:
+      version: 1
+      confidenceLevel: 0.95
+      bootstrapResamples: 2000
+      bootstrapSeed: 42
+      oneSlideSeed: 42
+    decisionThreshold: 0.5
+  - model: dsmil
+    embedDim: 512
+    attentionDim: 384
+    numFcLayers: 1
+    gatedAttention: true
+    dropout: 0.25
+    inputDropout: 0.0
+    gradientCheckpointing: false
+    precision: 32-true
+    gradientClipNorm: 0.0
+    accumulateGradBatches: 1
+    learningRate: 0.0003
+    weightDecay: 0.0001
+    maxEpochs: 40
+    optimizer: adamw
+    lrScheduler: none
+    warmupEpochs: 0
+    finalLrFraction: 0.01
+    batchSize: 1
+    bagSize: 4096
+    earlyStopping: true
+    patience: 8
+    earlyStoppingMinDelta: 0.0
+    minEpochs: 1
+    checkpointMetric: validation_auroc
+    analysis:
+      version: 1
+      confidenceLevel: 0.95
+      bootstrapResamples: 2000
+      bootstrapSeed: 42
+      oneSlideSeed: 42
+    decisionThreshold: 0.5
+  - model: mean_pool
+    embedDim: 512
+    attentionDim: 384
+    numFcLayers: 1
+    gatedAttention: true
+    dropout: 0.25
+    inputDropout: 0.0
+    gradientCheckpointing: false
+    precision: 32-true
+    gradientClipNorm: 0.0
+    accumulateGradBatches: 1
+    learningRate: 0.0003
+    weightDecay: 0.0001
+    maxEpochs: 40
+    optimizer: adamw
+    lrScheduler: none
+    warmupEpochs: 0
+    finalLrFraction: 0.01
+    batchSize: 1
+    bagSize: 4096
+    earlyStopping: true
+    patience: 8
+    earlyStoppingMinDelta: 0.0
+    minEpochs: 1
+    checkpointMetric: validation_auroc
+    analysis:
+      version: 1
+      confidenceLevel: 0.95
+      bootstrapResamples: 2000
+      bootstrapSeed: 42
+      oneSlideSeed: 42
+    decisionThreshold: 0.5
+  trainingSeeds:
+  - 42
+  notes: ''
+  predictorPolicy:
+    method: ensemble
+    refitPercentile: null
+  selectionMetric: validation_auroc
+  candidateSelection: all
+  batchName: Aggregators from scratch
+  recipe: *id001
+  grid:
+    learningRates:
+    - 0.0003
+    weightDecays:
+    - 0.0001
+    maxEpochs:
+    - 40
+  comparison:
+    reference: 1
+    primaryMetric: auroc

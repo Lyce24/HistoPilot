@@ -51,6 +51,22 @@ jobs:
               licenses = [name for name in wheel.namelist() if '.dist-info/licenses/' in name]
               assert [name.rsplit('/', 1)[1] for name in licenses] == ['LICENSE'], licenses
           PY
+      # The wheel this release attaches is the one a public demo installs: serve it, as a
+      # visitor would reach it, before the release exists.
+      - name: Smoke-test the wheel's public demo
+        shell: bash
+        run: |
+          wheel=$(ls dist/*.whl)
+          uv venv "$RUNNER_TEMP/demo" --python 3.11
+          uv pip install --python "$RUNNER_TEMP/demo/bin/python" "$wheel"
+          "$RUNNER_TEMP/demo/bin/histopilot" serve --demo --port 8787 --no-browser > "$RUNNER_TEMP/demo.log" 2>&1 &
+          server=$!
+          status=0
+          python scripts/smoke_demo.py http://127.0.0.1:8787 --expect-version "${GITHUB_REF_NAME#v}" || status=$?
+          kill "$server"
+          wait "$server" || true
+          if [ "$status" -ne 0 ]; then cat "$RUNNER_TEMP/demo.log"; fi
+          exit "$status"
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

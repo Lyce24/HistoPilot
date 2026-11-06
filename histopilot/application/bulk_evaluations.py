@@ -32,11 +32,26 @@ from histopilot.taskcenter.model import LIVE, TERMINAL
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
+NAME_LIMIT = 120
+
+
 def run_name(prefix, model, batch_name):
     """A batch member's run name. Predictor names omit their batch, so two models' predictors
     of the same configuration and seeds would read alike; the batch name tells them apart."""
     parts = [prefix, batch_name, model["name"]]
-    return " · ".join(part for part in parts if part)[:120]
+    return shorten(" · ".join(part for part in parts if part), NAME_LIMIT)
+
+
+def shorten(text: str, limit: int) -> str:
+    """Fit a name to `limit` characters: cut at a nearby word boundary and end with an
+    ellipsis, so a long name never ends in half a word or a dangling separator."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    space = cut.rfind(" ")
+    if not text[limit - 1].isspace() and space >= limit - 20:
+        cut = cut[:space]
+    return cut.rstrip(" ·/|,;:-") + "…"
 
 
 class BulkEvaluationService:

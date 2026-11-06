@@ -9,7 +9,7 @@ pytest.importorskip("lightning")
 
 from support import projects
 from support.predictors import FakeJobs
-from support.training import runtime
+from support.training import quiet_host, runtime
 
 from histopilot.application.development import DevelopmentService
 from histopilot.application.evaluation_runs import EvaluationRunService
@@ -34,6 +34,13 @@ from histopilot.training.fold import train_fold
 from histopilot.training.inference import evaluate
 from histopilot.training.refit import train_refit
 from histopilot.workers.train_batch import execute_plan
+
+
+@pytest.fixture(autouse=True)
+def _fixed_host(monkeypatch):
+    """Launch checks see a fixed 8-CPU host, so a 4-core CI runner does not refuse the default
+    recipe's threads and loader workers (TRAINING_RESOURCES_UNAVAILABLE)."""
+    quiet_host(monkeypatch)
 
 
 @pytest.mark.slow

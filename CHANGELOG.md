@@ -4,6 +4,28 @@ All notable changes to HistoPilot are recorded here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.2.0] - Unreleased
+
+Real data in public, and the evidence engineers and reviewers ask for.
+
+### Added
+
+- **Public benchmark on TCGA-NSCLC and CPTAC-NSCLC.** Five aggregators on UNI2-h features, cross-validated on 946 TCGA patients and applied to 451 CPTAC patients, with intervals, GPU memory and training time ([benchmarks](docs/benchmarks.md)). `examples/benchmarks/tcga-nsclc` rebuilds it from spec files and recomputes every number independently.
+- **Dataset shift.** A run's cohort compared with its predictor's development slides in feature space: domain AUROC, the share of slides beyond the development range, a principal-plane view and performance within thirds of atypicality. It runs as a CPU task that reads no label (`histopilot run shift-analyze`; [methods](docs/methods.md#dataset-shift)).
+- **Model cards.** Every frozen predictor has one, as JSON or Markdown, built only from the records that made and tested it (`histopilot predictor card`; [methods](docs/methods.md#model-cards)).
+- **Real studies in the public demo.** `histopilot serve --demo --demo-projects DIR` serves packaged projects read-only in the full application beside the synthetic walkthrough ([deployment](docs/deployment.md#packaged-projects)).
+
+### Changed
+
+- **CI runs the ML code.** Every push runs the backend suite twice: with Torch and Lightning on the runner's CPU, so the reference-parity and training tests run, and without them, so the service is proven to install lean. A Playwright test walks the public demo in Chromium, and the wheel, the release and both container images are smoke-tested before they are published.
+- **Containers.** Both images are smoke-tested before they are published: the CPU image must serve the public demo and the CUDA image must import its training stack. Every published image is also tagged `sha-<commit>`, a tag that never moves.
+
+### Fixed
+
+- A project restored from an archive into another folder lost its scored runs, attention maps, recalibration, predictor status and, in experiment results, its intervals, paired contrasts and p-values: readers compared each output's recorded absolute path with the current one. They now accept the same file below its own job or batch folder, and still check its size and SHA-256 where a receipt records them.
+- In a controlled comparison, an arm whose paired interval is unavailable says why, naming the arm and the reference, instead of a message about two batches.
+- After a restart that renumbered disks (as WSL does), every saved feature and slide file looked changed and nothing could be trained, applied or interpreted. A file is now identified by its inode, size and nanosecond times; its device number is no longer compared.
+
 ## [0.1.0] - 2026-10-31
 
 The first release. HistoPilot is a local-first research workspace for computational pathology: it takes a slide table to cross-validated, compared and applied multiple instance learning (MIL) models on foundation-model features, and keeps every step frozen, versioned and reproducible. You drive it from the browser, the terminal or an AI agent, all through one local API.
