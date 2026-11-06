@@ -267,4 +267,18 @@ def test_run_names_carry_their_batch_so_two_models_never_read_alike():
     )
     assert run_name("Inference", model, "nnMIL") != run_name("Inference", model, "ABMIL baseline")
     assert run_name("Inference", model, None) == f"Inference · {model['name']}"
-    assert len(run_name("x" * 100, {"name": "y" * 100}, "z")) == 120
+    long = run_name("x" * 100, {"name": "y" * 100}, "z")
+    assert len(long) <= 120 and long.endswith("…")
+
+
+def test_long_run_names_are_shortened_at_a_word_boundary_with_an_ellipsis():
+    model = {"name": "MIL aggregators from scratch · config 3 · seed 42 / split 42 · fold ensemble"}
+    name = run_name("Aggregators from scratch on CPTAC-NSCLC", model, "Aggregators from scratch")
+    # A plain cut at 120 characters ended this name in "seed 42 /".
+    assert name == (
+        "Aggregators from scratch on CPTAC-NSCLC · Aggregators from scratch · "
+        "MIL aggregators from scratch · config 3 · seed 42…"
+    )
+    assert len(name) <= 120
+    unbroken = run_name("A", {"name": "b" * 200}, None)
+    assert len(unbroken) == 120 and unbroken.endswith("b…")

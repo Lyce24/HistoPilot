@@ -310,6 +310,17 @@ describe('project roadmap progress', () => {
     expect(roadmap.experiments.blockers).toContain('features');
   });
 
+  it('counts a public demo\'s frozen bundles as complete and says their feature files are not shipped', () => {
+    const features = bundle();
+    features.current = false;
+    const evidence = { datasets: [dataset()], targetSplits: [targetSplit()], bundles: [features] };
+    const demo = modules(evidence, { ...workspace(), readOnly: true });
+    expect(demo.features.status).toBe('complete');
+    expect(demo.features.evidence).toBe('1 frozen bundle · feature files not included in this demo');
+    // Outside a read-only demo the same bundle still asks for verification.
+    expect(modules(evidence).features.status).toBe('draft');
+  });
+
   it('respects the service freeze decision for validated external features with incomplete extraction provenance', () => {
     const features = bundle();
     features.manifest.feature.validation.provenanceComplete = false;

@@ -46,6 +46,10 @@ export function batchNameLookup(experiments: readonly ModelExperimentSummary[]) 
   return (batchId: string) => names.get(batchId) ?? `Batch ${shortRecordId(batchId)}`;
 }
 
+/** A run's saved name as shown. Names saved before runs were shortened at a word boundary were
+ * cut at 120 characters and can end in a dangling separator ("… seed 42 /"); show an ellipsis. */
+export const runTitle = (name: string) => name.replace(/\s+[·/|]\s*$/u, '…');
+
 /** "ABMIL baseline · Configuration 1 · Seed ensemble · 3 training × 1 split seed · 15 models". */
 export function modelDescription(predictor: FrozenPredictor['manifest'], batchName: (batchId: string) => string) {
   return [batchName(predictor.batchId), predictorConfigurationLabel(predictor), predictorMethodLabel(predictor.method), predictorSeedLabel(predictor)].join(' · ');

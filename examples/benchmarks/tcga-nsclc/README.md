@@ -54,7 +54,7 @@ python recompute.py /path/to/the/project/folder nsclc_dataset.csv
 
 ## 4. More seeds, more architectures
 
-With one training seed the controlled comparison has no paired intervals, so it cannot say whether two arms differ. Those intervals resample training seeds. To get them, and to bring in the rest of HistoPilot's aggregators, write a comparison design with every arm against ABMIL, then copy the inputs from `specs/5-experiment.yaml` and set `trainingSeeds: [42, 43, 44]`:
+With one training seed, the controlled comparison's paired intervals resample patients and hold each trained model fixed, so they cannot say how much an arm would move if it were retrained. To measure that, and to bring in the rest of HistoPilot's aggregators, write a comparison design with every arm against ABMIL, then copy the inputs from `specs/5-experiment.yaml` and set `trainingSeeds: [42, 43, 44]`:
 
 ```bash
 histopilot experiment template --preset baseline \

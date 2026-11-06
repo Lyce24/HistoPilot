@@ -22,7 +22,8 @@ Real data in public, and the evidence engineers and reviewers ask for.
 
 ### Fixed
 
-- A project restored from an archive into another folder lost its scored runs, attention maps, recalibration and predictor status: readers compared each output's recorded absolute path with the current one. They now accept the same file below its own job folder, and still check its size and SHA-256.
+- A project restored from an archive into another folder lost its scored runs, attention maps, recalibration, predictor status and, in experiment results, its intervals, paired contrasts and p-values: readers compared each output's recorded absolute path with the current one. They now accept the same file below its own job or batch folder, and still check its size and SHA-256 where a receipt records them.
+- In a controlled comparison, an arm whose paired interval is unavailable says why, naming the arm and the reference, instead of a message about two batches.
 - After a restart that renumbered disks (as WSL does), every saved feature and slide file looked changed and nothing could be trained, applied or interpreted. A file is now identified by its inode, size and nanosecond times; its device number is no longer compared.
 
 ## [0.1.0] - 2026-10-31

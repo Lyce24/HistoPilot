@@ -86,10 +86,14 @@
   .experiment-run-metrics > div { padding: .7rem; }
 }
 
-/* Run map: test folds down, training seeds across. Status is text first; tint is secondary. */
-.experiment-run-map { display: grid; gap: .6rem; min-width: 0; }
-.experiment-run-map figure { display: grid; gap: .4rem; margin: 0; min-width: 0; }
+/* Run map: test folds down, training seeds across. Status is text first; tint is secondary.
+   Configurations sit side by side and wrap; a wide multi-seed table takes its own row and scrolls. */
+.experiment-run-map { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .6rem 1.25rem; min-width: 0; }
+.experiment-run-map figure { display: grid; gap: .4rem; margin: 0; min-width: 0; max-width: 100%; }
+.experiment-run-map > .experiment-tracking-hint { flex-basis: 100%; margin: 0; }
+.experiment-run-detail-anchor { min-width: 0; scroll-margin-top: 1rem; }
 .experiment-run-map figcaption { font-size: .8rem; font-weight: 650; color: var(--ink); }
+.experiment-run-map figcaption small { display: block; color: var(--muted); font-size: .72rem; font-weight: 500; }
 .experiment-run-map-scroll { overflow-x: auto; }
 .experiment-run-map table { width: auto; border-collapse: separate; border-spacing: 4px; font-size: .78rem; white-space: nowrap; }
 .experiment-run-map th { padding: .2rem .45rem; border: 0; background: transparent; color: var(--muted); font-size: .7rem; font-weight: 650; letter-spacing: .02em; text-align: left; text-transform: none; }

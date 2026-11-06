@@ -373,6 +373,35 @@ def test_loader_reads_every_arm_of_a_declared_comparison(tmp_path):
     assert {key[0] for key in loaded["oof"]} == {"cand-1", "cand-2"}
 
 
+def test_loader_reads_the_predictions_of_a_moved_project(tmp_path):
+    """A project copied, restored or packaged elsewhere keeps results naming its old folder."""
+    item = batch_files("b1", configurations=2, seeds=(42, 43))
+    item["batch"]["manifest"]["spec"]["comparison"] = {"reference": 1}
+    folder = tmp_path / "copy" / "training" / "b1"
+    folder.mkdir(parents=True)
+    (folder / "plan.json").write_text(json.dumps(item["plan"]))
+    trained_in = tmp_path / "original" / "training" / "b1"
+    for candidate in item["results"]["candidates"]:
+        records = item["oof"][(candidate["candidateId"], candidate["trainingSeed"], 42)]
+        (folder / candidate["oofPath"]).write_text(json.dumps({"records": records}))
+        candidate["oofPath"] = str(trained_in / candidate["oofPath"])
+    (folder / "results.json").write_text(json.dumps(item["results"]))
+    loaded = results._load(folder, item["batch"])
+    assert {key[0] for key in loaded["oof"]} == {"cand-1", "cand-2"}
+    (contrast,) = summarize(loaded)["batches"][0]["comparison"]["contrasts"]
+    assert contrast["oofInterval"]["available"] and contrast["pValue"] is not None
+
+
+def test_arms_without_saved_predictions_say_so_instead_of_blaming_their_units():
+    item = batch_files("arms", configurations=2)
+    item["batch"]["manifest"]["spec"]["comparison"] = {"reference": 1}
+    item["oof"] = {}
+    (contrast,) = summarize(item)["batches"][0]["comparison"]["contrasts"]
+    reason = contrast["oofInterval"]["reason"]
+    assert reason.startswith("The arm and the reference need saved out-of-fold predictions")
+    assert "batches" not in reason
+
+
 def test_declared_comparison_contrasts_every_arm_with_the_reference():
     item = batch_files("ablation", configurations=3, skills=(2.5, 0.4, 2.5))
     item["batch"]["manifest"]["spec"]["comparison"] = {"reference": 1, "primaryMetric": "auroc"}

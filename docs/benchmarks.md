@@ -23,10 +23,19 @@ HistoPilot run end to end on a public task: LUAD versus LUSC, trained by cross-v
 | DSMIL | 0.979 (0.968–0.987) | 0.972 (0.958–0.983) | 0.917 | 559 MiB | 8.5 |
 | Mean pooling | 0.966 (0.955–0.976) | 0.949 (0.930–0.965) | 0.881 | 726 MiB | 8.0 |
 
-Peak GPU memory is the largest allocation of any fold, on one RTX A5000; minutes per fold are the median over five folds. All 25 folds took 5.2 hours, run one at a time.
+Peak GPU memory is the largest allocation of any fold, on one RTX A5000; minutes per fold are the median over five folds. All 25 folds took 5.2 hours, run one at a time. The intervals in this table are recomputed by `recompute.py`; the app draws its own bootstrap resamples, so its intervals can differ in the third decimal.
 
 - **Every attention-based aggregator transfers.** CPTAC AUROCs fall within 0.01 of their cross-validated values, and TransMIL's rises. Mean pooling, the attention-free baseline, loses the most (0.966 to 0.949).
-- **The arms are not separable on this evidence.** Their cross-validated intervals overlap, and with one training seed HistoPilot reports no paired interval or Holm-adjusted p-value for the controlled comparison: those resample training seeds, so how much each arm would move if retrained is unmeasured. Rerunning with more training seeds adds them.
+- **The arms are close.** Paired with ABMIL on the same 946 patients' out-of-fold predictions, every arm is within 0.01 AUROC. Only DSMIL's paired interval excludes zero (0.006 higher than ABMIL), and after Holm adjustment for the four contrasts no difference is significant.
+
+| Arm | ABMIL − arm, out-of-fold AUROC | Paired 95% interval | p | Holm-adjusted p |
+| --- | ---: | --- | ---: | ---: |
+| CLAM-SB | −0.003 | −0.009 to 0.002 | 0.25 | 0.29 |
+| TransMIL | +0.007 | −0.002 to 0.019 | 0.11 | 0.29 |
+| DSMIL | −0.006 | −0.011 to −0.001 | 0.03 | 0.10 |
+| Mean pooling | +0.007 | −0.001 to 0.015 | 0.10 | 0.29 |
+
+These are the app's numbers (Results → Controlled comparison). The paired intervals resample patients with the same draws for both models and hold each trained model fixed, so with one training seed, how much an arm would move if it were retrained is unmeasured. Rerunning with more training seeds measures it.
 
 ## Dataset shift
 

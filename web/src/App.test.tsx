@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { renderLoadedPage } from './testFixtures/renderLoadedPage';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Content, ModulePrerequisites, moduleForPage, pageFromHash, projectFromUrl } from './App';
+import { Content, ModulePrerequisites, WorkspaceNote, moduleForPage, pageFromHash, projectFromUrl } from './App';
 import { buildRoadmap } from './lib/roadmap';
 import type { Workspace } from './api/types';
 import type { Roadmap } from './pages/ProjectRoadmap';
@@ -193,5 +193,15 @@ describe('module prerequisites', () => {
     const html = renderToStaticMarkup(<ModulePrerequisites module={module} roadmap={roadmapWith([module, features])} />);
     expect(html).toContain('Freeze a feature bundle for the same dataset as the protocol.');
     expect(html).toContain('Experiments is waiting for Slide features');
+  });
+});
+
+describe('workspace note', () => {
+  it('names the kind of workspace, and the synthetic demo as illustrative, without a version', () => {
+    const local = renderToStaticMarkup(<WorkspaceNote mode="local" publicDemo={false} />);
+    expect(local).toContain('Local workspace');
+    expect(local).not.toMatch(/v\d/);
+    expect(renderToStaticMarkup(<WorkspaceNote mode="synthetic-demo" publicDemo={false} />)).toContain('Generated records, not a real study.');
+    expect(renderToStaticMarkup(<WorkspaceNote mode="local" publicDemo />)).toContain('Run HistoPilot on your own slides');
   });
 });

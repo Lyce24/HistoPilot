@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { FeatureBundle } from '../api/bundles';
 import type { Configuration } from '../api/scientific';
 import FeatureBundleLibrary, { filterFeatureBundles } from './FeatureBundleLibrary';
+import { ReadOnlyContext } from '../lib/readOnly';
 
 const source = {
   id: 'feature', versionLabel: { tag: 'UNI features', note: '' },
@@ -23,10 +24,10 @@ function bundle(withPack = true): FeatureBundle {
     },
   };
 }
-function render(items: FeatureBundle[], selectedId = items[0]?.id ?? '') {
+function render(items: FeatureBundle[], selectedId = items[0]?.id ?? '', readOnly = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   try {
-    const html = renderToStaticMarkup(<QueryClientProvider client={client}><FeatureBundleLibrary project="project" items={items} features={[source]} selectedId={selectedId} onSelect={() => {}} onPrepare={() => {}} /></QueryClientProvider>);
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><ReadOnlyContext.Provider value={readOnly}><FeatureBundleLibrary project="project" items={items} features={[source]} selectedId={selectedId} onSelect={() => {}} onPrepare={() => {}} /></ReadOnlyContext.Provider></QueryClientProvider>);
     expect(client.getQueryCache().findAll().some((query) => query.queryKey.includes('selection'))).toBe(false);
     return html;
   } finally { client.clear(); }
@@ -83,6 +84,15 @@ describe('frozen feature bundle library', () => {
     expect(html).toContain('Blocking');
     expect(html).toContain('/mmap/blca-verified');
     expect(html).not.toContain('Verified inputs');
+  });
+
+  it('labels a public demo\'s bundles as not shipped instead of warning about their inputs', () => {
+    const shipped = bundle();
+    shipped.current = false;
+    const html = render([shipped], shipped.id, true);
+    expect(html).toContain('Features not in demo');
+    expect(html).not.toContain('Inputs need attention');
+    expect(render([bundle()], 'bundle', true)).toContain('Verified inputs');
   });
 
   it('directs an empty library to preparation rather than presenting loading controls', () => {

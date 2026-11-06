@@ -70,6 +70,13 @@ export function projectFromUrl(href = window.location.href): string | null {
   const params = new URL(href).searchParams;
   return params.get('project') ?? params.get('experiment');
 }
+/** The sidebar's closing note: which kind of workspace this is. */
+export function WorkspaceNote({ mode, publicDemo }: { mode: Workspace['mode']; publicDemo: boolean }) {
+  if (publicDemo) return <><div className="prototype-label"><span />Public demo <b>read-only</b></div><p>A real study on public data.<br /><a href="https://github.com/Lyce24/HistoPilot#quick-start" target="_blank" rel="noreferrer">Run HistoPilot on your own slides</a></p></>;
+  if (mode === 'synthetic-demo') return <><div className="prototype-label"><span />Synthetic demo <b>illustrative</b></div><p>Generated records, not a real study.<br />Every step, traceable.</p></>;
+  return <><div className="prototype-label"><span />Local workspace</div><p>Your data. Your infrastructure.<br />Every step, traceable.</p></>;
+}
+
 export function moduleForPage(page: Page) {
   if (page === 'legacy-protocol') return 'cohort';
   return ['selection', 'predictor', 'post-development', 'source-cv'].includes(page) ? 'experiments' : page;
@@ -259,9 +266,7 @@ function WorkspaceShell({ workspace: w, onExit }: { workspace: Workspace; onExit
           {w.mode === 'local' && !publicDemo ? <a className={`nav-link ${page === 'cleanup' ? 'active' : ''}`} href="#cleanup" aria-current={page === 'cleanup' ? 'page' : undefined}><Icon name="folder" size={16} /><span>Workspace cleanup</span></a> : null}
           {(w.mode === 'local' && !publicDemo ? ['task-center', 'operations', 'system'] as const : []).map((id) => <a key={id} className={`nav-link ${page === id ? 'active' : ''}`} href={`#${id}`} aria-current={page === id ? 'page' : undefined}><Icon name={toolIcons[id] ?? id} size={16} /><span>{pages[id]}</span></a>)}
         </nav>
-        <div className="sidebar-bottom">{publicDemo
-          ? <><div className="prototype-label"><span />Public demo <b>read-only</b></div><p>A real study on public data.<br /><a href="https://github.com/Lyce24/HistoPilot#quick-start" target="_blank" rel="noreferrer">Run HistoPilot on your own slides</a></p></>
-          : <><div className="prototype-label"><span />Local workspace <b>v0.1</b></div><p>Your data. Your infrastructure.<br />Every step, traceable.</p></>}</div>
+        <div className="sidebar-bottom"><WorkspaceNote mode={w.mode} publicDemo={publicDemo} /></div>
       </aside>
       {mobile && menu ? <button className="nav-backdrop" aria-label="Close navigation overlay" onClick={() => setMenu(false)} /> : null}
       <div className="main-shell">

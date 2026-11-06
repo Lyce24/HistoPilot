@@ -219,6 +219,12 @@ export function buildRoadmap(workspace: Workspace, evidence: Partial<RoadmapEvid
   states.cohort = progress(targetSplits.length, protocolDrafts.length + saved.targetSplits.length - targetSplits.length, 'frozen target and split', 'saved target draft', 'No frozen targets and splits');
   states.features = progress(readyBundles.length, saved.features.length + saved.bundles.length - readyBundles.length, 'verified frozen bundle', 'saved feature artifact', 'No saved feature source or frozen bundle');
   if (states.features.status === 'draft') states.features.evidence += ' · complete bundle verification';
+  if (workspace.readOnly && saved.bundles.length) {
+    // A public demo ships no feature files, so its bundles cannot be rechecked here. They
+    // were verified when the study ran, and the demo shows what the later stages made of them.
+    states.features = progress(saved.bundles.length, 0, 'frozen bundle', '', '');
+    states.features.evidence += ' · feature files not included in this demo';
+  }
   const extraction = extractionEvidence(saved.extractions);
   if (extraction) {
     const existing = states.features;
