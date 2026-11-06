@@ -34,7 +34,7 @@ jobs:
   tests:
     name: Tests (${{ matrix.leg }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -70,8 +70,16 @@ jobs:
           [ "$installed" = "$expected" ]
       - name: Tests, with coverage
         shell: bash
+        # One BLAS and OpenMP thread per process, at a lower priority: four test workers that
+        # each start Torch with a thread per core, plus the training workers some tests launch,
+        # otherwise starve the runner's own agent of CPU, and GitHub drops a runner that stops
+        # answering ("The hosted runner lost communication with the server").
+        env:
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
         run: |
-          uv run pytest -n auto --dist worksteal --cov --cov-report= --junitxml=pytest.xml
+          nice -n 10 uv run pytest -n auto --dist worksteal --cov --cov-report= --junitxml=pytest.xml
           uv run python scripts/coverage_summary.py "${{ matrix.label }}" | tee -a "$GITHUB_STEP_SUMMARY"
       # Counts, skip reasons and reference-parity results; fails the training leg if a test
       # still skipped for want of Torch, Lightning or scikit-learn.
